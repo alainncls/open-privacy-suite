@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=privacy_proxy
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - proxy-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Mock Billions identity service
+  billions-mock:
+    image: node:20-alpine
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./e2e/mock-billions:/app
+    working_dir: /app
+    environment:
+      - PORT=9000
+    networks:
+      - proxy-network
+    command: sh /app/start.sh
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.js"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Mock Erigon node for testing
+  erigon-mock:
+    image: node:20-alpine
+    ports:
+      - "8545:8545"
+    volumes:
+      - ./e2e/mock-node:/app
+    working_dir: /app
+    environment:
+      - PORT=8545
+    networks:
+      - proxy-network
+    command: sh /app/start.sh
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.js"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Privacy proxy backend
+  proxy-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_URL=http://erigon-mock:8545
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
+      - BILLIONS_URL=http://billions-mock:9000
+      - PORT=8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      billions-mock:
+        condition: service_healthy
+      erigon-mock:
+        condition: service_healthy
+    networks:
+      - proxy-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Frontend dev server
+  proxy-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      proxy-backend:
+        condition: service_started
+    networks:
+      - proxy-network
+
+volumes:
+  postgres-data:
+
+networks:
+  proxy-network:
+    driver: bridge

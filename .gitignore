@@ -1,0 +1,51 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage/
+
+# Dependency directories
+vendor/
+node_modules/
+.go/
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+# PostgreSQL (local dev databases)
+*.sql
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+frontend/dist/
+frontend/build/
