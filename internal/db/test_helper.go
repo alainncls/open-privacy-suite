@@ -5,7 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"testing"
+	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -72,4 +77,66 @@ func EnsureTestDatabase(dbURL string) error {
 	}
 	
 	return nil
+}
+
+// SetupTestContainer starts a PostgreSQL testcontainer and returns the connection string
+// This is the recommended approach for tests - no need for external PostgreSQL
+// The container is automatically cleaned up when the test finishes
+// If Docker is not available or testcontainers fails, falls back to external PostgreSQL
+func SetupTestContainer(t *testing.T) (string, func()) {
+	ctx := context.Background()
+
+	// Try to start PostgreSQL container
+	postgresContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15-alpine"),
+		postgres.WithDatabase("testdb"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	if err != nil {
+		// If testcontainers fails (Docker not available, network issues, etc.),
+		// fall back to external PostgreSQL
+		testcontainersErr := err
+		t.Logf("Warning: testcontainers failed (%v), falling back to external PostgreSQL", testcontainersErr)
+		t.Logf("Make sure PostgreSQL is running: docker-compose up -d postgres")
+		
+		// Use external PostgreSQL as fallback
+		dbURL := "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
+		if err := EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("Both testcontainers and external PostgreSQL failed. Start PostgreSQL with: docker-compose up -d postgres\nTestcontainers error: %v\nExternal PostgreSQL error: %v", testcontainersErr, err)
+		}
+		
+		// Return external DB URL with no-op cleanup
+		return dbURL, func() {}
+	}
+
+	// Get connection string
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		// If we can't get connection string, try to terminate and fall back
+		connStrErr := err
+		postgresContainer.Terminate(ctx)
+		t.Logf("Warning: failed to get connection string (%v), falling back to external PostgreSQL", connStrErr)
+		
+		dbURL := "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
+		if err := EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("Both testcontainers and external PostgreSQL failed. Start PostgreSQL with: docker-compose up -d postgres\nConnection string error: %v\nExternal PostgreSQL error: %v", connStrErr, err)
+		}
+		
+		return dbURL, func() {}
+	}
+
+	// Cleanup function
+	cleanup := func() {
+		if err := postgresContainer.Terminate(ctx); err != nil {
+			t.Logf("failed to terminate container: %v", err)
+		}
+	}
+
+	return connStr, cleanup
 }

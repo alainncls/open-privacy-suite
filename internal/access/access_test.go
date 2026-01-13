@@ -1,49 +1,56 @@
 package access
 
 import (
-	"os"
+	"errors"
 	"testing"
 
 	"privacy-proxy/internal/db"
 )
 
-func setupTestDB(t *testing.T) *db.DB {
-	// Use test database URL from environment or default
-	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
-	}
-	
-	// Ensure test database exists
-	if err := db.EnsureTestDatabase(dbURL); err != nil {
-		t.Logf("Warning: Could not ensure test database exists: %v", err)
-		t.Logf("Please create the database manually: createdb privacy_proxy_test")
-		// Continue anyway - might already exist
-	}
-	
-	database, err := db.New(dbURL)
-	if err != nil {
-		t.Fatalf("failed to create test DB: %v", err)
-	}
-	
-	// Clean up tables for fresh test
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Migrate()
-	
-	return database
+// mockPolicyStore is a mock implementation of PolicyStore for testing
+type mockPolicyStore struct {
+	policies map[string]*db.AccessPolicy
+	getError error
 }
 
-func cleanupTestDB(t *testing.T, database *db.DB) {
-	database.Close()
+func newMockPolicyStore() *mockPolicyStore {
+	return &mockPolicyStore{
+		policies: make(map[string]*db.AccessPolicy),
+	}
+}
+
+func (m *mockPolicyStore) GetPolicy(externalID string) (*db.AccessPolicy, error) {
+	if m.getError != nil {
+		return nil, m.getError
+	}
+	return m.policies[externalID], nil
+}
+
+func (m *mockPolicyStore) SetPolicy(policy *db.AccessPolicy) error {
+	if m.policies == nil {
+		m.policies = make(map[string]*db.AccessPolicy)
+	}
+	m.policies[policy.ExternalID] = policy
+	return nil
+}
+
+func (m *mockPolicyStore) ListPolicies() ([]*db.AccessPolicy, error) {
+	policies := make([]*db.AccessPolicy, 0, len(m.policies))
+	for _, p := range m.policies {
+		policies = append(policies, p)
+	}
+	return policies, nil
+}
+
+func (m *mockPolicyStore) DeletePolicy(externalID string) error {
+	delete(m.policies, externalID)
+	return nil
 }
 
 func TestCheckAccess(t *testing.T) {
-	database := setupTestDB(t)
-	defer cleanupTestDB(t, database)
-	
-	ctrl := NewController(database)
-	
+	mockStore := newMockPolicyStore()
+	ctrl := NewController(mockStore)
+
 	// Create a test policy
 	policy := &db.AccessPolicy{
 		ExternalID:   "billions:user_123",
@@ -51,16 +58,13 @@ func TestCheckAccess(t *testing.T) {
 		AllowMethods: []string{"eth_call", "eth_getBalance"},
 		Banned:       false,
 	}
-	
-	if err := database.SetPolicy(policy); err != nil {
-		t.Fatalf("failed to set policy: %v", err)
-	}
-	
+	mockStore.SetPolicy(policy)
+
 	tests := []struct {
-		name      string
+		name       string
 		externalID string
-		method    string
-		wantErr   bool
+		method     string
+		wantErr    bool
 	}{
 		{
 			name:       "allowed method",
@@ -87,11 +91,11 @@ func TestCheckAccess(t *testing.T) {
 			wantErr:    true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ctrl.CheckAccess(tt.externalID, tt.method)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error but got none")
@@ -106,11 +110,9 @@ func TestCheckAccess(t *testing.T) {
 }
 
 func TestCheckAccess_Banned(t *testing.T) {
-	database := setupTestDB(t)
-	defer cleanupTestDB(t, database)
-	
-	ctrl := NewController(database)
-	
+	mockStore := newMockPolicyStore()
+	ctrl := NewController(mockStore)
+
 	// Create a banned policy
 	policy := &db.AccessPolicy{
 		ExternalID:   "billions:banned_user",
@@ -118,11 +120,8 @@ func TestCheckAccess_Banned(t *testing.T) {
 		AllowMethods: []string{"eth_call"},
 		Banned:       true,
 	}
-	
-	if err := database.SetPolicy(policy); err != nil {
-		t.Fatalf("failed to set policy: %v", err)
-	}
-	
+	mockStore.SetPolicy(policy)
+
 	err := ctrl.CheckAccess("billions:banned_user", "eth_call")
 	if err == nil {
 		t.Errorf("expected error for banned user but got none")
@@ -130,11 +129,9 @@ func TestCheckAccess_Banned(t *testing.T) {
 }
 
 func TestCheckAccess_KYCRequired(t *testing.T) {
-	database := setupTestDB(t)
-	defer cleanupTestDB(t, database)
-	
-	ctrl := NewController(database)
-	
+	mockStore := newMockPolicyStore()
+	ctrl := NewController(mockStore)
+
 	// Create a policy without KYC
 	policy := &db.AccessPolicy{
 		ExternalID:   "billions:no_kyc_user",
@@ -142,17 +139,25 @@ func TestCheckAccess_KYCRequired(t *testing.T) {
 		AllowMethods: []string{"eth_call"},
 		Banned:       false,
 	}
-	
-	if err := database.SetPolicy(policy); err != nil {
-		t.Fatalf("failed to set policy: %v", err)
-	}
-	
+	mockStore.SetPolicy(policy)
+
 	err := ctrl.CheckAccess("billions:no_kyc_user", "eth_call")
 	if err == nil {
 		t.Errorf("expected error for non-KYC user but got none")
 	}
-	
+
 	if err != nil && err.Error() != "KYC required for billions:no_kyc_user" {
 		t.Errorf("expected KYC error, got: %v", err)
+	}
+}
+
+func TestCheckAccess_DatabaseError(t *testing.T) {
+	mockStore := newMockPolicyStore()
+	mockStore.getError = errors.New("database connection failed")
+	ctrl := NewController(mockStore)
+
+	err := ctrl.CheckAccess("billions:user_123", "eth_call")
+	if err == nil {
+		t.Errorf("expected error for database failure but got none")
 	}
 }

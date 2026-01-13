@@ -6,17 +6,19 @@ import (
 )
 
 type Controller struct {
-	db *db.DB
+	policyStore db.PolicyStore
 }
 
-func NewController(database *db.DB) *Controller {
-	return &Controller{db: database}
+// NewController creates a new access controller with a policy store
+// Accepts PolicyStore interface to allow mocking in tests
+func NewController(policyStore db.PolicyStore) *Controller {
+	return &Controller{policyStore: policyStore}
 }
 
 // CheckAccess validates if a request should be allowed
 // Returns error if access should be denied
 func (c *Controller) CheckAccess(externalID, method string) error {
-	policy, err := c.db.GetPolicy(externalID)
+	policy, err := c.policyStore.GetPolicy(externalID)
 	if err != nil {
 		return fmt.Errorf("failed to get policy: %w", err)
 	}
