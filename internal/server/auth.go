@@ -2,12 +2,16 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	"privacy-proxy/internal/auth"
 
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/iden3comm/v2/protocol"
 )
 
 // AuthRequest represents the request body for /auth endpoint
@@ -28,24 +32,155 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
-// handleAuth handles POST /auth - verifies JWZ proof and issues JWT tokens
-func (s *Server) handleAuth(c *gin.Context) {
-	var req AuthRequest
+// AuthRequestResponse represents the response from /auth/request endpoint
+type AuthRequestResponse struct {
+	SessionID   string                                `json:"session_id"`
+	AuthRequest *protocol.AuthorizationRequestMessage `json:"auth_request"`
+}
+
+// AuthVerifyRequest represents the request body for /auth/verify endpoint
+type AuthVerifyRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
+	JWZToken  string `json:"jwz_token" binding:"required"`
+}
+
+// handleAuthRequest handles POST /auth/request - creates authorization request
+// Step 1: Client requests authentication, server creates proof request
+func (s *Server) handleAuthRequest(c *gin.Context) {
+	// Validate verifier ID is configured
+	if s.config.VerifierID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "VERIFIER_ID not configured"})
+		return
+	}
+
+	// Generate session ID first (needed for callback URL)
+	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
+
+	// Build callback URL with session ID
+	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", s.config.BaseURL, sessionID)
+
+	// Create authorization request with proper callback URL
+	authReq, err := s.privadoVerifier.CreateAuthorizationRequest(
+		s.config.VerifierID,
+		callbackURL,
+		"Authenticate to access Ethereum node",
+	)
+	if err != nil {
+		s.sessionStore.DeleteSession(sessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create authorization request: " + err.Error()})
+		return
+	}
+
+	// Update session with the real auth request
+	if err := s.sessionStore.UpdateSession(sessionID, authReq); err != nil {
+		s.sessionStore.DeleteSession(sessionID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
+		return
+	}
+
+	// Return authorization request and session ID
+	c.JSON(http.StatusOK, AuthRequestResponse{
+		SessionID:   sessionID,
+		AuthRequest: authReq,
+	})
+}
+
+// handleAuthCallback handles POST /auth/callback - wallet callback with proof
+// Step 2: Wallet automatically sends proof here after user approves
+func (s *Server) handleAuthCallback(c *gin.Context) {
+	// Get session ID from query parameter (wallet includes it in callback URL)
+	sessionID := c.Query("session")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session parameter required"})
+		return
+	}
+
+	// Get session
+	session := s.sessionStore.GetSession(sessionID)
+	if session == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session not found or expired"})
+		return
+	}
+
+	// Read JWZ token from request body
+	// Wallet sends it as JSON: {"token": "..."} or just the token string
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+		return
+	}
+
+	var jwzToken string
+	// Try to parse as JSON first
+	var tokenPayload map[string]interface{}
+	if err := json.Unmarshal(body, &tokenPayload); err == nil {
+		if token, ok := tokenPayload["token"].(string); ok {
+			jwzToken = token
+		} else if token, ok := tokenPayload["jwz_token"].(string); ok {
+			jwzToken = token
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token not found in request body"})
+			return
+		}
+	} else {
+		// If not JSON, treat as plain string
+		jwzToken = string(body)
+	}
+
+	if jwzToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "jwz_token required"})
+		return
+	}
+
+	// Verify proof and issue tokens
+	response, err := s.verifyAndIssueTokens(c, jwzToken, session.AuthRequest, sessionID)
+	if err != nil {
+		return // Error already sent in verifyAndIssueTokens
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// handleAuthVerify handles POST /auth/verify - manual proof submission (development only)
+// Alternative flow for testing: client submits proof manually
+func (s *Server) handleAuthVerify(c *gin.Context) {
+	var req AuthVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return
 	}
 
-	// Verify JWZ token using Privado ID verifier
-	ctx := context.Background()
-	userDID, err := s.privadoVerifier.VerifyJWZ(ctx, req.JWZToken)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
+	// Get session
+	session := s.sessionStore.GetSession(req.SessionID)
+	if session == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session not found or expired"})
 		return
 	}
 
+	// Verify proof and issue tokens
+	response, err := s.verifyAndIssueTokens(c, req.JWZToken, session.AuthRequest, req.SessionID)
+	if err != nil {
+		return // Error already sent in verifyAndIssueTokens
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
+// Returns the response or sends error and returns nil
+func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
+	// Verify JWZ token against the original authorization request
+	ctx := context.Background()
+	userDID, err := s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
+		return nil, err
+	}
+
+	// Delete session after successful verification
+	s.sessionStore.DeleteSession(sessionID)
+
 	// Check if user has a policy (to determine KYC status)
-	// If no policy exists, we can still issue a token but KYC will be false
 	policy, _ := s.db.GetPolicy(userDID)
 	kyc := false
 	if policy != nil {
@@ -56,14 +191,14 @@ func (s *Server) handleAuth(c *gin.Context) {
 	accessToken, err := s.jwtService.IssueAccessToken(userDID, kyc)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue access token: " + err.Error()})
-		return
+		return nil, err
 	}
 
 	// Issue refresh token (long-lived)
 	refreshToken, err := s.jwtService.IssueRefreshToken(userDID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue refresh token: " + err.Error()})
-		return
+		return nil, err
 	}
 
 	// Store refresh token in database
@@ -71,16 +206,15 @@ func (s *Server) handleAuth(c *gin.Context) {
 	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
 	if err := s.db.SaveRefreshToken(tokenHash, userDID, expiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
-		return
+		return nil, err
 	}
 
-	// Return tokens
-	c.JSON(http.StatusOK, AuthResponse{
+	return &AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    1800, // 30 minutes in seconds
-	})
+	}, nil
 }
 
 // handleRefresh handles POST /refresh - issues new access token from refresh token

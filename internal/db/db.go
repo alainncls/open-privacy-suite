@@ -373,14 +373,17 @@ func (d *DB) IsAccessTokenRevoked(tokenID string) (bool, error) {
 
 // CleanupExpiredTokens removes expired tokens from the database
 func (d *DB) CleanupExpiredTokens() error {
+	// Use current time from Go to ensure consistency with how tokens are stored
+	now := time.Now()
+	
 	// Clean up expired refresh tokens
-	_, err := d.conn.Exec(`DELETE FROM refresh_tokens WHERE expires_at < CURRENT_TIMESTAMP`)
+	_, err := d.conn.Exec(`DELETE FROM refresh_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
 	}
 	
 	// Clean up expired revoked tokens
-	_, err = d.conn.Exec(`DELETE FROM revoked_tokens WHERE expires_at < CURRENT_TIMESTAMP`)
+	_, err = d.conn.Exec(`DELETE FROM revoked_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired revoked tokens: %w", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/iden3comm/v2/protocol"
 )
 
 type Server struct {
@@ -23,6 +24,8 @@ type Server struct {
 	proxy           *proxy.Proxy
 	privadoVerifier PrivadoVerifier
 	jwtService      *auth.JWTService
+	sessionStore    *auth.SessionStore
+	config          *config.Config
 }
 
 // DB returns the database instance (for testing)
@@ -30,9 +33,10 @@ func (s *Server) DB() *db.DB {
 	return s.db
 }
 
-// PrivadoVerifier interface for JWZ verification
+// PrivadoVerifier interface for Privado ID operations
 type PrivadoVerifier interface {
-	VerifyJWZ(ctx context.Context, jwzToken string) (string, error)
+	CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 }
 
 func New(cfg *config.Config) *Server {
@@ -74,12 +78,17 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 	accessCtrl := access.NewController(database)
 	proxySvc := proxy.New(cfg.NodeURL)
 
+	// Initialize session store (10 minute TTL, cleanup every minute)
+	sessionStore := auth.NewSessionStore(10*time.Minute, 1*time.Minute)
+
 	return &Server{
 		db:              database,
 		accessCtrl:      accessCtrl,
 		proxy:           proxySvc,
 		privadoVerifier: privadoVerifier,
 		jwtService:      jwtService,
+		sessionStore:    sessionStore,
+		config:          cfg,
 	}
 }
 
@@ -120,9 +129,15 @@ func (s *Server) Run(addr string) error {
 	router.HEAD("/health", healthHandler)
 
 	// Authentication endpoints (no auth required)
-	router.POST("/auth", s.handleAuth)
+	router.POST("/auth/request", s.handleAuthRequest)      // Step 1: Create proof request
+	router.POST("/auth/callback", s.handleAuthCallback)   // Step 2: Wallet callback
 	router.POST("/refresh", s.handleRefresh)
 	router.POST("/revoke", s.handleRevoke)
+	
+	// Manual verification endpoint (development/testing only)
+	if !s.config.IsProduction() {
+		router.POST("/auth/verify", s.handleAuthVerify)
+	}
 
 	// JSON-RPC proxy endpoint - protected by JWT
 	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)

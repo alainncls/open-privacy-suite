@@ -54,7 +54,6 @@ func (s *Service) ResolveIdentity(token string) (*Identity, error) {
 	}
 }
 
-
 // ResolveIdentityFromBillions makes actual HTTP call to Billions service
 // Receives the user_id part (without the "billions:" prefix)
 func (s *Service) ResolveIdentityFromBillions(userID string) (*Identity, error) {

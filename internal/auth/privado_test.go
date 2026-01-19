@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/iden3/iden3comm/v2/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,9 +31,19 @@ func TestPrivadoVerifier_VerifyJWZ_InvalidToken(t *testing.T) {
 	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id")
 	require.NoError(t, err)
 
+	// Create a minimal authorization request for testing
+	authRequest := &protocol.AuthorizationRequestMessage{
+		ID:   "test-request-id",
+		Type: "https://iden3-communication.io/authorization/1.0/request",
+		Body: protocol.AuthorizationRequestMessageBody{
+			CallbackURL: "http://localhost:8080/auth/callback",
+			Reason:      "Test verification",
+		},
+	}
+
 	// Try to verify an invalid JWZ token
 	ctx := context.Background()
-	_, err = verifier.VerifyJWZ(ctx, "invalid.jwz.token")
+	_, err = verifier.VerifyJWZ(ctx, "invalid.jwz.token", authRequest, "did:privado:verifier:test")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "verification failed")
 }

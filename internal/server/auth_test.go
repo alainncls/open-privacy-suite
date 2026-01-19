@@ -13,21 +13,39 @@ import (
 
 	"privacy-proxy/internal/access"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/iden3comm/v2/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // mockPrivadoVerifier is a mock for testing (implements PrivadoVerifier interface)
 type mockPrivadoVerifier struct {
-	verifyFunc func(ctx context.Context, jwzToken string) (string, error)
+	createRequestFunc func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	verifyFunc        func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 }
 
-func (m *mockPrivadoVerifier) VerifyJWZ(ctx context.Context, jwzToken string) (string, error) {
+func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {
+	if m.createRequestFunc != nil {
+		return m.createRequestFunc(verifierID, callbackURL, reason)
+	}
+	// Return a mock authorization request
+	return &protocol.AuthorizationRequestMessage{
+		ID:   "mock-request-id",
+		Type: "https://iden3-communication.io/authorization/1.0/request",
+		Body: protocol.AuthorizationRequestMessageBody{
+			CallbackURL: callbackURL,
+			Reason:      reason,
+		},
+	}, nil
+}
+
+func (m *mockPrivadoVerifier) VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
 	if m.verifyFunc != nil {
-		return m.verifyFunc(ctx, jwzToken)
+		return m.verifyFunc(ctx, jwzToken, authRequest, verifierID)
 	}
 	return "did:privado:test123", nil
 }
@@ -71,7 +89,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 
 	// Create mock Privado verifier
 	mockVerifier := &mockPrivadoVerifier{
-		verifyFunc: func(ctx context.Context, jwzToken string) (string, error) {
+		verifyFunc: func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
 			// Mock: accept any JWZ token and return a test DID
 			if jwzToken == "" {
 				return "", fmt.Errorf("empty JWZ token")
@@ -80,39 +98,84 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 		},
 	}
 
+	// Create test config
+	cfg := &config.Config{
+		VerifierID:  "did:privado:verifier:test",
+		BaseURL:     "http://localhost:8080",
+		Environment: "development",
+	}
+
 	srv := &Server{
 		db:              database,
 		privadoVerifier: mockVerifier,
 		jwtService:      jwtService,
 		accessCtrl:      access.NewController(database),
 		proxy:           nil, // Not needed for auth tests
+		sessionStore:    auth.NewSessionStore(10*time.Minute, 1*time.Minute),
+		config:          cfg,
 	}
 
 	return srv, jwtService
 }
 
-func TestHandleAuth_Success(t *testing.T) {
+func TestHandleAuthRequest_Success(t *testing.T) {
 	srv, _ := setupTestServerForAuth(t)
 	defer srv.db.Close()
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/auth", srv.handleAuth)
+	router.POST("/auth/request", srv.handleAuthRequest)
 
-	reqBody := map[string]interface{}{
-		"jwz_token": "mock.jwz.token",
-	}
-	jsonBody, _ := json.Marshal(reqBody)
-
-	req := httptest.NewRequest("POST", "/auth", bytes.NewReader(jsonBody))
+	req := httptest.NewRequest("POST", "/auth/request", nil)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var response AuthResponse
+	var response AuthRequestResponse
 	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response.SessionID)
+	assert.NotNil(t, response.AuthRequest)
+	assert.NotEmpty(t, response.AuthRequest.Body.CallbackURL)
+}
+
+func TestHandleAuthCallback_Success(t *testing.T) {
+	srv, _ := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/auth/request", srv.handleAuthRequest)
+	router.POST("/auth/callback", srv.handleAuthCallback)
+
+	// Step 1: Create auth request
+	req1 := httptest.NewRequest("POST", "/auth/request", nil)
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	assert.Equal(t, http.StatusOK, w1.Code)
+	var authReqResp AuthRequestResponse
+	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
+	sessionID := authReqResp.SessionID
+
+	// Step 2: Callback with proof
+	reqBody := map[string]interface{}{
+		"token": "mock.jwz.token",
+	}
+	jsonBody, _ := json.Marshal(reqBody)
+
+	req2 := httptest.NewRequest("POST", "/auth/callback?session="+sessionID, bytes.NewReader(jsonBody))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	var response AuthResponse
+	err := json.Unmarshal(w2.Body.Bytes(), &response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.AccessToken)
 	assert.NotEmpty(t, response.RefreshToken)
@@ -120,47 +183,137 @@ func TestHandleAuth_Success(t *testing.T) {
 	assert.Equal(t, 1800, response.ExpiresIn)
 }
 
-func TestHandleAuth_InvalidRequest(t *testing.T) {
+func TestHandleAuthCallback_VerificationFailure(t *testing.T) {
 	srv, _ := setupTestServerForAuth(t)
 	defer srv.db.Close()
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/auth", srv.handleAuth)
+	router.POST("/auth/request", srv.handleAuthRequest)
+	router.POST("/auth/callback", srv.handleAuthCallback)
 
-	req := httptest.NewRequest("POST", "/auth", bytes.NewReader([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	// Step 1: Create auth request
+	req1 := httptest.NewRequest("POST", "/auth/request", nil)
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleAuth_VerificationFailure(t *testing.T) {
-	srv, _ := setupTestServerForAuth(t)
-	defer srv.db.Close()
+	var authReqResp AuthRequestResponse
+	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
+	sessionID := authReqResp.SessionID
 
 	// Update mock to return error
 	mockVerifier := srv.privadoVerifier.(*mockPrivadoVerifier)
-	mockVerifier.verifyFunc = func(ctx context.Context, jwzToken string) (string, error) {
+	mockVerifier.verifyFunc = func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
 		return "", fmt.Errorf("verification failed")
 	}
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.POST("/auth", srv.handleAuth)
-
+	// Step 2: Callback with invalid proof
 	reqBody := map[string]interface{}{
-		"jwz_token": "invalid.token",
+		"token": "invalid.token",
 	}
 	jsonBody, _ := json.Marshal(reqBody)
 
-	req := httptest.NewRequest("POST", "/auth", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	req2 := httptest.NewRequest("POST", "/auth/callback?session="+sessionID, bytes.NewReader(jsonBody))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+}
+
+func TestHandleAuthVerify_DevelopmentOnly(t *testing.T) {
+	srv, _ := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	
+	// In development mode, /auth/verify should be available
+	if !srv.config.IsProduction() {
+		router.POST("/auth/request", srv.handleAuthRequest)
+		router.POST("/auth/verify", srv.handleAuthVerify)
+
+		// Step 1: Create auth request
+		req1 := httptest.NewRequest("POST", "/auth/request", nil)
+		req1.Header.Set("Content-Type", "application/json")
+		w1 := httptest.NewRecorder()
+		router.ServeHTTP(w1, req1)
+
+		var authReqResp AuthRequestResponse
+		json.Unmarshal(w1.Body.Bytes(), &authReqResp)
+		sessionID := authReqResp.SessionID
+
+		// Step 2: Verify with proof
+		verifyReq := AuthVerifyRequest{
+			SessionID: sessionID,
+			JWZToken:  "mock.jwz.token",
+		}
+		verifyBody, _ := json.Marshal(verifyReq)
+
+		req2 := httptest.NewRequest("POST", "/auth/verify", bytes.NewReader(verifyBody))
+		req2.Header.Set("Content-Type", "application/json")
+		w2 := httptest.NewRecorder()
+		router.ServeHTTP(w2, req2)
+
+		assert.Equal(t, http.StatusOK, w2.Code)
+
+		var response AuthResponse
+		err := json.Unmarshal(w2.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.NotEmpty(t, response.AccessToken)
+		assert.NotEmpty(t, response.RefreshToken)
+	}
+}
+
+func TestHandleAuthCallback_VerifierIDMismatch(t *testing.T) {
+	srv, _ := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/auth/request", srv.handleAuthRequest)
+	router.POST("/auth/callback", srv.handleAuthCallback)
+
+	// Step 1: Create auth request
+	req1 := httptest.NewRequest("POST", "/auth/request", nil)
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+
+	assert.Equal(t, http.StatusOK, w1.Code)
+	var authReqResp AuthRequestResponse
+	json.Unmarshal(w1.Body.Bytes(), &authReqResp)
+	sessionID := authReqResp.SessionID
+
+	// Update mock to simulate verifier ID mismatch
+	// In the real implementation, this would happen when authResponse.To != verifierID
+	// The proof was generated for a different verifier
+	mockVerifier := srv.privadoVerifier.(*mockPrivadoVerifier)
+	mockVerifier.verifyFunc = func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error) {
+		// Simulate verifier ID mismatch: the proof claims to be for a different verifier
+		// This mimics what happens in the real code when authResponse.To != verifierID
+		return "", fmt.Errorf("verifier ID mismatch: proof intended for did:privado:other_verifier, but expected %s", verifierID)
+	}
+
+	// Step 2: Callback with proof that has wrong verifier ID
+	reqBody := map[string]interface{}{
+		"token": "proof.for.different.verifier",
+	}
+	jsonBody, _ := json.Marshal(reqBody)
+
+	req2 := httptest.NewRequest("POST", "/auth/callback?session="+sessionID, bytes.NewReader(jsonBody))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	// Should fail with unauthorized due to verifier ID mismatch
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+	
+	var errorResp map[string]interface{}
+	err := json.Unmarshal(w2.Body.Bytes(), &errorResp)
+	require.NoError(t, err)
+	assert.Contains(t, errorResp["error"].(string), "verifier ID mismatch")
 }
 
 func TestHandleRefresh_Success(t *testing.T) {
