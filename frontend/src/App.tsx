@@ -1,9 +1,10 @@
 import { useState, ErrorInfo, Component, ReactNode } from 'react';
+import { Dashboard } from './components/dashboard/Dashboard';
 import PolicyList from './components/PolicyList';
 import AccessLogs from './components/AccessLogs';
 import './App.css';
 
-type Tab = 'policies' | 'logs';
+type Tab = 'dashboard' | 'policies' | 'logs';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -40,45 +41,53 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('policies');
+  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
 
   return (
     <ErrorBoundary>
-      <div className="App">
-        <header>
-          <h1>Privacy Proxy Dashboard</h1>
-          <p>Access control management for Erigon node</p>
+      <div className="min-h-screen bg-gray-50">
+        <header className="bg-white border-b border-gray-200 px-6 py-4">
+          <h1 className="text-2xl font-bold text-gray-900">Privacy Proxy Dashboard</h1>
+          <p className="text-sm text-gray-500">Access control management for Erigon node</p>
         </header>
 
-        <nav style={{ marginBottom: '2rem', borderBottom: '1px solid #ccc' }}>
-          <button
-            onClick={() => setActiveTab('policies')}
-            style={{
-              padding: '0.5rem 1rem',
-              marginRight: '0.5rem',
-              border: 'none',
-              background: activeTab === 'policies' ? '#007bff' : 'transparent',
-              color: activeTab === 'policies' ? 'white' : 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Policies
-          </button>
-          <button
-            onClick={() => setActiveTab('logs')}
-            style={{
-              padding: '0.5rem 1rem',
-              border: 'none',
-              background: activeTab === 'logs' ? '#007bff' : 'transparent',
-              color: activeTab === 'logs' ? 'white' : 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Access Logs
-          </button>
+        <nav className="bg-white border-b border-gray-200 px-6">
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'dashboard'
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Dashboard
+            </button>
+            <button
+              onClick={() => setActiveTab('policies')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'policies'
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Policies
+            </button>
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'logs'
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Access Logs
+            </button>
+          </div>
         </nav>
 
-        <main>
+        <main className="p-6 max-w-6xl mx-auto">
+          {activeTab === 'dashboard' && <Dashboard />}
           {activeTab === 'policies' && <PolicyList />}
           {activeTab === 'logs' && <AccessLogs />}
         </main>

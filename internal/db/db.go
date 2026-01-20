@@ -7,11 +7,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/tern/v2/migrate"
+
+	"privacy-proxy/internal/db/migrations"
 )
 
 type DB struct {
-	conn *sql.DB
+	conn        *sql.DB
+	databaseURL string
 }
 
 // Conn returns the underlying database connection (for testing)
@@ -41,86 +46,127 @@ func New(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	
+
 	// Test connection
 	ctx := context.Background()
 	if err := conn.PingContext(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-	
-	db := &DB{conn: conn}
-	
-	if err := db.Migrate(); err != nil {
+
+	db := &DB{conn: conn, databaseURL: databaseURL}
+
+	if err := db.Migrate(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
-	
+
 	return db, nil
+}
+
+// NewWithoutMigrate creates a database connection without running migrations.
+// Use this when you need to check migration status or run migrations manually.
+func NewWithoutMigrate(databaseURL string) (*DB, error) {
+	conn, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Test connection
+	ctx := context.Background()
+	if err := conn.PingContext(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	return &DB{conn: conn, databaseURL: databaseURL}, nil
 }
 
 func (d *DB) Close() error {
 	return d.conn.Close()
 }
 
-func (d *DB) Migrate() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS access_policies (
-		external_id VARCHAR(255) PRIMARY KEY,
-		kyc BOOLEAN NOT NULL DEFAULT false,
-		allow_methods JSONB NOT NULL DEFAULT '[]'::jsonb,
-		banned BOOLEAN NOT NULL DEFAULT false,
-		note TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	
-	CREATE TABLE IF NOT EXISTS access_logs (
-		id SERIAL PRIMARY KEY,
-		external_id VARCHAR(255) NOT NULL,
-		method VARCHAR(100) NOT NULL,
-		status_code INTEGER NOT NULL,
-		ip_address VARCHAR(45),
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	
-	-- Drop foreign key constraint if it exists (for existing databases)
-	DO $$ 
-	BEGIN
-		IF EXISTS (
-			SELECT 1 FROM information_schema.table_constraints 
-			WHERE constraint_name = 'access_logs_external_id_fkey'
-		) THEN
-			ALTER TABLE access_logs DROP CONSTRAINT access_logs_external_id_fkey;
-		END IF;
-	END $$;
-	
-	CREATE TABLE IF NOT EXISTS refresh_tokens (
-		token_hash VARCHAR(255) PRIMARY KEY,
-		subject VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		expires_at TIMESTAMP NOT NULL,
-		revoked BOOLEAN NOT NULL DEFAULT false,
-		revoked_at TIMESTAMP
-	);
-	
-	CREATE TABLE IF NOT EXISTS revoked_tokens (
-		token_id VARCHAR(255) PRIMARY KEY,
-		subject VARCHAR(255) NOT NULL,
-		revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		expires_at TIMESTAMP NOT NULL
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_logs_external_id ON access_logs(external_id);
-	CREATE INDEX IF NOT EXISTS idx_logs_created_at ON access_logs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_subject ON refresh_tokens(subject);
-	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
-	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_subject ON revoked_tokens(subject);
-	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
-	`
-	
-	_, err := d.conn.Exec(query)
-	return err
+// Migrate runs all pending database migrations using tern.
+func (d *DB) Migrate(ctx context.Context) error {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect for migrations: %w", err)
+	}
+	defer pgxConn.Close(ctx)
+
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	if err != nil {
+		return fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	if err := migrator.Migrate(ctx); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	return nil
+}
+
+// MigrateWithProgress runs migrations with a progress callback for CLI usage.
+// The callback receives: sequence number, migration name, direction ("up"/"down"), and SQL.
+func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int32, name, direction, sql string)) error {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect for migrations: %w", err)
+	}
+	defer pgxConn.Close(ctx)
+
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	if err != nil {
+		return fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	if onStart != nil {
+		migrator.OnStart = onStart
+	}
+
+	if err := migrator.Migrate(ctx); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	return nil
+}
+
+// GetMigrationStatus returns the current migration version and pending migrations.
+func (d *DB) GetMigrationStatus(ctx context.Context) (currentVersion int32, pendingCount int, err error) {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to connect for migrations: %w", err)
+	}
+	defer pgxConn.Close(ctx)
+
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return 0, 0, fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	version, err := migrator.GetCurrentVersion(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	pending := len(migrator.Migrations) - int(version)
+	if pending < 0 {
+		pending = 0
+	}
+
+	return version, pending, nil
 }
 
 func (d *DB) GetPolicy(externalID string) (*AccessPolicy, error) {
@@ -197,8 +243,8 @@ func (d *DB) ListPolicies() ([]*AccessPolicy, error) {
 	}
 	defer rows.Close()
 	
-	var policies []*AccessPolicy
-	
+	policies := make([]*AccessPolicy, 0)
+
 	for rows.Next() {
 		var policy AccessPolicy
 		var methodsJSON []byte
@@ -262,8 +308,8 @@ func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
 	}
 	defer rows.Close()
 	
-	var logs []*AccessLog
-	
+	logs := make([]*AccessLog, 0)
+
 	for rows.Next() {
 		var log AccessLog
 		if err := rows.Scan(
@@ -276,10 +322,10 @@ func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
-		
+
 		logs = append(logs, &log)
 	}
-	
+
 	return logs, nil
 }
 

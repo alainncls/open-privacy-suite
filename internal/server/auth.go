@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"privacy-proxy/internal/auth"
@@ -169,12 +170,34 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
 // Returns the response or sends error and returns nil
 func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
-	// Verify JWZ token against the original authorization request
-	ctx := context.Background()
-	userDID, err := s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
-		return nil, err
+	var userDID string
+	var err error
+
+	// In development mode, support mock tokens for testing
+	// Mock token format: mock.{userDID} or mock.jwz.token.{userDID}
+	if !s.config.IsProduction() && len(jwzToken) > 5 && jwzToken[:5] == "mock." {
+		// Extract DID from mock token
+		parts := strings.Split(jwzToken, ".")
+		if len(parts) >= 2 {
+			// Get the last part which should be the DID
+			userDID = parts[len(parts)-1]
+			// If DID doesn't have expected prefix, it might be the full mock token
+			if !strings.HasPrefix(userDID, "did:") {
+				userDID = "did:privado:" + userDID
+			}
+		}
+		if userDID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mock token format"})
+			return nil, fmt.Errorf("invalid mock token format")
+		}
+	} else {
+		// Verify JWZ token against the original authorization request
+		ctx := context.Background()
+		userDID, err = s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
+			return nil, err
+		}
 	}
 
 	// Delete session after successful verification

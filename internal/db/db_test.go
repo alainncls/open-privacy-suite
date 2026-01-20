@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -31,7 +32,8 @@ func setupTestDB(t *testing.T) *DB {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 	
 	return database
 }

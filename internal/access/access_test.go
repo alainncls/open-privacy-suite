@@ -161,3 +161,88 @@ func TestCheckAccess_DatabaseError(t *testing.T) {
 		t.Errorf("expected error for database failure but got none")
 	}
 }
+
+func TestCheckAccessWithParams_Multicall(t *testing.T) {
+	mockStore := newMockPolicyStore()
+	ctrl := NewController(mockStore)
+
+	// Create a test policy that allows eth_call
+	policy := &db.AccessPolicy{
+		ExternalID:   "billions:user_123",
+		KYC:          true,
+		AllowMethods: []string{"eth_call", "eth_getBalance"},
+		Banned:       false,
+	}
+	mockStore.SetPolicy(policy)
+
+	tests := []struct {
+		name    string
+		method  string
+		params  []interface{}
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "eth_call to Multicall3 blocked",
+			method:  "eth_call",
+			params:  []interface{}{map[string]interface{}{"to": Multicall3Address}},
+			wantErr: true,
+			errMsg:  "multicall not allowed",
+		},
+		{
+			name:    "eth_call to Multicall3 lowercase blocked",
+			method:  "eth_call",
+			params:  []interface{}{map[string]interface{}{"to": "0xca11bde05977b3631167028862be2a173976ca11"}},
+			wantErr: true,
+			errMsg:  "multicall not allowed",
+		},
+		{
+			name:    "eth_call to regular address allowed",
+			method:  "eth_call",
+			params:  []interface{}{map[string]interface{}{"to": "0x1234567890123456789012345678901234567890"}},
+			wantErr: false,
+		},
+		{
+			name:    "eth_call with empty params allowed",
+			method:  "eth_call",
+			params:  []interface{}{},
+			wantErr: false,
+		},
+		{
+			name:    "eth_call with nil params allowed",
+			method:  "eth_call",
+			params:  nil,
+			wantErr: false,
+		},
+		{
+			name:    "eth_call with malformed params allowed",
+			method:  "eth_call",
+			params:  []interface{}{"not a map"},
+			wantErr: false,
+		},
+		{
+			name:    "eth_getBalance unaffected by multicall check",
+			method:  "eth_getBalance",
+			params:  []interface{}{Multicall3Address, "latest"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ctrl.CheckAccessWithParams("billions:user_123", tt.method, tt.params)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				} else if tt.errMsg != "" && err.Error() != tt.errMsg {
+					t.Errorf("expected error message %q, got %q", tt.errMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}

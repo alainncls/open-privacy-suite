@@ -204,7 +204,8 @@ func TestE2E_AuthorizedRequest(t *testing.T) {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 
 	policy := &db.AccessPolicy{
 		ExternalID:   userDID,
@@ -288,7 +289,8 @@ func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 
 	policy := &db.AccessPolicy{
 		ExternalID:   userDID,
@@ -342,7 +344,8 @@ func TestE2E_BannedUser(t *testing.T) {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 
 	policy := &db.AccessPolicy{
 		ExternalID:   userDID,
@@ -395,7 +398,8 @@ func TestE2E_NoKYC(t *testing.T) {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 
 	policy := &db.AccessPolicy{
 		ExternalID:   userDID,

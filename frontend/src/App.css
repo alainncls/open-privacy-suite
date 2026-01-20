@@ -1,51 +1,60 @@
-.App {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
+/* Legacy styles for PolicyList and AccessLogs components */
+.policy-list,
+.access-logs {
+  text-align: left;
 }
 
-header {
-  margin-bottom: 2rem;
-}
-
-header h1 {
-  margin: 0 0 0.5rem 0;
-}
-
-header p {
-  margin: 0;
-  color: #666;
-}
-
-button {
-  padding: 0.5rem 1rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+.policy-list table,
+.access-logs table {
+  width: 100%;
+  border-collapse: collapse;
   background: white;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-
-button:hover {
-  background: #f5f5f5;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-table {
-  background: white;
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-th {
-  background: #f8f9fa;
+.policy-list th,
+.policy-list td,
+.access-logs th,
+.access-logs td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.policy-list th,
+.access-logs th {
+  background: #f9fafb;
   font-weight: 600;
+  color: #374151;
 }
 
-tbody tr:hover {
-  background: #f8f9fa;
+.policy-list tbody tr:hover,
+.access-logs tbody tr:hover {
+  background: #f9fafb;
+}
+
+.policy-form {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.policy-form input,
+.policy-form textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.policy-form input:focus,
+.policy-form textarea:focus {
+  outline: none;
+  border-color: #6b7280;
+  ring: 2px solid #6b7280;
 }

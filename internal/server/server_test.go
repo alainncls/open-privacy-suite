@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,8 @@ func setupTestServer(t *testing.T) *Server {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 	
 	cfg := &config.Config{
 		NodeURL:     "http://localhost:8545",

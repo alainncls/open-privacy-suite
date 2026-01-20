@@ -76,7 +76,8 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
+	database.Migrate(context.Background())
 
 	// Create JWT service
 	jwtService, err := auth.NewJWTService(

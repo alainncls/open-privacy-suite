@@ -34,8 +34,38 @@ export const policiesApi = {
 };
 
 export const logsApi = {
-  list: (limit?: number) => 
+  list: (limit?: number) =>
     api.get<AccessLog[]>('/logs', { params: { limit } }),
+};
+
+export interface StatusResponse {
+  proxy: {
+    status: string;
+    port: string;
+  };
+  node: {
+    status: string;
+    url: string;
+    latency_ms: number;
+    error?: string;
+  };
+}
+
+export interface TestRequestResponse {
+  success: boolean;
+  result?: unknown;
+  error?: string;
+  latency_ms: number;
+  blocked: boolean;
+}
+
+export const statusApi = {
+  get: () => api.get<StatusResponse>('/status'),
+};
+
+export const testApi = {
+  send: (method: string, params: unknown[] = []) =>
+    api.post<TestRequestResponse>('/test-request', { method, params }),
 };
 
 export default api;

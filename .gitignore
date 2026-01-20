@@ -24,8 +24,9 @@ node_modules/
 *.db-journal
 *.sqlite
 *.sqlite3
-# PostgreSQL (local dev databases)
-*.sql
+# PostgreSQL (local dev database dumps)
+# But allow migration files
+!internal/db/migrations/*.sql
 
 # Environment
 .env

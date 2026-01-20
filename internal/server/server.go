@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,6 +153,8 @@ func (s *Server) Run(addr string) error {
 		api.POST("/policies", s.createPolicy)
 		api.DELETE("/policies/:id", s.deletePolicy)
 		api.GET("/logs", s.getLogs)
+		api.GET("/status", s.getStatus)
+		api.POST("/test-request", s.handleTestRequest)
 	}
 
 	return router.Run(addr)
@@ -178,15 +181,15 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
-	// Parse method from JSON-RPC request
-	method, err := proxy.ParseMethod(body)
+	// Parse method and params from JSON-RPC request
+	method, params, err := proxy.ParseRequest(body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON-RPC request: " + err.Error()})
 		return
 	}
 
-	// Check access
-	if err := s.accessCtrl.CheckAccess(subjectStr, method); err != nil {
+	// Check access (including param-based checks like multicall detection)
+	if err := s.accessCtrl.CheckAccessWithParams(subjectStr, method, params); err != nil {
 		// Log denied access (always log, even if no policy exists)
 		s.db.LogAccess(subjectStr, method, http.StatusForbidden, c.ClientIP())
 		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + err.Error()})
@@ -369,4 +372,141 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// StatusResponse represents the system status
+type StatusResponse struct {
+	Proxy ProxyStatus `json:"proxy"`
+	Node  NodeStatus  `json:"node"`
+}
+
+// ProxyStatus represents the proxy status
+type ProxyStatus struct {
+	Status string `json:"status"`
+	Port   string `json:"port"`
+}
+
+// NodeStatus represents the node status
+type NodeStatus struct {
+	Status    string `json:"status"`
+	URL       string `json:"url"`
+	LatencyMs int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (s *Server) getStatus(c *gin.Context) {
+	// Check node health
+	nodeHealth := s.proxy.CheckHealth()
+
+	status := StatusResponse{
+		Proxy: ProxyStatus{
+			Status: "running",
+			Port:   "8080",
+		},
+		Node: NodeStatus{
+			Status:    nodeHealth.Status,
+			URL:       nodeHealth.URL,
+			LatencyMs: nodeHealth.LatencyMs,
+			Error:     nodeHealth.Error,
+		},
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// TestRequestInput represents the input for test request
+type TestRequestInput struct {
+	Method string        `json:"method"`
+	Params []interface{} `json:"params"`
+}
+
+// TestRequestResponse represents the response for test request
+type TestRequestResponse struct {
+	Success   bool        `json:"success"`
+	Result    interface{} `json:"result,omitempty"`
+	Error     string      `json:"error,omitempty"`
+	LatencyMs int64       `json:"latency_ms"`
+	Blocked   bool        `json:"blocked"`
+}
+
+func (s *Server) handleTestRequest(c *gin.Context) {
+	var input TestRequestInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Use synthetic identity for test requests
+	testIdentity := "test:dashboard"
+
+	// Check access
+	if err := s.accessCtrl.CheckAccessWithParams(testIdentity, input.Method, input.Params); err != nil {
+		// Log denied access
+		s.db.LogAccess(testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		c.JSON(http.StatusOK, TestRequestResponse{
+			Success:   false,
+			Error:     err.Error(),
+			LatencyMs: 0,
+			Blocked:   true,
+		})
+		return
+	}
+
+	// Build JSON-RPC request
+	rpcReq := proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  input.Method,
+		Params:  input.Params,
+		ID:      1,
+	}
+	reqBody, _ := json.Marshal(rpcReq)
+
+	// Forward to node and measure latency
+	start := time.Now()
+	respBody, statusCode, err := s.proxy.Forward(reqBody)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		s.db.LogAccess(testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		c.JSON(http.StatusOK, TestRequestResponse{
+			Success:   false,
+			Error:     err.Error(),
+			LatencyMs: latency,
+			Blocked:   false,
+		})
+		return
+	}
+
+	// Parse response
+	var rpcResp proxy.JSONRPCResponse
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		s.db.LogAccess(testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		c.JSON(http.StatusOK, TestRequestResponse{
+			Success:   false,
+			Error:     "invalid JSON-RPC response",
+			LatencyMs: latency,
+			Blocked:   false,
+		})
+		return
+	}
+
+	// Log successful access
+	s.db.LogAccess(testIdentity, input.Method, statusCode, c.ClientIP())
+
+	if rpcResp.Error != nil {
+		c.JSON(http.StatusOK, TestRequestResponse{
+			Success:   false,
+			Error:     rpcResp.Error.Message,
+			LatencyMs: latency,
+			Blocked:   false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, TestRequestResponse{
+		Success:   true,
+		Result:    rpcResp.Result,
+		LatencyMs: latency,
+		Blocked:   false,
+	})
 }
