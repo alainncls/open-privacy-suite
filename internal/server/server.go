@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"privacy-proxy/internal/access"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
+	"privacy-proxy/internal/rbac"
 	"strings"
 	"time"
 
@@ -21,11 +21,13 @@ import (
 
 type Server struct {
 	db              *db.DB
-	accessCtrl      *access.Controller
+	rbacAccessCtrl  *rbac.AccessController
 	proxy           *proxy.Proxy
 	privadoVerifier PrivadoVerifier
 	jwtService      *auth.JWTService
 	sessionStore    *auth.SessionStore
+	challengeStore  *ChallengeStore
+	rateLimiter     *RateLimiter
 	config          *config.Config
 }
 
@@ -37,6 +39,7 @@ func (s *Server) DB() *db.DB {
 // PrivadoVerifier interface for Privado ID operations
 type PrivadoVerifier interface {
 	CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error)
 	VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 }
 
@@ -76,19 +79,29 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 		panic(fmt.Errorf("failed to create JWT service: %w", err))
 	}
 
-	accessCtrl := access.NewController(database)
 	proxySvc := proxy.New(cfg.NodeURL)
+
+	// Initialize RBAC access controller with 5 minute cache TTL
+	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
 
 	// Initialize session store (10 minute TTL, cleanup every minute)
 	sessionStore := auth.NewSessionStore(10*time.Minute, 1*time.Minute)
 
+	// Initialize challenge store for ETH address linking (5 minute TTL, cleanup every minute)
+	challengeStore := NewChallengeStore(5*time.Minute, 1*time.Minute)
+
+	// Initialize rate limiter (cleanup every 10 seconds)
+	rateLimiter := NewRateLimiter(10 * time.Second)
+
 	return &Server{
 		db:              database,
-		accessCtrl:      accessCtrl,
+		rbacAccessCtrl:  rbacAccessCtrl,
 		proxy:           proxySvc,
 		privadoVerifier: privadoVerifier,
 		jwtService:      jwtService,
 		sessionStore:    sessionStore,
+		challengeStore:  challengeStore,
+		rateLimiter:     rateLimiter,
 		config:          cfg,
 	}
 }
@@ -130,35 +143,64 @@ func (s *Server) Run(addr string) error {
 	router.HEAD("/health", healthHandler)
 
 	// Authentication endpoints (no auth required)
-	router.POST("/auth/request", s.handleAuthRequest)      // Step 1: Create proof request
-	router.POST("/auth/callback", s.handleAuthCallback)   // Step 2: Wallet callback
+	// Register at both root level (for direct access) and under /api (for frontend proxy)
+	router.POST("/auth/request", s.handleAuthRequest)
+	router.POST("/auth/callback", s.handleAuthCallback)
 	router.POST("/refresh", s.handleRefresh)
 	router.POST("/revoke", s.handleRevoke)
-	
+
+	// Also register under /api for frontend proxy compatibility
+	router.POST("/api/auth/request", s.handleAuthRequest)
+	router.POST("/api/auth/callback", s.handleAuthCallback)
+	router.POST("/api/refresh", s.handleRefresh)
+	router.POST("/api/revoke", s.handleRevoke)
+
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
 		router.POST("/auth/verify", s.handleAuthVerify)
+		router.POST("/api/auth/verify", s.handleAuthVerify)
+	}
+
+	// ETH endpoints under /api for frontend proxy compatibility
+	apiEth := router.Group("/api/eth")
+	apiEth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
+	{
+		apiEth.POST("/link/challenge", s.handleEthLinkChallenge)
+		apiEth.POST("/link/verify", s.handleEthLinkVerify)
+		apiEth.GET("/addresses", s.handleGetEthAddresses)
+		apiEth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
 	}
 
 	// JSON-RPC proxy endpoint - protected by JWT
 	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
+	// ETH address linking endpoints - protected by JWT
+	eth := router.Group("/eth")
+	eth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
+	{
+		eth.POST("/link/challenge", s.handleEthLinkChallenge)
+		eth.POST("/link/verify", s.handleEthLinkVerify)
+		eth.GET("/addresses", s.handleGetEthAddresses)
+		eth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
+	}
+
 	// API endpoints for UI - protected by localhost-only middleware
 	api := router.Group("/api")
 	api.Use(s.localhostOnlyMiddleware())
 	{
-		api.GET("/policies", s.listPolicies)
-		api.GET("/policies/:id", s.getPolicy)
-		api.PUT("/policies/:id", s.updatePolicy)
-		api.POST("/policies", s.createPolicy)
-		api.DELETE("/policies/:id", s.deletePolicy)
 		api.GET("/logs", s.getLogs)
 		api.GET("/status", s.getStatus)
 		api.POST("/test-request", s.handleTestRequest)
+
+		// RBAC endpoints
+		s.registerRBACRoutes(api)
 	}
 
 	return router.Run(addr)
 }
+
+// MaxRequestBodySize is the maximum allowed request body size (1MB).
+const MaxRequestBodySize = 1 << 20 // 1MB
 
 func (s *Server) handleJSONRPC(c *gin.Context) {
 	// Extract identity from JWT (set by middleware)
@@ -174,25 +216,57 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
-	// Read request body
-	body, err := io.ReadAll(c.Request.Body)
+	// Read request body with size limit to prevent DoS
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, MaxRequestBodySize+1))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+		return
+	}
+
+	// Check if body exceeds limit (we read +1 to detect overflow)
+	if len(body) > MaxRequestBodySize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
 		return
 	}
 
 	// Parse method and params from JSON-RPC request
 	method, params, err := proxy.ParseRequest(body)
 	if err != nil {
+		// Check specifically for batch request error
+		if err == proxy.ErrBatchRequest {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "batch JSON-RPC requests are not supported for security reasons"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON-RPC request: " + err.Error()})
 		return
 	}
 
-	// Check access (including param-based checks like multicall detection)
-	if err := s.accessCtrl.CheckAccessWithParams(subjectStr, method, params); err != nil {
-		// Log denied access (always log, even if no policy exists)
+	// Check access via RBAC
+	accessReq := &rbac.AccessCheckRequest{
+		UserExternalID:   subjectStr,
+		Method:           method,
+		Params:           params,
+		ContractAddress:  rbac.GetContractAddress(method, params),
+		FunctionSelector: rbac.GetFunctionSelector(method, params),
+		RequiredClaims:   rbac.ClassifyOperation(method, params),
+	}
+	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
+	if err != nil {
+		s.db.LogAccess(subjectStr, method, http.StatusInternalServerError, c.ClientIP())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "access check failed: " + err.Error()})
+		return
+	}
+	if !result.Allowed {
 		s.db.LogAccess(subjectStr, method, http.StatusForbidden, c.ClientIP())
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + result.Reason})
+		return
+	}
+
+	// Check rate limits
+	allowed, rateLimitReason := s.rateLimiter.CheckAndIncrement(subjectStr, result.RateLimitRPS, result.RateLimitDaily)
+	if !allowed {
+		s.db.LogAccess(subjectStr, method, http.StatusTooManyRequests, c.ClientIP())
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": rateLimitReason})
 		return
 	}
 
@@ -213,107 +287,6 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 
 	// Return response from node
 	c.Data(statusCode, "application/json", responseBody)
-}
-
-func (s *Server) listPolicies(c *gin.Context) {
-	policies, err := s.db.ListPolicies()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, policies)
-}
-
-func (s *Server) getPolicy(c *gin.Context) {
-	externalID := c.Param("id")
-	policy, err := s.db.GetPolicy(externalID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if policy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
-		return
-	}
-	c.JSON(http.StatusOK, policy)
-}
-
-func (s *Server) createPolicy(c *gin.Context) {
-	var policy db.AccessPolicy
-	if err := c.ShouldBindJSON(&policy); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := s.db.SetPolicy(&policy); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, policy)
-}
-
-func (s *Server) updatePolicy(c *gin.Context) {
-	externalID := c.Param("id")
-
-	// Get existing policy
-	existingPolicy, err := s.db.GetPolicy(externalID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if existingPolicy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
-		return
-	}
-
-	// Parse partial update
-	var updates map[string]interface{}
-	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Apply updates to existing policy
-	if kyc, ok := updates["kyc"].(bool); ok {
-		existingPolicy.KYC = kyc
-	}
-	if allowMethods, ok := updates["allow_methods"].([]interface{}); ok {
-		methods := make([]string, 0, len(allowMethods))
-		for _, m := range allowMethods {
-			if method, ok := m.(string); ok {
-				methods = append(methods, method)
-			}
-		}
-		existingPolicy.AllowMethods = methods
-	}
-	if banned, ok := updates["banned"].(bool); ok {
-		existingPolicy.Banned = banned
-	}
-	if note, ok := updates["note"].(string); ok {
-		existingPolicy.Note = note
-	}
-
-	// Ensure ExternalID is set
-	existingPolicy.ExternalID = externalID
-
-	if err := s.db.SetPolicy(existingPolicy); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, existingPolicy)
-}
-
-func (s *Server) deletePolicy(c *gin.Context) {
-	externalID := c.Param("id")
-
-	if err := s.db.DeletePolicy(externalID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "policy deleted"})
 }
 
 func (s *Server) getLogs(c *gin.Context) {
@@ -439,13 +412,31 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// Use synthetic identity for test requests
 	testIdentity := "test:dashboard"
 
-	// Check access
-	if err := s.accessCtrl.CheckAccessWithParams(testIdentity, input.Method, input.Params); err != nil {
-		// Log denied access
+	// Check access via RBAC
+	accessReq := &rbac.AccessCheckRequest{
+		UserExternalID:   testIdentity,
+		Method:           input.Method,
+		Params:           input.Params,
+		ContractAddress:  rbac.GetContractAddress(input.Method, input.Params),
+		FunctionSelector: rbac.GetFunctionSelector(input.Method, input.Params),
+		RequiredClaims:   rbac.ClassifyOperation(input.Method, input.Params),
+	}
+	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
+	if err != nil {
+		s.db.LogAccess(testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
+		c.JSON(http.StatusOK, TestRequestResponse{
+			Success:   false,
+			Error:     "access check failed: " + err.Error(),
+			LatencyMs: 0,
+			Blocked:   true,
+		})
+		return
+	}
+	if !result.Allowed {
 		s.db.LogAccess(testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
 		c.JSON(http.StatusOK, TestRequestResponse{
 			Success:   false,
-			Error:     err.Error(),
+			Error:     result.Reason,
 			LatencyMs: 0,
 			Blocked:   true,
 		})

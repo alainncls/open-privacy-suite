@@ -5,8 +5,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies (skip native build scripts - bufferutil/utf-8-validate are optional)
+RUN npm install --ignore-scripts && npm rebuild esbuild
 
 # Copy source code
 COPY . .

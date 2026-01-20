@@ -60,12 +60,25 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 	// Build callback URL with session ID
 	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", s.config.BaseURL, sessionID)
 
-	// Create authorization request with proper callback URL
-	authReq, err := s.privadoVerifier.CreateAuthorizationRequest(
-		s.config.VerifierID,
-		callbackURL,
-		"Authenticate to access Ethereum node",
-	)
+	var authReq *protocol.AuthorizationRequestMessage
+	var err error
+
+	// Use ProofOfHumanity auth request when enabled and issuer DID is configured
+	if s.config.RequireProofOfHumanity && s.config.BillionsIssuerDID != "" {
+		authReq, err = s.privadoVerifier.CreateHumanityAuthRequest(
+			s.config.VerifierID,
+			callbackURL,
+			"Authenticate and verify humanity to access Ethereum node",
+			s.config.BillionsIssuerDID,
+		)
+	} else {
+		// Fall back to basic auth (just DID proof)
+		authReq, err = s.privadoVerifier.CreateAuthorizationRequest(
+			s.config.VerifierID,
+			callbackURL,
+			"Authenticate to access Ethereum node",
+		)
+	}
 	if err != nil {
 		s.sessionStore.DeleteSession(sessionID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create authorization request: " + err.Error()})
@@ -167,6 +180,13 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// HumanityVerificationError represents a failure to verify ProofOfHumanity
+type HumanityVerificationError struct {
+	Error      string `json:"error"`
+	Message    string `json:"message"`
+	VerifyURL  string `json:"verify_url"`
+}
+
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
 // Returns the response or sends error and returns nil
 func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
@@ -195,6 +215,15 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		ctx := context.Background()
 		userDID, err = s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
 		if err != nil {
+			// Check if this is a humanity verification failure
+			if strings.Contains(err.Error(), "humanity") || strings.Contains(err.Error(), "ProofOfHumanity") {
+				c.JSON(http.StatusForbidden, HumanityVerificationError{
+					Error:     "humanity_verification_required",
+					Message:   "Please complete ProofOfHumanity verification at Billions",
+					VerifyURL: "https://app.billions.network",
+				})
+				return nil, err
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
 			return nil, err
 		}
@@ -203,11 +232,17 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Delete session after successful verification
 	s.sessionStore.DeleteSession(sessionID)
 
-	// Check if user has a policy (to determine KYC status)
-	policy, _ := s.db.GetPolicy(userDID)
+	// Ensure user exists in RBAC system and get their KYC status
+	// New users default to KYC=false; KYC status is updated through admin API
 	kyc := false
-	if policy != nil {
-		kyc = policy.KYC
+	if s.rbacAccessCtrl != nil {
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), userDID, kyc)
+		if err != nil {
+			// Log error but continue - auth can proceed without RBAC user creation
+			_ = err
+		} else if user != nil {
+			kyc = user.KYC
+		}
 	}
 
 	// Issue access token (short-lived)
@@ -284,11 +319,13 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		return
 	}
 
-	// Get user policy to determine KYC status
-	policy, _ := s.db.GetPolicy(claims.Subject)
+	// Get user KYC status from RBAC
 	kyc := false
-	if policy != nil {
-		kyc = policy.KYC
+	if s.rbacAccessCtrl != nil {
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), claims.Subject, false)
+		if err == nil && user != nil {
+			kyc = user.KYC
+		}
 	}
 
 	// Issue new access token

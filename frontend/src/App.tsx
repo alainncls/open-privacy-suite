@@ -1,10 +1,11 @@
 import { useState, ErrorInfo, Component, ReactNode } from 'react';
 import { Dashboard } from './components/dashboard/Dashboard';
-import PolicyList from './components/PolicyList';
 import AccessLogs from './components/AccessLogs';
-import './App.css';
+import RBACManager from './components/rbac/RBACManager';
+import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
+import { Shield, LayoutDashboard, ScrollText, Users } from 'lucide-react';
 
-type Tab = 'dashboard' | 'policies' | 'logs';
+type Tab = 'dashboard' | 'logs' | 'rbac';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -28,10 +29,22 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Something went wrong</h2>
-          <p>{this.state.error?.message || 'An unexpected error occurred'}</p>
-          <button onClick={() => window.location.reload()}>Reload Page</button>
+        <div className="min-h-screen flex items-center justify-center p-8">
+          <div className="glass-card-solid p-8 text-center max-w-md animate-fade-in">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/20 flex items-center justify-center">
+              <Shield className="w-8 h-8 text-red-400" />
+            </div>
+            <h2 className="text-xl font-semibold text-white/90 mb-2">Something went wrong</h2>
+            <p className="text-white/60 mb-6">
+              {this.state.error?.message || 'An unexpected error occurred'}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-500 transition-colors shadow-lg shadow-primary-500/25"
+            >
+              Reload Page
+            </button>
+          </div>
         </div>
       );
     }
@@ -45,51 +58,50 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-gray-50">
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">Privacy Proxy Dashboard</h1>
-          <p className="text-sm text-gray-500">Access control management for Erigon node</p>
+      <div className="min-h-screen bg-mesh">
+        {/* Glass Navigation Header */}
+        <header className="glass-nav sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto px-6 py-4">
+            <div className="flex items-center justify-between">
+              {/* Logo and Title */}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/30">
+                  <Shield className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-lg font-semibold text-white/95">Privacy Proxy</h1>
+                  <p className="text-xs text-white/60">Node Access Control</p>
+                </div>
+              </div>
+
+              {/* Navigation Tabs */}
+              <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as Tab)}>
+                <TabsList className="bg-white/5">
+                  <TabsTrigger value="dashboard" className="gap-2">
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span className="hidden sm:inline">Dashboard</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="logs" className="gap-2">
+                    <ScrollText className="w-4 h-4" />
+                    <span className="hidden sm:inline">Access Logs</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="rbac" className="gap-2">
+                    <Users className="w-4 h-4" />
+                    <span className="hidden sm:inline">RBAC</span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </div>
         </header>
 
-        <nav className="bg-white border-b border-gray-200 px-6">
-          <div className="flex space-x-1">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'dashboard'
-                  ? 'border-gray-900 text-gray-900'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Dashboard
-            </button>
-            <button
-              onClick={() => setActiveTab('policies')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'policies'
-                  ? 'border-gray-900 text-gray-900'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Policies
-            </button>
-            <button
-              onClick={() => setActiveTab('logs')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'logs'
-                  ? 'border-gray-900 text-gray-900'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Access Logs
-            </button>
+        {/* Main Content */}
+        <main className="max-w-7xl mx-auto px-6 py-8">
+          <div className="animate-fade-in">
+            {activeTab === 'dashboard' && <Dashboard />}
+            {activeTab === 'logs' && <AccessLogs />}
+            {activeTab === 'rbac' && <RBACManager />}
           </div>
-        </nav>
-
-        <main className="p-6 max-w-6xl mx-auto">
-          {activeTab === 'dashboard' && <Dashboard />}
-          {activeTab === 'policies' && <PolicyList />}
-          {activeTab === 'logs' && <AccessLogs />}
         </main>
       </div>
     </ErrorBoundary>

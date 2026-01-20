@@ -54,11 +54,7 @@ services:
       - proxy-network
     working_dir: /app
 
-  # Disable services not needed for e2e tests
-  erigon-mock:
-    deploy:
-      replicas: 0
-
+  # Disable frontend not needed for e2e tests
   proxy-frontend:
     deploy:
       replicas: 0

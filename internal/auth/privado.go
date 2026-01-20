@@ -60,11 +60,38 @@ func (p *PrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, re
 	// Create basic authorization request
 	// This requests proof of identity (DID ownership)
 	reqMsg := auth.CreateAuthorizationRequest(reason, verifierID, callbackURL)
-	
+
 	// Optionally add KYC proof requirement
 	// For now, we'll use basic auth (just DID proof)
 	// You can extend this to require specific credentials by adding to reqMsg.Body.Scope
-	
+
+	return &reqMsg, nil
+}
+
+// CreateHumanityAuthRequest creates a Privado ID authorization request with ProofOfHumanity ZK query
+// This requires the user to prove they have a valid ProofOfHumanity credential from the specified issuer
+func (p *PrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
+	// Create basic authorization request
+	reqMsg := auth.CreateAuthorizationRequest(reason, verifierID, callbackURL)
+
+	// Add ProofOfHumanity ZK query to scope
+	// This requires the user to prove they have a ProofOfHumanity credential with isHuman=1
+	mtpProofRequest := protocol.ZeroKnowledgeProofRequest{
+		ID:        1,
+		CircuitID: "credentialAtomicQueryMTPV2",
+		Query: map[string]interface{}{
+			"allowedIssuers": []string{issuerDID},
+			"credentialSubject": map[string]interface{}{
+				"isHuman": map[string]interface{}{
+					"$eq": 1,
+				},
+			},
+			"context": "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld",
+			"type":    "ProofOfHumanity",
+		},
+	}
+	reqMsg.Body.Scope = append(reqMsg.Body.Scope, mtpProofRequest)
+
 	return &reqMsg, nil
 }
 

@@ -28,9 +28,10 @@ node_modules/
 # But allow migration files
 !internal/db/migrations/*.sql
 
-# Environment
+# Environment (keep .env.example)
 .env
-.env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -50,3 +51,15 @@ logs/
 # Build artifacts
 frontend/dist/
 frontend/build/
+
+# Secrets and certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# Temporary files
+tmp/
+.tmp/

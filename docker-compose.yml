@@ -65,6 +65,8 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
       - BILLIONS_URL=http://billions-mock:9000
       - PORT=8080
+      - ENVIRONMENT=development
+      - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,6 +93,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - VITE_API_TARGET=http://proxy-backend:8080
     depends_on:
       proxy-backend:
         condition: service_started

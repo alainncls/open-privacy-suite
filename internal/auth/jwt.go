@@ -28,9 +28,18 @@ type JWTService struct {
 
 // TokenClaims represents the claims in our JWT tokens
 type TokenClaims struct {
-	Subject string `json:"sub"` // User DID from Privado ID
-	KYC     bool   `json:"kyc"` // KYC status (from verified proof)
+	Subject      string        `json:"sub"`                 // User DID from Privado ID
+	KYC          bool          `json:"kyc"`                 // KYC status (from verified proof)
+	ZKRoleClaims *ZKRoleClaims `json:"zk_roles,omitempty"`  // Optional ZK-attested role claims
 	jwt.RegisteredClaims
+}
+
+// ZKRoleClaims contains role information extracted from ZK credentials.
+type ZKRoleClaims struct {
+	Groups         []string `json:"groups,omitempty"`          // Group paths (e.g., "gateway:engineering:devops")
+	Roles          []string `json:"roles,omitempty"`           // Role names (e.g., "deployer", "reader")
+	CredentialRefs []string `json:"credential_refs,omitempty"` // References to ZK credentials for audit
+	ProofTimestamp int64    `json:"proof_ts,omitempty"`        // When the proof was generated
 }
 
 // NewJWTService creates a new JWT service
@@ -64,10 +73,16 @@ func NewJWTService(accessSecret, refreshSecret string, accessTTL, refreshTTL tim
 
 // IssueAccessToken issues a new access token (short-lived)
 func (j *JWTService) IssueAccessToken(subject string, kyc bool) (string, error) {
+	return j.IssueAccessTokenWithZKClaims(subject, kyc, nil)
+}
+
+// IssueAccessTokenWithZKClaims issues a new access token with optional ZK role claims.
+func (j *JWTService) IssueAccessTokenWithZKClaims(subject string, kyc bool, zkClaims *ZKRoleClaims) (string, error) {
 	now := time.Now()
 	claims := TokenClaims{
-		Subject: subject,
-		KYC:     kyc,
+		Subject:      subject,
+		KYC:          kyc,
+		ZKRoleClaims: zkClaims,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(), // Unique token ID
 			ExpiresAt: jwt.NewNumericDate(now.Add(j.accessTTL)),

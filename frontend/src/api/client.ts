@@ -7,14 +7,6 @@ const api = axios.create({
   },
 });
 
-export interface AccessPolicy {
-  external_id: string;
-  kyc: boolean;
-  allow_methods: string[];
-  banned: boolean;
-  note?: string;
-}
-
 export interface AccessLog {
   id: number;
   external_id: string;
@@ -23,15 +15,6 @@ export interface AccessLog {
   ip_address: string;
   created_at: string;
 }
-
-export const policiesApi = {
-  list: () => api.get<AccessPolicy[]>('/policies'),
-  get: (id: string) => api.get<AccessPolicy>(`/policies/${id}`),
-  create: (policy: AccessPolicy) => api.post<AccessPolicy>('/policies', policy),
-  update: (id: string, policy: Partial<AccessPolicy>) => 
-    api.put<AccessPolicy>(`/policies/${id}`, policy),
-  delete: (id: string) => api.delete(`/policies/${id}`),
-};
 
 export const logsApi = {
   list: (limit?: number) =>

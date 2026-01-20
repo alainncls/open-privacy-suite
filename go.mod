@@ -3,6 +3,7 @@ module privacy-proxy
 go 1.24.2
 
 require (
+	github.com/ethereum/go-ethereum v1.16.7
 	github.com/gin-gonic/gin v1.9.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
@@ -44,7 +45,6 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustinxie/ecc v0.0.0-20210511000915-959544187564 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.5 // indirect
-	github.com/ethereum/go-ethereum v1.16.7 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

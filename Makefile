@@ -1,5 +1,5 @@
 .PHONY: build test test-unit test-e2e run dev clean e2e e2e-debug e2e-down \
-	db-migrate db-status db-new-migration install-tern
+	db-migrate db-status db-new-migration install-tern seed
 
 # Build backend
 build:
@@ -120,3 +120,9 @@ docker-down-clean:
 # View logs
 docker-logs:
 	docker-compose logs -f
+
+# Seed database with development data
+seed:
+	@echo "Seeding database with development data..."
+	@docker-compose exec -T postgres psql -U postgres -d privacy_proxy < scripts/seed.sql
+	@echo "Done!"

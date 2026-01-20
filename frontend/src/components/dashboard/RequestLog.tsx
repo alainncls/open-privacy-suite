@@ -1,17 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { logsApi, AccessLog } from '@/api/client';
+import { ScrollText, Pause, Play, Loader2 } from 'lucide-react';
 
-function getStatusColor(statusCode: number): string {
-  if (statusCode >= 200 && statusCode < 300) {
-    return 'bg-green-50 text-green-800';
-  } else if (statusCode === 403) {
-    return 'bg-orange-50 text-orange-800';
-  } else if (statusCode >= 500) {
-    return 'bg-red-50 text-red-800';
-  }
-  return 'bg-gray-50 text-gray-800';
+function getStatusBadgeVariant(statusCode: number): 'success' | 'warning' | 'destructive' | 'default' {
+  if (statusCode >= 200 && statusCode < 300) return 'success';
+  if (statusCode === 403) return 'warning';
+  if (statusCode >= 500) return 'destructive';
+  return 'default';
 }
 
 function formatTime(timestamp: string): string {
@@ -48,55 +54,90 @@ export function RequestLog() {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Request Log</CardTitle>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
+              <ScrollText className="w-5 h-5 text-cyan-400" />
+            </div>
+            <CardTitle className="text-lg">Request Log</CardTitle>
+            {!isPaused && !loading && (
+              <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-green-500/10">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-xs text-green-400">Live</span>
+              </div>
+            )}
+          </div>
           <Button
-            variant={isPaused ? 'default' : 'outline'}
+            variant={isPaused ? 'glassPrimary' : 'outline'}
             size="sm"
             onClick={() => setIsPaused(!isPaused)}
+            className="gap-2"
           >
-            {isPaused ? 'Resume' : 'Pause'}
+            {isPaused ? (
+              <>
+                <Play className="w-3.5 h-3.5" />
+                Resume
+              </>
+            ) : (
+              <>
+                <Pause className="w-3.5 h-3.5" />
+                Pause
+              </>
+            )}
           </Button>
         </div>
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="text-center py-4 text-gray-500">Loading...</div>
-        ) : logs.length === 0 ? (
-          <div className="text-center py-4 text-gray-500">No requests yet</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-gray-500">
-                  <th className="pb-2 font-medium">Time</th>
-                  <th className="pb-2 font-medium">Method</th>
-                  <th className="pb-2 font-medium">Status</th>
-                  <th className="pb-2 font-medium">Identity</th>
-                  <th className="pb-2 font-medium">IP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className={`border-b last:border-0 ${getStatusColor(log.status_code)}`}
-                  >
-                    <td className="py-2 font-mono text-xs">
-                      {formatTime(log.created_at)}
-                    </td>
-                    <td className="py-2 font-mono">{log.method}</td>
-                    <td className="py-2">{log.status_code}</td>
-                    <td className="py-2 font-mono text-xs truncate max-w-[150px]">
-                      {log.external_id}
-                    </td>
-                    <td className="py-2 font-mono text-xs">{log.ip_address}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
           </div>
+        ) : logs.length === 0 ? (
+          <div className="text-center py-8 text-white/50">
+            No requests yet
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Method</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Identity</TableHead>
+                <TableHead>IP</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {logs.map((log, index) => (
+                <TableRow
+                  key={log.id}
+                  className="animate-fade-in"
+                  style={{ animationDelay: `${index * 20}ms` }}
+                >
+                  <TableCell className="font-mono text-xs text-white/60">
+                    {formatTime(log.created_at)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {log.method}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getStatusBadgeVariant(log.status_code)}>
+                      {log.status_code}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-white/70 truncate max-w-[150px]">
+                    {log.external_id}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-white/60">
+                    {log.ip_address}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </CardContent>
     </Card>

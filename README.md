@@ -5,11 +5,16 @@ A privacy-preserving proxy service for Ethereum nodes (Erigon) that enforces acc
 ## Features
 
 - **Privado ID Integration**: Verifies zero-knowledge proofs (JWZ tokens) from Privado ID protocol
+- **ProofOfHumanity (Billions)**: Requires proof of liveness via Billions ProofOfHumanity credential
 - **JWT Authentication**: Issues and validates JWT tokens for authenticated requests
-- **Access Control**: Enforces KYC requirements and method-level permissions
+- **RBAC Access Control**: Multi-tenant, hierarchical role-based access control with:
+  - Method-level permissions (which JSON-RPC methods users can call)
+  - Contract-level permissions (which contracts users can interact with)
+  - Function selector restrictions (which contract functions users can call)
+  - Rate limiting (RPS and daily limits)
 - **Token Management**: Supports refresh tokens, token revocation, and automatic cleanup
 - **Management UI**: Web interface for managing access policies and viewing logs
-- **Comprehensive Testing**: Unit and E2E tests for all components
+- **Comprehensive Testing**: 131+ e2e tests covering all RBAC scenarios
 
 ## Architecture
 
@@ -147,17 +152,21 @@ Access the services:
 
 Environment variables:
 
+### Required for Production
+- `VERIFIER_ID` - Your verifier DID or identifier
+- `JWT_SECRET` - Secret for signing access tokens (strong, random value)
+- `JWT_REFRESH_SECRET` - Secret for signing refresh tokens (strong, random value)
+- `BILLIONS_ISSUER_DID` - Billions issuer DID for ProofOfHumanity verification
+
+### Optional Configuration
 - `PORT` - Server port (default: 8080)
 - `NODE_URL` - Ethereum node URL (default: http://localhost:8545)
 - `DATABASE_URL` - PostgreSQL connection string (default: postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable)
 - `PRIVADO_RPC_URL` - Privado network RPC URL (default: https://rpc-mainnet.privado.id)
-- `VERIFIER_ID` - Your verifier DID or identifier (required in production)
-  - Generate one using: `go run cmd/generate-verifier-did/main.go`
-  - Or use Privado ID Issuer Node API to create a proper identity
+- `IPFS_GATEWAY` - IPFS gateway for schema resolution (default: https://ipfs-proxy-cache.privado.id)
 - `BASE_URL` - Base URL for callback (default: http://localhost:8080)
 - `ENVIRONMENT` - "production" or "development" (default: development)
-- `JWT_SECRET` - Secret for signing access tokens (auto-generated if empty, dev only)
-- `JWT_REFRESH_SECRET` - Secret for signing refresh tokens (auto-generated if empty, dev only)
+- `REQUIRE_PROOF_OF_HUMANITY` - Require ProofOfHumanity credential (default: true in production, false in development)
 
 ## Usage
 
@@ -248,16 +257,6 @@ curl -X POST http://localhost:8080/revoke \
 
 ### Unit Tests
 
-**Business logic tests (no database required):**
-```bash
-go test ./internal/access/... -v
-```
-
-**Database layer tests (uses testcontainers automatically):**
-```bash
-go test ./internal/db/... -v
-```
-
 **All unit tests:**
 ```bash
 make test-unit
@@ -265,21 +264,76 @@ make test-unit
 go test ./internal/... -v
 ```
 
-**Note**: Database tests automatically use testcontainers (Docker required). Business logic tests use mocks and don't need PostgreSQL.
+**Database layer tests (uses testcontainers automatically):**
+```bash
+go test ./internal/db/... -v
+```
+
+**Note**: Database tests automatically use testcontainers (Docker required).
 
 ### E2E Tests
 
-1. Start mock services:
+E2E tests use Playwright and Docker to run a full integration suite with 131+ tests covering RBAC, authentication, and access control.
+
+**Run all E2E tests:**
 ```bash
-docker-compose up -d postgres erigon-mock
+make e2e
+# This starts all services and runs Playwright tests
 ```
 
-2. Run E2E tests:
+**Or run manually:**
 ```bash
-make test-e2e
-# or
-go test ./e2e/...
+# Start services
+docker-compose -f docker-compose.yml -f docker-compose.e2e.yml up -d postgres billions-mock anvil proxy-backend
+
+# Run tests
+docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test
+
+# Stop services
+docker-compose -f docker-compose.yml -f docker-compose.e2e.yml down
 ```
+
+**Run specific test suites:**
+```bash
+# Run only function selector tests
+docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Function Selector"
+
+# Run only hierarchy tests
+docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Hierarchy"
+```
+
+## Access Control
+
+This proxy implements a hierarchical Role-Based Access Control (RBAC) system for fine-grained permission management.
+
+### Key Features
+
+- **Multi-tenant organizations** with isolated permission hierarchies
+- **Restrictive inheritance**: Child groups can only narrow parent permissions
+- **Dual membership support**: Admin assignment and ZK-attested credentials
+- **Contract ownership tracking** with special abilities
+
+### Quick Start
+
+```bash
+# List organizations
+curl http://localhost:8080/api/orgs
+
+# Create a group
+curl -X POST http://localhost:8080/api/orgs/{org_id}/groups \
+  -H "Content-Type: application/json" \
+  -d '{"slug": "engineering", "name": "Engineering Team"}'
+
+# Set permissions
+curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/permissions \
+  -H "Content-Type: application/json" \
+  -d '{"allow_methods": ["eth_call", "eth_getBalance"]}'
+
+# Check effective permissions
+curl http://localhost:8080/api/users/{user_id}/effective-permissions
+```
+
+See [RBAC Documentation](docs/RBAC.md) for detailed use cases and API reference.
 
 ## Security Considerations
 
@@ -288,6 +342,7 @@ go test ./e2e/...
 - **Management API**: Protected by localhost-only middleware (accessible from Docker network)
 - **Token Rotation**: Refresh tokens are rotated on each refresh for enhanced security
 - **Privado RPC**: Use your own RPC node or trusted service (Infura, Alchemy) for production
+- **RBAC Admin**: RBAC admin endpoints are protected by localhost-only middleware
 
 ## License
 

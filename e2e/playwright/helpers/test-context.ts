@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import { APIRequestContext } from '@playwright/test';
 import { createPolicy, deletePolicy, PolicyOptions } from './policy.js';
 import { getJWTToken } from './auth.js';
+import { RBACApiClient } from './rbac-api.js';
+import { RBACTestFixture } from './rbac-fixtures.js';
 
 /**
  * TestContext provides test isolation through unique DIDs.
@@ -40,5 +42,56 @@ export class TestContext {
   async cleanup(request: APIRequestContext): Promise<void> {
     await deletePolicy(request, this.userDID);
     this._accessToken = null;
+  }
+}
+
+/**
+ * RBACTestContext provides test isolation for RBAC tests.
+ * Wraps RBACApiClient and RBACTestFixture for convenient access.
+ */
+export class RBACTestContext {
+  readonly testId: string;
+  readonly rbac: RBACApiClient;
+  readonly fixture: RBACTestFixture;
+
+  constructor(request: APIRequestContext) {
+    this.fixture = new RBACTestFixture(request);
+    this.testId = this.fixture.testId;
+    this.rbac = this.fixture.rbac;
+  }
+
+  /**
+   * Generate a unique slug for test isolation.
+   */
+  slug(base: string): string {
+    return this.fixture.slug(base);
+  }
+
+  /**
+   * Generate a unique DID for test isolation.
+   */
+  did(): string {
+    return this.fixture.did();
+  }
+
+  /**
+   * Generate a unique Ethereum address for test isolation.
+   */
+  contractAddress(): string {
+    return this.fixture.contractAddress();
+  }
+
+  /**
+   * Get a JWT token for a user DID.
+   */
+  async getToken(request: APIRequestContext, userDID: string): Promise<string> {
+    return getJWTToken(request, userDID);
+  }
+
+  /**
+   * Clean up all tracked resources.
+   */
+  async cleanup(): Promise<void> {
+    await this.fixture.cleanup();
   }
 }

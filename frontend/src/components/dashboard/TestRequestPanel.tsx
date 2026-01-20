@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -10,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { testApi, TestRequestResponse } from '@/api/client';
+import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 const COMMON_METHODS = [
   { value: 'eth_blockNumber', label: 'eth_blockNumber' },
@@ -56,13 +58,18 @@ export function TestRequestPanel() {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg">Test Request</CardTitle>
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
+            <Zap className="w-5 h-5 text-yellow-400" />
+          </div>
+          <CardTitle className="text-lg">Test Request</CardTitle>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <Select value={method} onValueChange={setMethod}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Select method" />
             </SelectTrigger>
             <SelectContent>
@@ -73,47 +80,74 @@ export function TestRequestPanel() {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={handleSend} disabled={loading}>
-            {loading ? 'Sending...' : 'Send'}
+          <Button onClick={handleSend} disabled={loading} className="gap-2">
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                Send
+              </>
+            )}
           </Button>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-white/70 mb-2">
             Params (JSON array, optional)
           </label>
-          <textarea
+          <Textarea
+            variant="code"
             value={params}
             onChange={(e) => setParams(e.target.value)}
             placeholder='["0x...", "latest"]'
-            className="w-full h-20 p-2 border border-gray-200 rounded-md font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gray-950"
+            className="h-20"
           />
         </div>
 
         {error && (
-          <div className="p-3 bg-red-50 rounded-md text-red-700 text-sm">
-            {error}
+          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <span className="text-red-400 text-sm">{error}</span>
           </div>
         )}
 
         {result && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Badge variant={result.blocked ? 'destructive' : result.success ? 'success' : 'warning'}>
-                {result.blocked ? 'BLOCKED' : result.success ? 'ALLOWED' : 'ERROR'}
-              </Badge>
-              <span className="text-sm text-gray-500">
+          <div className="space-y-3 animate-fade-in">
+            <div className="flex items-center gap-3">
+              {result.blocked ? (
+                <Badge variant="destructive" className="gap-1.5">
+                  <ShieldX className="w-3 h-3" />
+                  BLOCKED
+                </Badge>
+              ) : result.success ? (
+                <Badge variant="success" className="gap-1.5">
+                  <ShieldCheck className="w-3 h-3" />
+                  ALLOWED
+                </Badge>
+              ) : (
+                <Badge variant="warning" className="gap-1.5">
+                  <AlertTriangle className="w-3 h-3" />
+                  ERROR
+                </Badge>
+              )}
+              <span className="text-sm text-white/50">
                 {result.latency_ms}ms
               </span>
             </div>
             {result.success && result.result !== undefined && (
-              <pre className="p-3 bg-gray-50 rounded-md text-sm font-mono overflow-x-auto">
-                {JSON.stringify(result.result, null, 2)}
-              </pre>
+              <div className="glass-code">
+                <pre className="whitespace-pre-wrap break-all">
+                  {JSON.stringify(result.result, null, 2)}
+                </pre>
+              </div>
             )}
             {result.error && (
-              <div className="p-3 bg-orange-50 rounded-md text-orange-700 text-sm">
-                {result.error}
+              <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                <span className="text-orange-400 text-sm">{result.error}</span>
               </div>
             )}
           </div>

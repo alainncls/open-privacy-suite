@@ -64,8 +64,24 @@ func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
+// ErrBatchRequest is returned when a batch JSON-RPC request is detected.
+// Batch requests are not supported for security reasons.
+var ErrBatchRequest = fmt.Errorf("batch JSON-RPC requests are not supported")
+
+// IsBatchRequest checks if the body contains a JSON-RPC batch request (array format).
+func IsBatchRequest(body []byte) bool {
+	// Trim whitespace and check if it starts with '['
+	trimmed := bytes.TrimSpace(body)
+	return len(trimmed) > 0 && trimmed[0] == '['
+}
+
 // ParseMethod extracts the method name from a JSON-RPC request
 func ParseMethod(body []byte) (string, error) {
+	// Check for batch request first
+	if IsBatchRequest(body) {
+		return "", ErrBatchRequest
+	}
+
 	var req JSONRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", fmt.Errorf("failed to parse JSON-RPC request: %w", err)
@@ -74,8 +90,14 @@ func ParseMethod(body []byte) (string, error) {
 	return req.Method, nil
 }
 
-// ParseRequest extracts method and params from a JSON-RPC request
+// ParseRequest extracts method and params from a JSON-RPC request.
+// Returns ErrBatchRequest if the request is a batch (array) request.
 func ParseRequest(body []byte) (string, []interface{}, error) {
+	// Check for batch request first
+	if IsBatchRequest(body) {
+		return "", nil, ErrBatchRequest
+	}
+
 	var req JSONRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", nil, fmt.Errorf("failed to parse JSON-RPC request: %w", err)
