@@ -6,17 +6,19 @@ import (
 )
 
 func setupTestDB(t *testing.T) *DB {
-	// Use test database URL from environment or default
+	// Check if TEST_DATABASE_URL is set (for CI/external PostgreSQL)
 	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
-	}
 	
-	// Ensure test database exists
-	if err := EnsureTestDatabase(dbURL); err != nil {
-		t.Logf("Warning: Could not ensure test database exists: %v", err)
-		t.Logf("Please create the database manually: createdb privacy_proxy_test")
-		// Continue anyway - might already exist
+	if dbURL == "" {
+		// Use testcontainers for local development (no external PostgreSQL needed)
+		var cleanup func()
+		dbURL, cleanup = SetupTestContainer(t)
+		t.Cleanup(cleanup)
+	} else {
+		// Use external PostgreSQL (for CI or when explicitly set)
+		if err := EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("PostgreSQL not available. Start it with: docker-compose up -d postgres\nOr: make docker-up\nError: %v", err)
+		}
 	}
 	
 	database, err := New(dbURL)
@@ -27,6 +29,8 @@ func setupTestDB(t *testing.T) *DB {
 	// Clean up tables for fresh test
 	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
+	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
+	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
 	database.Migrate()
 	
 	return database

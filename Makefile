@@ -17,8 +17,14 @@ test:
 	go test ./... -v
 
 # Run unit tests only
-test-unit:
+test-unit: test-db-ready
 	go test ./internal/... -v
+
+# Check if test database is ready
+test-db-ready:
+	@echo "Checking PostgreSQL connection..."
+	@docker-compose ps postgres | grep -q "Up" || (echo "PostgreSQL is not running. Starting it..." && docker-compose up -d postgres && sleep 2)
+	@echo "PostgreSQL is ready"
 
 # Run E2E tests
 test-e2e:

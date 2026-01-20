@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -24,6 +25,15 @@ type AccessPolicy struct {
 	AllowMethods []string `json:"allow_methods"`
 	Banned       bool     `json:"banned"`
 	Note         string   `json:"note"`
+}
+
+// PolicyStore is an interface for policy storage operations
+// This allows business logic to be tested with mocks instead of requiring a real database
+type PolicyStore interface {
+	GetPolicy(externalID string) (*AccessPolicy, error)
+	SetPolicy(policy *AccessPolicy) error
+	ListPolicies() ([]*AccessPolicy, error)
+	DeletePolicy(externalID string) error
 }
 
 func New(databaseURL string) (*DB, error) {
@@ -85,8 +95,28 @@ func (d *DB) Migrate() error {
 		END IF;
 	END $$;
 	
+	CREATE TABLE IF NOT EXISTS refresh_tokens (
+		token_hash VARCHAR(255) PRIMARY KEY,
+		subject VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP NOT NULL,
+		revoked BOOLEAN NOT NULL DEFAULT false,
+		revoked_at TIMESTAMP
+	);
+	
+	CREATE TABLE IF NOT EXISTS revoked_tokens (
+		token_id VARCHAR(255) PRIMARY KEY,
+		subject VARCHAR(255) NOT NULL,
+		revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP NOT NULL
+	);
+	
 	CREATE INDEX IF NOT EXISTS idx_logs_external_id ON access_logs(external_id);
 	CREATE INDEX IF NOT EXISTS idx_logs_created_at ON access_logs(created_at);
+	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_subject ON refresh_tokens(subject);
+	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_subject ON revoked_tokens(subject);
+	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
 	`
 	
 	_, err := d.conn.Exec(query)
@@ -251,4 +281,109 @@ func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
 	}
 	
 	return logs, nil
+}
+
+// RefreshToken represents a refresh token in the database
+type RefreshToken struct {
+	TokenHash string
+	Subject   string
+	CreatedAt string
+	ExpiresAt string
+	Revoked   bool
+	RevokedAt *string
+}
+
+// SaveRefreshToken saves a refresh token to the database
+func (d *DB) SaveRefreshToken(tokenHash, subject string, expiresAt time.Time) error {
+	query := `INSERT INTO refresh_tokens (token_hash, subject, expires_at)
+	          VALUES ($1, $2, $3)
+	          ON CONFLICT(token_hash) DO UPDATE SET
+	          expires_at = excluded.expires_at,
+	          revoked = false,
+	          revoked_at = NULL`
+	
+	_, err := d.conn.Exec(query, tokenHash, subject, expiresAt)
+	return err
+}
+
+// GetRefreshToken retrieves a refresh token by hash
+func (d *DB) GetRefreshToken(tokenHash string) (*RefreshToken, error) {
+	query := `SELECT token_hash, subject, created_at, expires_at, revoked, revoked_at
+	          FROM refresh_tokens WHERE token_hash = $1`
+	
+	var token RefreshToken
+	var revokedAt sql.NullString
+	
+	err := d.conn.QueryRow(query, tokenHash).Scan(
+		&token.TokenHash,
+		&token.Subject,
+		&token.CreatedAt,
+		&token.ExpiresAt,
+		&token.Revoked,
+		&revokedAt,
+	)
+	
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get refresh token: %w", err)
+	}
+	
+	if revokedAt.Valid {
+		revokedAtStr := revokedAt.String
+		token.RevokedAt = &revokedAtStr
+	}
+	
+	return &token, nil
+}
+
+// RevokeRefreshToken marks a refresh token as revoked
+func (d *DB) RevokeRefreshToken(tokenHash string) error {
+	query := `UPDATE refresh_tokens 
+	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
+	          WHERE token_hash = $1`
+	
+	_, err := d.conn.Exec(query, tokenHash)
+	return err
+}
+
+// RevokeAccessToken stores a revoked access token (for blacklist checking)
+func (d *DB) RevokeAccessToken(tokenID, subject string, expiresAt time.Time) error {
+	query := `INSERT INTO revoked_tokens (token_id, subject, expires_at)
+	          VALUES ($1, $2, $3)
+	          ON CONFLICT(token_id) DO NOTHING`
+	
+	_, err := d.conn.Exec(query, tokenID, subject, expiresAt)
+	return err
+}
+
+// IsAccessTokenRevoked checks if an access token is revoked
+func (d *DB) IsAccessTokenRevoked(tokenID string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM revoked_tokens WHERE token_id = $1)`
+	
+	var exists bool
+	err := d.conn.QueryRow(query, tokenID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check revoked token: %w", err)
+	}
+	
+	return exists, nil
+}
+
+// CleanupExpiredTokens removes expired tokens from the database
+func (d *DB) CleanupExpiredTokens() error {
+	// Clean up expired refresh tokens
+	_, err := d.conn.Exec(`DELETE FROM refresh_tokens WHERE expires_at < CURRENT_TIMESTAMP`)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
+	}
+	
+	// Clean up expired revoked tokens
+	_, err = d.conn.Exec(`DELETE FROM revoked_tokens WHERE expires_at < CURRENT_TIMESTAMP`)
+	if err != nil {
+		return fmt.Errorf("failed to cleanup expired revoked tokens: %w", err)
+	}
+	
+	return nil
 }

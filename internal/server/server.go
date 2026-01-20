@@ -1,41 +1,85 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"privacy-proxy/internal/access"
+	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
-	"privacy-proxy/internal/identity"
 	"privacy-proxy/internal/proxy"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
-	db           *db.DB
-	identitySvc  *identity.Service
-	accessCtrl   *access.Controller
-	proxy        *proxy.Proxy
+	db              *db.DB
+	accessCtrl      *access.Controller
+	proxy           *proxy.Proxy
+	privadoVerifier PrivadoVerifier
+	jwtService      *auth.JWTService
+}
+
+// DB returns the database instance (for testing)
+func (s *Server) DB() *db.DB {
+	return s.db
+}
+
+// PrivadoVerifier interface for JWZ verification
+type PrivadoVerifier interface {
+	VerifyJWZ(ctx context.Context, jwzToken string) (string, error)
 }
 
 func New(cfg *config.Config) *Server {
+	return NewWithVerifier(cfg, nil)
+}
+
+// NewWithVerifier creates a new server with an optional PrivadoVerifier
+// If verifier is nil, creates a real PrivadoVerifier from config
+// This allows injecting a mock verifier for testing
+func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
 		panic(err)
 	}
 
-	identitySvc := identity.NewService(cfg.BillionsURL)
+	// Initialize Privado ID verifier
+	var privadoVerifier PrivadoVerifier
+	if verifier != nil {
+		privadoVerifier = verifier
+	} else {
+		privadoVerifier, err = auth.NewPrivadoVerifier(cfg.PrivadoRPCURL, cfg.IPFSGateway)
+		if err != nil {
+			panic(fmt.Errorf("failed to create Privado verifier: %w", err))
+		}
+	}
+
+	// Initialize JWT service
+	// Access tokens: 30 minutes, Refresh tokens: 7 days
+	jwtService, err := auth.NewJWTService(
+		cfg.JWTSecret,
+		cfg.JWTRefreshSecret,
+		30*time.Minute, // Access token TTL
+		7*24*time.Hour, // Refresh token TTL
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create JWT service: %w", err))
+	}
+
 	accessCtrl := access.NewController(database)
 	proxySvc := proxy.New(cfg.NodeURL)
 
 	return &Server{
-		db:          database,
-		identitySvc: identitySvc,
-		accessCtrl:  accessCtrl,
-		proxy:       proxySvc,
+		db:              database,
+		accessCtrl:      accessCtrl,
+		proxy:           proxySvc,
+		privadoVerifier: privadoVerifier,
+		jwtService:      jwtService,
 	}
 }
 
@@ -75,8 +119,13 @@ func (s *Server) Run(addr string) error {
 	router.GET("/health", healthHandler)
 	router.HEAD("/health", healthHandler)
 
-	// JSON-RPC proxy endpoint
-	router.POST("/", s.handleJSONRPC)
+	// Authentication endpoints (no auth required)
+	router.POST("/auth", s.handleAuth)
+	router.POST("/refresh", s.handleRefresh)
+	router.POST("/revoke", s.handleRevoke)
+
+	// JSON-RPC proxy endpoint - protected by JWT
+	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
 	// API endpoints for UI - protected by localhost-only middleware
 	api := router.Group("/api")
@@ -94,25 +143,16 @@ func (s *Server) Run(addr string) error {
 }
 
 func (s *Server) handleJSONRPC(c *gin.Context) {
-	// Extract Authorization header
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing Authorization header"})
+	// Extract identity from JWT (set by middleware)
+	subject, exists := c.Get("subject")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
 		return
 	}
 
-	// Parse Bearer token
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid Authorization header format"})
-		return
-	}
-	token := parts[1]
-
-	// Resolve identity from token
-	identity, err := s.identitySvc.ResolveIdentity(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "failed to resolve identity: " + err.Error()})
+	subjectStr, ok := subject.(string)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
 		return
 	}
 
@@ -131,24 +171,27 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	}
 
 	// Check access
-	if err := s.accessCtrl.CheckAccess(identity.Subject, method); err != nil {
+	if err := s.accessCtrl.CheckAccess(subjectStr, method); err != nil {
 		// Log denied access (always log, even if no policy exists)
-		s.db.LogAccess(identity.Subject, method, http.StatusForbidden, c.ClientIP())
+		s.db.LogAccess(subjectStr, method, http.StatusForbidden, c.ClientIP())
 		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + err.Error()})
 		return
 	}
+
+	// Restore request body for forwarding (it was consumed by io.ReadAll)
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 	// Forward to node
 	responseBody, statusCode, err := s.proxy.Forward(body)
 	if err != nil {
 		// Log error
-		s.db.LogAccess(identity.Subject, method, http.StatusBadGateway, c.ClientIP())
+		s.db.LogAccess(subjectStr, method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to forward request: " + err.Error()})
 		return
 	}
 
 	// Log successful access
-	s.db.LogAccess(identity.Subject, method, statusCode, c.ClientIP())
+	s.db.LogAccess(subjectStr, method, statusCode, c.ClientIP())
 
 	// Return response from node
 	c.Data(statusCode, "application/json", responseBody)
@@ -280,9 +323,10 @@ func (s *Server) getLogs(c *gin.Context) {
 // SECURITY MODEL:
 // - Gin's SetTrustedProxies ensures only requests FROM trusted IPs can set X-Forwarded-For
 // - External attackers (e.g., 203.0.113.1) cannot spoof X-Forwarded-For: 127.0.0.1 because:
-//   1. Their remote IP (203.0.113.1) is not in the trusted proxy list
-//   2. Gin will ignore X-Forwarded-For and use the actual remote IP
-//   3. Middleware will reject the request
+//  1. Their remote IP (203.0.113.1) is not in the trusted proxy list
+//  2. Gin will ignore X-Forwarded-For and use the actual remote IP
+//  3. Middleware will reject the request
+//
 // - Only localhost (127.0.0.1, ::1) and Docker network IPs (172.x.x.x) are allowed
 func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -295,7 +339,7 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 		// - Host accessing via localhost (172.x.x.x gateway)
 		// - Frontend container accessing backend (192.168.x.x or 172.x.x.x)
 		// Note: Docker networks are isolated by default, so this is safe
-		isLocalhost := clientIP == "127.0.0.1" || 
+		isLocalhost := clientIP == "127.0.0.1" ||
 			clientIP == "::1" ||
 			strings.HasPrefix(clientIP, "172.") || // Docker bridge networks (172.16.0.0/12)
 			strings.HasPrefix(clientIP, "192.168.") // Docker custom networks (192.168.0.0/16)

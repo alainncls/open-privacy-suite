@@ -1,114 +1,102 @@
-# Privacy Proxy for Erigon Node
+# Privacy Proxy
 
-A privacy proxy service that sits in front of an Erigon Ethereum node, providing identity-based access control with KYC verification and method whitelisting.
+A privacy-preserving proxy service for Ethereum nodes (Erigon) that enforces access control based on Privado ID zero-knowledge proofs and KYC verification.
+
+## Features
+
+- **Privado ID Integration**: Verifies zero-knowledge proofs (JWZ tokens) from Privado ID protocol
+- **JWT Authentication**: Issues and validates JWT tokens for authenticated requests
+- **Access Control**: Enforces KYC requirements and method-level permissions
+- **Token Management**: Supports refresh tokens, token revocation, and automatic cleanup
+- **Management UI**: Web interface for managing access policies and viewing logs
+- **Comprehensive Testing**: Unit and E2E tests for all components
 
 ## Architecture
 
 ```
 Client
   |
-  | JSON-RPC + Authorization: Bearer <token>
+  | POST /auth (JWZ proof)
   v
-Privacy Proxy (this service)
+Privacy Proxy
   |
-  | (validates identity, checks policy)
+  | Verify JWZ → Issue JWT
   v
-Ethereum Node (Erigon/geth)
+Client (with JWT)
+  |
+  | POST / (JSON-RPC + JWT)
+  v
+Privacy Proxy
+  |
+  | Validate JWT → Check Policy → Proxy
+  v
+Ethereum Node
 ```
 
-## Features
+## Authentication Flow
 
-- **Identity Resolution**: Integrates with Billions service (mocked for development) to resolve user identity from Bearer tokens
-- **Access Control**: Policy-based access control with:
-  - KYC verification (required for all users)
-  - Method whitelisting (e.g., allow `eth_call` but not `eth_sendTransaction`)
-  - Ban/unban functionality
-- **Access Logging**: Tracks all requests with user ID, method, status code, and IP address
-- **Management UI**: React dashboard for viewing logs and managing access policies
-- **Comprehensive Testing**: Unit tests and E2E tests for full request flow
+1. **Initial Authentication** (`POST /auth`):
+   - Client sends Privado ID JWZ proof
+   - Server verifies proof using `go-iden3-auth`
+   - If valid, server issues:
+     - Access token (JWT, 30 min TTL)
+     - Refresh token (JWT, 7 days TTL, stored in DB)
 
-## Project Structure
+2. **API Requests**:
+   - Client includes `Authorization: Bearer <access_token>`
+   - Server validates JWT and checks revocation
+   - Server extracts identity and checks access policies
 
-```
-privacy-proxy/
-├── cmd/
-│   ├── server/          # Main server application
-│   └── migrate/         # Database migration tool
-├── internal/
-│   ├── access/          # Access control logic
-│   ├── config/          # Configuration management
-│   ├── db/              # Database layer (PostgreSQL)
-│   ├── identity/        # Identity resolution (Billions integration)
-│   ├── proxy/           # Proxy forwarding logic
-│   └── server/          # HTTP server and routes
-├── e2e/                 # End-to-end tests
-│   └── mock-node/       # Mock Erigon node for testing
-├── frontend/            # React + TypeScript UI
-└── data/                # Database storage (gitignored)
-```
+3. **Token Refresh** (`POST /refresh`):
+   - Client sends refresh token
+   - Server validates and issues new access + refresh tokens
+   - Old refresh token is revoked (token rotation)
 
-## Quick Start
+4. **Token Revocation** (`POST /revoke`):
+   - Client can revoke refresh tokens
+   - Revoked tokens are stored in database
 
-### Prerequisites
+## Prerequisites
 
 - Go 1.21+
-- Node.js 18+ (for frontend)
-- PostgreSQL 12+ (or use Docker Compose)
-- Docker & Docker Compose (optional, for mock node and PostgreSQL)
+- PostgreSQL 15+
+- Node.js 20+ (for frontend)
+- Docker & Docker Compose (optional, for containerized setup)
 
-### Backend Setup
+## Setup
 
-1. Install dependencies:
+### Local Development
+
+1. **Install dependencies:**
 ```bash
 go mod download
+cd frontend && npm install
 ```
 
-2. Set up PostgreSQL database:
+2. **Set up PostgreSQL:**
 ```bash
-# Option 1: Use Docker Compose (recommended)
-docker-compose up -d postgres
-
-# Option 2: Use local PostgreSQL
 createdb privacy_proxy
+createdb privacy_proxy_test
+createdb privacy_proxy_e2e_test
 ```
 
-3. Run database migrations:
+3. **Run migrations:**
 ```bash
-# Set DATABASE_URL if not using default
-export DATABASE_URL="postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"
-
 make db-migrate
-# or
-go run ./cmd/migrate
 ```
 
-3. Start the server:
+4. **Start services:**
 ```bash
-make dev
-# or
+# Terminal 1: Backend
 go run ./cmd/server
+
+# Terminal 2: Frontend
+cd frontend && npm run dev
 ```
 
-The server will start on `http://localhost:8080`
+### Docker Setup
 
-### Frontend Setup
-
-1. Install dependencies:
-```bash
-cd frontend
-npm install
-```
-
-2. Start dev server:
-```bash
-npm run dev
-```
-
-The UI will be available at `http://localhost:5173`
-
-### Using Docker Compose
-
-Start all services (PostgreSQL, mock Billions, mock Erigon node, backend, and frontend):
+Start all services (PostgreSQL, mock services, backend, frontend):
 
 ```bash
 docker-compose up -d
@@ -116,7 +104,7 @@ docker-compose up -d
 
 This will start:
 - **PostgreSQL** on port 5432
-- **Mock Billions** service on port 9000
+- **Mock Privado ID** service on port 9000 (for testing)
 - **Mock Erigon node** on port 8545
 - **Backend API** on port 8080
 - **Frontend UI** on port 5173
@@ -126,25 +114,44 @@ Access the services:
 - Backend API: http://localhost:8080
 - Management API: http://localhost:8080/api (localhost-only)
 
-View logs:
-```bash
-docker-compose logs -f
-```
+## Configuration
 
-Stop all services:
-```bash
-docker-compose down
-```
+Environment variables:
+
+- `PORT` - Server port (default: 8080)
+- `NODE_URL` - Ethereum node URL (default: http://localhost:8545)
+- `DATABASE_URL` - PostgreSQL connection string (default: postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable)
+- `PRIVADO_RPC_URL` - Privado network RPC URL (default: https://rpc-mainnet.privado.id)
+- `JWT_SECRET` - Secret for signing access tokens (auto-generated if empty, dev only)
+- `JWT_REFRESH_SECRET` - Secret for signing refresh tokens (auto-generated if empty, dev only)
 
 ## Usage
 
-### Making Requests
+### 1. Authenticate with Privado ID
 
-Send JSON-RPC requests with an `Authorization` header:
+```bash
+curl -X POST http://localhost:8080/auth \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jwz_token": "<privado_jwz_proof>"
+  }'
+```
+
+Response:
+```json
+{
+  "access_token": "eyJhbGc...",
+  "refresh_token": "eyJhbGc...",
+  "token_type": "Bearer",
+  "expires_in": 1800
+}
+```
+
+### 2. Make JSON-RPC Requests
 
 ```bash
 curl -X POST http://localhost:8080/ \
-  -H "Authorization: Bearer user_123" \
+  -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -154,71 +161,54 @@ curl -X POST http://localhost:8080/ \
   }'
 ```
 
-### Managing Policies
+### 3. Refresh Token
 
-Use the UI at `http://localhost:5173` or the API:
-
-**List policies:**
 ```bash
-curl http://localhost:8080/api/policies
-```
-
-**Create/Update policy:**
-```bash
-curl -X PUT http://localhost:8080/api/policies/billions:user_123 \
+curl -X POST http://localhost:8080/refresh \
   -H "Content-Type: application/json" \
   -d '{
-    "external_id": "billions:user_123",
-    "kyc": true,
-    "allow_methods": ["eth_call", "eth_getBalance"],
-    "banned": false,
-    "note": "Test user"
+    "refresh_token": "<refresh_token>"
   }'
 ```
 
-**View access logs:**
+### 4. Revoke Token
+
 ```bash
-curl http://localhost:8080/api/logs?limit=100
+curl -X POST http://localhost:8080/revoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "<refresh_token>"
+  }'
 ```
-
-## Configuration
-
-Environment variables:
-
-- `PORT` - Server port (default: 8080)
-- `NODE_URL` - Ethereum node URL (default: http://localhost:8545)
-- `DATABASE_URL` - PostgreSQL connection string (default: postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable)
-- `BILLIONS_URL` - Billions service URL (default: http://localhost:9000)
 
 ## Testing
 
 ### Unit Tests
 
-**First, set up test databases:**
+**Business logic tests (no database required):**
 ```bash
-# Option 1: Use setup script
-./scripts/setup-test-db.sh
-
-# Option 2: Create manually
-createdb privacy_proxy_test
-createdb privacy_proxy_e2e_test
+go test ./internal/access/... -v
 ```
 
-**Then run tests:**
+**Database layer tests (uses testcontainers automatically):**
+```bash
+go test ./internal/db/... -v
+```
+
+**All unit tests:**
 ```bash
 make test-unit
 # or
-go test ./internal/...
+go test ./internal/... -v
 ```
+
+**Note**: Database tests automatically use testcontainers (Docker required). Business logic tests use mocks and don't need PostgreSQL.
 
 ### E2E Tests
 
-1. Start mock node:
+1. Start mock services:
 ```bash
-cd e2e/mock-node
-npm install
-npm start
-# In another terminal:
+docker-compose up -d postgres erigon-mock
 ```
 
 2. Run E2E tests:
@@ -228,79 +218,13 @@ make test-e2e
 go test ./e2e/...
 ```
 
-### All Tests
+## Security Considerations
 
-```bash
-make test
-```
-
-## API Endpoints
-
-### Proxy Endpoint
-
-- `POST /` - JSON-RPC proxy endpoint (requires `Authorization: Bearer <token>`)
-
-### Management API
-
-**Note**: Management API endpoints are only accessible from localhost for security. When running in Docker, you can still access them from your host machine via `localhost:8080`.
-
-- `GET /api/policies` - List all access policies
-- `GET /api/policies/:id` - Get specific policy
-- `POST /api/policies` - Create new policy
-- `PUT /api/policies/:id` - Update policy
-- `GET /api/logs?limit=N` - Get access logs (default limit: 100)
-
-## Data Model
-
-### Access Policy
-
-```json
-{
-  "external_id": "billions:user_123",
-  "kyc": true,
-  "allow_methods": ["eth_call", "eth_getBalance"],
-  "banned": false,
-  "note": "Internal tester"
-}
-```
-
-### Access Log
-
-```json
-{
-  "id": 1,
-  "external_id": "billions:user_123",
-  "method": "eth_call",
-  "status_code": 200,
-  "ip_address": "127.0.0.1",
-  "created_at": "2024-01-01T00:00:00Z"
-}
-```
-
-## Development
-
-### Adding New Features
-
-1. Write tests first (TDD approach)
-2. Implement feature
-3. Run tests: `make test`
-4. Update documentation
-
-### Database Migrations
-
-Migrations run automatically on startup. To manually run:
-
-```bash
-make db-migrate
-```
-
-## Production Considerations
-
-- Replace mocked Billions integration with real service
-- Configure PostgreSQL with proper credentials and SSL
-- Add HTTPS/TLS
-- Set up monitoring and alerting
-- Configure proper CORS for frontend
+- **JWT Secrets**: In production, always set `JWT_SECRET` and `JWT_REFRESH_SECRET` to strong, random values
+- **Token Revocation**: Revoked tokens are stored in PostgreSQL. For high-volume production, consider Redis for faster lookups
+- **Management API**: Protected by localhost-only middleware (accessible from Docker network)
+- **Token Rotation**: Refresh tokens are rotated on each refresh for enhanced security
+- **Privado RPC**: Use your own RPC node or trusted service (Infura, Alchemy) for production
 
 ## License
 

@@ -11,7 +11,6 @@ import (
 	"privacy-proxy/internal/access"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
-	"privacy-proxy/internal/identity"
 	"privacy-proxy/internal/proxy"
 
 	"github.com/gin-gonic/gin"
@@ -19,16 +18,19 @@ import (
 )
 
 func setupTestServer(t *testing.T) *Server {
+	// Check if TEST_DATABASE_URL is set (for CI/external PostgreSQL)
 	dbURL := os.Getenv("TEST_DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
-	}
 	
-	// Ensure test database exists
-	if err := db.EnsureTestDatabase(dbURL); err != nil {
-		t.Logf("Warning: Could not ensure test database exists: %v", err)
-		t.Logf("Please create the database manually: createdb privacy_proxy_test")
-		// Continue anyway - might already exist
+	if dbURL == "" {
+		// Use testcontainers for local development (no external PostgreSQL needed)
+		var cleanup func()
+		dbURL, cleanup = db.SetupTestContainer(t)
+		t.Cleanup(cleanup)
+	} else {
+		// Use external PostgreSQL (for CI or when explicitly set)
+		if err := db.EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("PostgreSQL not available. Start it with: docker-compose up -d postgres\nOr: make docker-up\nError: %v", err)
+		}
 	}
 	
 	database, err := db.New(dbURL)
@@ -39,6 +41,8 @@ func setupTestServer(t *testing.T) *Server {
 	// Clean up tables
 	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
 	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
+	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
+	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
 	database.Migrate()
 	
 	cfg := &config.Config{
@@ -47,15 +51,13 @@ func setupTestServer(t *testing.T) *Server {
 		BillionsURL: "http://localhost:9000",
 	}
 	
-	identitySvc := identity.NewService(cfg.BillionsURL)
 	accessCtrl := access.NewController(database)
 	proxySvc := proxy.New(cfg.NodeURL)
 	
 	return &Server{
-		db:          database,
-		identitySvc: identitySvc,
-		accessCtrl:  accessCtrl,
-		proxy:       proxySvc,
+		db:         database,
+		accessCtrl: accessCtrl,
+		proxy:      proxySvc,
 	}
 }
 
