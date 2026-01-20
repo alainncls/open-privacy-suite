@@ -1,0 +1,64 @@
+# E2E test override - use with: docker-compose -f docker-compose.yml -f docker-compose.e2e.yml
+
+services:
+  # Replace mock node with Anvil (Foundry's Ethereum node)
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    ports:
+      - "8545:8545"
+    networks:
+      - proxy-network
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
+    healthcheck:
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Override proxy-backend to use Anvil instead of mock node
+  proxy-backend:
+    environment:
+      - NODE_URL=http://anvil:8545
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
+      - BILLIONS_URL=http://billions-mock:9000
+      - PORT=8080
+      - ENVIRONMENT=development
+      - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      billions-mock:
+        condition: service_healthy
+      anvil:
+        condition: service_healthy
+
+  # Playwright test runner
+  playwright:
+    build:
+      context: ./e2e/playwright
+      dockerfile: Dockerfile
+    volumes:
+      - ./e2e/playwright:/app
+      - /app/node_modules
+      - ./e2e/playwright/test-results:/app/test-results
+      - ./e2e/playwright/playwright-report:/app/playwright-report
+    environment:
+      - PROXY_URL=http://proxy-backend:8080
+      - ADMIN_URL=http://proxy-backend:8080
+      - CI=${CI:-false}
+    depends_on:
+      proxy-backend:
+        condition: service_healthy
+    networks:
+      - proxy-network
+    working_dir: /app
+
+  # Disable services not needed for e2e tests
+  erigon-mock:
+    deploy:
+      replicas: 0
+
+  proxy-frontend:
+    deploy:
+      replicas: 0

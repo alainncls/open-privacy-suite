@@ -1,4 +1,10 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-bookworm AS builder
+
+# Install build dependencies for CGO (required by go-rapidsnark)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -9,13 +15,18 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build (CGO disabled - pgx/v5 is pure Go, no C dependencies needed)
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/bin/privacy-proxy ./cmd/server
+# Build with CGO enabled (required by go-rapidsnark/prover)
+RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/privacy-proxy ./cmd/server
 
 # Final stage
-FROM alpine:latest
+FROM debian:bookworm-slim
 
-RUN apk --no-cache add ca-certificates wget postgresql-client
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    postgresql-client \
+    libgmp10 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
