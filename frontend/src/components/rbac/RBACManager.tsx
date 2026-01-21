@@ -191,7 +191,7 @@ export default function RBACManager() {
                   value={selectedOrg?.id || ''}
                   onValueChange={handleOrgChange}
                 >
-                  <SelectTrigger className="w-[220px]">
+                  <SelectTrigger className="w-[280px]" aria-label="Select organization scope">
                     <SelectValue placeholder="Select organization" />
                   </SelectTrigger>
                   <SelectContent>
@@ -218,18 +218,20 @@ export default function RBACManager() {
           <div className="mb-4">
             <button
               onClick={() => setShowHowItWorks(!showHowItWorks)}
-              className="flex items-center gap-2 text-sm text-white/50 hover:text-white/70 transition-colors"
+              className="flex items-center gap-2 text-sm text-white/60 hover:text-white/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 rounded-md px-2 py-1 -ml-2"
+              aria-expanded={showHowItWorks}
+              aria-controls="how-permissions-work"
             >
-              <Info className="w-4 h-4" />
+              <Info className="w-4 h-4" aria-hidden="true" />
               <span>How permissions work</span>
               {showHowItWorks ? (
-                <ChevronUp className="w-4 h-4" />
+                <ChevronUp className="w-4 h-4" aria-hidden="true" />
               ) : (
-                <ChevronDown className="w-4 h-4" />
+                <ChevronDown className="w-4 h-4" aria-hidden="true" />
               )}
             </button>
             {showHowItWorks && (
-              <div className="mt-3 p-4 rounded-lg bg-white/5 border border-white/10 text-sm animate-fade-in">
+              <div id="how-permissions-work" className="mt-3 p-4 rounded-lg bg-white/5 border border-white/10 text-sm animate-fade-in">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h4 className="font-medium text-white/80 mb-2">Permission Model</h4>

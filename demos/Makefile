@@ -11,6 +11,7 @@ SHELL := /bin/bash
 
 # Directories
 DEMOS_DIR := $(shell pwd)
+PROJECT_ROOT := $(shell dirname $(DEMOS_DIR))
 PLAYWRIGHT_DIR := $(DEMOS_DIR)/playwright
 OUTPUT_DIR := $(DEMOS_DIR)/output
 CONFIGS_DIR := $(DEMOS_DIR)/configs
@@ -19,7 +20,7 @@ CONFIGS_DIR := $(DEMOS_DIR)/configs
 PYTHON := python3
 VENV := $(DEMOS_DIR)/.venv
 PIP := $(VENV)/bin/pip
-PYTHON_VENV := $(VENV)/bin/python
+PYTHON_VENV := PYTHONPATH=$(PROJECT_ROOT) $(VENV)/bin/python
 
 # Demo name (set via command line: make demo name=auth-flow)
 name ?=

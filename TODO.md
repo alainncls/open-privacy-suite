@@ -6,6 +6,12 @@
 
 ## Backlog
 
+### Demo Recording Support
+- [ ] **Backend mock signature mode** - Add `MOCK_SIGNATURES=true` env var to accept any wallet signature for demo recording
+  - Currently demo recording fails at wallet signing because mock signatures don't cryptographically validate
+  - Only enable in non-production environments
+  - Affects `internal/auth/link.go` signature verification
+
 ### Architecture Concerns (Non-Critical)
 - [ ] **Distributed Deployment** - In-memory stores won't work across multiple instances:
   - `SessionStore` - Auth sessions won't be shared
@@ -15,10 +21,18 @@
   - Recommendation: Document single-instance limitation or add Redis support
 
 ### Review Needed
-- [ ] **Demo creation system** - Review `demos/` folder and `make demo-*` targets for completeness and usefulness
 - [ ] **Bridge testing** - review the bridge and ensure that e2e tests and manual testing show that it is fully functional with post-verification on-chain of the bridging activity
 
 ## Done (Recent)
+- [x] **Demo creation system** - Reviewed and fixed. Added missing `__init__.py` files, fixed PYTHONPATH in Makefile, added comprehensive README. Known limitation: mock wallet signatures don't validate against backend (need backend mock mode for full demo recording)
+- [x] **Frontend accessibility & polish overhaul** - Comprehensive UI/UX improvements:
+  - Improved color contrast (WCAG AA compliance): `--text-secondary` 75%→85%, `--text-muted` 60%→70%
+  - Fixed focus states: Changed `focus:` to `focus-visible:` across input, select, and glass components
+  - Added `prefers-reduced-motion` support to disable animations for users who prefer reduced motion
+  - Added ARIA labels and attributes: QR code, loading spinners, collapsible sections, live status indicators
+  - Added screen reader support: `role="status"`, `aria-live="polite"`, `sr-only` text for color-only information
+  - Fixed scope dropdown truncation: Widened from 220px to 280px
+  - Improved text contrast consistency across card, tabs, and status components
 - [x] **Default Org bypass verification** - Confirmed intentional behavior (`rbac/access.go:311-315`), added clarifying comment
 - [x] **Frontend test coverage** - Added comprehensive tests for SuccessPage and LinkWalletPage (113 total tests now passing)
 - [x] **ENS resolution tests** - Added unit tests for namehash algorithm in `internal/ens/resolver_test.go`

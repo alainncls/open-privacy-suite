@@ -30,10 +30,10 @@ export function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
+      <div className="flex items-center justify-center py-16" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
-          <p className="text-white/60">Loading dashboard...</p>
+          <Loader2 className="w-8 h-8 text-primary-400 animate-spin" aria-hidden="true" />
+          <p className="text-white/70">Loading dashboard...</p>
         </div>
       </div>
     );

@@ -66,9 +66,9 @@ function AccessLogs() {
             </div>
             <div>
               <CardTitle className="text-lg">Access Logs</CardTitle>
-              <div className="flex items-center gap-2 mt-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-xs text-white/50">Auto-refreshing every 5s</span>
+              <div className="flex items-center gap-2 mt-1" role="status" aria-live="polite">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
+                <span className="text-xs text-white/60">Auto-refreshing every 5s</span>
               </div>
             </div>
           </div>
@@ -86,8 +86,9 @@ function AccessLogs() {
       </CardHeader>
       <CardContent>
         {loading && logs.length === 0 ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+          <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
+            <Loader2 className="w-6 h-6 text-white/50 animate-spin" aria-hidden="true" />
+            <span className="sr-only">Loading access logs...</span>
           </div>
         ) : logs.length === 0 ? (
           <div className="text-center py-12">

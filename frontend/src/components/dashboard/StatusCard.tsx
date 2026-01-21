@@ -68,8 +68,8 @@ export function StatusCard({ title, status, port, url, latency, error }: StatusC
             </div>
             <CardTitle className="text-lg">{title}</CardTitle>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5">
-            <div className={statusConfig.dotClass} />
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5" role="status">
+            <div className={statusConfig.dotClass} aria-hidden="true" />
             <span className="text-sm text-white/90 capitalize">{statusConfig.label}</span>
           </div>
         </div>
@@ -93,6 +93,9 @@ export function StatusCard({ title, status, port, url, latency, error }: StatusC
               <span className="text-white/70 text-sm">Latency</span>
               <span className={`font-mono text-sm ${getLatencyColor(latency)}`}>
                 {latency}ms
+                <span className="sr-only">
+                  {latency < 100 ? ' (good)' : latency < 300 ? ' (moderate)' : ' (slow)'}
+                </span>
               </span>
             </div>
           )}

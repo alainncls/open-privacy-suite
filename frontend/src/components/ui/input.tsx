@@ -7,10 +7,10 @@ const inputVariants = cva(
   {
     variants: {
       variant: {
-        default: "h-10 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 hover:bg-white/10 hover:border-white/30",
+        default: "h-10 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-white/90 placeholder:text-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 focus-visible:border-primary-500/50 hover:bg-white/10 hover:border-white/30",
         glass: "glass-input",
-        glassSolid: "h-10 rounded-lg border border-white/20 bg-primary-950/60 backdrop-blur-sm px-3 py-2 text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50",
-        ghost: "h-10 rounded-lg border-0 bg-transparent px-3 py-2 text-white/90 placeholder:text-white/40 focus:outline-none focus:bg-white/5",
+        glassSolid: "h-10 rounded-lg border border-white/20 bg-primary-950/60 backdrop-blur-sm px-3 py-2 text-white/90 placeholder:text-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 focus-visible:border-primary-500/50",
+        ghost: "h-10 rounded-lg border-0 bg-transparent px-3 py-2 text-white/90 placeholder:text-white/50 focus-visible:outline-none focus-visible:bg-white/5",
       },
     },
     defaultVariants: {

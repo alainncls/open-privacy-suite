@@ -154,12 +154,13 @@ export function LoginPage() {
         {/* QR Code for desktop */}
         {!isMobile && (
           <div className="flex flex-col items-center gap-4">
-            <div className="p-4 bg-white rounded-2xl shadow-lg">
+            <div className="p-4 bg-white rounded-2xl shadow-lg" role="img" aria-label="QR code for Privado ID authentication">
               <QRCodeSVG
                 value={deepLink}
                 size={200}
                 level="M"
                 includeMargin={false}
+                aria-hidden="true"
               />
             </div>
             <p className="text-sm text-white/80 text-center">
@@ -200,9 +201,9 @@ export function LoginPage() {
         )}
 
         {/* Polling indicator */}
-        <div className="flex items-center justify-center gap-2 text-white/70 text-sm">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          Waiting for wallet confirmation...
+        <div className="flex items-center justify-center gap-2 text-white/70 text-sm" role="status" aria-live="polite">
+          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+          <span>Waiting for wallet confirmation...</span>
         </div>
       </div>
     );
@@ -231,8 +232,8 @@ export function LoginPage() {
           <CardContent>
             {/* Loading state */}
             {state.step === 'loading' && (
-              <div className="flex flex-col items-center gap-4 py-8">
-                <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
+              <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite">
+                <Loader2 className="w-8 h-8 animate-spin text-primary-400" aria-hidden="true" />
                 <p className="text-white/80">Preparing authentication...</p>
               </div>
             )}

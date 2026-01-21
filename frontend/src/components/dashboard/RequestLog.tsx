@@ -62,8 +62,8 @@ export function RequestLog() {
             </div>
             <CardTitle className="text-lg">Request Log</CardTitle>
             {!isPaused && !loading && (
-              <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-green-500/10">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-green-500/10" role="status" aria-live="polite">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
                 <span className="text-xs text-green-400">Live</span>
               </div>
             )}
@@ -73,15 +73,16 @@ export function RequestLog() {
             size="sm"
             onClick={() => setIsPaused(!isPaused)}
             className="gap-2"
+            aria-label={isPaused ? 'Resume live log updates' : 'Pause live log updates'}
           >
             {isPaused ? (
               <>
-                <Play className="w-3.5 h-3.5" />
+                <Play className="w-3.5 h-3.5" aria-hidden="true" />
                 Resume
               </>
             ) : (
               <>
-                <Pause className="w-3.5 h-3.5" />
+                <Pause className="w-3.5 h-3.5" aria-hidden="true" />
                 Pause
               </>
             )}
@@ -90,8 +91,9 @@ export function RequestLog() {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+          <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
+            <Loader2 className="w-6 h-6 text-white/50 animate-spin" aria-hidden="true" />
+            <span className="sr-only">Loading request logs...</span>
           </div>
         ) : logs.length === 0 ? (
           <div className="text-center py-8 text-white/50">

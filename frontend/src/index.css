@@ -13,10 +13,10 @@
   --glass-border: rgba(255, 255, 255, 0.2);
   --glass-border-light: rgba(255, 255, 255, 0.1);
 
-  /* Text colors for dark backgrounds */
+  /* Text colors for dark backgrounds - WCAG AA compliant */
   --text-primary: rgba(255, 255, 255, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.75);
-  --text-muted: rgba(255, 255, 255, 0.6);
+  --text-secondary: rgba(255, 255, 255, 0.85);
+  --text-muted: rgba(255, 255, 255, 0.7);
 
   /* Status colors */
   --status-success: #22c55e;
@@ -115,7 +115,7 @@ body {
     color: var(--text-muted);
   }
 
-  .glass-input:focus {
+  .glass-input:focus-visible {
     outline: none;
     border-color: rgba(99, 102, 241, 0.5);
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
@@ -292,4 +292,20 @@ body {
 ::selection {
   background: rgba(99, 102, 241, 0.4);
   color: white;
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .status-dot {
+    animation: none;
+  }
 }
