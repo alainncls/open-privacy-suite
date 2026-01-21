@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"strings"
@@ -25,6 +26,7 @@ type ChallengeStore struct {
 	challenges map[string]*LinkChallenge // key: nonce
 	mu         sync.RWMutex
 	ttl        time.Duration
+	stopCh     chan struct{}
 }
 
 // NewChallengeStore creates a new challenge store with cleanup
@@ -32,18 +34,29 @@ func NewChallengeStore(ttl time.Duration, cleanupInterval time.Duration) *Challe
 	cs := &ChallengeStore{
 		challenges: make(map[string]*LinkChallenge),
 		ttl:        ttl,
+		stopCh:     make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
 	go func() {
 		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			cs.cleanup()
+		for {
+			select {
+			case <-ticker.C:
+				cs.cleanup()
+			case <-cs.stopCh:
+				return
+			}
 		}
 	}()
 
 	return cs
+}
+
+// Stop stops the cleanup goroutine
+func (cs *ChallengeStore) Stop() {
+	close(cs.stopCh)
 }
 
 // CreateChallenge creates a new link challenge
@@ -188,6 +201,12 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 	// Verify the challenge belongs to this user
 	if challenge.DID != userDID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "challenge does not belong to this user"})
+		return
+	}
+
+	// Validate address format
+	if !auth.IsValidAddress(req.Address) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid Ethereum address format"})
 		return
 	}
 
@@ -376,5 +395,7 @@ func (s *Server) resolveAndStoreENS(address string) {
 		ensNamePtr = &ensName
 	}
 
-	_ = s.db.UpdateENSName(address, ensNamePtr)
+	if err := s.db.UpdateENSName(address, ensNamePtr); err != nil {
+		log.Printf("Warning: failed to update ENS name for %s: %v", address, err)
+	}
 }

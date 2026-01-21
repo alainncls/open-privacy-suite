@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -396,6 +397,12 @@ func (s *Server) createContract(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate Ethereum address format
+	if !auth.IsValidAddress(input.Address) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid Ethereum address format"})
 		return
 	}
 

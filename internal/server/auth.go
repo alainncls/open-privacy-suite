@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -42,9 +43,14 @@ func (s *Server) getPublicURL(c *gin.Context) string {
 
 	if host != "" {
 		// Strip any port from the forwarded host
+		// For IPv6 literals like [::1]:8080, we want to strip ":8080" but keep [::1]
+		// For IPv6 without port like [::1], we don't want to strip at the internal colon
+		// Logic: strip port if (not IPv6 literal) OR (IPv6 literal with port, i.e. doesn't end with ])
 		hostname := host
 		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
-			if !strings.Contains(host, "[") || strings.HasSuffix(host, "]") == false {
+			isIPv6Literal := strings.Contains(host, "[")
+			hasPortAfterBracket := !strings.HasSuffix(host, "]")
+			if !isIPv6Literal || hasPortAfterBracket {
 				hostname = host[:colonIdx]
 			}
 		}
@@ -99,6 +105,10 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 
 	// Generate session ID first (needed for callback URL)
 	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
+	if sessionID == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "authentication service at capacity, please try again later"})
+		return
+	}
 
 	// Build callback URL with session ID using dynamic host detection
 	// This allows the QR code to work from any hostname (localhost, Tailscale, etc.)
@@ -281,7 +291,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), userDID, kyc)
 		if err != nil {
 			// Log error but continue - auth can proceed without RBAC user creation
-			_ = err
+			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
 		} else if user != nil {
 			kyc = user.KYC
 		}
@@ -314,7 +324,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
 		// Session may have been deleted or expired - log but continue
 		// The wallet still gets the tokens directly from the callback response
-		_ = err
+		log.Printf("Warning: failed to complete session %s: %v", sessionID, err)
 	}
 
 	return &AuthResponse{
@@ -434,7 +444,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// Revoke old refresh token
 	if err := s.db.RevokeRefreshToken(tokenHash); err != nil {
 		// Log error but continue (non-critical)
-		_ = err
+		log.Printf("Warning: failed to revoke old refresh token: %v", err)
 	}
 
 	// Store new refresh token

@@ -100,12 +100,19 @@ func VerifyAddressOwnership(claimedAddress, message, signatureHex string) error 
 	return nil
 }
 
-// NormalizeAddress converts an Ethereum address to lowercase checksum format
+// NormalizeAddress converts an Ethereum address to lowercase checksum format.
+// Returns lowercase address even if invalid (caller should validate first).
 func NormalizeAddress(address string) string {
 	if !common.IsHexAddress(address) {
 		return strings.ToLower(address)
 	}
 	return strings.ToLower(common.HexToAddress(address).Hex())
+}
+
+// IsValidAddress checks if a string is a valid Ethereum address.
+// A valid address is a 40 hex character string with 0x prefix (42 total chars).
+func IsValidAddress(address string) bool {
+	return common.IsHexAddress(address)
 }
 
 // MessageHashHex returns the hex-encoded hash of the signed message
