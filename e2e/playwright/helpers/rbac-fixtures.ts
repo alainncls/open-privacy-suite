@@ -77,9 +77,13 @@ export class RBACTestFixture {
 
   /**
    * Generate a unique Ethereum address for test isolation.
+   * Ethereum addresses are 40 hex characters (20 bytes) after the 0x prefix.
    */
   contractAddress(): string {
-    const bytes = randomUUID().replace(/-/g, '').slice(0, 40);
+    // UUID is only 32 hex chars, so combine two UUIDs and take 40 chars
+    const hex1 = randomUUID().replace(/-/g, '');
+    const hex2 = randomUUID().replace(/-/g, '');
+    const bytes = (hex1 + hex2).slice(0, 40);
     return `0x${bytes}`;
   }
 

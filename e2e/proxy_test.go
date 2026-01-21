@@ -224,12 +224,10 @@ func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banne
 	}
 
 	// Add to default group (permissions come from GroupAccess, not roles)
-	defaultGroupID := "00000000-0000-0000-0000-000000000001"
-
 	membership := &rbac.UserMembership{
 		ID:      uuid.New().String(),
 		UserID:  user.ID,
-		GroupID: defaultGroupID,
+		GroupID: rbac.DefaultGroupID,
 		Source:  rbac.MembershipSourceAdmin,
 	}
 

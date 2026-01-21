@@ -29,42 +29,55 @@ test.describe('Auth Formats', () => {
     expect(authRequestJson.length).toBeLessThan(2000);
   });
 
-  // QR code URL generation - needs backend implementation
-  test.skip('returns QR code URL for mobile User-Agent', async ({ request }) => {
-    const response = await request.post(`${PROXY_URL}/auth/request`, {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-      },
-    });
+  test('auth_request can generate valid iden3comm deeplink', async ({ request }) => {
+    const response = await request.post(`${PROXY_URL}/auth/request`);
 
     expect(response.ok()).toBe(true);
     const body = await response.json();
 
-    // Expected API: qr_code_url field for mobile clients
-    expect(body).toHaveProperty('qr_code_url');
-    expect(typeof body.qr_code_url).toBe('string');
-    expect(body.qr_code_url).toMatch(/^https?:\/\//);
+    // Frontend generates deeplink: iden3comm://?i_m=<base64_encoded_auth_request>
+    const authRequestJson = JSON.stringify(body.auth_request);
+    const base64Encoded = Buffer.from(authRequestJson).toString('base64');
+    const deeplink = `iden3comm://?i_m=${encodeURIComponent(base64Encoded)}`;
+
+    // Verify deeplink format
+    expect(deeplink).toMatch(/^iden3comm:\/\/\?i_m=/);
+
+    // Verify the encoded message can be decoded back
+    const urlParams = new URLSearchParams(deeplink.split('?')[1]);
+    const encodedMessage = urlParams.get('i_m');
+    expect(encodedMessage).not.toBeNull();
+
+    const decodedJson = Buffer.from(decodeURIComponent(encodedMessage!), 'base64').toString();
+    const decoded = JSON.parse(decodedJson);
+
+    // Verify decoded matches original
+    expect(decoded.id).toBe(body.auth_request.id);
+    expect(decoded.typ).toBe('application/iden3comm-plain-json');
+    expect(decoded.type).toBe('https://iden3-communication.io/authorization/1.0/request');
   });
 
-  // Deeplink generation - needs backend implementation
-  test.skip('returns deeplink for web clients', async ({ request }) => {
-    const response = await request.post(`${PROXY_URL}/auth/request`, {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-    });
+  test('auth_request contains required iden3comm fields for wallet', async ({ request }) => {
+    const response = await request.post(`${PROXY_URL}/auth/request`);
 
     expect(response.ok()).toBe(true);
     const body = await response.json();
+    const authRequest = body.auth_request;
 
-    // Expected API: deeplink field for web clients to open wallet app
-    expect(body).toHaveProperty('deeplink');
-    expect(typeof body.deeplink).toBe('string');
-    // Deeplink should use a custom scheme (e.g., privado://)
-    expect(body.deeplink).toMatch(/^[a-z]+:\/\//);
+    // Required iden3comm fields
+    expect(authRequest).toHaveProperty('id');
+    expect(authRequest).toHaveProperty('thid');
+    expect(authRequest).toHaveProperty('typ', 'application/iden3comm-plain-json');
+    expect(authRequest).toHaveProperty('type', 'https://iden3-communication.io/authorization/1.0/request');
+    expect(authRequest).toHaveProperty('from');
+    expect(authRequest).toHaveProperty('body');
+
+    // Body should contain callback URL
+    expect(authRequest.body).toHaveProperty('callbackUrl');
+    expect(authRequest.body.callbackUrl).toMatch(/\/auth\/callback\?session=/);
+
+    // Body should contain reason for user display
+    expect(authRequest.body).toHaveProperty('reason');
+    expect(typeof authRequest.body.reason).toBe('string');
   });
 });
