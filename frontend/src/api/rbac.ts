@@ -40,6 +40,7 @@ export const rbacApi = {
     create: (input: CreateOrganizationInput) => api.post<Organization>('/orgs', input),
     update: (orgId: string, input: UpdateOrganizationInput) =>
       api.put<Organization>(`/orgs/${orgId}`, input),
+    delete: (orgId: string) => api.delete(`/orgs/${orgId}`),
   },
 
   // Groups

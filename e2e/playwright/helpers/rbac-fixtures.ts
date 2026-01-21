@@ -297,14 +297,12 @@ export class RBACTestFixture {
     ownerGroupId: string,
     opts?: {
       address?: string;
-      abilities?: string[];
     }
   ): Promise<ContractOwnership> {
     const address = opts?.address ?? this.contractAddress();
     const contract = await this.rbac.createContract(orgId, {
       contract_address: address,
       owner_group_id: ownerGroupId,
-      owner_abilities: opts?.abilities ?? [],
     });
     this.contracts.push({ orgId, address });
     return contract;

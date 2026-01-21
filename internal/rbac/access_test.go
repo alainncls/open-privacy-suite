@@ -87,7 +87,7 @@ func TestClassifyOperation(t *testing.T) {
 	}
 }
 
-func TestGetContractAddress(t *testing.T) {
+func TestGetTargetAddress(t *testing.T) {
 	tests := []struct {
 		name     string
 		method   string
@@ -152,7 +152,7 @@ func TestGetContractAddress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetContractAddress(tt.method, tt.params)
+			result := GetTargetAddress(tt.method, tt.params)
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)
 			}
@@ -163,8 +163,8 @@ func TestGetContractAddress(t *testing.T) {
 func TestEffectivePermissionsMethods(t *testing.T) {
 	perms := &EffectivePermissions{
 		AllowMethods:   []string{"eth_call", "eth_getBalance"},
-		AllowContracts: []string{"0xcontract1", "0xcontract2"},
-		OwnedContracts: []string{"0xowned1"},
+		AllowAddresses: []string{"0xaddress1", "0xaddress2"},
+		OwnedAddresses: []string{"0xowned1"},
 		Claims:         []Claim{ClaimReader, ClaimWriter},
 	}
 
@@ -176,20 +176,20 @@ func TestEffectivePermissionsMethods(t *testing.T) {
 		t.Error("Expected HasMethod to return false for eth_sendTransaction")
 	}
 
-	// Test HasContract
-	if !perms.HasContract("0xcontract1") {
-		t.Error("Expected HasContract to return true for 0xcontract1")
+	// Test HasAddress
+	if !perms.HasAddress("0xaddress1") {
+		t.Error("Expected HasAddress to return true for 0xaddress1")
 	}
-	if perms.HasContract("0xunknown") {
-		t.Error("Expected HasContract to return false for unknown contract")
+	if perms.HasAddress("0xunknown") {
+		t.Error("Expected HasAddress to return false for unknown address")
 	}
 
-	// Test OwnsContract
-	if !perms.OwnsContract("0xowned1") {
-		t.Error("Expected OwnsContract to return true for 0xowned1")
+	// Test OwnsAddress
+	if !perms.OwnsAddress("0xowned1") {
+		t.Error("Expected OwnsAddress to return true for 0xowned1")
 	}
-	if perms.OwnsContract("0xcontract1") {
-		t.Error("Expected OwnsContract to return false for allowed but not owned contract")
+	if perms.OwnsAddress("0xaddress1") {
+		t.Error("Expected OwnsAddress to return false for allowed but not owned address")
 	}
 
 	// Test HasClaim

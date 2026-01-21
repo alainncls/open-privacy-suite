@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
 import type { User } from '@/types/rbac';
 import UserDetail from './UserDetail';
@@ -30,6 +31,8 @@ import {
 } from 'lucide-react';
 
 export default function UserList() {
+  const { userId } = useParams();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -37,6 +40,18 @@ export default function UserList() {
   useEffect(() => {
     loadUsers();
   }, []);
+
+  // Open modal if userId is in URL
+  useEffect(() => {
+    if (userId && users.length > 0) {
+      const user = users.find(u => u.id === userId);
+      if (user) {
+        setSelectedUser(user);
+      }
+    } else if (!userId) {
+      setSelectedUser(null);
+    }
+  }, [userId, users]);
 
   const loadUsers = async () => {
     try {
@@ -126,7 +141,7 @@ export default function UserList() {
                 key={user.id}
                 className="animate-fade-in cursor-pointer hover:bg-white/5"
                 style={{ animationDelay: `${index * 30}ms` }}
-                onClick={() => setSelectedUser(user)}
+                onClick={() => navigate(`/admin/rbac/users/${user.id}`)}
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -177,10 +192,11 @@ export default function UserList() {
                     onClick={e => e.stopPropagation()}
                   >
                     <Button
-                      variant={user.banned ? 'success' : 'outline'}
+                      variant={user.banned ? 'success' : 'destructive'}
                       size="sm"
                       onClick={() => handleToggleBan(user)}
                       className="gap-1.5"
+                      title={user.banned ? 'Unban this user' : 'Ban this user'}
                     >
                       {user.banned ? (
                         <>
@@ -197,7 +213,8 @@ export default function UserList() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setSelectedUser(user)}
+                      onClick={() => navigate(`/admin/rbac/users/${user.id}`)}
+                      title="View user details"
                     >
                       <Eye className="w-4 h-4" />
                     </Button>
@@ -212,7 +229,7 @@ export default function UserList() {
       {/* User Detail Dialog */}
       <Dialog
         open={!!selectedUser}
-        onOpenChange={open => !open && setSelectedUser(null)}
+        onOpenChange={open => !open && navigate('/admin/rbac/users')}
       >
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>

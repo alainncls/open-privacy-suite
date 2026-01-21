@@ -170,6 +170,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		Name        string  `json:"name" binding:"required"`
 		Description string  `json:"description"`
 		ParentID    *string `json:"parent_id"`
+		RoleID      *string `json:"role_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -201,6 +202,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		ID:          uuid.New().String(),
 		OrgID:       orgID,
 		ParentID:    input.ParentID,
+		RoleID:      input.RoleID,
 		Slug:        input.Slug,
 		Name:        input.Name,
 		Description: input.Description,
@@ -246,6 +248,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 	var input struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
+		RoleID      *string `json:"role_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -257,6 +260,14 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.Description != nil {
 		group.Description = *input.Description
+	}
+	if input.RoleID != nil {
+		// Allow setting to null by passing empty string
+		if *input.RoleID == "" {
+			group.RoleID = nil
+		} else {
+			group.RoleID = input.RoleID
+		}
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
@@ -302,12 +313,12 @@ func (s *Server) setGroupPermissions(c *gin.Context) {
 	groupID := c.Param("group_id")
 
 	var input struct {
-		AllowMethods      []string            `json:"allow_methods"`
-		AllowContracts    []string            `json:"allow_contracts"`
-		OwnedContracts    []string            `json:"owned_contracts"`
-		ContractFunctions map[string][]string `json:"contract_functions"` // contract_address -> allowed function selectors
-		RateLimitRPS      *int                `json:"rate_limit_rps"`
-		RateLimitDaily    *int                `json:"rate_limit_daily"`
+		AllowMethods     []string            `json:"allow_methods"`
+		AllowAddresses   []string            `json:"allow_addresses"`
+		OwnedAddresses   []string            `json:"owned_addresses"`
+		AddressFunctions map[string][]string `json:"address_functions"` // address -> allowed function selectors
+		RateLimitRPS     *int                `json:"rate_limit_rps"`
+		RateLimitDaily   *int                `json:"rate_limit_daily"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -315,14 +326,14 @@ func (s *Server) setGroupPermissions(c *gin.Context) {
 	}
 
 	perms := &rbac.GroupPermissions{
-		ID:                uuid.New().String(),
-		GroupID:           groupID,
-		AllowMethods:      input.AllowMethods,
-		AllowContracts:    input.AllowContracts,
-		OwnedContracts:    input.OwnedContracts,
-		ContractFunctions: input.ContractFunctions,
-		RateLimitRPS:      input.RateLimitRPS,
-		RateLimitDaily:    input.RateLimitDaily,
+		ID:               uuid.New().String(),
+		GroupID:          groupID,
+		AllowMethods:     input.AllowMethods,
+		AllowAddresses:   input.AllowAddresses,
+		OwnedAddresses:   input.OwnedAddresses,
+		AddressFunctions: input.AddressFunctions,
+		RateLimitRPS:     input.RateLimitRPS,
+		RateLimitDaily:   input.RateLimitDaily,
 	}
 
 	if err := s.db.SetGroupPermissions(c.Request.Context(), perms); err != nil {
@@ -352,9 +363,10 @@ func (s *Server) createRole(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		Name        string       `json:"name" binding:"required"`
-		Description string       `json:"description"`
-		Claims      []rbac.Claim `json:"claims"`
+		Name         string       `json:"name" binding:"required"`
+		Description  string       `json:"description"`
+		Claims       []rbac.Claim `json:"claims"`
+		AllowMethods []string     `json:"allow_methods"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -362,11 +374,12 @@ func (s *Server) createRole(c *gin.Context) {
 	}
 
 	role := &rbac.Role{
-		ID:          uuid.New().String(),
-		OrgID:       orgID,
-		Name:        input.Name,
-		Description: input.Description,
-		Claims:      input.Claims,
+		ID:           uuid.New().String(),
+		OrgID:        orgID,
+		Name:         input.Name,
+		Description:  input.Description,
+		Claims:       input.Claims,
+		AllowMethods: input.AllowMethods,
 	}
 
 	if err := s.db.CreateRole(c.Request.Context(), role); err != nil {
@@ -405,9 +418,10 @@ func (s *Server) updateRole(c *gin.Context) {
 	}
 
 	var input struct {
-		Name        *string       `json:"name"`
-		Description *string       `json:"description"`
-		Claims      *[]rbac.Claim `json:"claims"`
+		Name         *string       `json:"name"`
+		Description  *string       `json:"description"`
+		Claims       *[]rbac.Claim `json:"claims"`
+		AllowMethods *[]string     `json:"allow_methods"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -422,6 +436,9 @@ func (s *Server) updateRole(c *gin.Context) {
 	}
 	if input.Claims != nil {
 		role.Claims = *input.Claims
+	}
+	if input.AllowMethods != nil {
+		role.AllowMethods = *input.AllowMethods
 	}
 
 	if err := s.db.UpdateRole(c.Request.Context(), role); err != nil {
@@ -542,10 +559,14 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 
 func (s *Server) listUserMemberships(c *gin.Context) {
 	userID := c.Param("user_id")
-	memberships, err := s.db.ListUserMemberships(c.Request.Context(), userID)
+	memberships, err := s.db.ListUserMembershipsWithDetails(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	// Return empty array instead of null if no memberships
+	if memberships == nil {
+		memberships = []*rbac.MembershipWithDetails{}
 	}
 	c.JSON(http.StatusOK, memberships)
 }
@@ -614,7 +635,6 @@ func (s *Server) createContractOwnership(c *gin.Context) {
 	var input struct {
 		ContractAddress string         `json:"contract_address" binding:"required"`
 		OwnerGroupID    string         `json:"owner_group_id" binding:"required"`
-		OwnerAbilities  []string       `json:"owner_abilities"`
 		Metadata        map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -627,7 +647,6 @@ func (s *Server) createContractOwnership(c *gin.Context) {
 		ContractAddress: input.ContractAddress,
 		OrgID:           orgID,
 		OwnerGroupID:    input.OwnerGroupID,
-		OwnerAbilities:  input.OwnerAbilities,
 		Metadata:        input.Metadata,
 	}
 	if ownership.Metadata == nil {
@@ -660,9 +679,8 @@ func (s *Server) updateContractOwnership(c *gin.Context) {
 	}
 
 	var input struct {
-		OwnerGroupID   *string        `json:"owner_group_id"`
-		OwnerAbilities []string       `json:"owner_abilities"`
-		Metadata       map[string]any `json:"metadata"`
+		OwnerGroupID *string        `json:"owner_group_id"`
+		Metadata     map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -673,9 +691,6 @@ func (s *Server) updateContractOwnership(c *gin.Context) {
 
 	if input.OwnerGroupID != nil {
 		ownership.OwnerGroupID = *input.OwnerGroupID
-	}
-	if input.OwnerAbilities != nil {
-		ownership.OwnerAbilities = input.OwnerAbilities
 	}
 	if input.Metadata != nil {
 		ownership.Metadata = input.Metadata

@@ -20,9 +20,8 @@ export default function GroupPermissionsForm({
   onSave,
 }: GroupPermissionsFormProps) {
   const [loading, setLoading] = useState(true);
-  const [allowMethods, setAllowMethods] = useState('');
-  const [allowContracts, setAllowContracts] = useState('');
-  const [ownedContracts, setOwnedContracts] = useState('');
+  const [allowAddresses, setAllowAddresses] = useState('');
+  const [ownedAddresses, setOwnedAddresses] = useState('');
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
   const [saving, setSaving] = useState(false);
@@ -38,9 +37,8 @@ export default function GroupPermissionsForm({
       const response = await rbacApi.groups.getPermissions(orgId, groupId);
       const perms = response.data;
       if (perms) {
-        setAllowMethods((perms.allow_methods || []).join(', '));
-        setAllowContracts((perms.allow_contracts || []).join('\n'));
-        setOwnedContracts((perms.owned_contracts || []).join('\n'));
+        setAllowAddresses((perms.allow_addresses || []).join('\n'));
+        setOwnedAddresses((perms.owned_addresses || []).join('\n'));
         setRateLimitRPS(perms.rate_limit_rps?.toString() || '');
         setRateLimitDaily(perms.rate_limit_daily?.toString() || '');
       }
@@ -65,9 +63,8 @@ export default function GroupPermissionsForm({
 
     try {
       const permissions: Partial<GroupPermissions> = {
-        allow_methods: parseList(allowMethods),
-        allow_contracts: parseList(allowContracts, /[\s\n,]+/),
-        owned_contracts: parseList(ownedContracts, /[\s\n,]+/),
+        allow_addresses: parseList(allowAddresses, /[\s\n,]+/),
+        owned_addresses: parseList(ownedAddresses, /[\s\n,]+/),
         rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
         rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
       };
@@ -106,48 +103,40 @@ export default function GroupPermissionsForm({
         </div>
       )}
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
-          Allowed Methods
-        </label>
-        <Input
-          type="text"
-          value={allowMethods}
-          onChange={e => setAllowMethods(e.target.value)}
-          placeholder="eth_call, eth_getBalance, eth_blockNumber"
-        />
-        <p className="text-xs text-white/40">
-          Comma-separated list of allowed RPC methods
+      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 mb-4">
+        <p className="text-sm text-blue-400">
+          <strong>Note:</strong> Allowed methods are now configured on Roles, not Groups.
+          Edit the group's assigned Role to change allowed methods.
         </p>
       </div>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">
-          Allowed Contracts
+          Allowed Addresses
         </label>
         <Textarea
-          value={allowContracts}
-          onChange={e => setAllowContracts(e.target.value)}
+          value={allowAddresses}
+          onChange={e => setAllowAddresses(e.target.value)}
           placeholder="0x1234...&#10;0x5678..."
           className="h-24 font-mono text-sm"
         />
         <p className="text-xs text-white/40">
-          Contract addresses this group can interact with (one per line)
+          Addresses this group can interact with (one per line)
         </p>
       </div>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">
-          Owned Contracts
+          Owned Addresses
         </label>
         <Textarea
-          value={ownedContracts}
-          onChange={e => setOwnedContracts(e.target.value)}
+          value={ownedAddresses}
+          onChange={e => setOwnedAddresses(e.target.value)}
           placeholder="0xabcd...&#10;0xefgh..."
           className="h-24 font-mono text-sm"
         />
         <p className="text-xs text-white/40">
-          Contract addresses this group owns (one per line)
+          Addresses this group owns (one per line)
         </p>
       </div>
 

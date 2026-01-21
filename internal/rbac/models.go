@@ -41,6 +41,7 @@ type Group struct {
 	ID          string    `json:"id"`
 	OrgID       string    `json:"org_id"`
 	ParentID    *string   `json:"parent_id,omitempty"`
+	RoleID      *string   `json:"role_id,omitempty"` // Assigned role - all members inherit this role's permissions
 	Slug        string    `json:"slug"`
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
@@ -50,29 +51,30 @@ type Group struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Role represents a named permission set with claims.
+// Role represents a named permission set with claims and allowed methods.
 type Role struct {
-	ID          string    `json:"id"`
-	OrgID       string    `json:"org_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Claims      []Claim   `json:"claims"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	OrgID        string    `json:"org_id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	Claims       []Claim   `json:"claims"`
+	AllowMethods []string  `json:"allow_methods"` // Allowed RPC methods for this role
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // GroupPermissions represents the permissions assigned to a group.
 type GroupPermissions struct {
-	ID                string              `json:"id"`
-	GroupID           string              `json:"group_id"`
-	AllowMethods      []string            `json:"allow_methods"`
-	AllowContracts    []string            `json:"allow_contracts"`
-	OwnedContracts    []string            `json:"owned_contracts"`
-	ContractFunctions map[string][]string `json:"contract_functions,omitempty"` // contract_address -> allowed function selectors
-	RateLimitRPS      *int                `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily    *int                `json:"rate_limit_daily,omitempty"`
-	CreatedAt         time.Time           `json:"created_at"`
-	UpdatedAt         time.Time           `json:"updated_at"`
+	ID               string              `json:"id"`
+	GroupID          string              `json:"group_id"`
+	AllowMethods     []string            `json:"allow_methods"`
+	AllowAddresses   []string            `json:"allow_addresses"`
+	OwnedAddresses   []string            `json:"owned_addresses"`
+	AddressFunctions map[string][]string `json:"address_functions,omitempty"` // address -> allowed function selectors
+	RateLimitRPS     *int                `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily   *int                `json:"rate_limit_daily,omitempty"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at"`
 }
 
 // User represents a user in the RBAC system.
@@ -100,13 +102,12 @@ type UserMembership struct {
 	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
-// ContractOwnership tracks deployed contracts and owner abilities.
+// ContractOwnership tracks deployed contracts and their owner groups.
 type ContractOwnership struct {
 	ID               string         `json:"id"`
 	ContractAddress  string         `json:"contract_address"`
 	OrgID            string         `json:"org_id"`
 	OwnerGroupID     string         `json:"owner_group_id"`
-	OwnerAbilities   []string       `json:"owner_abilities"` // e.g., ["upgrade", "pause", "admin"]
 	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
 	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
 	Metadata         map[string]any `json:"metadata"`
@@ -116,18 +117,18 @@ type ContractOwnership struct {
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
 type EffectivePermissions struct {
-	ID                string              `json:"id"`
-	UserID            string              `json:"user_id"`
-	OrgID             string              `json:"org_id"`
-	AllowMethods      []string            `json:"allow_methods"`
-	AllowContracts    []string            `json:"allow_contracts"`
-	OwnedContracts    []string            `json:"owned_contracts"`
-	ContractFunctions map[string][]string `json:"contract_functions,omitempty"` // contract_address -> allowed function selectors
-	Claims            []Claim             `json:"claims"`
-	RateLimitRPS      *int                `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily    *int                `json:"rate_limit_daily,omitempty"`
-	ComputedAt        time.Time           `json:"computed_at"`
-	ExpiresAt         time.Time           `json:"expires_at"`
+	ID               string              `json:"id"`
+	UserID           string              `json:"user_id"`
+	OrgID            string              `json:"org_id"`
+	AllowMethods     []string            `json:"allow_methods"`
+	AllowAddresses   []string            `json:"allow_addresses"`
+	OwnedAddresses   []string            `json:"owned_addresses"`
+	AddressFunctions map[string][]string `json:"address_functions,omitempty"` // address -> allowed function selectors
+	Claims           []Claim             `json:"claims"`
+	RateLimitRPS     *int                `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily   *int                `json:"rate_limit_daily,omitempty"`
+	ComputedAt       time.Time           `json:"computed_at"`
+	ExpiresAt        time.Time           `json:"expires_at"`
 }
 
 // AuditLogEntry represents an entry in the RBAC audit log.
@@ -151,7 +152,7 @@ type AccessCheckRequest struct {
 	OrgSlug          string  `json:"org_slug,omitempty"` // Optional, defaults to "default"
 	Method           string  `json:"method"`
 	Params           []any   `json:"params,omitempty"`            // JSON-RPC params for Multicall detection
-	ContractAddress  string  `json:"contract_address,omitempty"`
+	TargetAddress    string  `json:"target_address,omitempty"`    // Target address (contract or EOA)
 	FunctionSelector string  `json:"function_selector,omitempty"` // First 4 bytes of calldata (e.g., "0xa9059cbb")
 	RequiredClaims   []Claim `json:"required_claims,omitempty"`
 }
@@ -194,34 +195,34 @@ func (e *EffectivePermissions) HasMethod(method string) bool {
 	return slices.Contains(e.AllowMethods, method)
 }
 
-// HasContract checks if the effective permissions allow a specific contract.
-// If AllowContracts is empty, all contracts are allowed (no restriction).
-func (e *EffectivePermissions) HasContract(address string) bool {
-	// Empty allow_contracts means no contract restriction - allow all
-	if len(e.AllowContracts) == 0 {
+// HasAddress checks if the effective permissions allow a specific address.
+// If AllowAddresses is empty, all addresses are allowed (no restriction).
+func (e *EffectivePermissions) HasAddress(address string) bool {
+	// Empty allow_addresses means no address restriction - allow all
+	if len(e.AllowAddresses) == 0 {
 		return true
 	}
-	return slices.Contains(e.AllowContracts, address)
+	return slices.Contains(e.AllowAddresses, address)
 }
 
-// OwnsContract checks if the effective permissions include ownership of a contract.
-func (e *EffectivePermissions) OwnsContract(address string) bool {
-	return slices.Contains(e.OwnedContracts, address)
+// OwnsAddress checks if the effective permissions include ownership of an address.
+func (e *EffectivePermissions) OwnsAddress(address string) bool {
+	return slices.Contains(e.OwnedAddresses, address)
 }
 
-// HasFunctionSelector checks if a function selector is allowed for a contract.
-// If the contract has no specific function restrictions, all functions are allowed.
+// HasFunctionSelector checks if a function selector is allowed for an address.
+// If the address has no specific function restrictions, all functions are allowed.
 // The selector should be the first 4 bytes of calldata (e.g., "0xa9059cbb" for transfer).
-func (e *EffectivePermissions) HasFunctionSelector(contract, selector string) bool {
+func (e *EffectivePermissions) HasFunctionSelector(address, selector string) bool {
 	// If no function restrictions defined, all functions are allowed
-	if e.ContractFunctions == nil || len(e.ContractFunctions) == 0 {
+	if e.AddressFunctions == nil || len(e.AddressFunctions) == 0 {
 		return true
 	}
 
-	// Check if this specific contract has function restrictions
-	allowedSelectors, hasRestrictions := e.ContractFunctions[contract]
+	// Check if this specific address has function restrictions
+	allowedSelectors, hasRestrictions := e.AddressFunctions[address]
 	if !hasRestrictions {
-		// Contract not in the map, all functions allowed
+		// Address not in the map, all functions allowed
 		return true
 	}
 

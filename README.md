@@ -138,8 +138,7 @@ docker-compose up -d
 
 This will start:
 - **PostgreSQL** on port 5432
-- **Mock Privado ID** service on port 9000 (for testing)
-- **Mock Erigon node** on port 8545
+- **Anvil** (local Ethereum node) on port 8545
 - **Backend API** on port 8080
 - **Frontend UI** on port 5173
 
@@ -284,22 +283,22 @@ make e2e
 **Or run manually:**
 ```bash
 # Start services
-docker-compose -f docker-compose.yml -f docker-compose.e2e.yml up -d postgres billions-mock anvil proxy-backend
+docker-compose -f docker-compose.e2e.yml up -d postgres anvil proxy-backend
 
 # Run tests
-docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test
+docker-compose -f docker-compose.e2e.yml run --rm playwright npm test
 
 # Stop services
-docker-compose -f docker-compose.yml -f docker-compose.e2e.yml down
+docker-compose -f docker-compose.e2e.yml down
 ```
 
 **Run specific test suites:**
 ```bash
 # Run only function selector tests
-docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Function Selector"
+docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Function Selector"
 
 # Run only hierarchy tests
-docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Hierarchy"
+docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Hierarchy"
 ```
 
 ## Access Control

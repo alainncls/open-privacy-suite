@@ -107,7 +107,6 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	cfg := &config.Config{
 		NodeURL:          "http://localhost:8545",
 		DatabaseURL:      dbURL,
-		BillionsURL:      "http://localhost:9000", // Not used anymore, but kept for compatibility
 		PrivadoRPCURL:    "https://rpc-mainnet.privado.id",
 		IPFSGateway:      "https://ipfs-proxy-cache.privado.id",
 		JWTSecret:        "test-secret",

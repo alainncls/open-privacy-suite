@@ -28,9 +28,7 @@ export default function MembershipForm({
   const [groups, setGroups] = useState<Group[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
-  const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [loadingGroups, setLoadingGroups] = useState(false);
-  const [loadingRoles, setLoadingRoles] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +39,6 @@ export default function MembershipForm({
       setGroups([]);
       setRoles([]);
       setSelectedGroupId('');
-      setSelectedRoleId('');
     }
   }, [selectedOrgId]);
 
@@ -49,7 +46,6 @@ export default function MembershipForm({
     if (!selectedOrgId) return;
 
     setLoadingGroups(true);
-    setLoadingRoles(true);
 
     try {
       const [groupsRes, rolesRes] = await Promise.all([
@@ -64,9 +60,14 @@ export default function MembershipForm({
       setRoles([]);
     } finally {
       setLoadingGroups(false);
-      setLoadingRoles(false);
     }
   };
+
+  // Get the role assigned to the selected group
+  const selectedGroup = groups.find(g => g.id === selectedGroupId);
+  const groupRole = selectedGroup?.role_id
+    ? roles.find(r => r.id === selectedGroup.role_id)
+    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,7 +82,7 @@ export default function MembershipForm({
     try {
       await rbacApi.users.createMembership(userId, {
         group_id: selectedGroupId,
-        role_id: selectedRoleId || null,
+        // Role is now inherited from the group, not set per-membership
       });
       onSave();
     } catch (err: unknown) {
@@ -163,48 +164,26 @@ export default function MembershipForm({
         )}
       </div>
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
-          Role (optional)
-        </label>
-        {loadingRoles ? (
-          <div className="flex items-center gap-2 text-white/40 py-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Loading roles...</span>
-          </div>
-        ) : !selectedOrgId ? (
-          <p className="text-white/40 text-sm py-2">Select an organization first</p>
-        ) : (
-          <Select
-            value={selectedRoleId}
-            onValueChange={setSelectedRoleId}
-            disabled={!selectedOrgId}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="No role (group permissions only)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_none">
-                <span className="text-white/60">No role (group permissions only)</span>
-              </SelectItem>
-              {roles.map(role => (
-                <SelectItem key={role.id} value={role.id}>
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-white/40" />
-                    <span>{role.name}</span>
-                    {role.description && (
-                      <span className="text-white/40 text-xs">- {role.description}</span>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <p className="text-xs text-white/40">
-          Roles grant additional claims/permissions on top of group permissions
-        </p>
-      </div>
+      {/* Show assigned role info */}
+      {selectedGroupId && (
+        <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+          <p className="text-xs text-white/50 mb-2">Assigned Role (inherited from group):</p>
+          {groupRole ? (
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-primary-400" />
+              <span className="font-medium">{groupRole.name}</span>
+              {groupRole.description && (
+                <span className="text-white/40 text-xs">- {groupRole.description}</span>
+              )}
+            </div>
+          ) : (
+            <span className="text-white/40 text-sm">No role assigned to this group</span>
+          )}
+          <p className="text-xs text-white/40 mt-2">
+            Users inherit their role from the group. To change the role, edit the group settings.
+          </p>
+        </div>
+      )}
 
       <div className="flex justify-end gap-3 pt-2">
         <Button

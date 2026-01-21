@@ -33,6 +33,7 @@ body {
   background: linear-gradient(135deg, #1e1b4b 0%, #312e81 25%, #1e3a5f 50%, #164e63 75%, #1e1b4b 100%);
   background-attachment: fixed;
   color: var(--text-primary);
+  overflow-x: hidden;
 }
 
 #root {

@@ -201,20 +201,24 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	store.groups["root"] = rootGroup
 	store.groups["child"] = childGroup
 
-	// Root allows: eth_call, eth_getBalance, eth_sendTransaction
+	// Root group permissions (contracts only - methods now come from Role)
 	store.groupPermissions["root"] = &GroupPermissions{
-		GroupID:      "root",
-		AllowMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
+		GroupID: "root",
 	}
 
-	// Child restricts to: eth_call, eth_getBalance
+	// Child group permissions (contracts only - methods now come from Role)
 	store.groupPermissions["child"] = &GroupPermissions{
-		GroupID:      "child",
-		AllowMethods: []string{"eth_call", "eth_getBalance"},
+		GroupID: "child",
 	}
 
-	// User in child group
-	role := &Role{ID: "role1", OrgID: "org1", Claims: []Claim{ClaimReader}}
+	// User in child group with a role that has methods
+	// In the new model, methods are on the Role, not GroupPermissions
+	role := &Role{
+		ID:           "role1",
+		OrgID:        "org1",
+		Claims:       []Claim{ClaimReader},
+		AllowMethods: []string{"eth_call", "eth_getBalance"}, // Methods on Role
+	}
 	store.roles["role1"] = role
 
 	roleID := "role1"
@@ -261,21 +265,28 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	store.groups["groupA"] = groupA
 	store.groups["groupB"] = groupB
 
-	// Group A allows: eth_call, eth_getBalance
+	// Group permissions (contracts only - methods now come from Role)
 	store.groupPermissions["groupA"] = &GroupPermissions{
-		GroupID:      "groupA",
-		AllowMethods: []string{"eth_call", "eth_getBalance"},
+		GroupID: "groupA",
 	}
-
-	// Group B allows: eth_call, eth_sendTransaction
 	store.groupPermissions["groupB"] = &GroupPermissions{
-		GroupID:      "groupB",
-		AllowMethods: []string{"eth_call", "eth_sendTransaction"},
+		GroupID: "groupB",
 	}
 
-	// User is member of both groups
-	roleReader := &Role{ID: "reader", OrgID: "org1", Claims: []Claim{ClaimReader}}
-	roleWriter := &Role{ID: "writer", OrgID: "org1", Claims: []Claim{ClaimWriter}}
+	// User is member of both groups with different roles
+	// In the new model, methods are on the Role, not GroupPermissions
+	roleReader := &Role{
+		ID:           "reader",
+		OrgID:        "org1",
+		Claims:       []Claim{ClaimReader},
+		AllowMethods: []string{"eth_call", "eth_getBalance"}, // Group A's methods
+	}
+	roleWriter := &Role{
+		ID:           "writer",
+		OrgID:        "org1",
+		Claims:       []Claim{ClaimWriter},
+		AllowMethods: []string{"eth_call", "eth_sendTransaction"}, // Group B's methods
+	}
 	store.roles["reader"] = roleReader
 	store.roles["writer"] = roleWriter
 
@@ -313,7 +324,7 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	}
 }
 
-func TestResolverOwnedContractsPropagate(t *testing.T) {
+func TestResolverOwnedAddressesPropagate(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
 
@@ -325,18 +336,18 @@ func TestResolverOwnedContractsPropagate(t *testing.T) {
 	store.groups["root"] = rootGroup
 	store.groups["child"] = childGroup
 
-	// Root owns contract A
+	// Root owns address A
 	store.groupPermissions["root"] = &GroupPermissions{
 		GroupID:        "root",
 		AllowMethods:   []string{"eth_call"},
-		OwnedContracts: []string{"0xcontractA"},
+		OwnedAddresses: []string{"0xaddressA"},
 	}
 
-	// Child owns contract B
+	// Child owns address B
 	store.groupPermissions["child"] = &GroupPermissions{
 		GroupID:        "child",
 		AllowMethods:   []string{"eth_call"},
-		OwnedContracts: []string{"0xcontractB"},
+		OwnedAddresses: []string{"0xaddressB"},
 	}
 
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -351,16 +362,16 @@ func TestResolverOwnedContractsPropagate(t *testing.T) {
 		t.Fatalf("ResolvePermissions failed: %v", err)
 	}
 
-	// Should have UNION of owned contracts (ownership propagates down)
-	if len(perms.OwnedContracts) != 2 {
-		t.Errorf("Expected 2 owned contracts, got %d: %v", len(perms.OwnedContracts), perms.OwnedContracts)
+	// Should have UNION of owned addresses (ownership propagates down)
+	if len(perms.OwnedAddresses) != 2 {
+		t.Errorf("Expected 2 owned addresses, got %d: %v", len(perms.OwnedAddresses), perms.OwnedAddresses)
 	}
 
-	if !perms.OwnsContract("0xcontractA") {
-		t.Error("Expected to own 0xcontractA (inherited from parent)")
+	if !perms.OwnsAddress("0xaddressA") {
+		t.Error("Expected to own 0xaddressA (inherited from parent)")
 	}
-	if !perms.OwnsContract("0xcontractB") {
-		t.Error("Expected to own 0xcontractB (from child)")
+	if !perms.OwnsAddress("0xaddressB") {
+		t.Error("Expected to own 0xaddressB (from child)")
 	}
 }
 

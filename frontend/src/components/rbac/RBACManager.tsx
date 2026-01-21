@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -16,14 +17,13 @@ import {
   FolderTree,
   FileCode2,
   Loader2,
+  Globe,
+  Info,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
-import OrganizationList from './OrganizationList';
-import GroupList from './GroupList';
-import RoleList from './RoleList';
-import UserList from './UserList';
-import ContractList from './ContractList';
 
 type RBACTab = 'organizations' | 'groups' | 'roles' | 'users' | 'contracts';
 
@@ -46,10 +46,25 @@ export function useOrgContext() {
 }
 
 export default function RBACManager() {
-  const [activeTab, setActiveTab] = useState<RBACTab>('organizations');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
+
+  // Derive active tab from URL
+  const getActiveTab = (): RBACTab => {
+    const path = location.pathname;
+    if (path.includes('/groups')) return 'groups';
+    if (path.includes('/roles')) return 'roles';
+    if (path.includes('/users')) return 'users';
+    if (path.includes('/contracts')) return 'contracts';
+    return 'organizations';
+  };
+
+  const activeTab = getActiveTab();
 
   const loadOrganizations = async () => {
     try {
@@ -57,6 +72,17 @@ export default function RBACManager() {
       const response = await rbacApi.orgs.list();
       const orgs = response.data || [];
       setOrganizations(orgs);
+
+      // Check for org in URL params
+      const orgIdFromUrl = searchParams.get('org');
+      if (orgIdFromUrl) {
+        const orgFromUrl = orgs.find(o => o.id === orgIdFromUrl);
+        if (orgFromUrl) {
+          setSelectedOrg(orgFromUrl);
+          return;
+        }
+      }
+
       // Auto-select first org if none selected
       if (!selectedOrg && orgs.length > 0) {
         setSelectedOrg(orgs[0]);
@@ -83,9 +109,37 @@ export default function RBACManager() {
     loadOrganizations();
   }, []);
 
+  // Sync org from URL when search params change
+  useEffect(() => {
+    const orgIdFromUrl = searchParams.get('org');
+    if (orgIdFromUrl && organizations.length > 0) {
+      const org = organizations.find(o => o.id === orgIdFromUrl);
+      if (org && org.id !== selectedOrg?.id) {
+        setSelectedOrg(org);
+      }
+    }
+  }, [searchParams, organizations]);
+
   const handleOrgChange = (orgId: string) => {
     const org = organizations.find(o => o.id === orgId);
     setSelectedOrg(org || null);
+    // Update URL with new org
+    if (org) {
+      setSearchParams({ org: orgId });
+    }
+  };
+
+  const handleTabChange = (value: string) => {
+    const tab = value as RBACTab;
+    const orgRequiredTabs: RBACTab[] = ['groups', 'roles', 'contracts'];
+    const needsOrg = orgRequiredTabs.includes(tab);
+
+    let path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
+    if (needsOrg && selectedOrg) {
+      navigate(`${path}?org=${selectedOrg.id}`);
+    } else {
+      navigate(path);
+    }
   };
 
   // Tabs that require org selection
@@ -116,52 +170,108 @@ export default function RBACManager() {
               </div>
             </div>
 
-            {/* Organization Selector - shown when org is required */}
-            {requiresOrg && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-white/60">Organization:</span>
-                {loading ? (
-                  <div className="flex items-center gap-2 text-white/40">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Loading...</span>
-                  </div>
-                ) : organizations.length === 0 ? (
-                  <Badge variant="outline" className="text-white/50">
-                    No organizations
-                  </Badge>
-                ) : (
-                  <Select
-                    value={selectedOrg?.id || ''}
-                    onValueChange={handleOrgChange}
-                  >
-                    <SelectTrigger className="w-[200px]">
-                      <SelectValue placeholder="Select organization" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {organizations.map(org => (
-                        <SelectItem key={org.id} value={org.id}>
-                          <div className="flex items-center gap-2">
-                            <Building2 className="w-4 h-4 text-white/40" />
-                            <span>{org.name}</span>
-                            <span className="text-white/40 text-xs">
-                              ({org.slug})
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            )}
+            {/* Organization Selector - always visible, disabled on global tabs */}
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-white/60">Scope:</span>
+              {loading ? (
+                <div className="flex items-center gap-2 text-white/40">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Loading...</span>
+                </div>
+              ) : !requiresOrg ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-white/5 text-white/50">
+                  <Globe className="w-4 h-4" />
+                  <span className="text-sm">Global (all organizations)</span>
+                </div>
+              ) : organizations.length === 0 ? (
+                <Badge variant="outline" className="text-white/50">
+                  No organizations
+                </Badge>
+              ) : (
+                <Select
+                  value={selectedOrg?.id || ''}
+                  onValueChange={handleOrgChange}
+                >
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue placeholder="Select organization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {organizations.map(org => (
+                      <SelectItem key={org.id} value={org.id}>
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <Building2 className="w-4 h-4 text-white/40 shrink-0" />
+                          <span className="truncate">{org.name}</span>
+                          <span className="text-white/40 text-xs shrink-0">
+                            ({org.slug})
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
           </div>
         </CardHeader>
 
         <CardContent className="pt-0">
-          <Tabs
-            value={activeTab}
-            onValueChange={value => setActiveTab(value as RBACTab)}
-          >
+          {/* How It Works - Collapsible */}
+          <div className="mb-4">
+            <button
+              onClick={() => setShowHowItWorks(!showHowItWorks)}
+              className="flex items-center gap-2 text-sm text-white/50 hover:text-white/70 transition-colors"
+            >
+              <Info className="w-4 h-4" />
+              <span>How permissions work</span>
+              {showHowItWorks ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+            </button>
+            {showHowItWorks && (
+              <div className="mt-3 p-4 rounded-lg bg-white/5 border border-white/10 text-sm animate-fade-in">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="font-medium text-white/80 mb-2">Permission Model</h4>
+                    <ul className="space-y-1.5 text-white/60 text-xs">
+                      <li className="flex items-start gap-2">
+                        <Building2 className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
+                        <span><strong className="text-white/80">Organizations</strong> are top-level tenants</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <FolderTree className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
+                        <span><strong className="text-white/80">Groups</strong> define <em>what</em> users can access (methods, contracts, rate limits)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Shield className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
+                        <span><strong className="text-white/80">Roles</strong> define <em>capabilities</em> (reader, writer, deployer, admin, upgrade)</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-white/80 mb-2">How Users Get Permissions</h4>
+                    <ul className="space-y-1.5 text-white/60 text-xs">
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary-400 font-mono shrink-0">1.</span>
+                        <span>Add a <strong className="text-white/80">User</strong> to a <strong className="text-white/80">Group</strong></span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary-400 font-mono shrink-0">2.</span>
+                        <span>Optionally assign a <strong className="text-white/80">Role</strong> to the membership</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary-400 font-mono shrink-0">3.</span>
+                        <span>User inherits Group's permissions + Role's claims</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="w-full justify-start mb-4">
               <TabsTrigger value="organizations" className="gap-2">
                 <Building2 className="w-4 h-4" />
@@ -184,39 +294,10 @@ export default function RBACManager() {
                 <span>Contracts</span>
               </TabsTrigger>
             </TabsList>
-
-            <TabsContent value="organizations">
-              <OrganizationList />
-            </TabsContent>
-
-            <TabsContent value="groups">
-              {!selectedOrg ? (
-                <NoOrgSelected />
-              ) : (
-                <GroupList orgId={selectedOrg.id} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="roles">
-              {!selectedOrg ? (
-                <NoOrgSelected />
-              ) : (
-                <RoleList orgId={selectedOrg.id} />
-              )}
-            </TabsContent>
-
-            <TabsContent value="users">
-              <UserList />
-            </TabsContent>
-
-            <TabsContent value="contracts">
-              {!selectedOrg ? (
-                <NoOrgSelected />
-              ) : (
-                <ContractList orgId={selectedOrg.id} />
-              )}
-            </TabsContent>
           </Tabs>
+
+          {/* Render nested route content */}
+          {requiresOrg && !selectedOrg ? <NoOrgSelected /> : <Outlet />}
         </CardContent>
       </Card>
     </OrgContext.Provider>

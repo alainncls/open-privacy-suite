@@ -167,9 +167,37 @@ client: &http.Client{},  // Uses default timeouts
 
 ---
 
+### 10. [MEDIUM] Session ID Exposed in URL for Polling Endpoint (CWE-598)
+
+**Location**: `internal/server/auth.go:338-366`
+
+**Issue**: The session status polling endpoint exposes session ID in URL path:
+```go
+// GET /api/auth/session/:id/status
+sessionID := c.Param("id")
+```
+After authentication completes, this endpoint returns access and refresh tokens directly.
+
+**Risk**:
+- Session IDs can leak via server/proxy logs, browser history, Referer headers
+- If session ID is leaked, attacker could poll and retrieve tokens within the 2-minute completion window
+- Mitigated by UUID randomness (122 bits entropy) and short TTL
+
+**Current Mitigations**:
+- Session IDs are UUIDs (cryptographically random)
+- Sessions expire after ~10 minutes
+- Completed sessions only live 2 more minutes for polling
+
+**Recommendation**:
+- Use HTTPOnly cookie for session tracking on polling endpoint instead of URL parameter
+- Set cookie with `SameSite=Strict`, `Secure=true`, `HttpOnly=true`
+- Keep URL-based session ID for callback (required for wallet app flow)
+
+---
+
 ## Low Severity Findings
 
-### 10. [LOW] Arbitrary Metadata JSON (CWE-20)
+### 11. [LOW] Arbitrary Metadata JSON (CWE-20)
 
 **Location**: `internal/server/admin_rbac.go` user update handler
 
@@ -181,7 +209,7 @@ client: &http.Client{},  // Uses default timeouts
 
 ---
 
-### 11. [LOW] Multicall Detection Limited to Known Addresses (CWE-184)
+### 12. [LOW] Multicall Detection Limited to Known Addresses (CWE-184)
 
 **Location**: `internal/rbac/access.go:172-176`
 
@@ -201,7 +229,7 @@ var MulticallAddresses = map[string]bool{
 
 ---
 
-### 12. [LOW] Type Assertion Failures Silent (CWE-754)
+### 13. [LOW] Type Assertion Failures Silent (CWE-754)
 
 **Location**: `internal/rbac/access.go:215-222`
 

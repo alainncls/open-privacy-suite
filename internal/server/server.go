@@ -82,7 +82,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 	proxySvc := proxy.New(cfg.NodeURL)
 
 	// Initialize RBAC access controller with 5 minute cache TTL
-	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute, cfg.AllowUnregisteredAddresses)
 
 	// Initialize session store (10 minute TTL, cleanup every minute)
 	sessionStore := auth.NewSessionStore(10*time.Minute, 1*time.Minute)
@@ -113,7 +113,16 @@ func (s *Server) Run(addr string) error {
 	// This enables localhost detection when accessing from host to Docker container
 	// SECURITY: Only requests FROM these IPs can set X-Forwarded-For headers.
 	// External attackers cannot spoof X-Forwarded-For because their IP won't be trusted.
-	router.SetTrustedProxies([]string{"127.0.0.1", "::1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8"})
+	// Trusted proxy IPs that can set X-Forwarded-For headers
+	// Includes Docker networks, private networks, and Tailscale CGNAT range
+	router.SetTrustedProxies([]string{
+		"127.0.0.1",
+		"::1",
+		"172.16.0.0/12",  // Docker bridge networks
+		"192.168.0.0/16", // Docker custom networks / private networks
+		"10.0.0.0/8",     // Private networks
+		"100.64.0.0/10",  // Tailscale CGNAT range
+	})
 
 	// CORS middleware for frontend
 	router.Use(func(c *gin.Context) {
@@ -152,6 +161,7 @@ func (s *Server) Run(addr string) error {
 	// Also register under /api for frontend proxy compatibility
 	router.POST("/api/auth/request", s.handleAuthRequest)
 	router.POST("/api/auth/callback", s.handleAuthCallback)
+	router.GET("/api/auth/session/:id/status", s.handleAuthSessionStatus)
 	router.POST("/api/refresh", s.handleRefresh)
 	router.POST("/api/revoke", s.handleRevoke)
 
@@ -246,7 +256,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		UserExternalID:   subjectStr,
 		Method:           method,
 		Params:           params,
-		ContractAddress:  rbac.GetContractAddress(method, params),
+		TargetAddress:    rbac.GetTargetAddress(method, params),
 		FunctionSelector: rbac.GetFunctionSelector(method, params),
 		RequiredClaims:   rbac.ClassifyOperation(method, params),
 	}
@@ -318,7 +328,7 @@ func (s *Server) getLogs(c *gin.Context) {
 //  2. Gin will ignore X-Forwarded-For and use the actual remote IP
 //  3. Middleware will reject the request
 //
-// - Only localhost (127.0.0.1, ::1) and Docker network IPs (172.x.x.x) are allowed
+// - Only localhost (127.0.0.1, ::1), Docker network IPs (172.x.x.x), and Tailscale IPs are allowed
 func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Gin's ClientIP() only trusts X-Forwarded-For if remote IP is in trusted proxy list
@@ -329,15 +339,17 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 		// Also allow Docker network IPs (172.16.0.0/12 and 192.168.0.0/16) - these come from:
 		// - Host accessing via localhost (172.x.x.x gateway)
 		// - Frontend container accessing backend (192.168.x.x or 172.x.x.x)
+		// Also allow Tailscale IPs (100.64.0.0/10 CGNAT range)
 		// Note: Docker networks are isolated by default, so this is safe
-		isLocalhost := clientIP == "127.0.0.1" ||
+		isAllowed := clientIP == "127.0.0.1" ||
 			clientIP == "::1" ||
-			strings.HasPrefix(clientIP, "172.") || // Docker bridge networks (172.16.0.0/12)
-			strings.HasPrefix(clientIP, "192.168.") // Docker custom networks (192.168.0.0/16)
+			strings.HasPrefix(clientIP, "172.") ||    // Docker bridge networks (172.16.0.0/12)
+			strings.HasPrefix(clientIP, "192.168.") || // Docker custom networks (192.168.0.0/16)
+			strings.HasPrefix(clientIP, "100.")       // Tailscale CGNAT (100.64.0.0/10)
 
-		if !isLocalhost {
+		if !isAllowed {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "management API is only accessible from localhost",
+				"error": "management API is only accessible from localhost or Tailscale",
 			})
 			c.Abort()
 			return
@@ -417,7 +429,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		UserExternalID:   testIdentity,
 		Method:           input.Method,
 		Params:           input.Params,
-		ContractAddress:  rbac.GetContractAddress(input.Method, input.Params),
+		TargetAddress:    rbac.GetTargetAddress(input.Method, input.Params),
 		FunctionSelector: rbac.GetFunctionSelector(input.Method, input.Params),
 		RequiredClaims:   rbac.ClassifyOperation(input.Method, input.Params),
 	}

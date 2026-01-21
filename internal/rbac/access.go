@@ -242,17 +242,21 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 // AccessController handles access control decisions for RBAC.
 type AccessController struct {
-	store    Store
-	resolver *Resolver
-	cache    *Cache
+	store                      Store
+	resolver                   *Resolver
+	cache                      *Cache
+	allowUnregisteredAddresses bool // If true, addresses not in RBAC bypass permission checks
 }
 
 // NewAccessController creates a new access controller.
-func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
+// allowUnregisteredAddresses: if true, addresses (contracts or EOAs) not registered in RBAC
+// will bypass permission checks (default should be true for backwards compatibility).
+func NewAccessController(store Store, cacheTTL time.Duration, allowUnregisteredAddresses bool) *AccessController {
 	return &AccessController{
-		store:    store,
-		resolver: NewResolver(store, cacheTTL),
-		cache:    NewCache(CacheConfig{TTL: cacheTTL}),
+		store:                      store,
+		resolver:                   NewResolver(store, cacheTTL),
+		cache:                      NewCache(CacheConfig{TTL: cacheTTL}),
+		allowUnregisteredAddresses: allowUnregisteredAddresses,
 	}
 }
 
@@ -347,23 +351,36 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Check contract access if specified
-	if req.ContractAddress != "" {
-		addr := strings.ToLower(req.ContractAddress)
-		if !perms.HasContract(addr) && !perms.OwnsContract(addr) {
+	// Check address access if specified
+	if req.TargetAddress != "" {
+		addr := strings.ToLower(req.TargetAddress)
+
+		// Determine if this is an "unregistered" address (user has no explicit address restrictions)
+		isUnregisteredAddress := len(perms.AllowAddresses) == 0 && !perms.OwnsAddress(addr)
+
+		// If bypass is disabled and address is unregistered, check if it's explicitly allowed
+		if isUnregisteredAddress && !c.allowUnregisteredAddresses {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("contract %s not allowed", req.ContractAddress),
+				Reason:  fmt.Sprintf("address %s not registered in RBAC (unregistered address access disabled)", req.TargetAddress),
 			}, nil
 		}
 
-		// Check function selector if specified and contract has function restrictions
+		// Standard address permission check
+		if !perms.HasAddress(addr) && !perms.OwnsAddress(addr) {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("address %s not allowed", req.TargetAddress),
+			}, nil
+		}
+
+		// Check function selector if specified and address has function restrictions
 		if req.FunctionSelector != "" {
 			selector := strings.ToLower(req.FunctionSelector)
 			if !perms.HasFunctionSelector(addr, selector) {
 				return &AccessCheckResult{
 					Allowed: false,
-					Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.ContractAddress),
+					Reason:  fmt.Sprintf("function %s not allowed on address %s", req.FunctionSelector, req.TargetAddress),
 				}, nil
 			}
 		}
@@ -415,8 +432,8 @@ func ClassifyOperation(method string, params []any) []Claim {
 	return []Claim{ClaimReader}
 }
 
-// GetContractAddress extracts the contract address from JSON-RPC params.
-func GetContractAddress(method string, params []any) string {
+// GetTargetAddress extracts the target address from JSON-RPC params.
+func GetTargetAddress(method string, params []any) string {
 	if len(params) == 0 {
 		return ""
 	}

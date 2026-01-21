@@ -18,10 +18,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { rbacApi } from '@/api/rbac';
 import {
   Building2,
   Plus,
   Pencil,
+  Trash2,
   Loader2,
 } from 'lucide-react';
 
@@ -48,6 +50,17 @@ export default function OrganizationList() {
     setShowForm(false);
     setEditing(null);
     await loadOrganizations();
+  };
+
+  const handleDelete = async (org: Organization) => {
+    if (!confirm(`Delete organization "${org.name}"? This action cannot be undone.`)) return;
+    try {
+      await rbacApi.orgs.delete(org.id);
+      await loadOrganizations();
+    } catch (error) {
+      console.error('Failed to delete organization:', error);
+      alert('Failed to delete organization. It may have groups, roles, or contracts that need to be deleted first.');
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -99,7 +112,6 @@ export default function OrganizationList() {
               <TableHead>Name</TableHead>
               <TableHead>Slug</TableHead>
               <TableHead>Created</TableHead>
-              <TableHead>Settings</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -126,15 +138,6 @@ export default function OrganizationList() {
                   {formatDate(org.created_at)}
                 </TableCell>
                 <TableCell>
-                  {org.settings && Object.keys(org.settings).length > 0 ? (
-                    <Badge variant="secondary" className="text-xs">
-                      {Object.keys(org.settings).length} settings
-                    </Badge>
-                  ) : (
-                    <span className="text-white/40 text-sm">None</span>
-                  )}
-                </TableCell>
-                <TableCell>
                   <div className="flex items-center justify-end gap-2">
                     <Button
                       variant="ghost"
@@ -143,8 +146,21 @@ export default function OrganizationList() {
                         e.stopPropagation();
                         setEditing(org);
                       }}
+                      title="Edit organization"
                     >
                       <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleDelete(org);
+                      }}
+                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      title="Delete organization"
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
                 </TableCell>

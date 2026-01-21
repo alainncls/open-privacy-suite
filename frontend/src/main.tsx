@@ -12,6 +12,14 @@ import { LoginPage } from './pages/LoginPage';
 import { LinkWalletPage } from './pages/LinkWalletPage';
 import { SuccessPage } from './pages/SuccessPage';
 import AdminApp from './App';
+import { Dashboard } from './components/dashboard/Dashboard';
+import AccessLogs from './components/AccessLogs';
+import RBACManager from './components/rbac/RBACManager';
+import OrganizationList from './components/rbac/OrganizationList';
+import GroupList from './components/rbac/GroupList';
+import RoleList from './components/rbac/RoleList';
+import UserList from './components/rbac/UserList';
+import ContractList from './components/rbac/ContractList';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -38,8 +46,21 @@ function Root() {
                 <Route path="/link-wallet" element={<LinkWalletPage />} />
                 <Route path="/success" element={<SuccessPage />} />
 
-                {/* Admin dashboard */}
-                <Route path="/admin/*" element={<AdminApp />} />
+                {/* Admin dashboard with nested routes */}
+                <Route path="/admin" element={<AdminApp />}>
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<Dashboard />} />
+                  <Route path="logs" element={<AccessLogs />} />
+                  <Route path="rbac" element={<RBACManager />}>
+                    <Route index element={<Navigate to="organizations" replace />} />
+                    <Route path="organizations" element={<OrganizationList />} />
+                    <Route path="groups" element={<GroupList />} />
+                    <Route path="roles" element={<RoleList />} />
+                    <Route path="users" element={<UserList />} />
+                    <Route path="users/:userId" element={<UserList />} />
+                    <Route path="contracts" element={<ContractList />} />
+                  </Route>
+                </Route>
 
                 {/* Default redirect to login */}
                 <Route path="/" element={<Navigate to="/login" replace />} />

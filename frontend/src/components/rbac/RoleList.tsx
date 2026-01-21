@@ -3,6 +3,7 @@ import { rbacApi } from '@/api/rbac';
 import type { Role } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import RoleForm from './RoleForm';
+import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -21,21 +22,22 @@ import {
 } from '@/components/ui/dialog';
 import { Shield, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
 
-interface RoleListProps {
-  orgId: string;
-}
-
-export default function RoleList({ orgId }: RoleListProps) {
+export default function RoleList() {
+  const { selectedOrg } = useOrgContext();
+  const orgId = selectedOrg?.id || '';
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Role | null>(null);
 
   useEffect(() => {
-    loadRoles();
+    if (orgId) {
+      loadRoles();
+    }
   }, [orgId]);
 
   const loadRoles = async () => {
+    if (!orgId) return;
     try {
       setLoading(true);
       const response = await rbacApi.roles.list(orgId);
@@ -89,7 +91,7 @@ export default function RoleList({ orgId }: RoleListProps) {
         <div>
           <h3 className="text-sm font-medium text-white/80">Roles</h3>
           <p className="text-xs text-white/50 mt-0.5">
-            Named permission sets with claims that can be assigned to users
+            Permission sets with claims (capabilities) assigned to users when they join groups
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
@@ -166,6 +168,7 @@ export default function RoleList({ orgId }: RoleListProps) {
                       variant="ghost"
                       size="sm"
                       onClick={() => setEditing(role)}
+                      title="Edit role"
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
@@ -174,6 +177,7 @@ export default function RoleList({ orgId }: RoleListProps) {
                       size="sm"
                       onClick={() => handleDelete(role)}
                       className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      title="Delete role"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

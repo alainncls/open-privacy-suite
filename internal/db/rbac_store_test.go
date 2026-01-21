@@ -1,0 +1,918 @@
+package db
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"privacy-proxy/internal/rbac"
+
+	"github.com/google/uuid"
+)
+
+func setupRBACTestDB(t *testing.T) *DB {
+	database := setupTestDB(t)
+
+	// Clear RBAC tables for fresh test
+	ctx := context.Background()
+	conn := database.Conn()
+
+	// Clear in correct order due to foreign keys
+	conn.ExecContext(ctx, "DELETE FROM rbac_audit_log")
+	conn.ExecContext(ctx, "DELETE FROM effective_permissions_cache")
+	conn.ExecContext(ctx, "DELETE FROM contract_ownership")
+	conn.ExecContext(ctx, "DELETE FROM user_memberships")
+	conn.ExecContext(ctx, "DELETE FROM group_permissions")
+	conn.ExecContext(ctx, "DELETE FROM roles")
+	conn.ExecContext(ctx, "DELETE FROM groups")
+	conn.ExecContext(ctx, "DELETE FROM users")
+	conn.ExecContext(ctx, "DELETE FROM organizations")
+
+	return database
+}
+
+// Organization Tests
+
+func TestOrganization_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	t.Run("Create", func(t *testing.T) {
+		org := &rbac.Organization{
+			ID:       uuid.New().String(),
+			Slug:     "test-org",
+			Name:     "Test Organization",
+			Settings: map[string]interface{}{"feature": true},
+		}
+
+		err := database.CreateOrganization(ctx, org)
+		if err != nil {
+			t.Fatalf("CreateOrganization() error = %v", err)
+		}
+
+		if org.CreatedAt.IsZero() {
+			t.Error("CreatedAt should be set")
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		org := &rbac.Organization{
+			ID:       uuid.New().String(),
+			Slug:     "get-test-org",
+			Name:     "Get Test Org",
+			Settings: map[string]interface{}{},
+		}
+		database.CreateOrganization(ctx, org)
+
+		retrieved, err := database.GetOrganization(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("GetOrganization() error = %v", err)
+		}
+
+		if retrieved == nil {
+			t.Fatal("GetOrganization() returned nil")
+		}
+
+		if retrieved.Name != org.Name {
+			t.Errorf("Name = %q, want %q", retrieved.Name, org.Name)
+		}
+	})
+
+	t.Run("GetBySlug", func(t *testing.T) {
+		org := &rbac.Organization{
+			ID:       uuid.New().String(),
+			Slug:     "slug-test-org",
+			Name:     "Slug Test Org",
+			Settings: map[string]interface{}{},
+		}
+		database.CreateOrganization(ctx, org)
+
+		retrieved, err := database.GetOrganizationBySlug(ctx, "slug-test-org")
+		if err != nil {
+			t.Fatalf("GetOrganizationBySlug() error = %v", err)
+		}
+
+		if retrieved == nil || retrieved.ID != org.ID {
+			t.Error("GetOrganizationBySlug() failed to find org")
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		org := &rbac.Organization{
+			ID:       uuid.New().String(),
+			Slug:     "update-test-org",
+			Name:     "Original Name",
+			Settings: map[string]interface{}{},
+		}
+		database.CreateOrganization(ctx, org)
+
+		org.Name = "Updated Name"
+		err := database.UpdateOrganization(ctx, org)
+		if err != nil {
+			t.Fatalf("UpdateOrganization() error = %v", err)
+		}
+
+		retrieved, _ := database.GetOrganization(ctx, org.ID)
+		if retrieved.Name != "Updated Name" {
+			t.Errorf("Name = %q, want %q", retrieved.Name, "Updated Name")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		orgs, err := database.ListOrganizations(ctx)
+		if err != nil {
+			t.Fatalf("ListOrganizations() error = %v", err)
+		}
+
+		if len(orgs) == 0 {
+			t.Error("ListOrganizations() returned empty list")
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		org := &rbac.Organization{
+			ID:       uuid.New().String(),
+			Slug:     "delete-test-org",
+			Name:     "Delete Test Org",
+			Settings: map[string]interface{}{},
+		}
+		database.CreateOrganization(ctx, org)
+
+		err := database.DeleteOrganization(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("DeleteOrganization() error = %v", err)
+		}
+
+		retrieved, _ := database.GetOrganization(ctx, org.ID)
+		if retrieved != nil {
+			t.Error("Organization should be deleted")
+		}
+	})
+
+	t.Run("GetNonExistent", func(t *testing.T) {
+		// Use a valid UUID format that doesn't exist
+		retrieved, err := database.GetOrganization(ctx, uuid.New().String())
+		if err != nil {
+			t.Fatalf("GetOrganization() error = %v", err)
+		}
+		if retrieved != nil {
+			t.Error("GetOrganization() should return nil for nonexistent org")
+		}
+	})
+}
+
+// Group Tests
+
+func TestGroup_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	// Create parent org
+	org := &rbac.Organization{
+		ID:       uuid.New().String(),
+		Slug:     "group-test-org",
+		Name:     "Group Test Org",
+		Settings: map[string]interface{}{},
+	}
+	database.CreateOrganization(ctx, org)
+
+	t.Run("Create", func(t *testing.T) {
+		group := &rbac.Group{
+			ID:          uuid.New().String(),
+			OrgID:       org.ID,
+			ParentID:    nil,
+			Slug:        "root",
+			Name:        "Root Group",
+			Description: "The root group",
+			Depth:       0,
+			Path:        "root",
+		}
+
+		err := database.CreateGroup(ctx, group)
+		if err != nil {
+			t.Fatalf("CreateGroup() error = %v", err)
+		}
+
+		if group.CreatedAt.IsZero() {
+			t.Error("CreatedAt should be set")
+		}
+	})
+
+	t.Run("CreateWithParent", func(t *testing.T) {
+		parent := &rbac.Group{
+			ID:    uuid.New().String(),
+			OrgID: org.ID,
+			Slug:  "parent",
+			Name:  "Parent Group",
+			Depth: 0,
+			Path:  "parent",
+		}
+		database.CreateGroup(ctx, parent)
+
+		child := &rbac.Group{
+			ID:       uuid.New().String(),
+			OrgID:    org.ID,
+			ParentID: &parent.ID,
+			Slug:     "child",
+			Name:     "Child Group",
+			Depth:    1,
+			Path:     "parent.child",
+		}
+
+		err := database.CreateGroup(ctx, child)
+		if err != nil {
+			t.Fatalf("CreateGroup() with parent error = %v", err)
+		}
+
+		retrieved, _ := database.GetGroup(ctx, child.ID)
+		if retrieved.ParentID == nil || *retrieved.ParentID != parent.ID {
+			t.Error("Child group should have parent ID")
+		}
+	})
+
+	t.Run("GetBySlug", func(t *testing.T) {
+		group := &rbac.Group{
+			ID:    uuid.New().String(),
+			OrgID: org.ID,
+			Slug:  "slug-group",
+			Name:  "Slug Group",
+			Depth: 0,
+			Path:  "slug-group",
+		}
+		database.CreateGroup(ctx, group)
+
+		retrieved, err := database.GetGroupBySlug(ctx, org.ID, "slug-group")
+		if err != nil {
+			t.Fatalf("GetGroupBySlug() error = %v", err)
+		}
+
+		if retrieved == nil || retrieved.ID != group.ID {
+			t.Error("GetGroupBySlug() failed to find group")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		groups, err := database.ListGroups(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("ListGroups() error = %v", err)
+		}
+
+		if len(groups) == 0 {
+			t.Error("ListGroups() returned empty list")
+		}
+	})
+
+	t.Run("GetHierarchy", func(t *testing.T) {
+		// Create hierarchy
+		root := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, Slug: "hier-root", Name: "Root", Depth: 0, Path: "hier-root"}
+		database.CreateGroup(ctx, root)
+
+		mid := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, ParentID: &root.ID, Slug: "hier-mid", Name: "Mid", Depth: 1, Path: "hier-root.hier-mid"}
+		database.CreateGroup(ctx, mid)
+
+		leaf := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, ParentID: &mid.ID, Slug: "hier-leaf", Name: "Leaf", Depth: 2, Path: "hier-root.hier-mid.hier-leaf"}
+		database.CreateGroup(ctx, leaf)
+
+		hierarchy, err := database.GetGroupHierarchy(ctx, leaf.ID)
+		if err != nil {
+			t.Fatalf("GetGroupHierarchy() error = %v", err)
+		}
+
+		if len(hierarchy) != 3 {
+			t.Errorf("GetGroupHierarchy() returned %d groups, want 3", len(hierarchy))
+		}
+	})
+}
+
+// Role Tests
+
+func TestRole_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	org := &rbac.Organization{
+		ID:       uuid.New().String(),
+		Slug:     "role-test-org",
+		Name:     "Role Test Org",
+		Settings: map[string]interface{}{},
+	}
+	database.CreateOrganization(ctx, org)
+
+	t.Run("Create", func(t *testing.T) {
+		role := &rbac.Role{
+			ID:          uuid.New().String(),
+			OrgID:       org.ID,
+			Name:        "Developer",
+			Description: "Developer role",
+			Claims:      []rbac.Claim{rbac.ClaimReader, rbac.ClaimWriter},
+		}
+
+		err := database.CreateRole(ctx, role)
+		if err != nil {
+			t.Fatalf("CreateRole() error = %v", err)
+		}
+	})
+
+	t.Run("GetByName", func(t *testing.T) {
+		role := &rbac.Role{
+			ID:     uuid.New().String(),
+			OrgID:  org.ID,
+			Name:   "UniqueRole",
+			Claims: []rbac.Claim{rbac.ClaimReader},
+		}
+		database.CreateRole(ctx, role)
+
+		retrieved, err := database.GetRoleByName(ctx, org.ID, "UniqueRole")
+		if err != nil {
+			t.Fatalf("GetRoleByName() error = %v", err)
+		}
+
+		if retrieved == nil || retrieved.ID != role.ID {
+			t.Error("GetRoleByName() failed to find role")
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		role := &rbac.Role{
+			ID:     uuid.New().String(),
+			OrgID:  org.ID,
+			Name:   "UpdateRole",
+			Claims: []rbac.Claim{rbac.ClaimReader},
+		}
+		database.CreateRole(ctx, role)
+
+		role.Claims = []rbac.Claim{rbac.ClaimReader, rbac.ClaimWriter, rbac.ClaimDeployer}
+		err := database.UpdateRole(ctx, role)
+		if err != nil {
+			t.Fatalf("UpdateRole() error = %v", err)
+		}
+
+		retrieved, _ := database.GetRole(ctx, role.ID)
+		if len(retrieved.Claims) != 3 {
+			t.Errorf("Claims length = %d, want 3", len(retrieved.Claims))
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		roles, err := database.ListRoles(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("ListRoles() error = %v", err)
+		}
+
+		if len(roles) == 0 {
+			t.Error("ListRoles() returned empty list")
+		}
+	})
+}
+
+// User Tests
+
+func TestUser_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	t.Run("Create", func(t *testing.T) {
+		user := &rbac.User{
+			ID:         uuid.New().String(),
+			ExternalID: "did:polygonid:polygon:main:user123",
+			KYC:        true,
+			Banned:     false,
+			Note:       "Test user",
+			Metadata:   map[string]interface{}{"source": "test"},
+		}
+
+		err := database.CreateUser(ctx, user)
+		if err != nil {
+			t.Fatalf("CreateUser() error = %v", err)
+		}
+	})
+
+	t.Run("GetByExternalID", func(t *testing.T) {
+		user := &rbac.User{
+			ID:         uuid.New().String(),
+			ExternalID: "did:unique:external123",
+			KYC:        false,
+			Metadata:   map[string]interface{}{},
+		}
+		database.CreateUser(ctx, user)
+
+		retrieved, err := database.GetUserByExternalID(ctx, "did:unique:external123")
+		if err != nil {
+			t.Fatalf("GetUserByExternalID() error = %v", err)
+		}
+
+		if retrieved == nil || retrieved.ID != user.ID {
+			t.Error("GetUserByExternalID() failed to find user")
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		user := &rbac.User{
+			ID:         uuid.New().String(),
+			ExternalID: "did:update:user",
+			KYC:        false,
+			Banned:     false,
+			Metadata:   map[string]interface{}{},
+		}
+		database.CreateUser(ctx, user)
+
+		user.Banned = true
+		user.Note = "Banned for testing"
+		err := database.UpdateUser(ctx, user)
+		if err != nil {
+			t.Fatalf("UpdateUser() error = %v", err)
+		}
+
+		retrieved, _ := database.GetUser(ctx, user.ID)
+		if !retrieved.Banned {
+			t.Error("User should be banned")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		users, err := database.ListUsers(ctx, 10, 0)
+		if err != nil {
+			t.Fatalf("ListUsers() error = %v", err)
+		}
+
+		if len(users) == 0 {
+			t.Error("ListUsers() returned empty list")
+		}
+	})
+}
+
+// Membership Tests
+
+func TestMembership_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	// Setup
+	org := &rbac.Organization{ID: uuid.New().String(), Slug: "mem-org", Name: "Membership Org", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org)
+
+	group := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, Slug: "mem-group", Name: "Membership Group", Depth: 0, Path: "mem-group"}
+	database.CreateGroup(ctx, group)
+
+	role := &rbac.Role{ID: uuid.New().String(), OrgID: org.ID, Name: "Member Role", Claims: []rbac.Claim{rbac.ClaimReader}}
+	database.CreateRole(ctx, role)
+
+	user := &rbac.User{ID: uuid.New().String(), ExternalID: "did:mem:user", KYC: true, Metadata: map[string]interface{}{}}
+	database.CreateUser(ctx, user)
+
+	t.Run("Create", func(t *testing.T) {
+		membership := &rbac.UserMembership{
+			ID:      uuid.New().String(),
+			UserID:  user.ID,
+			GroupID: group.ID,
+			RoleID:  &role.ID,
+			Source:  rbac.MembershipSourceAdmin,
+		}
+
+		err := database.CreateMembership(ctx, membership)
+		if err != nil {
+			t.Fatalf("CreateMembership() error = %v", err)
+		}
+	})
+
+	t.Run("GetByUserAndGroup", func(t *testing.T) {
+		// Create a new user and membership for this test
+		testUser := &rbac.User{ID: uuid.New().String(), ExternalID: "did:getby:user", KYC: true, Metadata: map[string]interface{}{}}
+		database.CreateUser(ctx, testUser)
+
+		membership := &rbac.UserMembership{
+			ID:      uuid.New().String(),
+			UserID:  testUser.ID,
+			GroupID: group.ID,
+			RoleID:  &role.ID,
+			Source:  rbac.MembershipSourceAdmin,
+		}
+		database.CreateMembership(ctx, membership)
+
+		retrieved, err := database.GetMembershipByUserAndGroup(ctx, testUser.ID, group.ID)
+		if err != nil {
+			t.Fatalf("GetMembershipByUserAndGroup() error = %v", err)
+		}
+
+		if retrieved == nil || retrieved.ID != membership.ID {
+			t.Error("GetMembershipByUserAndGroup() failed to find membership")
+		}
+	})
+
+	t.Run("ListUserMemberships", func(t *testing.T) {
+		memberships, err := database.ListUserMemberships(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("ListUserMemberships() error = %v", err)
+		}
+
+		if len(memberships) == 0 {
+			t.Error("ListUserMemberships() returned empty list")
+		}
+	})
+
+	t.Run("ListUserMembershipsInOrg", func(t *testing.T) {
+		memberships, err := database.ListUserMembershipsInOrg(ctx, user.ID, org.ID)
+		if err != nil {
+			t.Fatalf("ListUserMembershipsInOrg() error = %v", err)
+		}
+
+		if len(memberships) == 0 {
+			t.Error("ListUserMembershipsInOrg() returned empty list")
+		}
+
+		// Verify details are populated
+		if memberships[0].Group == nil {
+			t.Error("Membership should have Group details")
+		}
+	})
+
+	t.Run("ListGroupMembers", func(t *testing.T) {
+		members, err := database.ListGroupMembers(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListGroupMembers() error = %v", err)
+		}
+
+		if len(members) == 0 {
+			t.Error("ListGroupMembers() returned empty list")
+		}
+	})
+
+	t.Run("DeleteExpiredMemberships", func(t *testing.T) {
+		// Create expired membership
+		expiredUser := &rbac.User{ID: uuid.New().String(), ExternalID: "did:expired:user", KYC: true, Metadata: map[string]interface{}{}}
+		database.CreateUser(ctx, expiredUser)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		expiredMembership := &rbac.UserMembership{
+			ID:        uuid.New().String(),
+			UserID:    expiredUser.ID,
+			GroupID:   group.ID,
+			Source:    rbac.MembershipSourceAdmin,
+			ExpiresAt: &pastTime,
+		}
+		database.CreateMembership(ctx, expiredMembership)
+
+		deleted, err := database.DeleteExpiredMemberships(ctx)
+		if err != nil {
+			t.Fatalf("DeleteExpiredMemberships() error = %v", err)
+		}
+
+		if deleted == 0 {
+			t.Error("DeleteExpiredMemberships() should have deleted at least one membership")
+		}
+	})
+}
+
+// Group Permissions Tests
+
+func TestGroupPermissions_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	org := &rbac.Organization{ID: uuid.New().String(), Slug: "perm-org", Name: "Permissions Org", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org)
+
+	group := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, Slug: "perm-group", Name: "Permissions Group", Depth: 0, Path: "perm-group"}
+	database.CreateGroup(ctx, group)
+
+	t.Run("Set", func(t *testing.T) {
+		perms := &rbac.GroupPermissions{
+			ID:             uuid.New().String(),
+			GroupID:        group.ID,
+			AllowMethods:   []string{"eth_call", "eth_getBalance"},
+			AllowAddresses: []string{"0x1234"},
+			OwnedAddresses: []string{},
+			RateLimitRPS:   intPtr(100),
+			RateLimitDaily: intPtr(10000),
+		}
+
+		err := database.SetGroupPermissions(ctx, perms)
+		if err != nil {
+			t.Fatalf("SetGroupPermissions() error = %v", err)
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		perms, err := database.GetGroupPermissions(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("GetGroupPermissions() error = %v", err)
+		}
+
+		if perms == nil {
+			t.Fatal("GetGroupPermissions() returned nil")
+		}
+
+		if len(perms.AllowMethods) != 2 {
+			t.Errorf("AllowMethods length = %d, want 2", len(perms.AllowMethods))
+		}
+
+		if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 100 {
+			t.Error("RateLimitRPS should be 100")
+		}
+	})
+
+	t.Run("Update (Upsert)", func(t *testing.T) {
+		perms := &rbac.GroupPermissions{
+			ID:             uuid.New().String(), // New ID, but same group
+			GroupID:        group.ID,
+			AllowMethods:   []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
+			AllowAddresses: []string{"0x1234", "0x5678"},
+			OwnedAddresses: []string{"0x1234"},
+			RateLimitRPS:   intPtr(200),
+		}
+
+		err := database.SetGroupPermissions(ctx, perms)
+		if err != nil {
+			t.Fatalf("SetGroupPermissions() (upsert) error = %v", err)
+		}
+
+		retrieved, _ := database.GetGroupPermissions(ctx, group.ID)
+		if len(retrieved.AllowMethods) != 3 {
+			t.Errorf("AllowMethods length = %d, want 3", len(retrieved.AllowMethods))
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		err := database.DeleteGroupPermissions(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("DeleteGroupPermissions() error = %v", err)
+		}
+
+		perms, _ := database.GetGroupPermissions(ctx, group.ID)
+		if perms != nil {
+			t.Error("Permissions should be deleted")
+		}
+	})
+}
+
+// Contract Ownership Tests
+
+func TestContractOwnership_CRUD(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	org := &rbac.Organization{ID: uuid.New().String(), Slug: "contract-org", Name: "Contract Org", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org)
+
+	group := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, Slug: "contract-group", Name: "Contract Group", Depth: 0, Path: "contract-group"}
+	database.CreateGroup(ctx, group)
+
+	t.Run("Create", func(t *testing.T) {
+		ownership := &rbac.ContractOwnership{
+			ID:              uuid.New().String(),
+			ContractAddress: "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
+			OrgID:           org.ID,
+			OwnerGroupID:    group.ID,
+			Metadata:        map[string]interface{}{"name": "Test Contract"},
+		}
+
+		err := database.CreateContractOwnership(ctx, ownership)
+		if err != nil {
+			t.Fatalf("CreateContractOwnership() error = %v", err)
+		}
+	})
+
+	t.Run("GetByAddress", func(t *testing.T) {
+		ownership := &rbac.ContractOwnership{
+			ID:              uuid.New().String(),
+			ContractAddress: "0x1111111111111111111111111111111111111111",
+			OrgID:           org.ID,
+			OwnerGroupID:    group.ID,
+			Metadata:        map[string]interface{}{},
+		}
+		database.CreateContractOwnership(ctx, ownership)
+
+		// Get with uppercase (should normalize)
+		retrieved, err := database.GetContractOwnershipByAddress(ctx, org.ID, "0x1111111111111111111111111111111111111111")
+		if err != nil {
+			t.Fatalf("GetContractOwnershipByAddress() error = %v", err)
+		}
+
+		if retrieved == nil {
+			t.Error("GetContractOwnershipByAddress() should find contract")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		ownerships, err := database.ListContractOwnerships(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("ListContractOwnerships() error = %v", err)
+		}
+
+		if len(ownerships) == 0 {
+			t.Error("ListContractOwnerships() returned empty list")
+		}
+	})
+
+	t.Run("ListByGroup", func(t *testing.T) {
+		ownerships, err := database.ListContractOwnershipsByGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListContractOwnershipsByGroup() error = %v", err)
+		}
+
+		if len(ownerships) == 0 {
+			t.Error("ListContractOwnershipsByGroup() returned empty list")
+		}
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		ownership := &rbac.ContractOwnership{
+			ID:              uuid.New().String(),
+			ContractAddress: "0x2222222222222222222222222222222222222222",
+			OrgID:           org.ID,
+			OwnerGroupID:    group.ID,
+			Metadata:        map[string]interface{}{},
+		}
+		database.CreateContractOwnership(ctx, ownership)
+
+		ownership.Metadata = map[string]interface{}{"updated": true}
+		err := database.UpdateContractOwnership(ctx, ownership)
+		if err != nil {
+			t.Fatalf("UpdateContractOwnership() error = %v", err)
+		}
+
+		retrieved, _ := database.GetContractOwnership(ctx, ownership.ID)
+		if retrieved.Metadata["updated"] != true {
+			t.Error("Metadata should be updated")
+		}
+	})
+}
+
+// Cache Tests
+
+func TestEffectivePermissionsCache(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	org := &rbac.Organization{ID: uuid.New().String(), Slug: "cache-org", Name: "Cache Org", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org)
+
+	user := &rbac.User{ID: uuid.New().String(), ExternalID: "did:cache:user", KYC: true, Metadata: map[string]interface{}{}}
+	database.CreateUser(ctx, user)
+
+	t.Run("SetAndGet", func(t *testing.T) {
+		perms := &rbac.EffectivePermissions{
+			ID:             uuid.New().String(),
+			UserID:         user.ID,
+			OrgID:          org.ID,
+			AllowMethods:   []string{"eth_call"},
+			AllowAddresses: []string{},
+			OwnedAddresses: []string{},
+			Claims:         []rbac.Claim{rbac.ClaimReader},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		err := database.SetCachedPermissions(ctx, perms)
+		if err != nil {
+			t.Fatalf("SetCachedPermissions() error = %v", err)
+		}
+
+		retrieved, err := database.GetCachedPermissions(ctx, user.ID, org.ID)
+		if err != nil {
+			t.Fatalf("GetCachedPermissions() error = %v", err)
+		}
+
+		if retrieved == nil {
+			t.Fatal("GetCachedPermissions() returned nil")
+		}
+
+		if len(retrieved.AllowMethods) != 1 {
+			t.Error("AllowMethods should have 1 element")
+		}
+	})
+
+	t.Run("GetExpired", func(t *testing.T) {
+		expiredOrgID := uuid.New().String()
+		expiredPerms := &rbac.EffectivePermissions{
+			ID:             uuid.New().String(),
+			UserID:         user.ID,
+			OrgID:          expiredOrgID,
+			AllowMethods:   []string{},
+			AllowAddresses: []string{},
+			OwnedAddresses: []string{},
+			Claims:         []rbac.Claim{},
+			ComputedAt:     time.Now().Add(-2 * time.Hour),
+			ExpiresAt:      time.Now().Add(-1 * time.Hour),
+		}
+		database.SetCachedPermissions(ctx, expiredPerms)
+
+		retrieved, err := database.GetCachedPermissions(ctx, user.ID, expiredOrgID)
+		if err != nil {
+			t.Fatalf("GetCachedPermissions() error = %v", err)
+		}
+
+		if retrieved != nil {
+			t.Error("GetCachedPermissions() should return nil for expired cache")
+		}
+	})
+
+	t.Run("InvalidateForUser", func(t *testing.T) {
+		err := database.InvalidateCacheForUser(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("InvalidateCacheForUser() error = %v", err)
+		}
+
+		retrieved, _ := database.GetCachedPermissions(ctx, user.ID, org.ID)
+		if retrieved != nil {
+			t.Error("Cache should be invalidated")
+		}
+	})
+
+	t.Run("CleanupExpired", func(t *testing.T) {
+		deleted, err := database.CleanupExpiredCache(ctx)
+		if err != nil {
+			t.Fatalf("CleanupExpiredCache() error = %v", err)
+		}
+
+		// At least the expired one should be deleted
+		if deleted < 0 {
+			t.Errorf("CleanupExpiredCache() deleted = %d, want >= 0", deleted)
+		}
+	})
+}
+
+// Audit Log Tests
+
+func TestAuditLog(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	t.Run("Create", func(t *testing.T) {
+		entry := &rbac.AuditLogEntry{
+			ActorExternalID: "did:audit:actor",
+			Action:          "create",
+			ResourceType:    "organization",
+			ResourceName:    "Test Org",
+			NewValue:        map[string]interface{}{"name": "Test Org"},
+			IPAddress:       "127.0.0.1",
+		}
+
+		err := database.CreateAuditLog(ctx, entry)
+		if err != nil {
+			t.Fatalf("CreateAuditLog() error = %v", err)
+		}
+
+		if entry.ID == 0 {
+			t.Error("Audit log ID should be set")
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		logs, err := database.ListAuditLogs(ctx, "organization", nil, 10, 0)
+		if err != nil {
+			t.Fatalf("ListAuditLogs() error = %v", err)
+		}
+
+		if len(logs) == 0 {
+			t.Error("ListAuditLogs() returned empty list")
+		}
+	})
+
+	t.Run("ListByActor", func(t *testing.T) {
+		// Create entry with actor ID
+		actorID := uuid.New().String()
+		entry := &rbac.AuditLogEntry{
+			ActorID:         &actorID,
+			ActorExternalID: "did:audit:specific",
+			Action:          "update",
+			ResourceType:    "user",
+			ResourceName:    "Test User",
+			IPAddress:       "127.0.0.1",
+		}
+		database.CreateAuditLog(ctx, entry)
+
+		logs, err := database.ListAuditLogsByActor(ctx, actorID, 10, 0)
+		if err != nil {
+			t.Fatalf("ListAuditLogsByActor() error = %v", err)
+		}
+
+		if len(logs) == 0 {
+			t.Error("ListAuditLogsByActor() returned empty list")
+		}
+	})
+}
+
+// Helper functions
+
+func intPtr(i int) *int {
+	return &i
+}

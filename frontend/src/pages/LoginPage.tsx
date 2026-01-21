@@ -162,7 +162,7 @@ export function LoginPage() {
                 includeMargin={false}
               />
             </div>
-            <p className="text-sm text-white/60 text-center">
+            <p className="text-sm text-white/80 text-center">
               Scan with your Privado ID wallet
             </p>
           </div>
@@ -184,7 +184,7 @@ export function LoginPage() {
         {/* Desktop: also show button as fallback */}
         {!isMobile && (
           <div className="pt-4 border-t border-white/10">
-            <p className="text-xs text-white/40 text-center mb-3">
+            <p className="text-xs text-white/70 text-center mb-3">
               Or open the wallet on this device
             </p>
             <Button
@@ -200,7 +200,7 @@ export function LoginPage() {
         )}
 
         {/* Polling indicator */}
-        <div className="flex items-center justify-center gap-2 text-white/50 text-sm">
+        <div className="flex items-center justify-center gap-2 text-white/70 text-sm">
           <Loader2 className="w-4 h-4 animate-spin" />
           Waiting for wallet confirmation...
         </div>
@@ -209,7 +209,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4">
+    <div className="min-h-screen bg-mesh flex items-center justify-center p-4 overflow-x-hidden">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Logo Header */}
         <div className="text-center mb-8">
@@ -217,7 +217,7 @@ export function LoginPage() {
             <Shield className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white/95">Privacy Proxy</h1>
-          <p className="text-white/60 mt-1">Authenticated RPC Access</p>
+          <p className="text-white/80 mt-1">Authenticated RPC Access</p>
         </div>
 
         {/* Auth Card */}
@@ -233,7 +233,7 @@ export function LoginPage() {
             {state.step === 'loading' && (
               <div className="flex flex-col items-center gap-4 py-8">
                 <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
-                <p className="text-white/60">Preparing authentication...</p>
+                <p className="text-white/80">Preparing authentication...</p>
               </div>
             )}
 
@@ -247,7 +247,7 @@ export function LoginPage() {
                   <CheckCircle2 className="w-8 h-8 text-green-400" />
                 </div>
                 <p className="text-white/90 font-medium">Authentication successful!</p>
-                <p className="text-white/60 text-sm">Redirecting to wallet linking...</p>
+                <p className="text-white/80 text-sm">Redirecting to wallet linking...</p>
               </div>
             )}
 
@@ -259,7 +259,7 @@ export function LoginPage() {
                 </div>
                 <div className="text-center">
                   <p className="text-white/90 font-medium mb-2">Humanity Verification Required</p>
-                  <p className="text-white/60 text-sm mb-4">
+                  <p className="text-white/80 text-sm mb-4">
                     Please complete your ProofOfHumanity verification with Billions to continue.
                   </p>
                 </div>
@@ -291,7 +291,7 @@ export function LoginPage() {
                 </div>
                 <div className="text-center">
                   <p className="text-white/90 font-medium mb-2">Authentication Failed</p>
-                  <p className="text-white/60 text-sm">{state.error}</p>
+                  <p className="text-white/80 text-sm">{state.error}</p>
                 </div>
                 <Button onClick={startAuth} variant="glassPrimary" className="w-full mt-2">
                   Try Again
@@ -303,7 +303,7 @@ export function LoginPage() {
 
         {/* Help text */}
         <div className="mt-6 text-center">
-          <p className="text-white/40 text-sm">
+          <p className="text-white/70 text-sm">
             Don't have Privado ID?{' '}
             <a
               href="https://docs.privado.id/docs/wallet/wallet-app/privadoid-app/"

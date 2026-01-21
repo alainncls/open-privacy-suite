@@ -17,6 +17,7 @@ export interface Group {
   id: string;
   org_id: string;
   parent_id?: string | null;
+  role_id?: string | null; // Assigned role - all members inherit this role's permissions
   slug: string;
   name: string;
   description?: string;
@@ -32,6 +33,7 @@ export interface Role {
   name: string;
   description?: string;
   claims: Claim[];
+  allow_methods: string[]; // Allowed RPC methods for this role
   created_at: string;
   updated_at: string;
 }
@@ -40,8 +42,9 @@ export interface GroupPermissions {
   id: string;
   group_id: string;
   allow_methods: string[];
-  allow_contracts: string[];
-  owned_contracts: string[];
+  allow_addresses: string[];
+  owned_addresses: string[];
+  address_functions?: Record<string, string[]>;
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
   created_at: string;
@@ -76,7 +79,6 @@ export interface ContractOwnership {
   contract_address: string;
   org_id: string;
   owner_group_id: string;
-  owner_abilities: string[]; // e.g., ["upgrade", "pause", "admin"]
   deployed_by_user_id?: string | null;
   deployed_at?: string | null;
   metadata: Record<string, unknown>;
@@ -89,8 +91,9 @@ export interface EffectivePermissions {
   user_id: string;
   org_id: string;
   allow_methods: string[];
-  allow_contracts: string[];
-  owned_contracts: string[];
+  allow_addresses: string[];
+  owned_addresses: string[];
+  address_functions?: Record<string, string[]>;
   claims: Claim[];
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
@@ -108,7 +111,7 @@ export interface AccessCheckRequest {
   user_external_id: string;
   org_slug?: string;
   method: string;
-  contract_address?: string;
+  target_address?: string;
   required_claims?: Claim[];
 }
 
@@ -144,23 +147,27 @@ export interface CreateGroupInput {
   name: string;
   description?: string;
   parent_id?: string | null;
+  role_id?: string | null;
 }
 
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
+  role_id?: string | null;
 }
 
 export interface CreateRoleInput {
   name: string;
   description?: string;
   claims?: Claim[];
+  allow_methods?: string[];
 }
 
 export interface UpdateRoleInput {
   name?: string;
   description?: string;
   claims?: Claim[];
+  allow_methods?: string[];
 }
 
 export interface UpdateUserInput {
@@ -177,8 +184,9 @@ export interface CreateMembershipInput {
 
 export interface SetGroupPermissionsInput {
   allow_methods?: string[];
-  allow_contracts?: string[];
-  owned_contracts?: string[];
+  allow_addresses?: string[];
+  owned_addresses?: string[];
+  address_functions?: Record<string, string[]>;
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
 }
@@ -186,13 +194,11 @@ export interface SetGroupPermissionsInput {
 export interface CreateContractOwnershipInput {
   contract_address: string;
   owner_group_id: string;
-  owner_abilities?: string[];
   metadata?: Record<string, unknown>;
 }
 
 export interface UpdateContractOwnershipInput {
   owner_group_id?: string;
-  owner_abilities?: string[];
   metadata?: Record<string, unknown>;
 }
 

@@ -267,7 +267,7 @@ Test method access for a user.
 {
   "contract_address": "0x...",
   "owner_group_id": "uuid",
-  "owner_abilities": ["upgrade", "pause", "admin"]
+  "metadata": {}
 }
 ```
 

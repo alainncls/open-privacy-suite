@@ -18,26 +18,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Mock Billions identity service
-  billions-mock:
-    image: node:20-alpine
-    ports:
-      - "9000:9000"
-    volumes:
-      - ./e2e/mock-billions:/app
-    working_dir: /app
-    environment:
-      - PORT=9000
-    networks:
-      - proxy-network
-    command: sh /app/start.sh
-    healthcheck:
-      test: ["CMD", "node", "/app/healthcheck.js"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
   # Anvil (Foundry's local Ethereum node)
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
@@ -63,14 +43,11 @@ services:
     environment:
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
-      - BILLIONS_URL=http://billions-mock:9000
       - PORT=8080
       - ENVIRONMENT=development
       - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
     depends_on:
       postgres:
-        condition: service_healthy
-      billions-mock:
         condition: service_healthy
       anvil:
         condition: service_healthy

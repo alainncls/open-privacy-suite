@@ -87,7 +87,12 @@ export const authApiMethods = {
         return response.data.tokens;
       }
       return null;
-    } catch {
+    } catch (err) {
+      // Re-throw humanity verification errors so they can be handled by the caller
+      if (axios.isAxiosError(err) && err.response?.data?.error === 'humanity_verification_required') {
+        throw err;
+      }
+      // Swallow other errors (e.g., 404 for pending session)
       return null;
     }
   },

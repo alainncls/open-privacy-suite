@@ -207,16 +207,17 @@ Users with ZK-attested role credentials are automatically assigned to groups whe
 
 ### Contract Ownership
 
-Track deployed contracts and define special abilities:
+Track deployed contracts and their owner groups:
 ```bash
 curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts \
   -H "Content-Type: application/json" \
   -d '{
     "contract_address": "0x1234...",
-    "owner_group_id": "{group_id}",
-    "owner_abilities": ["upgrade", "pause", "admin"]
+    "owner_group_id": "{group_id}"
   }'
 ```
+
+Note: Permissions are determined by the user's role claims, not by contract-specific abilities.
 
 ## API Reference
 

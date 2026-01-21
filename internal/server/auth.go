@@ -15,6 +15,51 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
+// getPublicURL extracts the public-facing URL from request headers.
+// This allows the callback URL to work dynamically regardless of how the server is accessed
+// (e.g., via localhost, Tailscale hostname, or behind a reverse proxy).
+// Priority: X-Forwarded-Host > Host header > fallback to config BaseURL
+func (s *Server) getPublicURL(c *gin.Context) string {
+	// Check for forwarded headers (reverse proxy scenarios)
+	proto := c.GetHeader("X-Forwarded-Proto")
+	if proto == "" {
+		// Default to http for development, https for production
+		if s.config.IsProduction() {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	// Get the host from headers
+	host := c.GetHeader("X-Forwarded-Host")
+	if host == "" {
+		host = c.Request.Host
+	}
+
+	// If we have a valid host, construct the URL
+	if host != "" {
+		// Strip any port from the forwarded host - the callback needs to go
+		// directly to the backend port, not the frontend proxy port
+		hostname := host
+		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+			// Check it's not an IPv6 address (which has colons but is wrapped in [])
+			if !strings.Contains(host, "[") || strings.HasSuffix(host, "]") == false {
+				hostname = host[:colonIdx]
+			}
+		}
+		// Use the backend's actual port from config or default to 8080
+		port := s.config.Port
+		if port == "" {
+			port = "8080"
+		}
+		return fmt.Sprintf("%s://%s:%s", proto, hostname, port)
+	}
+
+	// Fall back to configured BaseURL
+	return s.config.BaseURL
+}
+
 // AuthRequest represents the request body for /auth endpoint
 type AuthRequest struct {
 	JWZToken string `json:"jwz_token" binding:"required"`
@@ -57,8 +102,10 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 	// Generate session ID first (needed for callback URL)
 	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
 
-	// Build callback URL with session ID
-	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", s.config.BaseURL, sessionID)
+	// Build callback URL with session ID using dynamic host detection
+	// This allows the QR code to work from any hostname (localhost, Tailscale, etc.)
+	baseURL := s.getPublicURL(c)
+	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
 
 	var authReq *protocol.AuthorizationRequestMessage
 	var err error
@@ -229,9 +276,6 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		}
 	}
 
-	// Delete session after successful verification
-	s.sessionStore.DeleteSession(sessionID)
-
 	// Ensure user exists in RBAC system and get their KYC status
 	// New users default to KYC=false; KYC status is updated through admin API
 	kyc := false
@@ -267,12 +311,58 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		return nil, err
 	}
 
+	// Mark session as completed with tokens (keep alive for frontend polling)
+	// Session will auto-expire after 2 minutes giving frontend time to poll
+	if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
+		// Session may have been deleted or expired - log but continue
+		// The wallet still gets the tokens directly from the callback response
+		_ = err
+	}
+
 	return &AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    1800, // 30 minutes in seconds
 	}, nil
+}
+
+// SessionStatusResponse represents the response for session status polling
+type SessionStatusResponse struct {
+	Completed bool          `json:"completed"`
+	Tokens    *AuthResponse `json:"tokens,omitempty"`
+}
+
+// handleAuthSessionStatus handles GET /api/auth/session/:id/status - poll for session completion
+// Frontend polls this after displaying QR code to check if wallet has completed auth
+func (s *Server) handleAuthSessionStatus(c *gin.Context) {
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session ID required"})
+		return
+	}
+
+	session := s.sessionStore.GetSession(sessionID)
+	if session == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
+		return
+	}
+
+	if !session.Completed {
+		c.JSON(http.StatusOK, SessionStatusResponse{Completed: false})
+		return
+	}
+
+	// Session is completed - return tokens
+	c.JSON(http.StatusOK, SessionStatusResponse{
+		Completed: true,
+		Tokens: &AuthResponse{
+			AccessToken:  session.AccessToken,
+			RefreshToken: session.RefreshToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    1800,
+		},
+	})
 }
 
 // handleRefresh handles POST /refresh - issues new access token from refresh token

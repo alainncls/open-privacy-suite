@@ -24,8 +24,7 @@ The privacy proxy testbed supports two testing modes:
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | `postgres` | postgres:15-alpine | 5432 | Policy and token storage |
-| `erigon-mock` | node:20-alpine | 8545 | Mock Ethereum JSON-RPC node |
-| `billions-mock` | node:20-alpine | 9000 | Mock KYC/identity service |
+| `anvil` | foundry | 8545 | Local Ethereum node |
 | `proxy-backend` | Go binary | 8080 | Privacy proxy server |
 | `proxy-frontend` | Node.js | 5173 | Admin UI (Vite dev server) |
 
@@ -34,9 +33,7 @@ The privacy proxy testbed supports two testing modes:
 ```
 postgres ──┐
             ├──▶ proxy-backend ──▶ proxy-frontend
-erigon-mock ┤
-            │
-billions-mock ┘
+anvil ─────┘
 ```
 
 All services wait for their dependencies to be healthy before starting.
@@ -91,42 +88,6 @@ const mockResponses = {
   },
 };
 ```
-
----
-
-## Mock Billions Service
-
-**Location:** `e2e/mock-billions/server.js`
-
-A minimal Express.js server that simulates the Billions KYC API.
-
-### API Endpoint
-
-```
-GET /verify
-Headers: Authorization: Bearer {user_id}
-
-Response:
-{
-  "subject": "billions:{user_id}",
-  "kyc": true,
-  "claims": {
-    "token": "{user_id}",
-    "iat": <unix_timestamp>,
-    "exp": <unix_timestamp + 3600>
-  }
-}
-```
-
-### Behavior
-
-- **Valid token:** Returns identity with `kyc: true`
-- **Missing/empty token:** Returns 401 error
-- **Health check:** `GET /health` returns `{"status": "ok"}`
-
-### Testing KYC Failures
-
-The mock always returns `kyc: true`. To test KYC failures, create a policy with `kyc: false` in the database - the access controller checks the policy's KYC flag, not the Billions response.
 
 ---
 
@@ -353,8 +314,7 @@ make docker-down
 |---------|-----|
 | Privacy Proxy API | http://localhost:8080 |
 | Admin UI | http://localhost:5173 |
-| Mock Ethereum Node | http://localhost:8545 |
-| Mock Billions | http://localhost:9000 |
+| Anvil (Ethereum Node) | http://localhost:8545 |
 | PostgreSQL | localhost:5432 |
 
 ---
@@ -520,8 +480,7 @@ go test -v -run TestE2E_AuthorizedRequest ./e2e/...
 
 | File | Lines | Description |
 |------|-------|-------------|
-| `docker-compose.yml` | 1-112 | Service definitions |
-| `e2e/mock-node/server.js` | 1-54 | Mock Ethereum node |
-| `e2e/mock-billions/server.js` | 1-61 | Mock Billions service |
-| `e2e/proxy_test.go` | 49-130 | E2E test setup |
-| `internal/db/test_helper.go` | 86-142 | testcontainers setup |
+| `docker-compose.yml` | - | Service definitions |
+| `e2e/mock-node/server.js` | - | Mock Ethereum node (for unit tests) |
+| `e2e/proxy_test.go` | - | E2E test setup |
+| `internal/db/test_helper.go` | - | testcontainers setup |

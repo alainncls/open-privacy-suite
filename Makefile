@@ -1,9 +1,14 @@
-.PHONY: build test test-unit test-e2e run dev clean e2e e2e-debug e2e-down \
-	db-migrate db-status db-new-migration install-tern seed
+.PHONY: build test test-unit test-e2e run dev clean e2e e2e-debug e2e-down e2e-clean \
+	db-migrate db-status db-new-migration install-tern seed \
+	contracts-install contracts-build contracts-deploy authproxy
 
 # Build backend
 build:
 	go build -o bin/privacy-proxy ./cmd/server
+
+# Build authproxy
+authproxy:
+	go build -o bin/authproxy ./cmd/authproxy
 
 # Run backend
 run: build
@@ -13,13 +18,22 @@ run: build
 dev:
 	go run ./cmd/server
 
-# Run all tests
-test:
+# Run all tests (Go + Frontend)
+test: test-unit frontend-test
+
+# Run Go tests
+test-go:
 	go test ./... -v
 
 # Run unit tests only
 test-unit: test-db-ready
 	go test ./internal/... -v
+
+# Run unit tests with coverage
+test-coverage: test-db-ready
+	go test ./internal/... -v -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
 # Check if test database is ready
 test-db-ready:
@@ -31,21 +45,31 @@ test-db-ready:
 test-e2e:
 	go test ./e2e/... -v
 
-# Run Playwright E2E tests with Docker Compose
+# E2E compose command - isolated from local dev
+E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml
+
+# Run Playwright E2E tests with Docker Compose (isolated environment)
 e2e:
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build postgres billions-mock anvil proxy-backend
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm test
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml down
+	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend
+	$(E2E_COMPOSE) run --rm playwright npm test; \
+	status=$$?; \
+	$(E2E_COMPOSE) down -v; \
+	exit $$status
 
 # Run Playwright E2E tests and keep services running (for debugging)
 e2e-debug:
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build postgres billions-mock anvil proxy-backend
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm playwright npm run test:debug
+	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend
+	$(E2E_COMPOSE) run --rm playwright npm run test:debug
 	@echo "Services still running. Run 'make e2e-down' to stop them."
 
-# Stop E2E services
+# Stop E2E services and clean up volumes
 e2e-down:
-	docker-compose -f docker-compose.yml -f docker-compose.e2e.yml down
+	$(E2E_COMPOSE) down -v
+
+# Force clean E2E environment (removes containers, volumes, networks)
+e2e-clean:
+	$(E2E_COMPOSE) down -v --remove-orphans
+	@docker volume rm privacy-proxy-e2e_e2e-postgres-data 2>/dev/null || true
 
 # Install frontend dependencies
 frontend-install:
@@ -58,6 +82,17 @@ frontend-dev:
 # Build frontend
 frontend-build:
 	cd frontend && npm run build
+
+# Run frontend tests
+frontend-test:
+	cd frontend && npm run test:run
+
+# Run frontend tests with coverage
+frontend-test-coverage:
+	cd frontend && npm run test:coverage
+
+# Run all tests (Go + Frontend)
+test-all: test-unit frontend-test
 
 # Clean build artifacts
 clean:
@@ -126,3 +161,39 @@ seed:
 	@echo "Seeding database with development data..."
 	@docker-compose exec -T postgres psql -U postgres -d privacy_proxy < scripts/seed.sql
 	@echo "Done!"
+
+# ============================================================================
+# Contract Development (Foundry)
+# ============================================================================
+
+# Install Foundry dependencies (forge-std)
+contracts-install:
+	@echo "Installing Foundry dependencies..."
+	cd contracts && forge install foundry-rs/forge-std --no-commit
+	@echo "Done!"
+
+# Build contracts
+contracts-build:
+	@echo "Building contracts..."
+	cd contracts && forge build
+	@echo "Done!"
+
+# Deploy Counter contract to local Anvil
+# Requires: Anvil running on localhost:8545 (use 'docker-compose up anvil' or 'make docker-up')
+# Uses Anvil's default account 0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+contracts-deploy:
+	@echo "Deploying Counter contract to local Anvil..."
+	@echo "Make sure Anvil is running (docker-compose up anvil)"
+	cd contracts && forge script script/Deploy.s.sol:DeployCounter \
+		--rpc-url http://localhost:8545 \
+		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+		--broadcast
+	@echo ""
+	@echo "Contract deployed! Add the address above to the admin UI contracts section."
+
+# Deploy and show contract address (quieter output)
+contracts-deploy-quiet:
+	@cd contracts && forge script script/Deploy.s.sol:DeployCounter \
+		--rpc-url http://localhost:8545 \
+		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+		--broadcast 2>&1 | grep -E "(Counter deployed to:|deployed)"

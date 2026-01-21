@@ -1,7 +1,5 @@
-import { useState, ErrorInfo, Component, ReactNode } from 'react';
-import { Dashboard } from './components/dashboard/Dashboard';
-import AccessLogs from './components/AccessLogs';
-import RBACManager from './components/rbac/RBACManager';
+import { ErrorInfo, Component, ReactNode } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Shield, LayoutDashboard, ScrollText, Users } from 'lucide-react';
 
@@ -54,7 +52,31 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Derive active tab from URL
+  const getActiveTab = (): Tab => {
+    if (location.pathname.includes('/logs')) return 'logs';
+    if (location.pathname.includes('/rbac')) return 'rbac';
+    return 'dashboard';
+  };
+
+  const activeTab = getActiveTab();
+
+  const handleTabChange = (value: string) => {
+    switch (value) {
+      case 'dashboard':
+        navigate('/admin/dashboard');
+        break;
+      case 'logs':
+        navigate('/admin/logs');
+        break;
+      case 'rbac':
+        navigate('/admin/rbac');
+        break;
+    }
+  };
 
   return (
     <ErrorBoundary>
@@ -75,7 +97,7 @@ function App() {
               </div>
 
               {/* Navigation Tabs */}
-              <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as Tab)}>
+              <Tabs value={activeTab} onValueChange={handleTabChange}>
                 <TabsList className="bg-white/5">
                   <TabsTrigger value="dashboard" className="gap-2">
                     <LayoutDashboard className="w-4 h-4" />
@@ -98,9 +120,7 @@ function App() {
         {/* Main Content */}
         <main className="max-w-7xl mx-auto px-6 py-8">
           <div className="animate-fade-in">
-            {activeTab === 'dashboard' && <Dashboard />}
-            {activeTab === 'logs' && <AccessLogs />}
-            {activeTab === 'rbac' && <RBACManager />}
+            <Outlet />
           </div>
         </main>
       </div>

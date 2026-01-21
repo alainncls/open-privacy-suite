@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { ContractOwnership, Group } from '@/types/rbac';
 import ContractForm from './ContractForm';
+import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -20,11 +20,9 @@ import {
 } from '@/components/ui/dialog';
 import { FileCode2, Plus, Pencil, Trash2, Loader2, FolderTree } from 'lucide-react';
 
-interface ContractListProps {
-  orgId: string;
-}
-
-export default function ContractList({ orgId }: ContractListProps) {
+export default function ContractList() {
+  const { selectedOrg } = useOrgContext();
+  const orgId = selectedOrg?.id || '';
   const [contracts, setContracts] = useState<ContractOwnership[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,10 +30,13 @@ export default function ContractList({ orgId }: ContractListProps) {
   const [editing, setEditing] = useState<ContractOwnership | null>(null);
 
   useEffect(() => {
-    loadData();
+    if (orgId) {
+      loadData();
+    }
   }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     try {
       setLoading(true);
       const [contractsRes, groupsRes] = await Promise.all([
@@ -130,7 +131,6 @@ export default function ContractList({ orgId }: ContractListProps) {
             <TableRow>
               <TableHead>Contract Address</TableHead>
               <TableHead>Owner Group</TableHead>
-              <TableHead>Abilities</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -162,28 +162,12 @@ export default function ContractList({ orgId }: ContractListProps) {
                   </div>
                 </TableCell>
                 <TableCell>
-                  {contract.owner_abilities && contract.owner_abilities.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {contract.owner_abilities.map(ability => (
-                        <Badge
-                          key={ability}
-                          variant="outline"
-                          className="text-xs"
-                        >
-                          {ability}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-white/40 text-sm">None</span>
-                  )}
-                </TableCell>
-                <TableCell>
                   <div className="flex items-center justify-end gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => setEditing(contract)}
+                      title="Edit contract"
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
@@ -192,6 +176,7 @@ export default function ContractList({ orgId }: ContractListProps) {
                       size="sm"
                       onClick={() => handleDelete(contract)}
                       className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      title="Delete contract"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

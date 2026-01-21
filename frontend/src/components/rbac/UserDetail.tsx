@@ -254,18 +254,18 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
           </div>
         ) : (
           <div className="space-y-2">
-            {memberships.map(m => (
+            {memberships.map((m, idx) => (
               <div
-                key={m.membership.id}
+                key={m.membership?.id || idx}
                 className="flex items-center justify-between p-3 rounded-lg bg-white/5"
               >
                 <div className="flex items-center gap-3">
                   <FolderTree className="w-4 h-4 text-primary-400" />
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{m.group.name}</span>
+                      <span className="font-medium text-sm">{m.group?.name || 'Unknown Group'}</span>
                       <Badge variant="outline" className="text-xs font-mono">
-                        {m.group.path}
+                        {m.group?.path || 'N/A'}
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 mt-1">
@@ -273,31 +273,37 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                         <Badge variant="secondary" className="text-xs gap-1">
                           <Shield className="w-3 h-3" />
                           {m.role.name}
+                          {m.group?.role_id ? ' (from group)' : ' (legacy)'}
                         </Badge>
                       ) : (
-                        <span className="text-xs text-white/40">No role</span>
+                        <span className="text-xs text-white/40">No role assigned</span>
                       )}
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${
-                          m.membership.source === 'zk_attested'
-                            ? 'text-purple-400 border-purple-500/30'
-                            : 'text-white/50'
-                        }`}
-                      >
-                        {m.membership.source}
-                      </Badge>
+                      {m.membership?.source && (
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            m.membership.source === 'zk_attested'
+                              ? 'text-purple-400 border-purple-500/30'
+                              : 'text-white/50'
+                          }`}
+                        >
+                          {m.membership.source}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleDeleteMembership(m.membership.id)}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                {m.membership?.id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteMembership(m.membership.id)}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    title="Remove membership"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
             ))}
           </div>

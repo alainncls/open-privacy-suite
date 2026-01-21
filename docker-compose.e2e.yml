@@ -1,13 +1,38 @@
-# E2E test override - use with: docker-compose -f docker-compose.yml -f docker-compose.e2e.yml
+# E2E test configuration - runs in complete isolation from local dev
+# Usage: docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml up -d --build
+#
+# Key differences from dev docker-compose.yml:
+# 1. Uses isolated project name (privacy-proxy-e2e) via Makefile -p flag
+# 2. Uses anonymous volume for postgres (not shared with dev)
+# 3. No host port mappings - services communicate only via internal network
+# 4. Ephemeral - all data destroyed on `docker-compose down -v`
 
 services:
-  # Replace mock node with Anvil (Foundry's Ethereum node)
+  # PostgreSQL database - isolated instance for E2E
+  postgres:
+    image: postgres:15-alpine
+    # No port mapping - only accessible within e2e network
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=privacy_proxy
+    # Anonymous volume - data is ephemeral, destroyed on down -v
+    volumes:
+      - e2e-postgres-data:/var/lib/postgresql/data
+    networks:
+      - e2e-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Anvil (Foundry's local Ethereum node)
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
-    ports:
-      - "8545:8545"
+    # No port mapping
     networks:
-      - proxy-network
+      - e2e-network
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
@@ -16,22 +41,31 @@ services:
       retries: 5
       start_period: 5s
 
-  # Override proxy-backend to use Anvil instead of mock node
+  # Privacy proxy backend
   proxy-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    # No port mapping - only playwright container needs access
     environment:
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
-      - BILLIONS_URL=http://billions-mock:9000
       - PORT=8080
-      - ENVIRONMENT=development
+      - ENVIRONMENT=test
       - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000
     depends_on:
       postgres:
         condition: service_healthy
-      billions-mock:
-        condition: service_healthy
       anvil:
         condition: service_healthy
+    networks:
+      - e2e-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # Playwright test runner
   playwright:
@@ -51,10 +85,14 @@ services:
       proxy-backend:
         condition: service_healthy
     networks:
-      - proxy-network
+      - e2e-network
     working_dir: /app
 
-  # Disable frontend not needed for e2e tests
-  proxy-frontend:
-    deploy:
-      replicas: 0
+# Isolated volume - separate from dev
+volumes:
+  e2e-postgres-data:
+
+# Isolated network - separate from dev
+networks:
+  e2e-network:
+    driver: bridge

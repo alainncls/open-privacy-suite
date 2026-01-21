@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Group } from '@/types/rbac';
+import type { Group, Role } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,11 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircle, Save, X, Loader2, FolderTree } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, FolderTree, Shield } from 'lucide-react';
 
 interface GroupFormProps {
   orgId: string;
   groups: Group[];
+  roles?: Role[];
   group?: Group;
   parentId?: string;
   onClose: () => void;
@@ -25,6 +26,7 @@ interface GroupFormProps {
 export default function GroupForm({
   orgId,
   groups,
+  roles: propRoles,
   group,
   parentId,
   onClose,
@@ -36,10 +38,34 @@ export default function GroupForm({
   const [selectedParentId, setSelectedParentId] = useState<string | undefined>(
     parentId || group?.parent_id || undefined
   );
+  const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>(
+    group?.role_id || undefined
+  );
+  const [roles, setRoles] = useState<Role[]>(propRoles || []);
+  const [loadingRoles, setLoadingRoles] = useState(!propRoles);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!group;
+
+  useEffect(() => {
+    if (!propRoles) {
+      loadRoles();
+    }
+  }, [orgId, propRoles]);
+
+  const loadRoles = async () => {
+    try {
+      setLoadingRoles(true);
+      const response = await rbacApi.roles.list(orgId);
+      setRoles(response.data || []);
+    } catch (error) {
+      console.error('Failed to load roles:', error);
+      setRoles([]);
+    } finally {
+      setLoadingRoles(false);
+    }
+  };
 
   // Filter out the current group and its descendants from parent options
   const getAvailableParents = () => {
@@ -77,13 +103,18 @@ export default function GroupForm({
 
     try {
       if (isEditing) {
-        await rbacApi.groups.update(orgId, group.id, { name, description });
+        await rbacApi.groups.update(orgId, group.id, {
+          name,
+          description,
+          role_id: selectedRoleId || null,
+        });
       } else {
         await rbacApi.groups.create(orgId, {
           slug,
           name,
           description,
           parent_id: selectedParentId || null,
+          role_id: selectedRoleId || null,
         });
       }
       onSave();
@@ -187,6 +218,52 @@ export default function GroupForm({
           </div>
         </>
       )}
+
+      {/* Role Selector - always shown */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-white/70">
+          Assigned Role
+        </label>
+        {loadingRoles ? (
+          <div className="flex items-center gap-2 text-white/40 py-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">Loading roles...</span>
+          </div>
+        ) : (
+          <Select
+            value={selectedRoleId || '_none'}
+            onValueChange={value =>
+              setSelectedRoleId(value === '_none' ? undefined : value)
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="No role assigned" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_none">
+                <div className="flex items-center gap-2 text-white/60">
+                  <Shield className="w-4 h-4" />
+                  <span>No role assigned</span>
+                </div>
+              </SelectItem>
+              {roles.map(role => (
+                <SelectItem key={role.id} value={role.id}>
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-primary-400" />
+                    <span>{role.name}</span>
+                    {role.description && (
+                      <span className="text-white/40 text-xs">- {role.description}</span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <p className="text-xs text-white/40">
+          All users in this group will inherit the selected role's permissions (methods + claims)
+        </p>
+      </div>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">

@@ -12,8 +12,6 @@ import {
 } from '@/components/ui/select';
 import { AlertCircle, Save, X, Loader2, FolderTree } from 'lucide-react';
 
-const COMMON_ABILITIES = ['upgrade', 'pause', 'admin', 'mint', 'burn', 'transfer'];
-
 interface ContractFormProps {
   orgId: string;
   groups: Group[];
@@ -31,27 +29,10 @@ export default function ContractForm({
 }: ContractFormProps) {
   const [contractAddress, setContractAddress] = useState(contract?.contract_address || '');
   const [ownerGroupId, setOwnerGroupId] = useState(contract?.owner_group_id || '');
-  const [abilities, setAbilities] = useState<string[]>(contract?.owner_abilities || []);
-  const [customAbility, setCustomAbility] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!contract;
-
-  const toggleAbility = (ability: string) => {
-    if (abilities.includes(ability)) {
-      setAbilities(abilities.filter(a => a !== ability));
-    } else {
-      setAbilities([...abilities, ability]);
-    }
-  };
-
-  const addCustomAbility = () => {
-    if (customAbility && !abilities.includes(customAbility)) {
-      setAbilities([...abilities, customAbility]);
-      setCustomAbility('');
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,13 +49,11 @@ export default function ContractForm({
       if (isEditing) {
         await rbacApi.contracts.update(orgId, contract.contract_address, {
           owner_group_id: ownerGroupId,
-          owner_abilities: abilities,
         });
       } else {
         await rbacApi.contracts.create(orgId, {
           contract_address: contractAddress,
           owner_group_id: ownerGroupId,
-          owner_abilities: abilities,
         });
       }
       onSave();
@@ -147,76 +126,7 @@ export default function ContractForm({
           </Select>
         )}
         <p className="text-xs text-white/40">
-          The group that owns this contract
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
-          Owner Abilities
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {COMMON_ABILITIES.map(ability => (
-            <button
-              key={ability}
-              type="button"
-              onClick={() => toggleAbility(ability)}
-              className={`px-3 py-1.5 rounded-lg border text-sm transition-all ${
-                abilities.includes(ability)
-                  ? 'border-primary-500/50 bg-primary-500/20 text-primary-400'
-                  : 'border-white/20 bg-white/5 text-white/60 hover:border-white/30 hover:bg-white/10'
-              }`}
-            >
-              {ability}
-            </button>
-          ))}
-        </div>
-
-        {/* Custom abilities */}
-        {abilities
-          .filter(a => !COMMON_ABILITIES.includes(a))
-          .map(ability => (
-            <div key={ability} className="flex items-center gap-2 mt-2">
-              <span className="px-3 py-1.5 rounded-lg border border-primary-500/50 bg-primary-500/20 text-primary-400 text-sm">
-                {ability}
-              </span>
-              <button
-                type="button"
-                onClick={() => setAbilities(abilities.filter(a => a !== ability))}
-                className="text-white/40 hover:text-red-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-
-        {/* Add custom ability */}
-        <div className="flex gap-2 mt-2">
-          <Input
-            type="text"
-            value={customAbility}
-            onChange={e => setCustomAbility(e.target.value)}
-            placeholder="Custom ability..."
-            className="flex-1"
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addCustomAbility();
-              }
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addCustomAbility}
-            disabled={!customAbility}
-          >
-            Add
-          </Button>
-        </div>
-        <p className="text-xs text-white/40">
-          Abilities the owner group has on this contract
+          The group that owns this contract. Members with appropriate role claims can perform actions on it.
         </p>
       </div>
 

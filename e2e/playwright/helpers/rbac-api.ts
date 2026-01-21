@@ -79,7 +79,6 @@ export interface ContractOwnership {
   contract_address: string;
   org_id: string;
   owner_group_id: string;
-  owner_abilities: string[];
   deployed_by_user_id: string | null;
   deployed_at: string | null;
   metadata: Record<string, unknown>;
@@ -187,13 +186,11 @@ export interface CreateMembershipInput {
 export interface CreateContractInput {
   contract_address: string;
   owner_group_id: string;
-  owner_abilities?: string[];
   metadata?: Record<string, unknown>;
 }
 
 export interface UpdateContractInput {
   owner_group_id?: string;
-  owner_abilities?: string[];
   metadata?: Record<string, unknown>;
 }
 

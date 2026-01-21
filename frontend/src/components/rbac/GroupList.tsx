@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Group, GroupPermissions } from '@/types/rbac';
+import type { Group, GroupPermissions, Role } from '@/types/rbac';
 import GroupForm from './GroupForm';
 import GroupPermissionsForm from './GroupPermissionsForm';
+import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -20,18 +21,19 @@ import {
   Settings,
   Loader2,
   ChevronRight,
+  Shield,
 } from 'lucide-react';
-
-interface GroupListProps {
-  orgId: string;
-}
 
 interface GroupWithPermissions extends Group {
   permissions?: GroupPermissions | null;
+  role?: Role | null;
 }
 
-export default function GroupList({ orgId }: GroupListProps) {
+export default function GroupList() {
+  const { selectedOrg } = useOrgContext();
+  const orgId = selectedOrg?.id || '';
   const [groups, setGroups] = useState<GroupWithPermissions[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
@@ -39,14 +41,27 @@ export default function GroupList({ orgId }: GroupListProps) {
   const [parentForNew, setParentForNew] = useState<Group | null>(null);
 
   useEffect(() => {
-    loadGroups();
+    if (orgId) {
+      loadGroups();
+    }
   }, [orgId]);
 
   const loadGroups = async () => {
+    if (!orgId) return;
     try {
       setLoading(true);
-      const response = await rbacApi.groups.list(orgId);
-      const groupsList = response.data || [];
+
+      // Load groups and roles in parallel
+      const [groupsResponse, rolesResponse] = await Promise.all([
+        rbacApi.groups.list(orgId),
+        rbacApi.roles.list(orgId),
+      ]);
+      const groupsList = groupsResponse.data || [];
+      const rolesList = rolesResponse.data || [];
+      setRoles(rolesList);
+
+      // Create a map of roles for quick lookup
+      const rolesMap = new Map(rolesList.map(r => [r.id, r]));
 
       // Load permissions for each group
       const groupsWithPermissions = await Promise.all(
@@ -56,9 +71,17 @@ export default function GroupList({ orgId }: GroupListProps) {
               orgId,
               group.id
             );
-            return { ...group, permissions: permsResponse.data };
+            return {
+              ...group,
+              permissions: permsResponse.data,
+              role: group.role_id ? rolesMap.get(group.role_id) || null : null,
+            };
           } catch {
-            return { ...group, permissions: null };
+            return {
+              ...group,
+              permissions: null,
+              role: group.role_id ? rolesMap.get(group.role_id) || null : null,
+            };
           }
         })
       );
@@ -112,10 +135,9 @@ export default function GroupList({ orgId }: GroupListProps) {
 
   const renderGroup = (group: GroupWithPermissions, level: number = 0) => {
     const children = getChildGroups(group.id);
-    const hasPermissions =
+    const hasAddresses =
       group.permissions &&
-      ((group.permissions.allow_methods?.length || 0) > 0 ||
-        (group.permissions.allow_contracts?.length || 0) > 0);
+      (group.permissions.allow_addresses?.length || 0) > 0;
 
     return (
       <div key={group.id} className="animate-fade-in">
@@ -139,15 +161,20 @@ export default function GroupList({ orgId }: GroupListProps) {
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
                   {group.slug}
                 </Badge>
+                {group.role && (
+                  <Badge variant="secondary" className="text-xs flex-shrink-0 gap-1">
+                    <Shield className="w-3 h-3" />
+                    {group.role.name}
+                  </Badge>
+                )}
               </div>
               <div className="flex items-center gap-1 text-xs text-white/40 mt-0.5">
                 <span className="font-mono">{group.path}</span>
-                {hasPermissions && (
+                {hasAddresses && (
                   <>
                     <ChevronRight className="w-3 h-3" />
                     <span>
-                      {group.permissions?.allow_methods?.length || 0} methods,{' '}
-                      {group.permissions?.allow_contracts?.length || 0} contracts
+                      {group.permissions?.allow_addresses?.length || 0} addresses
                     </span>
                   </>
                 )}
@@ -207,7 +234,7 @@ export default function GroupList({ orgId }: GroupListProps) {
         <div>
           <h3 className="text-sm font-medium text-white/80">Groups</h3>
           <p className="text-xs text-white/50 mt-0.5">
-            Hierarchical permission containers with methods and contract access
+            Hierarchical containers defining what methods and addresses users can access
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
@@ -258,6 +285,7 @@ export default function GroupList({ orgId }: GroupListProps) {
           <GroupForm
             orgId={orgId}
             groups={groups}
+            roles={roles}
             parentId={parentForNew?.id}
             onClose={() => {
               setShowForm(false);
@@ -279,6 +307,7 @@ export default function GroupList({ orgId }: GroupListProps) {
               key={editing.id}
               orgId={orgId}
               groups={groups}
+              roles={roles}
               group={editing}
               onClose={() => setEditing(null)}
               onSave={handleSave}

@@ -82,8 +82,7 @@ Configured per-user via RBAC:
 | `postgres` | 5432 | Database |
 | `proxy-backend` | 8080 | API server |
 | `proxy-frontend` | 5173 | Admin UI |
-| `erigon-mock` | 8545 | Mock Ethereum node |
-| `billions-mock` | 9000 | Mock KYC service |
+| `anvil` | 8545 | Local Ethereum node |
 
 ### E2E Testing (docker-compose.e2e.yml)
 

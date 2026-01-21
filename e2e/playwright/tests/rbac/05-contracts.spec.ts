@@ -19,23 +19,12 @@ test.describe('RBAC Contracts', () => {
 
     const contract = await ctx.fixture.createContract(org.id, group.id, {
       address,
-      abilities: ['upgrade', 'pause', 'admin'],
     });
 
     expect(contract.id).toBeTruthy();
     expect(contract.contract_address).toBe(address);
     expect(contract.org_id).toBe(org.id);
     expect(contract.owner_group_id).toBe(group.id);
-    expect(contract.owner_abilities).toEqual(['upgrade', 'pause', 'admin']);
-  });
-
-  test('registers contract with default abilities', async () => {
-    const org = await ctx.fixture.createOrg('defaultorg');
-    const group = await ctx.fixture.createGroup(org.id, 'defaultgroup');
-
-    const contract = await ctx.fixture.createContract(org.id, group.id);
-
-    expect(contract.owner_abilities).toEqual([]);
   });
 
   test('updates contract owner group', async () => {
@@ -51,23 +40,6 @@ test.describe('RBAC Contracts', () => {
     });
 
     expect(updated.owner_group_id).toBe(group2.id);
-  });
-
-  test('updates contract abilities', async () => {
-    const org = await ctx.fixture.createOrg('updateabilitiesorg');
-    const group = await ctx.fixture.createGroup(org.id, 'abilitygroup');
-    const address = ctx.contractAddress();
-
-    await ctx.fixture.createContract(org.id, group.id, {
-      address,
-      abilities: ['upgrade'],
-    });
-
-    const updated = await ctx.rbac.updateContract(org.id, address, {
-      owner_abilities: ['upgrade', 'pause', 'admin'],
-    });
-
-    expect(updated.owner_abilities).toEqual(['upgrade', 'pause', 'admin']);
   });
 
   test('updates contract metadata', async () => {
@@ -125,15 +97,9 @@ test.describe('RBAC Contracts', () => {
     const org = await ctx.fixture.createOrg('multicontractorg');
     const group = await ctx.fixture.createGroup(org.id, 'multicontractgroup');
 
-    const contract1 = await ctx.fixture.createContract(org.id, group.id, {
-      abilities: ['upgrade'],
-    });
-    const contract2 = await ctx.fixture.createContract(org.id, group.id, {
-      abilities: ['admin'],
-    });
-    const contract3 = await ctx.fixture.createContract(org.id, group.id, {
-      abilities: ['pause'],
-    });
+    const contract1 = await ctx.fixture.createContract(org.id, group.id);
+    const contract2 = await ctx.fixture.createContract(org.id, group.id);
+    const contract3 = await ctx.fixture.createContract(org.id, group.id);
 
     const contracts = await ctx.rbac.listContracts(org.id);
     const addresses = contracts.map((c) => c.contract_address);

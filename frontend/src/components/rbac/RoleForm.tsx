@@ -18,6 +18,9 @@ export default function RoleForm({ orgId, role, onClose, onSave }: RoleFormProps
   const [name, setName] = useState(role?.name || '');
   const [description, setDescription] = useState(role?.description || '');
   const [claims, setClaims] = useState<Claim[]>(role?.claims || []);
+  const [allowMethods, setAllowMethods] = useState(
+    (role?.allow_methods || []).join(', ')
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,16 +32,34 @@ export default function RoleForm({ orgId, role, onClose, onSave }: RoleFormProps
     }
   };
 
+  const parseList = (value: string) => {
+    return value
+      .split(/[\s,]+/)
+      .map(v => v.trim())
+      .filter(v => v.length > 0);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
 
     try {
+      const methods = parseList(allowMethods);
       if (role) {
-        await rbacApi.roles.update(orgId, role.id, { name, description, claims });
+        await rbacApi.roles.update(orgId, role.id, {
+          name,
+          description,
+          claims,
+          allow_methods: methods,
+        });
       } else {
-        await rbacApi.roles.create(orgId, { name, description, claims });
+        await rbacApi.roles.create(orgId, {
+          name,
+          description,
+          claims,
+          allow_methods: methods,
+        });
       }
       onSave();
     } catch (err: unknown) {
@@ -103,9 +124,24 @@ export default function RoleForm({ orgId, role, onClose, onSave }: RoleFormProps
       </div>
 
       <div className="space-y-2">
+        <label className="block text-sm font-medium text-white/70">
+          Allowed Methods
+        </label>
+        <Textarea
+          value={allowMethods}
+          onChange={e => setAllowMethods(e.target.value)}
+          placeholder="eth_call, eth_getBalance, eth_blockNumber, eth_chainId, eth_gasPrice, eth_sendTransaction"
+          className="h-24 font-mono text-sm"
+        />
+        <p className="text-xs text-white/40">
+          Comma-separated list of allowed RPC methods for users with this role
+        </p>
+      </div>
+
+      <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">Claims</label>
         <p className="text-xs text-white/40 mb-3">
-          Select the permissions this role grants
+          Select the capability claims this role grants
         </p>
         <div className="grid grid-cols-2 gap-2">
           {ALL_CLAIMS.map(claim => (
