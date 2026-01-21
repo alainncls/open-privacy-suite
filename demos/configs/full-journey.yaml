@@ -1,0 +1,159 @@
+# Full Journey Demo
+# Complete end-to-end walkthrough of Privacy Proxy
+
+version: "1"
+
+metadata:
+  name: "full-journey"
+  title: "Privacy Proxy: Complete Platform Tour"
+  description: "End-to-end journey from authentication to blockchain access"
+
+video:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  viewport: { width: 1280, height: 720 }
+
+voice:
+  provider: "openai"
+  voice_id: "nova"
+  speed: 0.95
+
+steps:
+  # Introduction
+  - id: "landing"
+    action: "navigate"
+    url: "/"
+    wait: { selector: "[data-testid='hero-section']", timeout: 10000 }
+    narration: "Privacy Proxy is the complete solution for privacy-preserving blockchain access. Let me show you how it works."
+    pause: 2.0
+    screenshot: true
+
+  # Authentication Flow
+  - id: "auth_start"
+    action: "click"
+    selector: "[data-testid='get-started']"
+    wait: { navigation: "/login" }
+    narration: "First, users authenticate using zero-knowledge proofs. No personal data is ever exposed."
+    pause: 1.5
+
+  - id: "auth_qr"
+    action: "wait"
+    wait: { selector: "[data-testid='qr-code']", timeout: 5000 }
+    narration: "In production, the Privado ID app scans this code and generates a proof that you meet the required criteria."
+    pause: 2.0
+    screenshot: true
+
+  - id: "auth_mock"
+    action: "click"
+    selector: "button:has-text('Mock Login')"
+    wait: { navigation: "/link-wallet", timeout: 10000 }
+    narration: "The system verifies the proof cryptographically, confirming your eligibility without learning anything else about you."
+    pause: 1.5
+
+  # Wallet Connection
+  - id: "wallet_intro"
+    action: "wait"
+    wait: { selector: "[data-testid='wallet-connect']", timeout: 5000 }
+    narration: "Next, connect a wallet. This creates a link between your verified credentials and your on-chain identity."
+    pause: 1.5
+
+  - id: "wallet_click"
+    action: "click"
+    selector: "button:has-text('Connect Wallet')"
+    wait: { selector: "[data-testid='rk-wallet-option']", timeout: 5000 }
+    pause: 0.5
+
+  - id: "wallet_select"
+    action: "click"
+    selector: "[data-testid='rk-wallet-option-injected']"
+    wait: { navigation: "/dashboard", timeout: 15000 }
+    narration: "We support MetaMask, WalletConnect, Coinbase Wallet, and more through RainbowKit."
+    pause: 1.0
+
+  # User Dashboard
+  - id: "dashboard_overview"
+    action: "wait"
+    wait: { selector: "[data-testid='user-dashboard']", timeout: 5000 }
+    narration: "Welcome to your dashboard. Here you can see your RPC endpoints and access permissions."
+    pause: 2.0
+    screenshot: true
+
+  - id: "rpc_endpoint"
+    action: "hover"
+    selector: "[data-testid='rpc-endpoint']"
+    narration: "Your personalized RPC endpoint is ready. Use this in your dApps just like any other RPC provider."
+    pause: 1.5
+
+  - id: "copy_endpoint"
+    action: "click"
+    selector: "[data-testid='copy-endpoint']"
+    narration: "Copy the endpoint URL and you're ready to interact with the blockchain."
+    pause: 1.0
+
+  # Show permissions
+  - id: "permissions_tab"
+    action: "click"
+    selector: "[data-testid='tab-permissions']"
+    wait: { selector: "[data-testid='permissions-list']", timeout: 5000 }
+    narration: "The permissions tab shows which contracts and methods you can access based on your organization membership."
+    pause: 2.0
+    screenshot: true
+
+  # Admin Tour (quick)
+  - id: "admin_nav"
+    action: "click"
+    selector: "[data-testid='nav-admin']"
+    wait: { navigation: "/admin", timeout: 5000 }
+    narration: "Administrators manage organizations, groups, and access policies through a dedicated interface."
+    pause: 1.5
+
+  - id: "admin_overview"
+    action: "wait"
+    wait: { selector: "[data-testid='admin-dashboard']", timeout: 5000 }
+    narration: "The admin dashboard provides complete visibility into your access control configuration."
+    pause: 2.0
+    screenshot: true
+
+  - id: "admin_orgs"
+    action: "click"
+    selector: "[data-testid='nav-organizations']"
+    wait: { selector: "[data-testid='org-list']", timeout: 5000 }
+    narration: "Organizations group related contracts and users. Each can have its own permission structure."
+    pause: 1.5
+
+  - id: "admin_groups"
+    action: "click"
+    selector: "[data-testid='org-card']:first-child"
+    wait: { selector: "[data-testid='org-detail']", timeout: 5000 }
+    narration: "Within each organization, groups define who can access what at the contract method level."
+    pause: 2.0
+    screenshot: true
+
+  # Conclusion
+  - id: "conclusion"
+    action: "navigate"
+    url: "/"
+    wait: { selector: "[data-testid='hero-section']", timeout: 5000 }
+    narration: "Privacy Proxy: Privacy-preserving authentication, fine-grained access control, and seamless blockchain connectivity. The infrastructure Web3 deserves."
+    pause: 3.0
+    screenshot: true
+
+branding:
+  watermark:
+    position: "bottom-right"
+    opacity: 0.7
+  intro:
+    duration: 4
+  outro:
+    cta: "Get started at gateway.fm/privacy-proxy"
+    duration: 5
+
+captions:
+  style: "modern"
+  position: "bottom"
+  font_size: 48
+
+export:
+  - { aspect: "16:9", resolution: "1920x1080" }
+  - { aspect: "9:16", resolution: "1080x1920", suffix: "-vertical" }
+  - { aspect: "1:1", resolution: "1080x1080", suffix: "-square" }

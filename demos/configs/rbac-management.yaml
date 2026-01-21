@@ -1,0 +1,161 @@
+# RBAC Management Demo
+# Demonstrates enterprise-grade role-based access control for blockchain
+
+version: "1"
+
+metadata:
+  name: "rbac-management"
+  title: "Enterprise Access Control for Web3"
+  description: "Role-based access control with fine-grained permissions"
+
+video:
+  resolution: { width: 1920, height: 1080 }
+  fps: 60
+  viewport: { width: 1280, height: 720 }
+
+voice:
+  provider: "openai"
+  voice_id: "echo"
+  speed: 1.0
+
+steps:
+  - id: "intro"
+    action: "navigate"
+    url: "/admin"
+    wait: { selector: "[data-testid='admin-dashboard']", timeout: 10000 }
+    narration: "Privacy Proxy provides enterprise-grade access control for blockchain applications. Let's explore the admin interface."
+    pause: 2.0
+
+  - id: "organizations_overview"
+    action: "click"
+    selector: "[data-testid='nav-organizations']"
+    wait: { selector: "[data-testid='org-list']", timeout: 5000 }
+    narration: "Organizations are the top-level containers. Each organization can have multiple groups with different permissions."
+    pause: 1.5
+    screenshot: true
+
+  - id: "create_org_button"
+    action: "click"
+    selector: "button:has-text('Create Organization')"
+    wait: { selector: "[data-testid='org-form']", timeout: 5000 }
+    narration: "Let's create a new organization for a DeFi protocol."
+    pause: 1.0
+
+  - id: "fill_org_name"
+    action: "type"
+    selector: "input[name='name']"
+    value: "Acme DeFi"
+    narration: "We'll call it Acme DeFi."
+    pause: 0.5
+
+  - id: "fill_org_slug"
+    action: "type"
+    selector: "input[name='slug']"
+    value: "acme-defi"
+    pause: 0.3
+
+  - id: "submit_org"
+    action: "click"
+    selector: "button[type='submit']:has-text('Create')"
+    wait: { selector: "[data-testid='org-created']", timeout: 5000 }
+    narration: "Organization created. Now let's set up access groups."
+    pause: 1.0
+
+  - id: "groups_tab"
+    action: "click"
+    selector: "[data-testid='tab-groups']"
+    wait: { selector: "[data-testid='groups-list']", timeout: 5000 }
+    narration: "Groups define collections of users with shared permissions. Let's create an admin group."
+    pause: 1.5
+
+  - id: "create_group"
+    action: "click"
+    selector: "button:has-text('Create Group')"
+    wait: { selector: "[data-testid='group-form']", timeout: 5000 }
+    narration: "Each group can have specific contract access and method-level permissions."
+    pause: 1.0
+
+  - id: "fill_group_name"
+    action: "type"
+    selector: "input[name='groupName']"
+    value: "Protocol Admins"
+    pause: 0.3
+
+  - id: "select_permissions"
+    action: "click"
+    selector: "[data-testid='permission-full-access']"
+    narration: "Admins get full access to all contracts registered with this organization."
+    pause: 1.0
+
+  - id: "submit_group"
+    action: "click"
+    selector: "button[type='submit']:has-text('Create')"
+    wait: { selector: "[data-testid='group-created']", timeout: 5000 }
+    pause: 0.5
+
+  - id: "contracts_tab"
+    action: "click"
+    selector: "[data-testid='tab-contracts']"
+    wait: { selector: "[data-testid='contracts-list']", timeout: 5000 }
+    narration: "Now let's register smart contracts that this organization manages."
+    pause: 1.5
+
+  - id: "add_contract"
+    action: "click"
+    selector: "button:has-text('Add Contract')"
+    wait: { selector: "[data-testid='contract-form']", timeout: 5000 }
+    narration: "We can add any EVM contract and define which methods are accessible."
+    pause: 1.0
+
+  - id: "fill_contract"
+    action: "type"
+    selector: "input[name='address']"
+    value: "0x1234567890abcdef1234567890abcdef12345678"
+    pause: 0.5
+
+  - id: "fill_contract_name"
+    action: "type"
+    selector: "input[name='contractName']"
+    value: "Governance Token"
+    narration: "This governance token contract will be accessible only by authorized users."
+    pause: 1.0
+
+  - id: "submit_contract"
+    action: "click"
+    selector: "button[type='submit']:has-text('Add')"
+    wait: { selector: "[data-testid='contract-added']", timeout: 5000 }
+    pause: 0.5
+
+  - id: "final_overview"
+    action: "navigate"
+    url: "/admin/acme-defi"
+    wait: { selector: "[data-testid='org-overview']", timeout: 5000 }
+    narration: "Here's our complete setup. Organizations, groups, contracts, and permissions all work together to provide granular access control."
+    pause: 2.0
+    screenshot: true
+
+  - id: "conclusion"
+    action: "wait"
+    pause: 2.0
+    narration: "Privacy Proxy brings enterprise-grade access control to Web3. Your blockchain, your rules."
+    screenshot: true
+
+branding:
+  watermark:
+    position: "bottom-right"
+    opacity: 0.7
+  intro:
+    duration: 3
+  outro:
+    cta: "Start building at gateway.fm/privacy-proxy"
+    duration: 4
+
+captions:
+  style: "modern"
+  position: "bottom"
+  font_size: 48
+
+export:
+  - { aspect: "16:9", resolution: "1920x1080" }
+  - { aspect: "9:16", resolution: "1080x1920", suffix: "-vertical" }
+  - { aspect: "1:1", resolution: "1080x1080", suffix: "-square" }

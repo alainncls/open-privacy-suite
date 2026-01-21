@@ -1,5 +1,39 @@
 # Privacy Proxy - Project Conventions
 
+## Persistent Task Tracking (TODO.md)
+
+**Read `TODO.md` at the start of each session** to understand current priorities and context.
+
+### Workflow
+1. **On session start**: Read TODO.md to see active tasks, blockers, and context
+2. **During work**: Update TODO.md as you complete items or discover new issues
+3. **Before ending**: Ensure TODO.md reflects current state for continuity
+
+### TODO.md Format
+```markdown
+# TODO
+
+## In Progress
+- [ ] Task description with relevant context
+
+## Blocked
+- [ ] Task - **Blocker:** reason
+
+## Backlog
+- [ ] Future task
+
+## Done (Recent)
+- [x] Completed task - brief outcome/notes
+```
+
+### Guidelines
+- Keep entries concise but include enough context for future sessions
+- Move completed items to "Done (Recent)" with outcome notes
+- Periodically archive old "Done" items to keep the file manageable
+- Both human and AI can add/update items freely
+
+---
+
 ## Database
 
 ### PostgreSQL Access
@@ -71,6 +105,26 @@ make test-unit
 ```bash
 make e2e
 ```
+
+## Git
+
+### Commit Signing
+Commits should be made **without GPG signing** (use `--no-gpg-sign` or `-c commit.gpgsign=false`):
+```bash
+git commit --no-gpg-sign -m "message"
+# or
+git -c commit.gpgsign=false commit -m "message"
+```
+
+### Pre-commit Hooks
+Setup pre-commit hooks to run all tests before committing:
+```bash
+make setup-hooks
+```
+
+This installs a pre-commit hook that runs:
+- `make test` (Go unit tests + frontend tests)
+- `make e2e` (E2E tests)
 
 ## Code Style
 

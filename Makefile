@@ -1,7 +1,9 @@
 .PHONY: build test test-unit test-e2e run run-binary dev clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
-	stop restart logs status
+	stop restart logs status \
+	demo demo-record demo-process demo-all demo-setup demo-clean \
+	setup-hooks
 
 # Build backend
 build:
@@ -203,3 +205,60 @@ contracts-deploy-quiet:
 		--rpc-url http://localhost:8545 \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast 2>&1 | grep -E "(Counter deployed to:|deployed)"
+
+# ============================================================================
+# Demo Video Generation
+# ============================================================================
+
+# Setup demo generation environment
+demo-setup:
+	@cd demos && make setup
+
+# Generate complete demo video
+# Usage: make demo name=auth-flow
+demo:
+	@cd demos && make demo name=$(name)
+
+# Record video only (no processing)
+# Usage: make demo-record name=auth-flow
+demo-record:
+	@cd demos && make demo-record name=$(name)
+
+# Process existing recording
+# Usage: make demo-process name=auth-flow
+demo-process:
+	@cd demos && make demo-process name=$(name)
+
+# Generate all demo videos
+demo-all:
+	@cd demos && make demo-all
+
+# List available demo configurations
+demo-list:
+	@cd demos && make demo-list
+
+# Clean demo outputs
+demo-clean:
+	@cd demos && make clean
+
+# ============================================================================
+# Git Hooks
+# ============================================================================
+
+# Setup git hooks for pre-commit testing
+setup-hooks:
+	@mkdir -p .git/hooks
+	@echo '#!/bin/bash' > .git/hooks/pre-commit
+	@echo 'set -e' >> .git/hooks/pre-commit
+	@echo '' >> .git/hooks/pre-commit
+	@echo 'echo "Running pre-commit tests..."' >> .git/hooks/pre-commit
+	@echo '' >> .git/hooks/pre-commit
+	@echo '# Run Go unit tests and frontend tests' >> .git/hooks/pre-commit
+	@echo 'make test' >> .git/hooks/pre-commit
+	@echo '' >> .git/hooks/pre-commit
+	@echo '# Run E2E tests' >> .git/hooks/pre-commit
+	@echo 'make e2e' >> .git/hooks/pre-commit
+	@echo '' >> .git/hooks/pre-commit
+	@echo 'echo "All tests passed!"' >> .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed at .git/hooks/pre-commit"
