@@ -38,6 +38,23 @@ func (s *Server) DB() *db.DB {
 	return s.db
 }
 
+// Stop gracefully stops all background goroutines.
+// Should be called before server shutdown.
+func (s *Server) Stop() {
+	if s.sessionStore != nil {
+		s.sessionStore.Stop()
+	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+	if s.challengeStore != nil {
+		s.challengeStore.Stop()
+	}
+	if s.rbacAccessCtrl != nil {
+		s.rbacAccessCtrl.Stop()
+	}
+}
+
 // PrivadoVerifier interface for Privado ID operations
 type PrivadoVerifier interface {
 	CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
@@ -121,6 +138,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 }
 
 func (s *Server) Run(addr string) error {
+	router := s.setupRouter()
+	return router.Run(addr)
+}
+
+// RunWithServer runs the server with a custom http.Server for graceful shutdown support.
+func (s *Server) RunWithServer(httpServer *http.Server) error {
+	router := s.setupRouter()
+	httpServer.Handler = router
+	return httpServer.ListenAndServe()
+}
+
+func (s *Server) setupRouter() *gin.Engine {
 	router := gin.Default()
 
 	// Trust Docker network proxies (allows X-Forwarded-For to work correctly)
@@ -139,19 +168,7 @@ func (s *Server) Run(addr string) error {
 	})
 
 	// CORS middleware for frontend
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	router.Use(s.corsMiddleware())
 
 	// Health check endpoint (no auth required)
 	// Support both GET and HEAD for healthchecks (wget --spider uses HEAD)
@@ -185,30 +202,30 @@ func (s *Server) Run(addr string) error {
 		router.POST("/api/auth/verify", s.handleAuthVerify)
 	}
 
-	// ETH endpoints under /api for frontend proxy compatibility
+	// ETH address linking endpoints - available at two paths for flexibility:
+	// - /api/eth/* - for frontend proxy (frontend proxies /api/* to backend)
+	// - /eth/* - for direct API access (mobile apps, CLI tools)
+	// Both require JWT authentication.
+	ethEndpoints := func(group *gin.RouterGroup) {
+		group.POST("/link/challenge", s.handleEthLinkChallenge)
+		group.POST("/link/verify", s.handleEthLinkVerify)
+		group.GET("/addresses", s.handleGetEthAddresses)
+		group.DELETE("/addresses/:address", s.handleDeleteEthAddress)
+		group.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
+	}
+
 	apiEth := router.Group("/api/eth")
 	apiEth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
-	{
-		apiEth.POST("/link/challenge", s.handleEthLinkChallenge)
-		apiEth.POST("/link/verify", s.handleEthLinkVerify)
-		apiEth.GET("/addresses", s.handleGetEthAddresses)
-		apiEth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
-		apiEth.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
-	}
+	ethEndpoints(apiEth)
 
-	// JSON-RPC proxy endpoint - protected by JWT
-	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
-
-	// ETH address linking endpoints - protected by JWT
 	eth := router.Group("/eth")
 	eth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
-	{
-		eth.POST("/link/challenge", s.handleEthLinkChallenge)
-		eth.POST("/link/verify", s.handleEthLinkVerify)
-		eth.GET("/addresses", s.handleGetEthAddresses)
-		eth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
-		eth.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
-	}
+	ethEndpoints(eth)
+
+	// JSON-RPC proxy endpoint - protected by JWT
+	// Support both "/" (direct access) and "/rpc" (frontend proxy)
+	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
+	router.POST("/rpc", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
 	// API endpoints for UI - protected by localhost-only middleware
 	api := router.Group("/api")
@@ -222,7 +239,7 @@ func (s *Server) Run(addr string) error {
 		s.registerRBACRoutes(api)
 	}
 
-	return router.Run(addr)
+	return router
 }
 
 // MaxRequestBodySize is the maximum allowed request body size (1MB).
@@ -334,6 +351,45 @@ func (s *Server) getLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, logs)
+}
+
+// corsMiddleware returns a CORS middleware configured from server settings.
+// In development (or with CORSAllowedOrigins="*"), allows all origins.
+// In production, only allows configured origins.
+func (s *Server) corsMiddleware() gin.HandlerFunc {
+	allowedOrigins := s.config.CORSAllowedOrigins
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+
+		// Determine if this origin should be allowed
+		var allowOrigin string
+		if allowedOrigins == "*" {
+			allowOrigin = "*"
+		} else if allowedOrigins != "" {
+			// Check if origin is in the allowed list
+			for _, allowed := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(allowed) == origin {
+					allowOrigin = origin
+					break
+				}
+			}
+		}
+
+		if allowOrigin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		}
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
 }
 
 // localhostOnlyMiddleware restricts access to localhost only

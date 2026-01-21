@@ -19,6 +19,7 @@ type Config struct {
 	RequireProofOfHumanity     bool   // Whether to require ProofOfHumanity credential (default: true in prod)
 	AllowUnregisteredAddresses bool   // If true, addresses not in RBAC bypass permission checks (default: true)
 	ENSResolverURL             string // Ethereum mainnet RPC URL for ENS resolution
+	CORSAllowedOrigins         string // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
 }
 
 func Load() *Config {
@@ -39,6 +40,16 @@ func Load() *Config {
 		allowUnregisteredBool = false
 	}
 
+	// Default CORS origins: "*" in dev, must be configured in production
+	corsOrigins := getEnv("CORS_ALLOWED_ORIGINS", "")
+	if corsOrigins == "" {
+		if env == "production" {
+			corsOrigins = "" // Empty means no origins allowed - must be configured
+		} else {
+			corsOrigins = "*" // Allow all in development
+		}
+	}
+
 	return &Config{
 		NodeURL:                getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:            getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -50,10 +61,11 @@ func Load() *Config {
 		BaseURL:                getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
 		Port:                   getEnv("PORT", "8080"),                                        // Server port
 		Environment:                env,
-		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""),                  // Billions issuer DID for PoH
+		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""),                      // Billions issuer DID for PoH
 		RequireProofOfHumanity:     requirePoHBool,
 		AllowUnregisteredAddresses: allowUnregisteredBool,
 		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
+		CORSAllowedOrigins:         corsOrigins,
 	}
 }
 
