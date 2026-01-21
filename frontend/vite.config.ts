@@ -13,8 +13,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: '0.0.0.0',
-    // Allow any host for Tailscale and local network access
-    allowedHosts: ['localhost', 'max-mac', '127.0.0.1', '.local', 'proxy-frontend'],
+    // Allow all hosts in development for ngrok/external access
+    allowedHosts: true,
     proxy: {
       '/api': {
         // Default to localhost:8080 for local development

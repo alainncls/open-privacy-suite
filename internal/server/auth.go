@@ -15,15 +15,19 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
-// getPublicURL extracts the public-facing URL from request headers.
-// This allows the callback URL to work dynamically regardless of how the server is accessed
-// (e.g., via localhost, Tailscale hostname, or behind a reverse proxy).
-// Priority: X-Forwarded-Host > Host header > fallback to config BaseURL
+// getPublicURL extracts the public-facing URL for callbacks.
+// Priority: explicit BASE_URL config > dynamic detection from headers
 func (s *Server) getPublicURL(c *gin.Context) string {
-	// Check for forwarded headers (reverse proxy scenarios)
+	// If BASE_URL is explicitly configured (not the default), use it directly.
+	// This is the most reliable way to configure external access (ngrok, etc.)
+	defaultBaseURL := "http://localhost:8080"
+	if s.config.BaseURL != "" && s.config.BaseURL != defaultBaseURL {
+		return s.config.BaseURL
+	}
+
+	// Dynamic detection for local development
 	proto := c.GetHeader("X-Forwarded-Proto")
 	if proto == "" {
-		// Default to http for development, https for production
 		if s.config.IsProduction() {
 			proto = "https"
 		} else {
@@ -31,24 +35,19 @@ func (s *Server) getPublicURL(c *gin.Context) string {
 		}
 	}
 
-	// Get the host from headers
 	host := c.GetHeader("X-Forwarded-Host")
 	if host == "" {
 		host = c.Request.Host
 	}
 
-	// If we have a valid host, construct the URL
 	if host != "" {
-		// Strip any port from the forwarded host - the callback needs to go
-		// directly to the backend port, not the frontend proxy port
+		// Strip any port from the forwarded host
 		hostname := host
 		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
-			// Check it's not an IPv6 address (which has colons but is wrapped in [])
 			if !strings.Contains(host, "[") || strings.HasSuffix(host, "]") == false {
 				hostname = host[:colonIdx]
 			}
 		}
-		// Use the backend's actual port from config or default to 8080
 		port := s.config.Port
 		if port == "" {
 			port = "8080"
@@ -56,7 +55,6 @@ func (s *Server) getPublicURL(c *gin.Context) string {
 		return fmt.Sprintf("%s://%s:%s", proto, hostname, port)
 	}
 
-	// Fall back to configured BaseURL
 	return s.config.BaseURL
 }
 

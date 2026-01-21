@@ -39,11 +39,32 @@ export function SuccessPage() {
     loadAddresses();
   }, [accessToken]);
 
-  // Copy to clipboard
+  // Copy to clipboard with fallback for mobile
   const copyToClipboard = async (text: string, type: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(type);
-    setTimeout(() => setCopied(null), 2000);
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers/mobile
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      // Show the text in a prompt as last resort
+      window.prompt('Copy this text:', text);
+    }
   };
 
   // Add network to MetaMask
