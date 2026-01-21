@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount, useSignMessage, useDisconnect } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { Wallet, Link2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X } from 'lucide-react';
+import { Wallet, Link2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Copy, Check } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -33,6 +33,14 @@ export function LinkWalletPage() {
     linkedAddresses: [],
   });
   const [isLinking, setIsLinking] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+
+  // Copy address to clipboard
+  const copyToClipboard = async (address: string) => {
+    await navigator.clipboard.writeText(address);
+    setCopiedAddress(address);
+    setTimeout(() => setCopiedAddress(null), 2000);
+  };
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -261,20 +269,33 @@ export function LinkWalletPage() {
                   {state.linkedAddresses.map((linked) => (
                     <div
                       key={linked.address}
-                      className="flex items-center justify-between p-3 bg-white/5 rounded-lg"
+                      className="flex items-center justify-between p-3 bg-white/5 rounded-lg gap-2"
                     >
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-400" />
-                        <span className="text-white/80 font-mono text-sm">
-                          {linked.address.slice(0, 6)}...{linked.address.slice(-4)}
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />
+                        <span className="text-white/80 font-mono text-xs break-all">
+                          {linked.address}
                         </span>
                       </div>
-                      <button
-                        onClick={() => handleUnlink(linked.address)}
-                        className="text-white/40 hover:text-red-400 text-xs"
-                      >
-                        Unlink
-                      </button>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => copyToClipboard(linked.address)}
+                          className="text-white/40 hover:text-white/70 p-1"
+                          title="Copy address"
+                        >
+                          {copiedAddress === linked.address ? (
+                            <Check className="w-4 h-4 text-green-400" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleUnlink(linked.address)}
+                          className="text-white/40 hover:text-red-400 text-xs"
+                        >
+                          Unlink
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

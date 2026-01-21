@@ -10,7 +10,7 @@ import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
 export function SuccessPage() {
   const navigate = useNavigate();
   const { isAuthenticated, accessToken, userDID, logout } = useAuth();
-  const [copied, setCopied] = useState<'rpc' | 'token' | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
 
@@ -40,7 +40,7 @@ export function SuccessPage() {
   }, [accessToken]);
 
   // Copy to clipboard
-  const copyToClipboard = async (text: string, type: 'rpc' | 'token') => {
+  const copyToClipboard = async (text: string, type: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(type);
     setTimeout(() => setCopied(null), 2000);
@@ -215,16 +215,27 @@ export function SuccessPage() {
             {linkedAddresses.length > 0 && (
               <div className="mt-4 pt-4 border-t border-white/10">
                 <p className="text-xs text-white/50 mb-2">Linked Wallets</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-2">
                   {linkedAddresses.map((addr) => (
                     <div
                       key={addr.address}
-                      className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-full text-xs"
+                      className="flex items-center gap-2 p-2 bg-white/5 rounded-lg"
                     >
-                      <Wallet className="w-3 h-3 text-accent-400" />
-                      <span className="text-white/70 font-mono">
-                        {addr.address.slice(0, 6)}...{addr.address.slice(-4)}
+                      <Wallet className="w-3 h-3 text-accent-400 flex-shrink-0" />
+                      <span className="text-white/70 font-mono text-xs break-all flex-1">
+                        {addr.address}
                       </span>
+                      <button
+                        onClick={() => copyToClipboard(addr.address, addr.address)}
+                        className="text-white/40 hover:text-white/70 p-1 flex-shrink-0"
+                        title="Copy address"
+                      >
+                        {copied === addr.address ? (
+                          <Check className="w-3 h-3 text-green-400" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                      </button>
                     </div>
                   ))}
                 </div>
