@@ -1,6 +1,7 @@
-.PHONY: build test test-unit test-e2e run dev clean e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build test test-unit test-e2e run run-binary dev clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
-	contracts-install contracts-build contracts-deploy authproxy
+	contracts-install contracts-build contracts-deploy authproxy \
+	stop restart logs status
 
 # Build backend
 build:
@@ -10,8 +11,28 @@ build:
 authproxy:
 	go build -o bin/authproxy ./cmd/authproxy
 
-# Run backend
-run: build
+# Run full Docker stack (postgres, anvil, backend, frontend)
+run:
+	docker-compose up --build -d
+
+# Stop all services
+stop:
+	docker-compose down
+
+# Restart all services
+restart:
+	docker-compose down && docker-compose up --build -d
+
+# View logs
+logs:
+	docker-compose logs -f
+
+# Show service status
+status:
+	docker-compose ps
+
+# Run backend binary directly (without Docker)
+run-binary: build
 	./bin/privacy-proxy
 
 # Run in dev mode (with hot reload)
@@ -94,8 +115,13 @@ frontend-test-coverage:
 # Run all tests (Go + Frontend)
 test-all: test-unit frontend-test
 
-# Clean build artifacts
+# Clean Docker environment (stop services, remove volumes)
 clean:
+	docker-compose down -v
+	docker system prune -f
+
+# Clean build artifacts
+clean-build:
 	rm -rf bin/
 	rm -rf frontend/dist/
 	rm -rf frontend/node_modules/
@@ -136,26 +162,6 @@ install-tern:
 test-db-setup:
 	./scripts/setup-test-db.sh
 
-# Docker compose up
-docker-up:
-	docker-compose up -d
-
-# Docker compose up with logs
-docker-up-logs:
-	docker-compose up
-
-# Docker compose down
-docker-down:
-	docker-compose down
-
-# Docker compose down with volumes
-docker-down-clean:
-	docker-compose down -v
-
-# View logs
-docker-logs:
-	docker-compose logs -f
-
 # Seed database with development data
 seed:
 	@echo "Seeding database with development data..."
@@ -179,7 +185,7 @@ contracts-build:
 	@echo "Done!"
 
 # Deploy Counter contract to local Anvil
-# Requires: Anvil running on localhost:8545 (use 'docker-compose up anvil' or 'make docker-up')
+# Requires: Anvil running on localhost:8545 (use 'make run' to start all services)
 # Uses Anvil's default account 0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 contracts-deploy:
 	@echo "Deploying Counter contract to local Anvil..."
