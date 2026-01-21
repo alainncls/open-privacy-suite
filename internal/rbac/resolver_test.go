@@ -8,22 +8,24 @@ import (
 
 // MockStore implements Store interface for testing
 type MockStore struct {
-	organizations      map[string]*Organization
-	groups             map[string]*Group
-	groupPermissions   map[string]*GroupPermissions
-	roles              map[string]*Role
-	users              map[string]*User
-	memberships        map[string]*UserMembership
-	cachedPermissions  map[string]*EffectivePermissions
-	groupsByOrg        map[string][]*MembershipWithDetails
+	organizations     map[string]*Organization
+	groups            map[string]*Group
+	groupAccess       map[string]*GroupAccess
+	contracts         map[string]*Contract
+	contractGrants    map[string][]*ContractGrant
+	users             map[string]*User
+	memberships       map[string]*UserMembership
+	cachedPermissions map[string]*EffectivePermissions
+	groupsByOrg       map[string][]*MembershipWithDetails
 }
 
 func NewMockStore() *MockStore {
 	return &MockStore{
 		organizations:     make(map[string]*Organization),
 		groups:            make(map[string]*Group),
-		groupPermissions:  make(map[string]*GroupPermissions),
-		roles:             make(map[string]*Role),
+		groupAccess:       make(map[string]*GroupAccess),
+		contracts:         make(map[string]*Contract),
+		contractGrants:    make(map[string][]*ContractGrant),
 		users:             make(map[string]*User),
 		memberships:       make(map[string]*UserMembership),
 		cachedPermissions: make(map[string]*EffectivePermissions),
@@ -88,12 +90,8 @@ func (m *MockStore) GetGroupHierarchy(ctx context.Context, groupID string) ([]*G
 	return hierarchy, nil
 }
 
-func (m *MockStore) GetGroupPermissions(ctx context.Context, groupID string) (*GroupPermissions, error) {
-	return m.groupPermissions[groupID], nil
-}
-
-func (m *MockStore) GetRole(ctx context.Context, id string) (*Role, error) {
-	return m.roles[id], nil
+func (m *MockStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error) {
+	return m.groupAccess[groupID], nil
 }
 
 func (m *MockStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error) {
@@ -136,25 +134,41 @@ func (m *MockStore) InvalidateCacheForGroup(ctx context.Context, groupID string)
 	return nil
 }
 
+func (m *MockStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
+	return m.contractGrants[groupID], nil
+}
+
+func (m *MockStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {
+	return nil, nil
+}
+
+func (m *MockStore) GetContract(ctx context.Context, id string) (*Contract, error) {
+	return m.contracts[id], nil
+}
+
 // Stub implementations for other Store methods
 func (m *MockStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
-func (m *MockStore) DeleteOrganization(ctx context.Context, id string) error { return nil }
-func (m *MockStore) CreateGroup(ctx context.Context, group *Group) error { return nil }
-func (m *MockStore) UpdateGroup(ctx context.Context, group *Group) error { return nil }
-func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
-func (m *MockStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) { return nil, nil }
+func (m *MockStore) DeleteOrganization(ctx context.Context, id string) error         { return nil }
+func (m *MockStore) CreateGroup(ctx context.Context, group *Group) error             { return nil }
+func (m *MockStore) UpdateGroup(ctx context.Context, group *Group) error             { return nil }
+func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error)  { return nil, nil }
+func (m *MockStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) {
+	return nil, nil
+}
 func (m *MockStore) DeleteGroup(ctx context.Context, id string) error { return nil }
-func (m *MockStore) SetGroupPermissions(ctx context.Context, perms *GroupPermissions) error { return nil }
-func (m *MockStore) DeleteGroupPermissions(ctx context.Context, groupID string) error { return nil }
-func (m *MockStore) CreateRole(ctx context.Context, role *Role) error { return nil }
-func (m *MockStore) GetRoleByName(ctx context.Context, orgID, name string) (*Role, error) { return nil, nil }
-func (m *MockStore) UpdateRole(ctx context.Context, role *Role) error { return nil }
-func (m *MockStore) ListRoles(ctx context.Context, orgID string) ([]*Role, error) { return nil, nil }
-func (m *MockStore) DeleteRole(ctx context.Context, id string) error { return nil }
-func (m *MockStore) CreateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockStore) GetUser(ctx context.Context, id string) (*User, error) { return m.users[id], nil }
+func (m *MockStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error {
+	m.groupAccess[access.GroupID] = access
+	return nil
+}
+func (m *MockStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) error {
+	m.groupAccess[access.GroupID] = access
+	return nil
+}
+func (m *MockStore) DeleteGroupAccess(ctx context.Context, groupID string) error { return nil }
+func (m *MockStore) CreateUser(ctx context.Context, user *User) error            { return nil }
+func (m *MockStore) GetUser(ctx context.Context, id string) (*User, error)       { return m.users[id], nil }
 func (m *MockStore) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) {
 	for _, u := range m.users {
 		if u.ExternalID == externalID {
@@ -164,27 +178,65 @@ func (m *MockStore) GetUserByExternalID(ctx context.Context, externalID string) 
 	return nil, nil
 }
 func (m *MockStore) UpdateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
-func (m *MockStore) DeleteUser(ctx context.Context, id string) error { return nil }
+func (m *MockStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteUser(ctx context.Context, id string) error                       { return nil }
 func (m *MockStore) CreateMembership(ctx context.Context, membership *UserMembership) error { return nil }
-func (m *MockStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) { return nil, nil }
-func (m *MockStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) { return nil, nil }
-func (m *MockStore) UpdateMembership(ctx context.Context, membership *UserMembership) error { return nil }
-func (m *MockStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) { return nil, nil }
-func (m *MockStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) { return nil, nil }
-func (m *MockStore) DeleteMembership(ctx context.Context, id string) error { return nil }
-func (m *MockStore) DeleteExpiredMemberships(ctx context.Context) (int64, error) { return 0, nil }
-func (m *MockStore) CreateContractOwnership(ctx context.Context, ownership *ContractOwnership) error { return nil }
-func (m *MockStore) GetContractOwnership(ctx context.Context, id string) (*ContractOwnership, error) { return nil, nil }
-func (m *MockStore) GetContractOwnershipByAddress(ctx context.Context, orgID, address string) (*ContractOwnership, error) { return nil, nil }
-func (m *MockStore) UpdateContractOwnership(ctx context.Context, ownership *ContractOwnership) error { return nil }
-func (m *MockStore) ListContractOwnerships(ctx context.Context, orgID string) ([]*ContractOwnership, error) { return nil, nil }
-func (m *MockStore) ListContractOwnershipsByGroup(ctx context.Context, groupID string) ([]*ContractOwnership, error) { return nil, nil }
-func (m *MockStore) DeleteContractOwnership(ctx context.Context, id string) error { return nil }
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
+func (m *MockStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockStore) UpdateMembership(ctx context.Context, membership *UserMembership) error {
+	return nil
+}
+func (m *MockStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockStore) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	return nil, nil
+}
+func (m *MockStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteMembership(ctx context.Context, id string) error           { return nil }
+func (m *MockStore) DeleteExpiredMemberships(ctx context.Context) (int64, error)     { return 0, nil }
+func (m *MockStore) CreateContract(ctx context.Context, contract *Contract) error    { return nil }
+func (m *MockStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
+	for _, c := range m.contracts {
+		if c.OrgID == orgID && c.Address == address {
+			return c, nil
+		}
+	}
+	return nil, nil
+}
+func (m *MockStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
+func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteContract(ctx context.Context, id string) error                 { return nil }
+func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
+func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
+	return nil, nil
+}
+func (m *MockStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) {
+	return nil, nil
+}
+func (m *MockStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
+func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)       { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
-func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
-func (m *MockStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
+func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
+	return nil, nil
+}
+func (m *MockStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) {
+	return nil, nil
+}
 
 // Tests
 
@@ -201,32 +253,25 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	store.groups["root"] = rootGroup
 	store.groups["child"] = childGroup
 
-	// Root group permissions (contracts only - methods now come from Role)
-	store.groupPermissions["root"] = &GroupPermissions{
-		GroupID: "root",
+	// Root group access - wider permissions
+	store.groupAccess["root"] = &GroupAccess{
+		GroupID:        "root",
+		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
+		DefaultClaims:  []Claim{ClaimRead, ClaimWrite},
 	}
 
-	// Child group permissions (contracts only - methods now come from Role)
-	store.groupPermissions["child"] = &GroupPermissions{
-		GroupID: "child",
+	// Child group access - more restrictive (INTERSECTION with parent)
+	store.groupAccess["child"] = &GroupAccess{
+		GroupID:        "child",
+		AllowedMethods: []string{"eth_call", "eth_getBalance"},
+		DefaultClaims:  []Claim{ClaimRead},
 	}
 
-	// User in child group with a role that has methods
-	// In the new model, methods are on the Role, not GroupPermissions
-	role := &Role{
-		ID:           "role1",
-		OrgID:        "org1",
-		Claims:       []Claim{ClaimReader},
-		AllowMethods: []string{"eth_call", "eth_getBalance"}, // Methods on Role
-	}
-	store.roles["role1"] = role
-
-	roleID := "role1"
+	// User in child group
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "child", RoleID: &roleID},
+			Membership: &UserMembership{UserID: "user1", GroupID: "child"},
 			Group:      childGroup,
-			Role:       role,
 		},
 	}
 
@@ -237,8 +282,8 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	}
 
 	// Should only have intersection: eth_call, eth_getBalance
-	if len(perms.AllowMethods) != 2 {
-		t.Errorf("Expected 2 methods, got %d: %v", len(perms.AllowMethods), perms.AllowMethods)
+	if len(perms.AllowedMethods) != 2 {
+		t.Errorf("Expected 2 methods, got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 	}
 
 	if !perms.HasMethod("eth_call") {
@@ -249,6 +294,11 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	}
 	if perms.HasMethod("eth_sendTransaction") {
 		t.Error("eth_sendTransaction should be restricted by child group")
+	}
+
+	// Should only have intersection of claims: read
+	if len(perms.DefaultClaims) != 1 || perms.DefaultClaims[0] != ClaimRead {
+		t.Errorf("Expected only read claim, got %v", perms.DefaultClaims)
 	}
 }
 
@@ -265,43 +315,28 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	store.groups["groupA"] = groupA
 	store.groups["groupB"] = groupB
 
-	// Group permissions (contracts only - methods now come from Role)
-	store.groupPermissions["groupA"] = &GroupPermissions{
-		GroupID: "groupA",
+	// Group A access
+	store.groupAccess["groupA"] = &GroupAccess{
+		GroupID:        "groupA",
+		AllowedMethods: []string{"eth_call", "eth_getBalance"},
+		DefaultClaims:  []Claim{ClaimRead},
 	}
-	store.groupPermissions["groupB"] = &GroupPermissions{
-		GroupID: "groupB",
+	// Group B access
+	store.groupAccess["groupB"] = &GroupAccess{
+		GroupID:        "groupB",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+		DefaultClaims:  []Claim{ClaimWrite},
 	}
 
-	// User is member of both groups with different roles
-	// In the new model, methods are on the Role, not GroupPermissions
-	roleReader := &Role{
-		ID:           "reader",
-		OrgID:        "org1",
-		Claims:       []Claim{ClaimReader},
-		AllowMethods: []string{"eth_call", "eth_getBalance"}, // Group A's methods
-	}
-	roleWriter := &Role{
-		ID:           "writer",
-		OrgID:        "org1",
-		Claims:       []Claim{ClaimWriter},
-		AllowMethods: []string{"eth_call", "eth_sendTransaction"}, // Group B's methods
-	}
-	store.roles["reader"] = roleReader
-	store.roles["writer"] = roleWriter
-
-	readerID := "reader"
-	writerID := "writer"
+	// User is member of both groups
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "groupA", RoleID: &readerID},
+			Membership: &UserMembership{UserID: "user1", GroupID: "groupA"},
 			Group:      groupA,
-			Role:       roleReader,
 		},
 		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "groupB", RoleID: &writerID},
+			Membership: &UserMembership{UserID: "user1", GroupID: "groupB"},
 			Group:      groupB,
-			Role:       roleWriter,
 		},
 	}
 
@@ -311,20 +346,17 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	}
 
 	// Should have UNION of methods: eth_call, eth_getBalance, eth_sendTransaction
-	if len(perms.AllowMethods) != 3 {
-		t.Errorf("Expected 3 methods, got %d: %v", len(perms.AllowMethods), perms.AllowMethods)
+	if len(perms.AllowedMethods) != 3 {
+		t.Errorf("Expected 3 methods, got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 	}
 
-	// Should have UNION of claims: reader, writer
-	if !perms.HasClaim(ClaimReader) {
-		t.Error("Expected reader claim")
-	}
-	if !perms.HasClaim(ClaimWriter) {
-		t.Error("Expected writer claim")
+	// Should have UNION of default claims: read, write
+	if len(perms.DefaultClaims) != 2 {
+		t.Errorf("Expected 2 default claims, got %d: %v", len(perms.DefaultClaims), perms.DefaultClaims)
 	}
 }
 
-func TestResolverOwnedAddressesPropagate(t *testing.T) {
+func TestResolverContractGrantsInheritance(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
 
@@ -336,18 +368,28 @@ func TestResolverOwnedAddressesPropagate(t *testing.T) {
 	store.groups["root"] = rootGroup
 	store.groups["child"] = childGroup
 
-	// Root owns address A
-	store.groupPermissions["root"] = &GroupPermissions{
-		GroupID:        "root",
-		AllowMethods:   []string{"eth_call"},
-		OwnedAddresses: []string{"0xaddressA"},
+	// Contract A
+	contractA := &Contract{ID: "contractA", OrgID: "org1", Address: "0xaddressA"}
+	store.contracts["contractA"] = contractA
+
+	// Root group has admin claim on contract A
+	store.contractGrants["root"] = []*ContractGrant{
+		{ContractID: "contractA", GroupID: "root", Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
 	}
 
-	// Child owns address B
-	store.groupPermissions["child"] = &GroupPermissions{
+	// Child group narrows to read/write only
+	store.contractGrants["child"] = []*ContractGrant{
+		{ContractID: "contractA", GroupID: "child", Claims: []Claim{ClaimRead, ClaimWrite}},
+	}
+
+	// Group access
+	store.groupAccess["root"] = &GroupAccess{
+		GroupID:        "root",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+	}
+	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
-		AllowMethods:   []string{"eth_call"},
-		OwnedAddresses: []string{"0xaddressB"},
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 	}
 
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -362,16 +404,17 @@ func TestResolverOwnedAddressesPropagate(t *testing.T) {
 		t.Fatalf("ResolvePermissions failed: %v", err)
 	}
 
-	// Should have UNION of owned addresses (ownership propagates down)
-	if len(perms.OwnedAddresses) != 2 {
-		t.Errorf("Expected 2 owned addresses, got %d: %v", len(perms.OwnedAddresses), perms.OwnedAddresses)
+	// Should have INTERSECTION of claims on contract A: read, write (not admin)
+	// Note: addresses are lowercased in the resolver
+	access, ok := perms.ContractAccess["0xaddressa"]
+	if !ok {
+		t.Fatal("Expected access to 0xaddressa")
 	}
-
-	if !perms.OwnsAddress("0xaddressA") {
-		t.Error("Expected to own 0xaddressA (inherited from parent)")
+	if len(access.Claims) != 2 {
+		t.Errorf("Expected 2 claims on contract A, got %d: %v", len(access.Claims), access.Claims)
 	}
-	if !perms.OwnsAddress("0xaddressB") {
-		t.Error("Expected to own 0xaddressB (from child)")
+	if access.HasClaim(ClaimAdmin) {
+		t.Error("Should not have admin claim (restricted by child group)")
 	}
 }
 
@@ -390,16 +433,16 @@ func TestResolverRateLimitsRestrictive(t *testing.T) {
 	rootRPS := 100
 	childRPS := 50 // More restrictive
 
-	store.groupPermissions["root"] = &GroupPermissions{
-		GroupID:      "root",
-		AllowMethods: []string{"eth_call"},
-		RateLimitRPS: &rootRPS,
+	store.groupAccess["root"] = &GroupAccess{
+		GroupID:        "root",
+		AllowedMethods: []string{"eth_call"},
+		RateLimitRPS:   &rootRPS,
 	}
 
-	store.groupPermissions["child"] = &GroupPermissions{
-		GroupID:      "child",
-		AllowMethods: []string{"eth_call"},
-		RateLimitRPS: &childRPS,
+	store.groupAccess["child"] = &GroupAccess{
+		GroupID:        "child",
+		AllowedMethods: []string{"eth_call"},
+		RateLimitRPS:   &childRPS,
 	}
 
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -436,10 +479,62 @@ func TestResolverNoMemberships(t *testing.T) {
 	}
 
 	// Should return empty permissions
-	if len(perms.AllowMethods) != 0 {
-		t.Errorf("Expected 0 methods for user with no memberships, got %d", len(perms.AllowMethods))
+	if len(perms.AllowedMethods) != 0 {
+		t.Errorf("Expected 0 methods for user with no memberships, got %d", len(perms.AllowedMethods))
 	}
-	if len(perms.Claims) != 0 {
-		t.Errorf("Expected 0 claims for user with no memberships, got %d", len(perms.Claims))
+	if len(perms.DefaultClaims) != 0 {
+		t.Errorf("Expected 0 default claims for user with no memberships, got %d", len(perms.DefaultClaims))
+	}
+	if len(perms.ContractAccess) != 0 {
+		t.Errorf("Expected 0 contract access for user with no memberships, got %d", len(perms.ContractAccess))
+	}
+}
+
+func TestResolverMultipleMembershipsRateLimitsMax(t *testing.T) {
+	store := NewMockStore()
+	resolver := NewResolver(store, 5*time.Minute)
+
+	org := &Organization{ID: "org1", Slug: "test"}
+	store.organizations["org1"] = org
+
+	groupA := &Group{ID: "groupA", OrgID: "org1", Slug: "groupA", Path: "groupA", Depth: 0}
+	groupB := &Group{ID: "groupB", OrgID: "org1", Slug: "groupB", Path: "groupB", Depth: 0}
+	store.groups["groupA"] = groupA
+	store.groups["groupB"] = groupB
+
+	rpsA := 50
+	rpsB := 100 // Higher
+
+	store.groupAccess["groupA"] = &GroupAccess{
+		GroupID:        "groupA",
+		AllowedMethods: []string{"eth_call"},
+		RateLimitRPS:   &rpsA,
+	}
+	store.groupAccess["groupB"] = &GroupAccess{
+		GroupID:        "groupB",
+		AllowedMethods: []string{"eth_call"},
+		RateLimitRPS:   &rpsB,
+	}
+
+	// User is member of both groups
+	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+		{
+			Membership: &UserMembership{UserID: "user1", GroupID: "groupA"},
+			Group:      groupA,
+		},
+		{
+			Membership: &UserMembership{UserID: "user1", GroupID: "groupB"},
+			Group:      groupB,
+		},
+	}
+
+	perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+	if err != nil {
+		t.Fatalf("ResolvePermissions failed: %v", err)
+	}
+
+	// Across memberships, should have MAXIMUM rate limit (100)
+	if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 100 {
+		t.Errorf("Expected rate limit 100, got %v", perms.RateLimitRPS)
 	}
 }

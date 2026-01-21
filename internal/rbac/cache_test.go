@@ -12,10 +12,10 @@ func TestCacheBasicOperations(t *testing.T) {
 	})
 
 	perms := &EffectivePermissions{
-		UserID:       "user1",
-		OrgID:        "org1",
-		AllowMethods: []string{"eth_call"},
-		Claims:       []Claim{ClaimReader},
+		UserID:         "user1",
+		OrgID:          "org1",
+		AllowedMethods: []string{"eth_call"},
+		DefaultClaims:  []Claim{ClaimRead},
 	}
 
 	// Test Set and Get
@@ -25,7 +25,7 @@ func TestCacheBasicOperations(t *testing.T) {
 	if got == nil {
 		t.Fatal("Expected to get cached permissions")
 	}
-	if len(got.AllowMethods) != 1 || got.AllowMethods[0] != "eth_call" {
+	if len(got.AllowedMethods) != 1 || got.AllowedMethods[0] != "eth_call" {
 		t.Errorf("Got unexpected permissions: %v", got)
 	}
 
@@ -43,9 +43,9 @@ func TestCacheExpiration(t *testing.T) {
 	})
 
 	perms := &EffectivePermissions{
-		UserID:       "user1",
-		OrgID:        "org1",
-		AllowMethods: []string{"eth_call"},
+		UserID:         "user1",
+		OrgID:          "org1",
+		AllowedMethods: []string{"eth_call"},
 	}
 
 	cache.Set(perms)

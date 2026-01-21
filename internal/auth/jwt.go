@@ -34,10 +34,11 @@ type TokenClaims struct {
 	jwt.RegisteredClaims
 }
 
-// ZKRoleClaims contains role information extracted from ZK credentials.
+// ZKRoleClaims contains claims extracted from ZK credentials.
+// Note: In the simplified RBAC model, role names are replaced by claims (read, write, admin, upgrade).
 type ZKRoleClaims struct {
 	Groups         []string `json:"groups,omitempty"`          // Group paths (e.g., "gateway:engineering:devops")
-	Roles          []string `json:"roles,omitempty"`           // Role names (e.g., "deployer", "reader")
+	Claims         []string `json:"claims,omitempty"`          // Claims (e.g., "read", "write", "admin")
 	CredentialRefs []string `json:"credential_refs,omitempty"` // References to ZK credentials for audit
 	ProofTimestamp int64    `json:"proof_ts,omitempty"`        // When the proof was generated
 }

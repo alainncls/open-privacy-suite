@@ -9,10 +9,37 @@ import (
 	"time"
 
 	"privacy-proxy/internal/rbac"
+
+	"github.com/lib/pq"
 )
 
 // Ensure DB implements rbac.Store
 var _ rbac.Store = (*DB)(nil)
+
+// nullStringPtr converts a sql.NullString to a pointer to string, or nil if null.
+func nullStringPtr(ns sql.NullString) *string {
+	if ns.Valid {
+		return &ns.String
+	}
+	return nil
+}
+
+// nullTimePtr converts a sql.NullTime to a pointer to time.Time, or nil if null.
+func nullTimePtr(ns sql.NullTime) *time.Time {
+	if ns.Valid {
+		return &ns.Time
+	}
+	return nil
+}
+
+// nullIntPtr converts a sql.NullInt32 to a pointer to int, or nil if null.
+func nullIntPtr(ns sql.NullInt32) *int {
+	if ns.Valid {
+		val := int(ns.Int32)
+		return &val
+	}
+	return nil
+}
 
 // Organization operations
 
@@ -129,27 +156,26 @@ func (d *DB) DeleteOrganization(ctx context.Context, id string) error {
 // Group operations
 
 func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `INSERT INTO groups (id, org_id, parent_id, role_id, slug, name, description, depth, path)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
-		group.ID, group.OrgID, group.ParentID, group.RoleID, group.Slug, group.Name,
+		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
 		group.Description, group.Depth, group.Path,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
 func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, role_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
 	group := &rbac.Group{}
 	var parentID sql.NullString
-	var roleID sql.NullString
 	var description sql.NullString
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&group.ID, &group.OrgID, &parentID, &roleID, &group.Slug, &group.Name,
+		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 		&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -161,9 +187,6 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 
 	if parentID.Valid {
 		group.ParentID = &parentID.String
-	}
-	if roleID.Valid {
-		group.RoleID = &roleID.String
 	}
 	if description.Valid {
 		group.Description = description.String
@@ -173,16 +196,15 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 }
 
 func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, role_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug = $2`
 
 	group := &rbac.Group{}
 	var parentID sql.NullString
-	var roleID sql.NullString
 	var description sql.NullString
 
 	err := d.conn.QueryRowContext(ctx, query, orgID, slug).Scan(
-		&group.ID, &group.OrgID, &parentID, &roleID, &group.Slug, &group.Name,
+		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 		&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -195,9 +217,6 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 	if parentID.Valid {
 		group.ParentID = &parentID.String
 	}
-	if roleID.Valid {
-		group.RoleID = &roleID.String
-	}
 	if description.Valid {
 		group.Description = description.String
 	}
@@ -206,15 +225,15 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 }
 
 func (d *DB) UpdateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `UPDATE groups SET slug = $2, name = $3, description = $4, role_id = $5, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE groups SET slug = $2, name = $3, description = $4, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
-	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description, group.RoleID)
+	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description)
 	return err
 }
 
 func (d *DB) ListGroups(ctx context.Context, orgID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, role_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
 	          FROM groups WHERE org_id = $1 ORDER BY path`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -227,7 +246,7 @@ func (d *DB) ListGroups(ctx context.Context, orgID string) ([]*rbac.Group, error
 }
 
 func (d *DB) ListGroupsByParent(ctx context.Context, parentID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, role_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
 	          FROM groups WHERE parent_id = $1 ORDER BY name`
 
 	rows, err := d.conn.QueryContext(ctx, query, parentID)
@@ -258,7 +277,7 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 		args[i+1] = part
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, parent_id, role_id, slug, name, description, depth, path, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug IN (%s) ORDER BY depth`, strings.Join(placeholders, ", "))
 
 	rows, err := d.conn.QueryContext(ctx, query, args...)
@@ -280,11 +299,10 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 	for rows.Next() {
 		group := &rbac.Group{}
 		var parentID sql.NullString
-		var roleID sql.NullString
 		var description sql.NullString
 
 		if err := rows.Scan(
-			&group.ID, &group.OrgID, &parentID, &roleID, &group.Slug, &group.Name,
+			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
@@ -292,9 +310,6 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 		if parentID.Valid {
 			group.ParentID = &parentID.String
-		}
-		if roleID.Valid {
-			group.RoleID = &roleID.String
 		}
 		if description.Valid {
 			group.Description = description.String
@@ -305,221 +320,410 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 	return groups, nil
 }
 
-// Group Permissions operations
+// Group Access operations
 
-func (d *DB) SetGroupPermissions(ctx context.Context, perms *rbac.GroupPermissions) error {
-	query := `INSERT INTO group_permissions (id, group_id, allow_methods, allow_addresses, owned_addresses, address_functions, rate_limit_rps, rate_limit_daily)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily)
+	          VALUES ($1, $2, $3, $4, $5, $6)
+	          RETURNING created_at, updated_at`
+
+	claims := make([]string, len(access.DefaultClaims))
+	for i, c := range access.DefaultClaims {
+		claims[i] = string(c)
+	}
+
+	return d.conn.QueryRowContext(ctx, query,
+		access.ID, access.GroupID,
+		pq.Array(access.AllowedMethods), pq.Array(claims),
+		access.RateLimitRPS, access.RateLimitDaily,
+	).Scan(&access.CreatedAt, &access.UpdatedAt)
+}
+
+func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
+	query := `SELECT id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily, created_at, updated_at
+	          FROM group_access WHERE group_id = $1`
+
+	access := &rbac.GroupAccess{}
+	var allowedMethods, defaultClaims pq.StringArray
+	var rateLimitRPS, rateLimitDaily sql.NullInt32
+
+	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
+		&access.ID, &access.GroupID,
+		&allowedMethods, &defaultClaims,
+		&rateLimitRPS, &rateLimitDaily,
+		&access.CreatedAt, &access.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group access: %w", err)
+	}
+
+	access.AllowedMethods = allowedMethods
+	access.DefaultClaims = make([]rbac.Claim, len(defaultClaims))
+	for i, c := range defaultClaims {
+		access.DefaultClaims[i] = rbac.Claim(c)
+	}
+
+	if rateLimitRPS.Valid {
+		val := int(rateLimitRPS.Int32)
+		access.RateLimitRPS = &val
+	}
+	if rateLimitDaily.Valid {
+		val := int(rateLimitDaily.Int32)
+		access.RateLimitDaily = &val
+	}
+
+	return access, nil
+}
+
+func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily)
+	          VALUES ($1, $2, $3, $4, $5, $6)
 	          ON CONFLICT (group_id) DO UPDATE SET
-	          allow_methods = EXCLUDED.allow_methods,
-	          allow_addresses = EXCLUDED.allow_addresses,
-	          owned_addresses = EXCLUDED.owned_addresses,
-	          address_functions = EXCLUDED.address_functions,
+	          allowed_methods = EXCLUDED.allowed_methods,
+	          default_claims = EXCLUDED.default_claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
-	allowMethods, _ := json.Marshal(perms.AllowMethods)
-	allowAddresses, _ := json.Marshal(perms.AllowAddresses)
-	ownedAddresses, _ := json.Marshal(perms.OwnedAddresses)
-	addressFunctions, _ := json.Marshal(perms.AddressFunctions)
+	claims := make([]string, len(access.DefaultClaims))
+	for i, c := range access.DefaultClaims {
+		claims[i] = string(c)
+	}
 
 	return d.conn.QueryRowContext(ctx, query,
-		perms.ID, perms.GroupID,
-		allowMethods, allowAddresses, ownedAddresses, addressFunctions,
-		perms.RateLimitRPS, perms.RateLimitDaily,
-	).Scan(&perms.CreatedAt, &perms.UpdatedAt)
+		access.ID, access.GroupID,
+		pq.Array(access.AllowedMethods), pq.Array(claims),
+		access.RateLimitRPS, access.RateLimitDaily,
+	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 
-func (d *DB) GetGroupPermissions(ctx context.Context, groupID string) (*rbac.GroupPermissions, error) {
-	query := `SELECT id, group_id, allow_methods, allow_addresses, owned_addresses, address_functions, rate_limit_rps, rate_limit_daily, created_at, updated_at
-	          FROM group_permissions WHERE group_id = $1`
-
-	perms := &rbac.GroupPermissions{}
-	var allowMethods, allowAddresses, ownedAddresses, addressFunctions []byte
-	var rateLimitRPS, rateLimitDaily sql.NullInt32
-
-	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
-		&perms.ID, &perms.GroupID,
-		&allowMethods, &allowAddresses, &ownedAddresses, &addressFunctions,
-		&rateLimitRPS, &rateLimitDaily,
-		&perms.CreatedAt, &perms.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get group permissions: %w", err)
-	}
-
-	if err := json.Unmarshal(allowMethods, &perms.AllowMethods); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-	}
-	if err := json.Unmarshal(allowAddresses, &perms.AllowAddresses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_addresses: %w", err)
-	}
-	if err := json.Unmarshal(ownedAddresses, &perms.OwnedAddresses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal owned_addresses: %w", err)
-	}
-	if len(addressFunctions) > 0 {
-		if err := json.Unmarshal(addressFunctions, &perms.AddressFunctions); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal address_functions: %w", err)
-		}
-	}
-
-	if rateLimitRPS.Valid {
-		val := int(rateLimitRPS.Int32)
-		perms.RateLimitRPS = &val
-	}
-	if rateLimitDaily.Valid {
-		val := int(rateLimitDaily.Int32)
-		perms.RateLimitDaily = &val
-	}
-
-	return perms, nil
-}
-
-func (d *DB) DeleteGroupPermissions(ctx context.Context, groupID string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM group_permissions WHERE group_id = $1`, groupID)
+func (d *DB) DeleteGroupAccess(ctx context.Context, groupID string) error {
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM group_access WHERE group_id = $1`, groupID)
 	return err
 }
 
-// Role operations
+// Contract operations
 
-func (d *DB) CreateRole(ctx context.Context, role *rbac.Role) error {
-	query := `INSERT INTO roles (id, org_id, name, description, claims, allow_methods)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error {
+	query := `INSERT INTO contracts (id, org_id, address, name, deployed_by_user_id, deployed_at, metadata)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
-	claims, _ := json.Marshal(role.Claims)
-	allowMethods, _ := json.Marshal(role.AllowMethods)
+	metadata, _ := json.Marshal(contract.Metadata)
 
 	return d.conn.QueryRowContext(ctx, query,
-		role.ID, role.OrgID, role.Name, role.Description, claims, allowMethods,
-	).Scan(&role.CreatedAt, &role.UpdatedAt)
+		contract.ID, contract.OrgID, strings.ToLower(contract.Address), contract.Name,
+		contract.DeployedByUserID, contract.DeployedAt, metadata,
+	).Scan(&contract.CreatedAt, &contract.UpdatedAt)
 }
 
-func (d *DB) GetRole(ctx context.Context, id string) (*rbac.Role, error) {
-	query := `SELECT id, org_id, name, description, claims, allow_methods, created_at, updated_at
-	          FROM roles WHERE id = $1`
+func (d *DB) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE id = $1`
 
-	role := &rbac.Role{}
-	var description sql.NullString
-	var claims, allowMethods []byte
-
-	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&role.ID, &role.OrgID, &role.Name, &description, &claims, &allowMethods,
-		&role.CreatedAt, &role.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get role: %w", err)
-	}
-
-	if description.Valid {
-		role.Description = description.String
-	}
-
-	if err := json.Unmarshal(claims, &role.Claims); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
-	}
-	if err := json.Unmarshal(allowMethods, &role.AllowMethods); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-	}
-
-	return role, nil
+	return scanContract(d.conn.QueryRowContext(ctx, query, id))
 }
 
-func (d *DB) GetRoleByName(ctx context.Context, orgID, name string) (*rbac.Role, error) {
-	query := `SELECT id, org_id, name, description, claims, allow_methods, created_at, updated_at
-	          FROM roles WHERE org_id = $1 AND name = $2`
+func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
-	role := &rbac.Role{}
-	var description sql.NullString
-	var claims, allowMethods []byte
-
-	err := d.conn.QueryRowContext(ctx, query, orgID, name).Scan(
-		&role.ID, &role.OrgID, &role.Name, &description, &claims, &allowMethods,
-		&role.CreatedAt, &role.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get role: %w", err)
-	}
-
-	if description.Valid {
-		role.Description = description.String
-	}
-
-	if err := json.Unmarshal(claims, &role.Claims); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
-	}
-	if err := json.Unmarshal(allowMethods, &role.AllowMethods); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-	}
-
-	return role, nil
+	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
 }
 
-func (d *DB) UpdateRole(ctx context.Context, role *rbac.Role) error {
-	query := `UPDATE roles SET name = $2, description = $3, claims = $4, allow_methods = $5, updated_at = CURRENT_TIMESTAMP
+func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error {
+	query := `UPDATE contracts SET name = $2, metadata = $3, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
-	claims, _ := json.Marshal(role.Claims)
-	allowMethods, _ := json.Marshal(role.AllowMethods)
+	metadata, _ := json.Marshal(contract.Metadata)
 
-	_, err := d.conn.ExecContext(ctx, query, role.ID, role.Name, role.Description, claims, allowMethods)
+	_, err := d.conn.ExecContext(ctx, query, contract.ID, contract.Name, metadata)
 	return err
 }
 
-func (d *DB) ListRoles(ctx context.Context, orgID string) ([]*rbac.Role, error) {
-	query := `SELECT id, org_id, name, description, claims, allow_methods, created_at, updated_at
-	          FROM roles WHERE org_id = $1 ORDER BY name`
+func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract, error) {
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list roles: %w", err)
+		return nil, fmt.Errorf("failed to list contracts: %w", err)
 	}
 	defer rows.Close()
 
-	var roles []*rbac.Role
-	for rows.Next() {
-		role := &rbac.Role{}
-		var description sql.NullString
-		var claims, allowMethods []byte
-
-		if err := rows.Scan(
-			&role.ID, &role.OrgID, &role.Name, &description, &claims, &allowMethods,
-			&role.CreatedAt, &role.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan role: %w", err)
-		}
-
-		if description.Valid {
-			role.Description = description.String
-		}
-
-		if err := json.Unmarshal(claims, &role.Claims); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
-		}
-		if err := json.Unmarshal(allowMethods, &role.AllowMethods); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-		}
-
-		roles = append(roles, role)
-	}
-
-	return roles, nil
+	return scanContracts(rows)
 }
 
-func (d *DB) DeleteRole(ctx context.Context, id string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM roles WHERE id = $1`, id)
+func (d *DB) DeleteContract(ctx context.Context, id string) error {
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
 	return err
+}
+
+func scanContract(row *sql.Row) (*rbac.Contract, error) {
+	contract := &rbac.Contract{}
+	var name sql.NullString
+	var deployedByUserID sql.NullString
+	var deployedAt sql.NullTime
+	var metadata []byte
+
+	err := row.Scan(
+		&contract.ID, &contract.OrgID, &contract.Address, &name,
+		&deployedByUserID, &deployedAt, &metadata,
+		&contract.CreatedAt, &contract.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan contract: %w", err)
+	}
+
+	if name.Valid {
+		contract.Name = name.String
+	}
+	if deployedByUserID.Valid {
+		contract.DeployedByUserID = &deployedByUserID.String
+	}
+	if deployedAt.Valid {
+		contract.DeployedAt = &deployedAt.Time
+	}
+
+	if err := json.Unmarshal(metadata, &contract.Metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return contract, nil
+}
+
+func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
+	var contracts []*rbac.Contract
+	for rows.Next() {
+		contract := &rbac.Contract{}
+		var name sql.NullString
+		var deployedByUserID sql.NullString
+		var deployedAt sql.NullTime
+		var metadata []byte
+
+		if err := rows.Scan(
+			&contract.ID, &contract.OrgID, &contract.Address, &name,
+			&deployedByUserID, &deployedAt, &metadata,
+			&contract.CreatedAt, &contract.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan contract: %w", err)
+		}
+
+		if name.Valid {
+			contract.Name = name.String
+		}
+		if deployedByUserID.Valid {
+			contract.DeployedByUserID = &deployedByUserID.String
+		}
+		if deployedAt.Valid {
+			contract.DeployedAt = &deployedAt.Time
+		}
+
+		if err := json.Unmarshal(metadata, &contract.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		contracts = append(contracts, contract)
+	}
+	return contracts, nil
+}
+
+// Contract Grant operations
+
+func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, claims, functions)
+	          VALUES ($1, $2, $3, $4, $5)
+	          RETURNING created_at, updated_at`
+
+	claims := make([]string, len(grant.Claims))
+	for i, c := range grant.Claims {
+		claims[i] = string(c)
+	}
+
+	var functions interface{}
+	if grant.Functions != nil {
+		functions = pq.Array(grant.Functions)
+	}
+
+	return d.conn.QueryRowContext(ctx, query,
+		grant.ID, grant.ContractID, grant.GroupID,
+		pq.Array(claims), functions,
+	).Scan(&grant.CreatedAt, &grant.UpdatedAt)
+}
+
+func (d *DB) GetContractGrant(ctx context.Context, id string) (*rbac.ContractGrant, error) {
+	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	          FROM contract_grants WHERE id = $1`
+
+	return scanContractGrant(d.conn.QueryRowContext(ctx, query, id))
+}
+
+func (d *DB) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*rbac.ContractGrant, error) {
+	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
+
+	return scanContractGrant(d.conn.QueryRowContext(ctx, query, contractID, groupID))
+}
+
+func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
+	query := `UPDATE contract_grants SET claims = $2, functions = $3, updated_at = CURRENT_TIMESTAMP
+	          WHERE id = $1`
+
+	claims := make([]string, len(grant.Claims))
+	for i, c := range grant.Claims {
+		claims[i] = string(c)
+	}
+
+	var functions interface{}
+	if grant.Functions != nil {
+		functions = pq.Array(grant.Functions)
+	}
+
+	_, err := d.conn.ExecContext(ctx, query, grant.ID, pq.Array(claims), functions)
+	return err
+}
+
+func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
+	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
+
+	rows, err := d.conn.QueryContext(ctx, query, contractID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contract grants: %w", err)
+	}
+	defer rows.Close()
+
+	return scanContractGrants(rows)
+}
+
+func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
+	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	          FROM contract_grants WHERE group_id = $1 ORDER BY created_at`
+
+	rows, err := d.conn.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contract grants: %w", err)
+	}
+	defer rows.Close()
+
+	return scanContractGrants(rows)
+}
+
+func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
+	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.claims, cg.functions, cg.created_at, cg.updated_at,
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
+	          FROM contract_grants cg
+	          JOIN groups g ON cg.group_id = g.id
+	          WHERE cg.group_id = $1 ORDER BY cg.created_at`
+
+	rows, err := d.conn.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contract grants with group: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*rbac.ContractGrantWithGroup
+	for rows.Next() {
+		result := &rbac.ContractGrantWithGroup{
+			Grant: &rbac.ContractGrant{},
+			Group: &rbac.Group{},
+		}
+
+		var claims, functions pq.StringArray
+		var parentID, description sql.NullString
+
+		if err := rows.Scan(
+			&result.Grant.ID, &result.Grant.ContractID, &result.Grant.GroupID,
+			&claims, &functions, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
+			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
+			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path,
+			&result.Group.CreatedAt, &result.Group.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan contract grant with group: %w", err)
+		}
+
+		result.Grant.Claims = make([]rbac.Claim, len(claims))
+		for i, c := range claims {
+			result.Grant.Claims[i] = rbac.Claim(c)
+		}
+		if len(functions) > 0 {
+			result.Grant.Functions = functions
+		}
+		if parentID.Valid {
+			result.Group.ParentID = &parentID.String
+		}
+		if description.Valid {
+			result.Group.Description = description.String
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func (d *DB) DeleteContractGrant(ctx context.Context, id string) error {
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM contract_grants WHERE id = $1`, id)
+	return err
+}
+
+func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
+	grant := &rbac.ContractGrant{}
+	var claims, functions pq.StringArray
+
+	err := row.Scan(
+		&grant.ID, &grant.ContractID, &grant.GroupID,
+		&claims, &functions, &grant.CreatedAt, &grant.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan contract grant: %w", err)
+	}
+
+	grant.Claims = make([]rbac.Claim, len(claims))
+	for i, c := range claims {
+		grant.Claims[i] = rbac.Claim(c)
+	}
+	if len(functions) > 0 {
+		grant.Functions = functions
+	}
+
+	return grant, nil
+}
+
+func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
+	var grants []*rbac.ContractGrant
+	for rows.Next() {
+		grant := &rbac.ContractGrant{}
+		var claims, functions pq.StringArray
+
+		if err := rows.Scan(
+			&grant.ID, &grant.ContractID, &grant.GroupID,
+			&claims, &functions, &grant.CreatedAt, &grant.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
+		}
+
+		grant.Claims = make([]rbac.Claim, len(claims))
+		for i, c := range claims {
+			grant.Claims[i] = rbac.Claim(c)
+		}
+		if len(functions) > 0 {
+			grant.Functions = functions
+		}
+
+		grants = append(grants, grant)
+	}
+	return grants, nil
 }
 
 // User operations
@@ -657,43 +861,43 @@ func (d *DB) DeleteUser(ctx context.Context, id string) error {
 // Membership operations
 
 func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembership) error {
-	query := `INSERT INTO user_memberships (id, user_id, group_id, role_id, source, zk_credential_ref, expires_at)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO user_memberships (id, user_id, group_id, source, zk_credential_ref, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6)
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
-		membership.ID, membership.UserID, membership.GroupID, membership.RoleID,
+		membership.ID, membership.UserID, membership.GroupID,
 		string(membership.Source), membership.ZKCredentialRef, membership.ExpiresAt,
 	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
 }
 
 func (d *DB) GetMembership(ctx context.Context, id string) (*rbac.UserMembership, error) {
-	query := `SELECT id, user_id, group_id, role_id, source, zk_credential_ref, expires_at, created_at, updated_at
+	query := `SELECT id, user_id, group_id, source, zk_credential_ref, expires_at, created_at, updated_at
 	          FROM user_memberships WHERE id = $1`
 
 	return scanMembership(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*rbac.UserMembership, error) {
-	query := `SELECT id, user_id, group_id, role_id, source, zk_credential_ref, expires_at, created_at, updated_at
+	query := `SELECT id, user_id, group_id, source, zk_credential_ref, expires_at, created_at, updated_at
 	          FROM user_memberships WHERE user_id = $1 AND group_id = $2`
 
 	return scanMembership(d.conn.QueryRowContext(ctx, query, userID, groupID))
 }
 
 func (d *DB) UpdateMembership(ctx context.Context, membership *rbac.UserMembership) error {
-	query := `UPDATE user_memberships SET role_id = $2, source = $3, zk_credential_ref = $4, expires_at = $5, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE user_memberships SET source = $2, zk_credential_ref = $3, expires_at = $4, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	_, err := d.conn.ExecContext(ctx, query,
-		membership.ID, membership.RoleID, string(membership.Source),
+		membership.ID, string(membership.Source),
 		membership.ZKCredentialRef, membership.ExpiresAt,
 	)
 	return err
 }
 
 func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.UserMembership, error) {
-	query := `SELECT id, user_id, group_id, role_id, source, zk_credential_ref, expires_at, created_at, updated_at
+	query := `SELECT id, user_id, group_id, source, zk_credential_ref, expires_at, created_at, updated_at
 	          FROM user_memberships WHERE user_id = $1`
 
 	rows, err := d.conn.QueryContext(ctx, query, userID)
@@ -706,12 +910,10 @@ func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.Us
 }
 
 func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
-	query := `SELECT m.id, m.user_id, m.group_id, m.role_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.role_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at,
-	                 r.id, r.org_id, r.name, r.description, r.claims, r.allow_methods, r.created_at, r.updated_at
+	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
-	          LEFT JOIN roles r ON COALESCE(g.role_id, m.role_id) = r.id
 	          WHERE m.user_id = $1`
 
 	rows, err := d.conn.QueryContext(ctx, query, userID)
@@ -720,85 +922,14 @@ func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) 
 	}
 	defer rows.Close()
 
-	var results []*rbac.MembershipWithDetails
-	for rows.Next() {
-		result := &rbac.MembershipWithDetails{
-			Membership: &rbac.UserMembership{},
-			Group:      &rbac.Group{},
-		}
-
-		var roleID, zkCredRef sql.NullString
-		var expiresAt sql.NullTime
-		var groupParentID, groupRoleID, groupDescription sql.NullString
-		var rID, rOrgID, rName, rDescription sql.NullString
-		var rClaims, rAllowMethods []byte
-		var rCreatedAt, rUpdatedAt sql.NullTime
-
-		if err := rows.Scan(
-			&result.Membership.ID, &result.Membership.UserID, &result.Membership.GroupID,
-			&roleID, &result.Membership.Source, &zkCredRef, &expiresAt,
-			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
-			&result.Group.ID, &result.Group.OrgID, &groupParentID, &groupRoleID, &result.Group.Slug,
-			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path,
-			&result.Group.CreatedAt, &result.Group.UpdatedAt,
-			&rID, &rOrgID, &rName, &rDescription, &rClaims, &rAllowMethods, &rCreatedAt, &rUpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan membership: %w", err)
-		}
-
-		if roleID.Valid {
-			result.Membership.RoleID = &roleID.String
-		}
-		if zkCredRef.Valid {
-			result.Membership.ZKCredentialRef = zkCredRef.String
-		}
-		if expiresAt.Valid {
-			result.Membership.ExpiresAt = &expiresAt.Time
-		}
-		if groupParentID.Valid {
-			result.Group.ParentID = &groupParentID.String
-		}
-		if groupRoleID.Valid {
-			result.Group.RoleID = &groupRoleID.String
-		}
-		if groupDescription.Valid {
-			result.Group.Description = groupDescription.String
-		}
-
-		if rID.Valid {
-			result.Role = &rbac.Role{
-				ID:          rID.String,
-				OrgID:       rOrgID.String,
-				Name:        rName.String,
-				Description: rDescription.String,
-				CreatedAt:   rCreatedAt.Time,
-				UpdatedAt:   rUpdatedAt.Time,
-			}
-			if len(rClaims) > 0 {
-				if err := json.Unmarshal(rClaims, &result.Role.Claims); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
-				}
-			}
-			if len(rAllowMethods) > 0 {
-				if err := json.Unmarshal(rAllowMethods, &result.Role.AllowMethods); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-				}
-			}
-		}
-
-		results = append(results, result)
-	}
-
-	return results, nil
+	return scanMembershipsWithDetails(rows)
 }
 
 func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*rbac.MembershipWithDetails, error) {
-	query := `SELECT m.id, m.user_id, m.group_id, m.role_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.role_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at,
-	                 r.id, r.org_id, r.name, r.description, r.claims, r.allow_methods, r.created_at, r.updated_at
+	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
-	          LEFT JOIN roles r ON COALESCE(g.role_id, m.role_id) = r.id
 	          WHERE m.user_id = $1 AND g.org_id = $2`
 
 	rows, err := d.conn.QueryContext(ctx, query, userID, orgID)
@@ -807,80 +938,11 @@ func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string)
 	}
 	defer rows.Close()
 
-	var results []*rbac.MembershipWithDetails
-	for rows.Next() {
-		result := &rbac.MembershipWithDetails{
-			Membership: &rbac.UserMembership{},
-			Group:      &rbac.Group{},
-		}
-
-		var roleID, zkCredRef sql.NullString
-		var expiresAt sql.NullTime
-		var groupParentID, groupRoleID, groupDescription sql.NullString
-		var rID, rOrgID, rName, rDescription sql.NullString
-		var rClaims, rAllowMethods []byte
-		var rCreatedAt, rUpdatedAt sql.NullTime
-
-		if err := rows.Scan(
-			&result.Membership.ID, &result.Membership.UserID, &result.Membership.GroupID,
-			&roleID, &result.Membership.Source, &zkCredRef, &expiresAt,
-			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
-			&result.Group.ID, &result.Group.OrgID, &groupParentID, &groupRoleID, &result.Group.Slug,
-			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path,
-			&result.Group.CreatedAt, &result.Group.UpdatedAt,
-			&rID, &rOrgID, &rName, &rDescription, &rClaims, &rAllowMethods, &rCreatedAt, &rUpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan membership: %w", err)
-		}
-
-		if roleID.Valid {
-			result.Membership.RoleID = &roleID.String
-		}
-		if zkCredRef.Valid {
-			result.Membership.ZKCredentialRef = zkCredRef.String
-		}
-		if expiresAt.Valid {
-			result.Membership.ExpiresAt = &expiresAt.Time
-		}
-		if groupParentID.Valid {
-			result.Group.ParentID = &groupParentID.String
-		}
-		if groupRoleID.Valid {
-			result.Group.RoleID = &groupRoleID.String
-		}
-		if groupDescription.Valid {
-			result.Group.Description = groupDescription.String
-		}
-
-		if rID.Valid {
-			result.Role = &rbac.Role{
-				ID:          rID.String,
-				OrgID:       rOrgID.String,
-				Name:        rName.String,
-				Description: rDescription.String,
-				CreatedAt:   rCreatedAt.Time,
-				UpdatedAt:   rUpdatedAt.Time,
-			}
-			if len(rClaims) > 0 {
-				if err := json.Unmarshal(rClaims, &result.Role.Claims); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
-				}
-			}
-			if len(rAllowMethods) > 0 {
-				if err := json.Unmarshal(rAllowMethods, &result.Role.AllowMethods); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
-				}
-			}
-		}
-
-		results = append(results, result)
-	}
-
-	return results, nil
+	return scanMembershipsWithDetails(rows)
 }
 
 func (d *DB) ListGroupMembers(ctx context.Context, groupID string) ([]*rbac.UserMembership, error) {
-	query := `SELECT id, user_id, group_id, role_id, source, zk_credential_ref, expires_at, created_at, updated_at
+	query := `SELECT id, user_id, group_id, source, zk_credential_ref, expires_at, created_at, updated_at
 	          FROM user_memberships WHERE group_id = $1`
 
 	rows, err := d.conn.QueryContext(ctx, query, groupID)
@@ -910,12 +972,12 @@ func (d *DB) DeleteExpiredMemberships(ctx context.Context) (int64, error) {
 
 func scanMembership(row *sql.Row) (*rbac.UserMembership, error) {
 	membership := &rbac.UserMembership{}
-	var roleID, zkCredRef sql.NullString
+	var zkCredRef sql.NullString
 	var expiresAt sql.NullTime
 
 	err := row.Scan(
 		&membership.ID, &membership.UserID, &membership.GroupID,
-		&roleID, &membership.Source, &zkCredRef, &expiresAt,
+		&membership.Source, &zkCredRef, &expiresAt,
 		&membership.CreatedAt, &membership.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -925,9 +987,6 @@ func scanMembership(row *sql.Row) (*rbac.UserMembership, error) {
 		return nil, fmt.Errorf("failed to scan membership: %w", err)
 	}
 
-	if roleID.Valid {
-		membership.RoleID = &roleID.String
-	}
 	if zkCredRef.Valid {
 		membership.ZKCredentialRef = zkCredRef.String
 	}
@@ -942,20 +1001,17 @@ func scanMemberships(rows *sql.Rows) ([]*rbac.UserMembership, error) {
 	var memberships []*rbac.UserMembership
 	for rows.Next() {
 		membership := &rbac.UserMembership{}
-		var roleID, zkCredRef sql.NullString
+		var zkCredRef sql.NullString
 		var expiresAt sql.NullTime
 
 		if err := rows.Scan(
 			&membership.ID, &membership.UserID, &membership.GroupID,
-			&roleID, &membership.Source, &zkCredRef, &expiresAt,
+			&membership.Source, &zkCredRef, &expiresAt,
 			&membership.CreatedAt, &membership.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan membership: %w", err)
 		}
 
-		if roleID.Valid {
-			membership.RoleID = &roleID.String
-		}
 		if zkCredRef.Valid {
 			membership.ZKCredentialRef = zkCredRef.String
 		}
@@ -968,156 +1024,62 @@ func scanMemberships(rows *sql.Rows) ([]*rbac.UserMembership, error) {
 	return memberships, nil
 }
 
-// Contract Ownership operations
-
-func (d *DB) CreateContractOwnership(ctx context.Context, ownership *rbac.ContractOwnership) error {
-	query := `INSERT INTO contract_ownership (id, contract_address, org_id, owner_group_id, deployed_by_user_id, deployed_at, metadata)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
-	          RETURNING created_at, updated_at`
-
-	metadata, _ := json.Marshal(ownership.Metadata)
-
-	return d.conn.QueryRowContext(ctx, query,
-		ownership.ID, strings.ToLower(ownership.ContractAddress), ownership.OrgID,
-		ownership.OwnerGroupID,
-		ownership.DeployedByUserID, ownership.DeployedAt, metadata,
-	).Scan(&ownership.CreatedAt, &ownership.UpdatedAt)
-}
-
-func (d *DB) GetContractOwnership(ctx context.Context, id string) (*rbac.ContractOwnership, error) {
-	query := `SELECT id, contract_address, org_id, owner_group_id, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
-	          FROM contract_ownership WHERE id = $1`
-
-	return scanContractOwnership(d.conn.QueryRowContext(ctx, query, id))
-}
-
-func (d *DB) GetContractOwnershipByAddress(ctx context.Context, orgID, address string) (*rbac.ContractOwnership, error) {
-	query := `SELECT id, contract_address, org_id, owner_group_id, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
-	          FROM contract_ownership WHERE org_id = $1 AND contract_address = $2`
-
-	return scanContractOwnership(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
-}
-
-func (d *DB) UpdateContractOwnership(ctx context.Context, ownership *rbac.ContractOwnership) error {
-	query := `UPDATE contract_ownership SET owner_group_id = $2, metadata = $3, updated_at = CURRENT_TIMESTAMP
-	          WHERE id = $1`
-
-	metadata, _ := json.Marshal(ownership.Metadata)
-
-	_, err := d.conn.ExecContext(ctx, query,
-		ownership.ID, ownership.OwnerGroupID, metadata,
-	)
-	return err
-}
-
-func (d *DB) ListContractOwnerships(ctx context.Context, orgID string) ([]*rbac.ContractOwnership, error) {
-	query := `SELECT id, contract_address, org_id, owner_group_id, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
-	          FROM contract_ownership WHERE org_id = $1 ORDER BY created_at DESC`
-
-	rows, err := d.conn.QueryContext(ctx, query, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list contract ownerships: %w", err)
-	}
-	defer rows.Close()
-
-	return scanContractOwnerships(rows)
-}
-
-func (d *DB) ListContractOwnershipsByGroup(ctx context.Context, groupID string) ([]*rbac.ContractOwnership, error) {
-	query := `SELECT id, contract_address, org_id, owner_group_id, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
-	          FROM contract_ownership WHERE owner_group_id = $1 ORDER BY created_at DESC`
-
-	rows, err := d.conn.QueryContext(ctx, query, groupID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list contract ownerships: %w", err)
-	}
-	defer rows.Close()
-
-	return scanContractOwnerships(rows)
-}
-
-func (d *DB) DeleteContractOwnership(ctx context.Context, id string) error {
-	_, err := d.conn.ExecContext(ctx, `DELETE FROM contract_ownership WHERE id = $1`, id)
-	return err
-}
-
-func scanContractOwnership(row *sql.Row) (*rbac.ContractOwnership, error) {
-	ownership := &rbac.ContractOwnership{}
-	var deployedByUserID sql.NullString
-	var deployedAt sql.NullTime
-	var metadata []byte
-
-	err := row.Scan(
-		&ownership.ID, &ownership.ContractAddress, &ownership.OrgID, &ownership.OwnerGroupID,
-		&deployedByUserID, &deployedAt, &metadata,
-		&ownership.CreatedAt, &ownership.UpdatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan contract ownership: %w", err)
-	}
-
-	if deployedByUserID.Valid {
-		ownership.DeployedByUserID = &deployedByUserID.String
-	}
-	if deployedAt.Valid {
-		ownership.DeployedAt = &deployedAt.Time
-	}
-
-	if err := json.Unmarshal(metadata, &ownership.Metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-	}
-
-	return ownership, nil
-}
-
-func scanContractOwnerships(rows *sql.Rows) ([]*rbac.ContractOwnership, error) {
-	var ownerships []*rbac.ContractOwnership
+func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, error) {
+	var results []*rbac.MembershipWithDetails
 	for rows.Next() {
-		ownership := &rbac.ContractOwnership{}
-		var deployedByUserID sql.NullString
-		var deployedAt sql.NullTime
-		var metadata []byte
+		result := &rbac.MembershipWithDetails{
+			Membership: &rbac.UserMembership{},
+			Group:      &rbac.Group{},
+		}
+
+		var zkCredRef sql.NullString
+		var expiresAt sql.NullTime
+		var groupParentID, groupDescription sql.NullString
 
 		if err := rows.Scan(
-			&ownership.ID, &ownership.ContractAddress, &ownership.OrgID, &ownership.OwnerGroupID,
-			&deployedByUserID, &deployedAt, &metadata,
-			&ownership.CreatedAt, &ownership.UpdatedAt,
+			&result.Membership.ID, &result.Membership.UserID, &result.Membership.GroupID,
+			&result.Membership.Source, &zkCredRef, &expiresAt,
+			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
+			&result.Group.ID, &result.Group.OrgID, &groupParentID, &result.Group.Slug,
+			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path,
+			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan contract ownership: %w", err)
+			return nil, fmt.Errorf("failed to scan membership: %w", err)
 		}
 
-		if deployedByUserID.Valid {
-			ownership.DeployedByUserID = &deployedByUserID.String
+		if zkCredRef.Valid {
+			result.Membership.ZKCredentialRef = zkCredRef.String
 		}
-		if deployedAt.Valid {
-			ownership.DeployedAt = &deployedAt.Time
+		if expiresAt.Valid {
+			result.Membership.ExpiresAt = &expiresAt.Time
+		}
+		if groupParentID.Valid {
+			result.Group.ParentID = &groupParentID.String
+		}
+		if groupDescription.Valid {
+			result.Group.Description = groupDescription.String
 		}
 
-		if err := json.Unmarshal(metadata, &ownership.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-
-		ownerships = append(ownerships, ownership)
+		results = append(results, result)
 	}
-	return ownerships, nil
+
+	return results, nil
 }
 
 // Effective Permissions Cache operations
 
 func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*rbac.EffectivePermissions, error) {
-	query := `SELECT id, user_id, org_id, allow_methods, allow_addresses, owned_addresses, address_functions, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at
+	query := `SELECT id, user_id, org_id, allowed_methods, contract_access, default_claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at
 	          FROM effective_permissions_cache WHERE user_id = $1 AND org_id = $2 AND expires_at > $3`
 
 	perms := &rbac.EffectivePermissions{}
-	var allowMethods, allowAddresses, ownedAddresses, addressFunctions, claims []byte
+	var allowedMethods, defaultClaims pq.StringArray
+	var contractAccess []byte
 	var rateLimitRPS, rateLimitDaily sql.NullInt32
 
 	err := d.conn.QueryRowContext(ctx, query, userID, orgID, time.Now()).Scan(
 		&perms.ID, &perms.UserID, &perms.OrgID,
-		&allowMethods, &allowAddresses, &ownedAddresses, &addressFunctions, &claims,
+		&allowedMethods, &contractAccess, &defaultClaims,
 		&rateLimitRPS, &rateLimitDaily, &perms.ComputedAt, &perms.ExpiresAt,
 	)
 	if err == sql.ErrNoRows {
@@ -1127,22 +1089,18 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 		return nil, fmt.Errorf("failed to get cached permissions: %w", err)
 	}
 
-	if err := json.Unmarshal(allowMethods, &perms.AllowMethods); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_methods: %w", err)
+	perms.AllowedMethods = allowedMethods
+	perms.DefaultClaims = make([]rbac.Claim, len(defaultClaims))
+	for i, c := range defaultClaims {
+		perms.DefaultClaims[i] = rbac.Claim(c)
 	}
-	if err := json.Unmarshal(allowAddresses, &perms.AllowAddresses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal allow_addresses: %w", err)
-	}
-	if err := json.Unmarshal(ownedAddresses, &perms.OwnedAddresses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal owned_addresses: %w", err)
-	}
-	if len(addressFunctions) > 0 {
-		if err := json.Unmarshal(addressFunctions, &perms.AddressFunctions); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal address_functions: %w", err)
+
+	if len(contractAccess) > 0 {
+		if err := json.Unmarshal(contractAccess, &perms.ContractAccess); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal contract_access: %w", err)
 		}
-	}
-	if err := json.Unmarshal(claims, &perms.Claims); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
+	} else {
+		perms.ContractAccess = make(map[string]rbac.ContractAccess)
 	}
 
 	if rateLimitRPS.Valid {
@@ -1158,28 +1116,27 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 }
 
 func (d *DB) SetCachedPermissions(ctx context.Context, perms *rbac.EffectivePermissions) error {
-	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allow_methods, allow_addresses, owned_addresses, address_functions, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allowed_methods, contract_access, default_claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	          ON CONFLICT (user_id, org_id) DO UPDATE SET
-	          allow_methods = EXCLUDED.allow_methods,
-	          allow_addresses = EXCLUDED.allow_addresses,
-	          owned_addresses = EXCLUDED.owned_addresses,
-	          address_functions = EXCLUDED.address_functions,
-	          claims = EXCLUDED.claims,
+	          allowed_methods = EXCLUDED.allowed_methods,
+	          contract_access = EXCLUDED.contract_access,
+	          default_claims = EXCLUDED.default_claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          computed_at = EXCLUDED.computed_at,
 	          expires_at = EXCLUDED.expires_at`
 
-	allowMethods, _ := json.Marshal(perms.AllowMethods)
-	allowAddresses, _ := json.Marshal(perms.AllowAddresses)
-	ownedAddresses, _ := json.Marshal(perms.OwnedAddresses)
-	addressFunctions, _ := json.Marshal(perms.AddressFunctions)
-	claims, _ := json.Marshal(perms.Claims)
+	defaultClaims := make([]string, len(perms.DefaultClaims))
+	for i, c := range perms.DefaultClaims {
+		defaultClaims[i] = string(c)
+	}
+
+	contractAccess, _ := json.Marshal(perms.ContractAccess)
 
 	_, err := d.conn.ExecContext(ctx, query,
 		perms.ID, perms.UserID, perms.OrgID,
-		allowMethods, allowAddresses, ownedAddresses, addressFunctions, claims,
+		pq.Array(perms.AllowedMethods), contractAccess, pq.Array(defaultClaims),
 		perms.RateLimitRPS, perms.RateLimitDaily, perms.ComputedAt, perms.ExpiresAt,
 	)
 	return err
@@ -1317,4 +1274,21 @@ func scanAuditLogs(rows *sql.Rows) ([]*rbac.AuditLogEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// Alias methods for convenience
+
+// SetGroupAccess creates or updates group access settings (alias for UpdateGroupAccess).
+func (d *DB) SetGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
+	return d.UpdateGroupAccess(ctx, access)
+}
+
+// ListContractGrants lists grants for a contract (alias for ListContractGrantsByContract).
+func (d *DB) ListContractGrants(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
+	return d.ListContractGrantsByContract(ctx, contractID)
+}
+
+// ListContractGrantsForGroup lists grants for a group (alias for ListContractGrantsByGroup).
+func (d *DB) ListContractGrantsForGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
+	return d.ListContractGrantsByGroup(ctx, groupID)
 }

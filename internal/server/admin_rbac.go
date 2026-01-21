@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,15 +24,23 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.GET("/orgs/:org_id/groups/:group_id", s.getGroup)
 	api.PUT("/orgs/:org_id/groups/:group_id", s.updateGroup)
 	api.DELETE("/orgs/:org_id/groups/:group_id", s.deleteGroup)
-	api.GET("/orgs/:org_id/groups/:group_id/permissions", s.getGroupPermissions)
-	api.PUT("/orgs/:org_id/groups/:group_id/permissions", s.setGroupPermissions)
 
-	// Roles
-	api.GET("/orgs/:org_id/roles", s.listRoles)
-	api.POST("/orgs/:org_id/roles", s.createRole)
-	api.GET("/orgs/:org_id/roles/:role_id", s.getRole)
-	api.PUT("/orgs/:org_id/roles/:role_id", s.updateRole)
-	api.DELETE("/orgs/:org_id/roles/:role_id", s.deleteRole)
+	// Group Access (replaces old permissions and roles)
+	api.GET("/orgs/:org_id/groups/:group_id/access", s.getGroupAccess)
+	api.PUT("/orgs/:org_id/groups/:group_id/access", s.setGroupAccess)
+
+	// Contracts
+	api.GET("/orgs/:org_id/contracts", s.listContracts)
+	api.POST("/orgs/:org_id/contracts", s.createContract)
+	api.GET("/orgs/:org_id/contracts/:address", s.getContract)
+	api.PUT("/orgs/:org_id/contracts/:address", s.updateContract)
+	api.DELETE("/orgs/:org_id/contracts/:address", s.deleteContract)
+
+	// Contract Grants
+	api.GET("/orgs/:org_id/contracts/:address/grants", s.listContractGrants)
+	api.POST("/orgs/:org_id/contracts/:address/grants", s.createContractGrant)
+	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", s.updateContractGrant)
+	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", s.deleteContractGrant)
 
 	// Users
 	api.GET("/users", s.listRBACUsers)
@@ -43,12 +52,6 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.GET("/users/:user_id/memberships", s.listUserMemberships)
 	api.POST("/users/:user_id/memberships", s.createUserMembership)
 	api.DELETE("/users/:user_id/memberships/:membership_id", s.deleteUserMembership)
-
-	// Contracts
-	api.GET("/orgs/:org_id/contracts", s.listContractOwnerships)
-	api.POST("/orgs/:org_id/contracts", s.createContractOwnership)
-	api.PUT("/orgs/:org_id/contracts/:address", s.updateContractOwnership)
-	api.DELETE("/orgs/:org_id/contracts/:address", s.deleteContractOwnership)
 
 	// Debugging
 	api.GET("/users/:user_id/effective-permissions", s.getEffectivePermissions)
@@ -171,7 +174,6 @@ func (s *Server) createGroup(c *gin.Context) {
 		Name        string  `json:"name" binding:"required"`
 		Description string  `json:"description"`
 		ParentID    *string `json:"parent_id"`
-		RoleID      *string `json:"role_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -203,7 +205,6 @@ func (s *Server) createGroup(c *gin.Context) {
 		ID:          uuid.New().String(),
 		OrgID:       orgID,
 		ParentID:    input.ParentID,
-		RoleID:      input.RoleID,
 		Slug:        input.Slug,
 		Name:        input.Name,
 		Description: input.Description,
@@ -249,7 +250,6 @@ func (s *Server) updateGroup(c *gin.Context) {
 	var input struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
-		RoleID      *string `json:"role_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -261,14 +261,6 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.Description != nil {
 		group.Description = *input.Description
-	}
-	if input.RoleID != nil {
-		// Allow setting to null by passing empty string
-		if *input.RoleID == "" {
-			group.RoleID = nil
-		} else {
-			group.RoleID = input.RoleID
-		}
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
@@ -296,133 +288,163 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "group deleted"})
 }
 
-func (s *Server) getGroupPermissions(c *gin.Context) {
+// Group Access handlers (replaces old permissions)
+
+func (s *Server) getGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
-	perms, err := s.db.GetGroupPermissions(c.Request.Context(), groupID)
+	access, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if perms == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "permissions not found"})
-		return
+	if access == nil {
+		// Return empty access if not set
+		access = &rbac.GroupAccess{
+			GroupID:        groupID,
+			AllowedMethods: []string{},
+			DefaultClaims:  []rbac.Claim{},
+		}
 	}
-	c.JSON(http.StatusOK, perms)
+	c.JSON(http.StatusOK, access)
 }
 
-func (s *Server) setGroupPermissions(c *gin.Context) {
+func (s *Server) setGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
 
+	// Verify group exists
+	group, err := s.db.GetGroup(c.Request.Context(), groupID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if group == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+
 	var input struct {
-		AllowMethods     []string            `json:"allow_methods"`
-		AllowAddresses   []string            `json:"allow_addresses"`
-		OwnedAddresses   []string            `json:"owned_addresses"`
-		AddressFunctions map[string][]string `json:"address_functions"` // address -> allowed function selectors
-		RateLimitRPS     *int                `json:"rate_limit_rps"`
-		RateLimitDaily   *int                `json:"rate_limit_daily"`
+		AllowedMethods []string     `json:"allowed_methods"`
+		DefaultClaims  []rbac.Claim `json:"default_claims"`
+		RateLimitRPS   *int         `json:"rate_limit_rps"`
+		RateLimitDaily *int         `json:"rate_limit_daily"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	perms := &rbac.GroupPermissions{
-		ID:               uuid.New().String(),
-		GroupID:          groupID,
-		AllowMethods:     input.AllowMethods,
-		AllowAddresses:   input.AllowAddresses,
-		OwnedAddresses:   input.OwnedAddresses,
-		AddressFunctions: input.AddressFunctions,
-		RateLimitRPS:     input.RateLimitRPS,
-		RateLimitDaily:   input.RateLimitDaily,
-	}
-
-	if err := s.db.SetGroupPermissions(c.Request.Context(), perms); err != nil {
+	// Check if access already exists
+	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	access := &rbac.GroupAccess{
+		GroupID:        groupID,
+		AllowedMethods: input.AllowedMethods,
+		DefaultClaims:  input.DefaultClaims,
+		RateLimitRPS:   input.RateLimitRPS,
+		RateLimitDaily: input.RateLimitDaily,
+	}
+
+	if existing != nil {
+		access.ID = existing.ID
+		if err := s.db.UpdateGroupAccess(c.Request.Context(), access); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		access.ID = uuid.New().String()
+		if err := s.db.CreateGroupAccess(c.Request.Context(), access); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// Invalidate cache for group members
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
 
-	c.JSON(http.StatusOK, perms)
+	c.JSON(http.StatusOK, access)
 }
 
-// Role handlers
+// Contract handlers
 
-func (s *Server) listRoles(c *gin.Context) {
+func (s *Server) listContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
-	roles, err := s.db.ListRoles(c.Request.Context(), orgID)
+	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, roles)
+	c.JSON(http.StatusOK, contracts)
 }
 
-func (s *Server) createRole(c *gin.Context) {
+func (s *Server) createContract(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		Name         string       `json:"name" binding:"required"`
-		Description  string       `json:"description"`
-		Claims       []rbac.Claim `json:"claims"`
-		AllowMethods []string     `json:"allow_methods"`
+		Address  string         `json:"address" binding:"required"`
+		Name     string         `json:"name"`
+		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	role := &rbac.Role{
-		ID:           uuid.New().String(),
-		OrgID:        orgID,
-		Name:         input.Name,
-		Description:  input.Description,
-		Claims:       input.Claims,
-		AllowMethods: input.AllowMethods,
+	contract := &rbac.Contract{
+		ID:       uuid.New().String(),
+		OrgID:    orgID,
+		Address:  strings.ToLower(input.Address),
+		Name:     input.Name,
+		Metadata: input.Metadata,
+	}
+	if contract.Metadata == nil {
+		contract.Metadata = make(map[string]any)
 	}
 
-	if err := s.db.CreateRole(c.Request.Context(), role); err != nil {
+	if err := s.db.CreateContract(c.Request.Context(), contract); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, role)
+	c.JSON(http.StatusCreated, contract)
 }
 
-func (s *Server) getRole(c *gin.Context) {
-	roleID := c.Param("role_id")
-	role, err := s.db.GetRole(c.Request.Context(), roleID)
+func (s *Server) getContract(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if role == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
 		return
 	}
-	c.JSON(http.StatusOK, role)
+	c.JSON(http.StatusOK, contract)
 }
 
-func (s *Server) updateRole(c *gin.Context) {
-	roleID := c.Param("role_id")
+func (s *Server) updateContract(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
 
-	role, err := s.db.GetRole(c.Request.Context(), roleID)
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if role == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
 		return
 	}
 
 	var input struct {
-		Name         *string       `json:"name"`
-		Description  *string       `json:"description"`
-		Claims       *[]rbac.Claim `json:"claims"`
-		AllowMethods *[]string     `json:"allow_methods"`
+		Name     *string        `json:"name"`
+		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -430,48 +452,209 @@ func (s *Server) updateRole(c *gin.Context) {
 	}
 
 	if input.Name != nil {
-		role.Name = *input.Name
+		contract.Name = *input.Name
 	}
-	if input.Description != nil {
-		role.Description = *input.Description
-	}
-	if input.Claims != nil {
-		role.Claims = *input.Claims
-	}
-	if input.AllowMethods != nil {
-		role.AllowMethods = *input.AllowMethods
+	if input.Metadata != nil {
+		contract.Metadata = input.Metadata
 	}
 
-	if err := s.db.UpdateRole(c.Request.Context(), role); err != nil {
+	if err := s.db.UpdateContract(c.Request.Context(), contract); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Invalidate cache for org
-	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), role.OrgID)
-
-	c.JSON(http.StatusOK, role)
+	c.JSON(http.StatusOK, contract)
 }
 
-func (s *Server) deleteRole(c *gin.Context) {
-	roleID := c.Param("role_id")
+func (s *Server) deleteContract(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
 
-	role, err := s.db.GetRole(c.Request.Context(), roleID)
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if role != nil {
-		// Invalidate cache before deleting
-		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), role.OrgID)
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
 	}
 
-	if err := s.db.DeleteRole(c.Request.Context(), roleID); err != nil {
+	// Invalidate cache for the entire org (grants may affect many groups)
+	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+
+	if err := s.db.DeleteContract(c.Request.Context(), contract.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "role deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "contract deleted"})
+}
+
+// Contract Grant handlers
+
+func (s *Server) listContractGrants(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	grants, err := s.db.ListContractGrantsByContract(c.Request.Context(), contract.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, grants)
+}
+
+func (s *Server) createContractGrant(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input struct {
+		GroupID   string       `json:"group_id" binding:"required"`
+		Claims    []rbac.Claim `json:"claims" binding:"required"`
+		Functions []string     `json:"functions"` // nil = all functions
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Verify group exists and belongs to the same org
+	group, err := s.db.GetGroup(c.Request.Context(), input.GroupID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if group == nil || group.OrgID != orgID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group not found or belongs to different organization"})
+		return
+	}
+
+	grant := &rbac.ContractGrant{
+		ID:         uuid.New().String(),
+		ContractID: contract.ID,
+		GroupID:    input.GroupID,
+		Claims:     input.Claims,
+		Functions:  input.Functions,
+	}
+
+	if err := s.db.CreateContractGrant(c.Request.Context(), grant); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Invalidate cache for the group
+	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), input.GroupID)
+
+	c.JSON(http.StatusCreated, grant)
+}
+
+func (s *Server) updateContractGrant(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+	groupID := c.Param("group_id")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	grant, err := s.db.GetContractGrantByContractAndGroup(c.Request.Context(), contract.ID, groupID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if grant == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grant not found"})
+		return
+	}
+
+	var input struct {
+		Claims    *[]rbac.Claim `json:"claims"`
+		Functions *[]string     `json:"functions"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if input.Claims != nil {
+		grant.Claims = *input.Claims
+	}
+	if input.Functions != nil {
+		grant.Functions = *input.Functions
+	}
+
+	if err := s.db.UpdateContractGrant(c.Request.Context(), grant); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Invalidate cache for the group
+	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
+
+	c.JSON(http.StatusOK, grant)
+}
+
+func (s *Server) deleteContractGrant(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+	groupID := c.Param("group_id")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	grant, err := s.db.GetContractGrantByContractAndGroup(c.Request.Context(), contract.ID, groupID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if grant == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grant not found"})
+		return
+	}
+
+	// Invalidate cache before deleting
+	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
+
+	if err := s.db.DeleteContractGrant(c.Request.Context(), grant.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "grant deleted"})
 }
 
 // User handlers
@@ -577,10 +760,17 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 
 	addresses := make([]gin.H, 0, len(links))
 	for _, link := range links {
-		addresses = append(addresses, gin.H{
+		addr := gin.H{
 			"address":     link.EthAddress,
 			"verified_at": link.VerifiedAt,
-		})
+		}
+		if link.ENSName != nil {
+			addr["ens_name"] = *link.ENSName
+		}
+		if link.ENSResolvedAt != nil {
+			addr["ens_resolved_at"] = *link.ENSResolvedAt
+		}
+		addresses = append(addresses, addr)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"addresses": addresses})
@@ -606,8 +796,7 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 
 	var input struct {
-		GroupID string  `json:"group_id" binding:"required"`
-		RoleID  *string `json:"role_id"`
+		GroupID string `json:"group_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -618,7 +807,6 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		ID:      uuid.New().String(),
 		UserID:  userID,
 		GroupID: input.GroupID,
-		RoleID:  input.RoleID,
 		Source:  rbac.MembershipSourceAdmin,
 	}
 
@@ -646,124 +834,6 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "membership deleted"})
-}
-
-// Contract ownership handlers
-
-func (s *Server) listContractOwnerships(c *gin.Context) {
-	orgID := c.Param("org_id")
-	ownerships, err := s.db.ListContractOwnerships(c.Request.Context(), orgID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, ownerships)
-}
-
-func (s *Server) createContractOwnership(c *gin.Context) {
-	orgID := c.Param("org_id")
-
-	var input struct {
-		ContractAddress string         `json:"contract_address" binding:"required"`
-		OwnerGroupID    string         `json:"owner_group_id" binding:"required"`
-		Metadata        map[string]any `json:"metadata"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	ownership := &rbac.ContractOwnership{
-		ID:              uuid.New().String(),
-		ContractAddress: input.ContractAddress,
-		OrgID:           orgID,
-		OwnerGroupID:    input.OwnerGroupID,
-		Metadata:        input.Metadata,
-	}
-	if ownership.Metadata == nil {
-		ownership.Metadata = make(map[string]any)
-	}
-
-	if err := s.db.CreateContractOwnership(c.Request.Context(), ownership); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Invalidate cache for the owner group
-	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), input.OwnerGroupID)
-
-	c.JSON(http.StatusCreated, ownership)
-}
-
-func (s *Server) updateContractOwnership(c *gin.Context) {
-	orgID := c.Param("org_id")
-	address := c.Param("address")
-
-	ownership, err := s.db.GetContractOwnershipByAddress(c.Request.Context(), orgID, address)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if ownership == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "contract ownership not found"})
-		return
-	}
-
-	var input struct {
-		OwnerGroupID *string        `json:"owner_group_id"`
-		Metadata     map[string]any `json:"metadata"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	oldGroupID := ownership.OwnerGroupID
-
-	if input.OwnerGroupID != nil {
-		ownership.OwnerGroupID = *input.OwnerGroupID
-	}
-	if input.Metadata != nil {
-		ownership.Metadata = input.Metadata
-	}
-
-	if err := s.db.UpdateContractOwnership(c.Request.Context(), ownership); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Invalidate cache for both old and new owner groups
-	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), oldGroupID)
-	if input.OwnerGroupID != nil && *input.OwnerGroupID != oldGroupID {
-		s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), *input.OwnerGroupID)
-	}
-
-	c.JSON(http.StatusOK, ownership)
-}
-
-func (s *Server) deleteContractOwnership(c *gin.Context) {
-	orgID := c.Param("org_id")
-	address := c.Param("address")
-
-	ownership, err := s.db.GetContractOwnershipByAddress(c.Request.Context(), orgID, address)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if ownership == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "contract ownership not found"})
-		return
-	}
-
-	// Invalidate cache before deleting
-	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), ownership.OwnerGroupID)
-
-	if err := s.db.DeleteContractOwnership(c.Request.Context(), ownership.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "contract ownership deleted"})
 }
 
 // Debugging handlers

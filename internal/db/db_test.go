@@ -32,7 +32,9 @@ func setupTestDB(t *testing.T) *DB {
 	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
 	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
-	database.Migrate(context.Background())
+	if err := database.Migrate(context.Background()); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
 
 	return database
 }

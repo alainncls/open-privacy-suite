@@ -52,15 +52,15 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	// Clean up RBAC tables
+	// Clean up RBAC tables (new schema)
 	ctx := context.Background()
 	conn := database.Conn()
 	conn.ExecContext(ctx, "DELETE FROM rbac_audit_log")
 	conn.ExecContext(ctx, "DELETE FROM effective_permissions_cache")
-	conn.ExecContext(ctx, "DELETE FROM contract_ownership")
+	conn.ExecContext(ctx, "DELETE FROM contract_grants")
+	conn.ExecContext(ctx, "DELETE FROM contracts")
 	conn.ExecContext(ctx, "DELETE FROM user_memberships")
-	conn.ExecContext(ctx, "DELETE FROM group_permissions")
-	conn.ExecContext(ctx, "DELETE FROM roles")
+	conn.ExecContext(ctx, "DELETE FROM group_access")
 	conn.ExecContext(ctx, "DELETE FROM groups")
 	conn.ExecContext(ctx, "DELETE FROM users")
 	conn.ExecContext(ctx, "DELETE FROM organizations")
@@ -85,7 +85,7 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	require.NoError(t, err)
 
 	// Create RBAC access controller
-	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute, true)
+	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
 
 	// Create server with minimal setup
 	gin.SetMode(gin.TestMode)
@@ -310,15 +310,15 @@ func TestGroupAPI(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("SetGroupPermissions", func(t *testing.T) {
+	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
-			"allow_methods":   []string{"eth_call", "eth_getBalance"},
-			"allow_addresses": []string{"0x1234"},
+			"allowed_methods": []string{"eth_call", "eth_getBalance"},
+			"default_claims":  []string{"read"},
 			"rate_limit_rps":  100,
 		}
 		jsonBody, _ := json.Marshal(body)
 
-		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/permissions", org.ID, createdGroupID), bytes.NewReader(jsonBody))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, createdGroupID), bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -327,8 +327,8 @@ func TestGroupAPI(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("GetGroupPermissions", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups/%s/permissions", org.ID, createdGroupID), nil)
+	t.Run("GetGroupAccess", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, createdGroupID), nil)
 		w := httptest.NewRecorder()
 
 		server.router.ServeHTTP(w, req)
@@ -339,7 +339,7 @@ func TestGroupAPI(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		methods := response["allow_methods"].([]any)
+		methods := response["allowed_methods"].([]any)
 		assert.Len(t, methods, 2)
 	})
 
@@ -370,91 +370,43 @@ func TestGroupAPI(t *testing.T) {
 	})
 }
 
-func TestRoleAPI(t *testing.T) {
+func TestGroupAccessAPI(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 
-	org := createTestOrganization(t, server, "role-test-org")
-	var createdRoleID string
+	org := createTestOrganization(t, server, "group-access-test-org")
+	group := createTestGroup(t, server, org.ID, "test-group")
 
-	t.Run("CreateRole", func(t *testing.T) {
+	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
-			"name":        "Developer",
-			"description": "Developer role",
-			"claims":      []string{"reader", "writer"},
+			"allowed_methods": []string{"eth_call", "eth_getBalance"},
+			"default_claims":  []string{"read"},
+			"rate_limit_rps":  100,
 		}
 		jsonBody, _ := json.Marshal(body)
 
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/roles", org.ID), bytes.NewReader(jsonBody))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
 		server.router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusCreated, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("GetGroupAccess", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), nil)
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		createdRoleID = response["id"].(string)
-	})
-
-	t.Run("ListRoles", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/roles", org.ID), nil)
-		w := httptest.NewRecorder()
-
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("GetRole", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/roles/%s", org.ID, createdRoleID), nil)
-		w := httptest.NewRecorder()
-
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("UpdateRole", func(t *testing.T) {
-		body := map[string]any{
-			"claims": []string{"reader", "writer", "deployer"},
-		}
-		jsonBody, _ := json.Marshal(body)
-
-		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/roles/%s", org.ID, createdRoleID), bytes.NewReader(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("DeleteRole", func(t *testing.T) {
-		// Create a role to delete
-		body := map[string]any{
-			"name":   "DeleteMe",
-			"claims": []string{"reader"},
-		}
-		jsonBody, _ := json.Marshal(body)
-
-		createReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/roles", org.ID), bytes.NewReader(jsonBody))
-		createReq.Header.Set("Content-Type", "application/json")
-		createW := httptest.NewRecorder()
-		server.router.ServeHTTP(createW, createReq)
-
-		var createResp map[string]any
-		json.Unmarshal(createW.Body.Bytes(), &createResp)
-		deleteRoleID := createResp["id"].(string)
-
-		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/orgs/%s/roles/%s", org.ID, deleteRoleID), nil)
-		w := httptest.NewRecorder()
-
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
+		methods := response["allowed_methods"].([]any)
+		assert.Equal(t, 2, len(methods))
 	})
 }
 
@@ -470,7 +422,7 @@ func TestUserAPI(t *testing.T) {
 		Note:       "Test user",
 		Metadata:   map[string]any{},
 	}
-	err := server.db.CreateUser(context.Background(), user)
+	err := server.Server.db.CreateUser(context.Background(), user)
 	require.NoError(t, err)
 
 	t.Run("ListUsers", func(t *testing.T) {
@@ -523,10 +475,9 @@ func TestUserAPI(t *testing.T) {
 func TestMembershipAPI(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 
-	// Setup: org, group, role, user
+	// Setup: org, group, user
 	org := createTestOrganization(t, server, "membership-test-org")
 	group := createTestGroup(t, server, org.ID, "membership-group")
-	role := createTestRole(t, server, org.ID, "Member")
 
 	user := &rbac.User{
 		ID:         uuid.New().String(),
@@ -534,7 +485,7 @@ func TestMembershipAPI(t *testing.T) {
 		KYC:        true,
 		Metadata:   map[string]any{},
 	}
-	err := server.db.CreateUser(context.Background(), user)
+	err := server.Server.db.CreateUser(context.Background(), user)
 	require.NoError(t, err)
 
 	var createdMembershipID string
@@ -542,7 +493,6 @@ func TestMembershipAPI(t *testing.T) {
 	t.Run("CreateMembership", func(t *testing.T) {
 		body := map[string]any{
 			"group_id": group.ID,
-			"role_id":  role.ID,
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -595,18 +545,18 @@ func TestMembershipAPI(t *testing.T) {
 	})
 }
 
-func TestContractOwnershipAPI(t *testing.T) {
+func TestContractAPI(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 
 	org := createTestOrganization(t, server, "contract-test-org")
-	group := createTestGroup(t, server, org.ID, "contract-group")
+	_ = createTestGroup(t, server, org.ID, "contract-group")
 
 	testAddress := "0x1234567890123456789012345678901234567890"
 
-	t.Run("CreateContractOwnership", func(t *testing.T) {
+	t.Run("CreateContract", func(t *testing.T) {
 		body := map[string]any{
-			"contract_address": testAddress,
-			"owner_group_id":   group.ID,
+			"address": testAddress,
+			"name":    "Test Contract",
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -619,7 +569,7 @@ func TestContractOwnershipAPI(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, w.Code)
 	})
 
-	t.Run("ListContractOwnerships", func(t *testing.T) {
+	t.Run("ListContracts", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts", org.ID), nil)
 		w := httptest.NewRecorder()
 
@@ -628,8 +578,9 @@ func TestContractOwnershipAPI(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("UpdateContractOwnership", func(t *testing.T) {
+	t.Run("UpdateContract", func(t *testing.T) {
 		body := map[string]any{
+			"name":     "Updated Contract",
 			"metadata": map[string]any{"updated": true},
 		}
 		jsonBody, _ := json.Marshal(body)
@@ -643,7 +594,7 @@ func TestContractOwnershipAPI(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("DeleteContractOwnership", func(t *testing.T) {
+	t.Run("DeleteContract", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/orgs/%s/contracts/%s", org.ID, testAddress), nil)
 		w := httptest.NewRecorder()
 
@@ -658,10 +609,20 @@ func TestAccessCheckAPI(t *testing.T) {
 
 	// Setup: org, group, user with membership
 	org := createTestOrganization(t, server, "access-test-org")
-	// Create role with allow_methods (in new model, methods are on Role, not GroupPermissions)
-	role := createTestRoleWithMethods(t, server, org.ID, "AccessRole", []string{"eth_call", "eth_getBalance"})
-	// Create group with the role assigned
-	group := createTestGroupWithRole(t, server, org.ID, "access-group", role.ID)
+	// Create group
+	group := createTestGroup(t, server, org.ID, "access-group")
+
+	// Set group access with allowed methods
+	accessBody := map[string]any{
+		"allowed_methods": []string{"eth_call", "eth_getBalance"},
+		"default_claims":  []string{"read"},
+	}
+	accessJson, _ := json.Marshal(accessBody)
+	accessReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(accessJson))
+	accessReq.Header.Set("Content-Type", "application/json")
+	accessW := httptest.NewRecorder()
+	server.router.ServeHTTP(accessW, accessReq)
+	require.Equal(t, http.StatusOK, accessW.Code)
 
 	user := &rbac.User{
 		ID:         uuid.New().String(),
@@ -669,13 +630,12 @@ func TestAccessCheckAPI(t *testing.T) {
 		KYC:        true,
 		Metadata:   map[string]any{},
 	}
-	err := server.db.CreateUser(context.Background(), user)
+	err := server.Server.db.CreateUser(context.Background(), user)
 	require.NoError(t, err)
 
 	// Create membership
 	memBody := map[string]any{
 		"group_id": group.ID,
-		"role_id":  role.ID,
 	}
 	memJson, _ := json.Marshal(memBody)
 	memReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/users/%s/memberships", user.ID), bytes.NewReader(memJson))
@@ -779,16 +739,9 @@ func createTestOrganization(t *testing.T, server *testServerRBAC, slug string) *
 }
 
 func createTestGroup(t *testing.T, server *testServerRBAC, orgID, slug string) *rbac.Group {
-	return createTestGroupWithRole(t, server, orgID, slug, "")
-}
-
-func createTestGroupWithRole(t *testing.T, server *testServerRBAC, orgID, slug, roleID string) *rbac.Group {
 	body := map[string]any{
 		"slug": slug,
 		"name": slug + " Group",
-	}
-	if roleID != "" {
-		body["role_id"] = roleID
 	}
 	jsonBody, _ := json.Marshal(body)
 
@@ -802,47 +755,10 @@ func createTestGroupWithRole(t *testing.T, server *testServerRBAC, orgID, slug, 
 	var response map[string]any
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	var rID *string
-	if rid, ok := response["role_id"].(string); ok && rid != "" {
-		rID = &rid
-	}
-
 	return &rbac.Group{
-		ID:     response["id"].(string),
-		OrgID:  orgID,
-		Slug:   response["slug"].(string),
-		Name:   response["name"].(string),
-		RoleID: rID,
-	}
-}
-
-func createTestRole(t *testing.T, server *testServerRBAC, orgID, name string) *rbac.Role {
-	return createTestRoleWithMethods(t, server, orgID, name, nil)
-}
-
-func createTestRoleWithMethods(t *testing.T, server *testServerRBAC, orgID, name string, allowMethods []string) *rbac.Role {
-	body := map[string]any{
-		"name":   name,
-		"claims": []string{"reader"},
-	}
-	if allowMethods != nil {
-		body["allow_methods"] = allowMethods
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/roles", orgID), bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.router.ServeHTTP(w, req)
-	require.Equal(t, http.StatusCreated, w.Code)
-
-	var response map[string]any
-	json.Unmarshal(w.Body.Bytes(), &response)
-
-	return &rbac.Role{
 		ID:    response["id"].(string),
 		OrgID: orgID,
+		Slug:  response["slug"].(string),
 		Name:  response["name"].(string),
 	}
 }

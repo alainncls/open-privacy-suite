@@ -10,6 +10,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"strings"
@@ -29,6 +30,7 @@ type Server struct {
 	challengeStore  *ChallengeStore
 	rateLimiter     *RateLimiter
 	config          *config.Config
+	ensResolver     *ens.Resolver
 }
 
 // DB returns the database instance (for testing)
@@ -82,7 +84,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 	proxySvc := proxy.New(cfg.NodeURL)
 
 	// Initialize RBAC access controller with 5 minute cache TTL
-	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute, cfg.AllowUnregisteredAddresses)
+	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
+	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
 
 	// Initialize session store (10 minute TTL, cleanup every minute)
 	sessionStore := auth.NewSessionStore(10*time.Minute, 1*time.Minute)
@@ -92,6 +95,16 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 
 	// Initialize rate limiter (cleanup every 10 seconds)
 	rateLimiter := NewRateLimiter(10 * time.Second)
+
+	// Initialize ENS resolver (optional - may fail if no mainnet RPC available)
+	var ensResolver *ens.Resolver
+	if cfg.ENSResolverURL != "" {
+		ensResolver, err = ens.NewResolver(cfg.ENSResolverURL)
+		if err != nil {
+			// Log warning but don't fail - ENS resolution is optional
+			fmt.Printf("Warning: failed to create ENS resolver: %v\n", err)
+		}
+	}
 
 	return &Server{
 		db:              database,
@@ -103,6 +116,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 		challengeStore:  challengeStore,
 		rateLimiter:     rateLimiter,
 		config:          cfg,
+		ensResolver:     ensResolver,
 	}
 }
 
@@ -179,6 +193,7 @@ func (s *Server) Run(addr string) error {
 		apiEth.POST("/link/verify", s.handleEthLinkVerify)
 		apiEth.GET("/addresses", s.handleGetEthAddresses)
 		apiEth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
+		apiEth.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
 	}
 
 	// JSON-RPC proxy endpoint - protected by JWT
@@ -192,6 +207,7 @@ func (s *Server) Run(addr string) error {
 		eth.POST("/link/verify", s.handleEthLinkVerify)
 		eth.GET("/addresses", s.handleGetEthAddresses)
 		eth.DELETE("/addresses/:address", s.handleDeleteEthAddress)
+		eth.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
 	}
 
 	// API endpoints for UI - protected by localhost-only middleware
@@ -252,13 +268,17 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	}
 
 	// Check access via RBAC
+	var requiredClaims []rbac.Claim
+	if claim := rbac.ClassifyOperation(method, params); claim != "" {
+		requiredClaims = []rbac.Claim{claim}
+	}
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   subjectStr,
 		Method:           method,
 		Params:           params,
 		TargetAddress:    rbac.GetTargetAddress(method, params),
 		FunctionSelector: rbac.GetFunctionSelector(method, params),
-		RequiredClaims:   rbac.ClassifyOperation(method, params),
+		RequiredClaims:   requiredClaims,
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
@@ -425,13 +445,17 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	testIdentity := "test:dashboard"
 
 	// Check access via RBAC
+	var testRequiredClaims []rbac.Claim
+	if claim := rbac.ClassifyOperation(input.Method, input.Params); claim != "" {
+		testRequiredClaims = []rbac.Claim{claim}
+	}
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   testIdentity,
 		Method:           input.Method,
 		Params:           input.Params,
 		TargetAddress:    rbac.GetTargetAddress(input.Method, input.Params),
 		FunctionSelector: rbac.GetFunctionSelector(input.Method, input.Params),
-		RequiredClaims:   rbac.ClassifyOperation(input.Method, input.Params),
+		RequiredClaims:   testRequiredClaims,
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {

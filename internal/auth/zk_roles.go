@@ -21,24 +21,24 @@ func NewZKRoleExtractor(store rbac.Store) *ZKRoleExtractor {
 	return &ZKRoleExtractor{store: store}
 }
 
-// ExtractRoleClaims extracts role claims from a Privado ID proof response.
+// ExtractRoleClaims extracts claims from a Privado ID proof response.
 // This is called after a successful ZK proof verification.
 // The proofData contains the verified credential data from Privado.
 func (e *ZKRoleExtractor) ExtractRoleClaims(proofData map[string]any) (*ZKRoleClaims, error) {
 	claims := &ZKRoleClaims{
 		Groups:         []string{},
-		Roles:          []string{},
+		Claims:         []string{},
 		CredentialRefs: []string{},
 		ProofTimestamp: time.Now().Unix(),
 	}
 
-	// Extract role credentials from the proof data
+	// Extract credential data from the proof data
 	// The exact structure depends on the Privado credential schema
 	// Expected format in credential:
 	// {
 	//   "credentialSubject": {
 	//     "rbac_groups": ["org:group1", "org:group2"],
-	//     "rbac_roles": ["deployer", "reader"],
+	//     "rbac_claims": ["read", "write"],
 	//     "id": "did:polygonid:..."
 	//   }
 	// }
@@ -53,11 +53,11 @@ func (e *ZKRoleExtractor) ExtractRoleClaims(proofData map[string]any) (*ZKRoleCl
 			}
 		}
 
-		// Extract roles
-		if roles, ok := credSubject["rbac_roles"].([]any); ok {
-			for _, r := range roles {
-				if rs, ok := r.(string); ok {
-					claims.Roles = append(claims.Roles, rs)
+		// Extract claims (read, write, admin, upgrade)
+		if claimsArr, ok := credSubject["rbac_claims"].([]any); ok {
+			for _, c := range claimsArr {
+				if cs, ok := c.(string); ok {
+					claims.Claims = append(claims.Claims, cs)
 				}
 			}
 		}
@@ -73,6 +73,8 @@ func (e *ZKRoleExtractor) ExtractRoleClaims(proofData map[string]any) (*ZKRoleCl
 
 // ProcessZKMemberships creates or updates user memberships based on ZK-attested claims.
 // This synchronizes the RBAC database with the ZK credentials.
+// Note: In the simplified RBAC model, ZK credentials grant group membership only.
+// Contract-level claims come from ContractGrants, not from user memberships.
 func (e *ZKRoleExtractor) ProcessZKMemberships(ctx context.Context, userID string, zkClaims *ZKRoleClaims) error {
 	if zkClaims == nil {
 		return nil
@@ -97,16 +99,6 @@ func (e *ZKRoleExtractor) ProcessZKMemberships(ctx context.Context, userID strin
 			continue // Skip if group doesn't exist
 		}
 
-		// Find matching role from ZK claims
-		var roleID *string
-		for _, roleName := range zkClaims.Roles {
-			role, err := e.store.GetRoleByName(ctx, orgEntity.ID, roleName)
-			if err == nil && role != nil {
-				roleID = &role.ID
-				break // Use first matching role
-			}
-		}
-
 		// Check if membership already exists
 		existing, err := e.store.GetMembershipByUserAndGroup(ctx, userID, groupEntity.ID)
 		if err != nil {
@@ -117,7 +109,6 @@ func (e *ZKRoleExtractor) ProcessZKMemberships(ctx context.Context, userID strin
 			// Update existing membership
 			existing.Source = rbac.MembershipSourceZKAttested
 			existing.ZKCredentialRef = strings.Join(zkClaims.CredentialRefs, ",")
-			existing.RoleID = roleID
 			if err := e.store.UpdateMembership(ctx, existing); err != nil {
 				return fmt.Errorf("failed to update membership: %w", err)
 			}
@@ -127,7 +118,6 @@ func (e *ZKRoleExtractor) ProcessZKMemberships(ctx context.Context, userID strin
 				ID:              uuid.New().String(),
 				UserID:          userID,
 				GroupID:         groupEntity.ID,
-				RoleID:          roleID,
 				Source:          rbac.MembershipSourceZKAttested,
 				ZKCredentialRef: strings.Join(zkClaims.CredentialRefs, ","),
 			}

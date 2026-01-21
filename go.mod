@@ -11,6 +11,7 @@ require (
 	github.com/iden3/iden3comm/v2 v2.12.1
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/jackc/tern/v2 v2.3.4
+	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.31.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.31.0

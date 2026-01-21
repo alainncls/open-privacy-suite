@@ -1,6 +1,7 @@
 // RBAC TypeScript types mirroring backend models
 
-export type Claim = 'reader' | 'writer' | 'deployer' | 'admin' | 'upgrade';
+// Claims: read, write, admin, upgrade (no more deployer - use admin for deploy permissions)
+export type Claim = 'read' | 'write' | 'admin' | 'upgrade';
 
 export type MembershipSource = 'admin' | 'zk_attested';
 
@@ -13,11 +14,11 @@ export interface Organization {
   updated_at: string;
 }
 
+// Group - no more role_id (permissions come from GroupAccess and ContractGrants)
 export interface Group {
   id: string;
   org_id: string;
   parent_id?: string | null;
-  role_id?: string | null; // Assigned role - all members inherit this role's permissions
   slug: string;
   name: string;
   description?: string;
@@ -27,24 +28,36 @@ export interface Group {
   updated_at: string;
 }
 
-export interface Role {
+// Contract - first-class resource
+export interface Contract {
   id: string;
   org_id: string;
-  name: string;
-  description?: string;
-  claims: Claim[];
-  allow_methods: string[]; // Allowed RPC methods for this role
+  address: string; // lowercase 0x-prefixed
+  name?: string;
+  deployed_by_user_id?: string | null;
+  deployed_at?: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
 
-export interface GroupPermissions {
+// ContractGrant - links groups to contracts with claims
+export interface ContractGrant {
+  id: string;
+  contract_id: string;
+  group_id: string;
+  claims: Claim[];
+  functions?: string[] | null; // null = all functions, or specific selectors
+  created_at: string;
+  updated_at: string;
+}
+
+// GroupAccess - RPC method permissions and rate limits for a group
+export interface GroupAccess {
   id: string;
   group_id: string;
-  allow_methods: string[];
-  allow_addresses: string[];
-  owned_addresses: string[];
-  address_functions?: Record<string, string[]>;
+  allowed_methods: string[];
+  default_claims: Claim[]; // Claims for unregistered contracts
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
   created_at: string;
@@ -62,11 +75,11 @@ export interface User {
   updated_at: string;
 }
 
+// UserMembership - no more role_id (permissions come from group)
 export interface UserMembership {
   id: string;
   user_id: string;
   group_id: string;
-  role_id?: string | null;
   source: MembershipSource;
   zk_credential_ref?: string;
   expires_at?: string | null;
@@ -74,37 +87,30 @@ export interface UserMembership {
   updated_at: string;
 }
 
-export interface ContractOwnership {
-  id: string;
-  contract_address: string;
-  org_id: string;
-  owner_group_id: string;
-  deployed_by_user_id?: string | null;
-  deployed_at?: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
+// ContractAccess - access permissions for a specific contract
+export interface ContractAccess {
+  claims: Claim[];
+  functions?: string[] | null; // null = all functions allowed
 }
 
+// EffectivePermissions - computed permissions for a user
 export interface EffectivePermissions {
   id: string;
   user_id: string;
   org_id: string;
-  allow_methods: string[];
-  allow_addresses: string[];
-  owned_addresses: string[];
-  address_functions?: Record<string, string[]>;
-  claims: Claim[];
+  allowed_methods: string[];
+  contract_access: Record<string, ContractAccess>; // address -> access
+  default_claims: Claim[]; // Claims for unregistered contracts
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
   computed_at: string;
   expires_at: string;
 }
 
+// MembershipWithDetails - no more role field
 export interface MembershipWithDetails {
   membership: UserMembership;
   group: Group;
-  role?: Role | null;
 }
 
 export interface AccessCheckRequest {
@@ -112,6 +118,7 @@ export interface AccessCheckRequest {
   org_slug?: string;
   method: string;
   target_address?: string;
+  function_selector?: string;
   required_claims?: Claim[];
 }
 
@@ -130,6 +137,7 @@ export interface CacheStats {
 }
 
 // Input types for creating/updating entities
+
 export interface CreateOrganizationInput {
   slug: string;
   name: string;
@@ -142,32 +150,25 @@ export interface UpdateOrganizationInput {
   settings?: Record<string, unknown>;
 }
 
+// No more role_id in group creation
 export interface CreateGroupInput {
   slug: string;
   name: string;
   description?: string;
   parent_id?: string | null;
-  role_id?: string | null;
 }
 
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
-  role_id?: string | null;
 }
 
-export interface CreateRoleInput {
-  name: string;
-  description?: string;
-  claims?: Claim[];
-  allow_methods?: string[];
-}
-
-export interface UpdateRoleInput {
-  name?: string;
-  description?: string;
-  claims?: Claim[];
-  allow_methods?: string[];
+// Input for setting group access
+export interface SetGroupAccessInput {
+  allowed_methods?: string[];
+  default_claims?: Claim[];
+  rate_limit_rps?: number | null;
+  rate_limit_daily?: number | null;
 }
 
 export interface UpdateUserInput {
@@ -177,48 +178,50 @@ export interface UpdateUserInput {
   metadata?: Record<string, unknown>;
 }
 
+// No more role_id in membership creation
 export interface CreateMembershipInput {
   group_id: string;
-  role_id?: string | null;
 }
 
-export interface SetGroupPermissionsInput {
-  allow_methods?: string[];
-  allow_addresses?: string[];
-  owned_addresses?: string[];
-  address_functions?: Record<string, string[]>;
-  rate_limit_rps?: number | null;
-  rate_limit_daily?: number | null;
-}
-
-export interface CreateContractOwnershipInput {
-  contract_address: string;
-  owner_group_id: string;
+// Input for creating a contract
+export interface CreateContractInput {
+  address: string;
+  name?: string;
   metadata?: Record<string, unknown>;
 }
 
-export interface UpdateContractOwnershipInput {
-  owner_group_id?: string;
+export interface UpdateContractInput {
+  name?: string;
   metadata?: Record<string, unknown>;
+}
+
+// Input for creating a contract grant
+export interface CreateContractGrantInput {
+  group_id: string;
+  claims: Claim[];
+  functions?: string[] | null;
+}
+
+export interface UpdateContractGrantInput {
+  claims?: Claim[];
+  functions?: string[] | null;
 }
 
 // All available claims for reference
-export const ALL_CLAIMS: Claim[] = ['reader', 'writer', 'deployer', 'admin', 'upgrade'];
+export const ALL_CLAIMS: Claim[] = ['read', 'write', 'admin', 'upgrade'];
 
 // Claim labels for display
 export const CLAIM_LABELS: Record<Claim, string> = {
-  reader: 'Reader',
-  writer: 'Writer',
-  deployer: 'Deployer',
+  read: 'Read',
+  write: 'Write',
   admin: 'Admin',
   upgrade: 'Upgrade',
 };
 
 // Claim descriptions for tooltips
 export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
-  reader: 'Can read data from contracts',
-  writer: 'Can write/execute transactions',
-  deployer: 'Can deploy new contracts',
-  admin: 'Administrative access to group',
-  upgrade: 'Can upgrade contracts',
+  read: 'Can read data from contracts (eth_call, eth_estimateGas)',
+  write: 'Can write/execute transactions (eth_sendTransaction)',
+  admin: 'Full control - considered owner of the contract',
+  upgrade: 'Can upgrade proxy contracts',
 };

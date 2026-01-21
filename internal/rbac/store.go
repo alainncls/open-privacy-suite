@@ -24,18 +24,29 @@ type Store interface {
 	GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) // Returns groups from root to the specified group
 	DeleteGroup(ctx context.Context, id string) error
 
-	// Group Permissions operations
-	SetGroupPermissions(ctx context.Context, perms *GroupPermissions) error
-	GetGroupPermissions(ctx context.Context, groupID string) (*GroupPermissions, error)
-	DeleteGroupPermissions(ctx context.Context, groupID string) error
+	// Group Access operations (replaces roles.allow_methods and group_permissions)
+	CreateGroupAccess(ctx context.Context, access *GroupAccess) error
+	GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error)
+	UpdateGroupAccess(ctx context.Context, access *GroupAccess) error
+	DeleteGroupAccess(ctx context.Context, groupID string) error
 
-	// Role operations
-	CreateRole(ctx context.Context, role *Role) error
-	GetRole(ctx context.Context, id string) (*Role, error)
-	GetRoleByName(ctx context.Context, orgID, name string) (*Role, error)
-	UpdateRole(ctx context.Context, role *Role) error
-	ListRoles(ctx context.Context, orgID string) ([]*Role, error)
-	DeleteRole(ctx context.Context, id string) error
+	// Contract operations
+	CreateContract(ctx context.Context, contract *Contract) error
+	GetContract(ctx context.Context, id string) (*Contract, error)
+	GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error)
+	UpdateContract(ctx context.Context, contract *Contract) error
+	ListContracts(ctx context.Context, orgID string) ([]*Contract, error)
+	DeleteContract(ctx context.Context, id string) error
+
+	// Contract Grant operations
+	CreateContractGrant(ctx context.Context, grant *ContractGrant) error
+	GetContractGrant(ctx context.Context, id string) (*ContractGrant, error)
+	GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error)
+	UpdateContractGrant(ctx context.Context, grant *ContractGrant) error
+	ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error)
+	ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error)
+	ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error)
+	DeleteContractGrant(ctx context.Context, id string) error
 
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
@@ -52,18 +63,10 @@ type Store interface {
 	UpdateMembership(ctx context.Context, membership *UserMembership) error
 	ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error)
 	ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error)
+	ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error)
 	ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error)
 	DeleteMembership(ctx context.Context, id string) error
 	DeleteExpiredMemberships(ctx context.Context) (int64, error)
-
-	// Contract Ownership operations
-	CreateContractOwnership(ctx context.Context, ownership *ContractOwnership) error
-	GetContractOwnership(ctx context.Context, id string) (*ContractOwnership, error)
-	GetContractOwnershipByAddress(ctx context.Context, orgID, address string) (*ContractOwnership, error)
-	UpdateContractOwnership(ctx context.Context, ownership *ContractOwnership) error
-	ListContractOwnerships(ctx context.Context, orgID string) ([]*ContractOwnership, error)
-	ListContractOwnershipsByGroup(ctx context.Context, groupID string) ([]*ContractOwnership, error)
-	DeleteContractOwnership(ctx context.Context, id string) error
 
 	// Effective Permissions Cache operations
 	GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error)
@@ -92,9 +95,9 @@ const (
 const (
 	ResourceTypeOrganization = "organization"
 	ResourceTypeGroup        = "group"
-	ResourceTypeRole         = "role"
 	ResourceTypeUser         = "user"
 	ResourceTypeMembership   = "membership"
 	ResourceTypeContract     = "contract"
-	ResourceTypePermission   = "permission"
+	ResourceTypeGrant        = "grant"
+	ResourceTypeAccess       = "access"
 )

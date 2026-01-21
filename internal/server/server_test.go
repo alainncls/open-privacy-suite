@@ -47,7 +47,7 @@ func setupTestServer(t *testing.T) *Server {
 	}
 
 	proxySvc := proxy.New(cfg.NodeURL)
-	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute, true)
+	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
 
 	return &Server{
 		db:             database,

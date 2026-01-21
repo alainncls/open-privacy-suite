@@ -1,5 +1,5 @@
 -- Initial schema for privacy-proxy
--- Consolidated schema including all RBAC tables
+-- Consolidated schema including simplified RBAC tables
 
 -- =============================================================================
 -- Legacy tables (for backward compatibility)
@@ -53,11 +53,13 @@ CREATE TABLE IF NOT EXISTS eth_address_links (
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     revoked BOOLEAN DEFAULT false,
     revoked_at TIMESTAMP,
+    ens_name VARCHAR(255),              -- Cached ENS name (if any)
+    ens_resolved_at TIMESTAMP,          -- When ENS was last resolved
     UNIQUE(eth_address)  -- Each ETH address can only be linked to one DID
 );
 
 -- =============================================================================
--- RBAC tables
+-- RBAC tables (Simplified - Contract-Centric Model)
 -- =============================================================================
 
 -- Organizations: Top-level tenants
@@ -70,25 +72,12 @@ CREATE TABLE IF NOT EXISTS organizations (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Roles: Named permission sets with claims
-CREATE TABLE IF NOT EXISTS roles (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    claims JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of claims: deployer, reader, writer, admin, upgrade
-    allow_methods JSONB NOT NULL DEFAULT '[]'::jsonb, -- Allowed JSON-RPC methods
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(org_id, name)
-);
-
 -- Groups: Hierarchical permission containers within organizations
+-- Note: role_id removed - permissions now come from group_access and contract_grants
 CREATE TABLE IF NOT EXISTS groups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     parent_id UUID REFERENCES groups(id) ON DELETE CASCADE,
-    role_id UUID REFERENCES roles(id) ON DELETE SET NULL,
     slug VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -99,19 +88,50 @@ CREATE TABLE IF NOT EXISTS groups (
     UNIQUE(org_id, slug)
 );
 
--- Group permissions: Per-group method/address allowlists and rate limits
-CREATE TABLE IF NOT EXISTS group_permissions (
+-- Contracts: First-class resources representing deployed contracts
+-- Note: "Ownership" is claims-based - a group with 'admin' claim on a contract is considered its owner
+CREATE TABLE IF NOT EXISTS contracts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    address VARCHAR(42) NOT NULL, -- Ethereum address (lowercase, with 0x prefix)
+    name VARCHAR(255),
+    deployed_by_user_id UUID, -- Audit trail only (FK added after users table)
+    deployed_at TIMESTAMP,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+-- Unique constraint on lowercase address per org (using functional index)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_org_address_unique ON contracts(org_id, lower(address));
+
+-- Contract grants: Links groups to contracts with specific claims
+-- Claims: 'read', 'write', 'admin', 'upgrade'
+--   - read: eth_call, eth_estimateGas (view functions)
+--   - write: eth_sendTransaction (state-changing functions)
+--   - admin: full control, considered "owner" of the contract
+--   - upgrade: can upgrade proxy contracts
+CREATE TABLE IF NOT EXISTS contract_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    contract_id UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    allow_methods JSONB NOT NULL DEFAULT '[]'::jsonb, -- Allowed JSON-RPC methods
-    allow_addresses JSONB NOT NULL DEFAULT '[]'::jsonb, -- Allowed addresses (contracts or EOAs, lowercase)
-    owned_addresses JSONB NOT NULL DEFAULT '[]'::jsonb, -- Addresses owned by this group
-    address_functions JSONB NOT NULL DEFAULT '{}'::jsonb, -- {"0xaddress": ["0xselector1", ...]} function selectors
+    claims TEXT[] NOT NULL DEFAULT '{}', -- Array of claims: read, write, admin, upgrade
+    functions TEXT[], -- NULL = all functions, or specific selectors ['0x12345678']
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id, group_id)
+);
+
+-- Group access: RPC method permissions and rate limits per group
+-- Replaces roles.allow_methods and group_permissions rate limits
+CREATE TABLE IF NOT EXISTS group_access (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE UNIQUE,
+    allowed_methods TEXT[] NOT NULL DEFAULT '{}', -- Allowed JSON-RPC methods
+    default_claims TEXT[] DEFAULT '{}', -- Claims for unregistered contracts
     rate_limit_rps INTEGER, -- Requests per second limit (NULL = unlimited)
     rate_limit_daily INTEGER, -- Daily request limit (NULL = unlimited)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(group_id)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Users: Extended user model for RBAC
@@ -126,12 +146,22 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- User memberships: Links users to groups with roles
+-- Add FK constraint for contracts.deployed_by_user_id now that users table exists
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_contracts_deployed_by_user'
+    ) THEN
+        ALTER TABLE contracts ADD CONSTRAINT fk_contracts_deployed_by_user
+            FOREIGN KEY (deployed_by_user_id) REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+-- User memberships: Links users to groups (simplified - no role_id override)
 CREATE TABLE IF NOT EXISTS user_memberships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    role_id UUID REFERENCES roles(id) ON DELETE SET NULL,
     source VARCHAR(50) NOT NULL DEFAULT 'admin', -- 'admin' or 'zk_attested'
     zk_credential_ref TEXT, -- Reference to ZK credential if source is zk_attested
     expires_at TIMESTAMP, -- Optional membership expiration
@@ -140,30 +170,15 @@ CREATE TABLE IF NOT EXISTS user_memberships (
     UNIQUE(user_id, group_id)
 );
 
--- Contract ownership: Tracks deployed contracts and their owner groups
-CREATE TABLE IF NOT EXISTS contract_ownership (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    contract_address VARCHAR(42) NOT NULL, -- Ethereum address (lowercase, with 0x prefix)
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    owner_group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    deployed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    deployed_at TIMESTAMP,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(contract_address, org_id)
-);
-
 -- Effective permissions cache: Materialized permissions for performance
+-- Updated to reflect new contract-centric model
 CREATE TABLE IF NOT EXISTS effective_permissions_cache (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    allow_methods JSONB NOT NULL DEFAULT '[]'::jsonb,
-    allow_addresses JSONB NOT NULL DEFAULT '[]'::jsonb,
-    owned_addresses JSONB NOT NULL DEFAULT '[]'::jsonb,
-    address_functions JSONB NOT NULL DEFAULT '{}'::jsonb,
-    claims JSONB NOT NULL DEFAULT '[]'::jsonb,
+    allowed_methods TEXT[] NOT NULL DEFAULT '{}',
+    contract_access JSONB NOT NULL DEFAULT '{}'::jsonb, -- {address: {claims: [], functions: []}}
+    default_claims TEXT[] DEFAULT '{}', -- Claims for unregistered contracts
     rate_limit_rps INTEGER,
     rate_limit_daily INTEGER,
     computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -177,7 +192,7 @@ CREATE TABLE IF NOT EXISTS rbac_audit_log (
     actor_id UUID, -- User who performed the action (NULL for system actions)
     actor_external_id VARCHAR(255), -- External ID of actor for reference
     action VARCHAR(50) NOT NULL, -- create, update, delete, assign, revoke
-    resource_type VARCHAR(50) NOT NULL, -- organization, group, role, user, membership, etc.
+    resource_type VARCHAR(50) NOT NULL, -- organization, group, user, membership, contract, grant, access
     resource_id UUID, -- ID of the affected resource
     resource_name VARCHAR(255), -- Human-readable name for reference
     old_value JSONB, -- Previous value (for updates)
@@ -207,16 +222,14 @@ CREATE INDEX IF NOT EXISTS idx_eth_address_links_active ON eth_address_links(did
 CREATE INDEX IF NOT EXISTS idx_groups_org_id ON groups(org_id);
 CREATE INDEX IF NOT EXISTS idx_groups_parent_id ON groups(parent_id);
 CREATE INDEX IF NOT EXISTS idx_groups_path ON groups(path);
-CREATE INDEX IF NOT EXISTS idx_groups_role_id ON groups(role_id);
-CREATE INDEX IF NOT EXISTS idx_roles_org_id ON roles(org_id);
-CREATE INDEX IF NOT EXISTS idx_group_permissions_group_id ON group_permissions(group_id);
-CREATE INDEX IF NOT EXISTS idx_group_permissions_address_functions ON group_permissions USING GIN (address_functions);
+CREATE INDEX IF NOT EXISTS idx_contracts_org_id ON contracts(org_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_address ON contracts(address);
+CREATE INDEX IF NOT EXISTS idx_contract_grants_contract_id ON contract_grants(contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_grants_group_id ON contract_grants(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_access_group_id ON group_access(group_id);
 CREATE INDEX IF NOT EXISTS idx_users_external_id ON users(external_id);
 CREATE INDEX IF NOT EXISTS idx_user_memberships_user_id ON user_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_memberships_group_id ON user_memberships(group_id);
-CREATE INDEX IF NOT EXISTS idx_contract_ownership_org_id ON contract_ownership(org_id);
-CREATE INDEX IF NOT EXISTS idx_contract_ownership_owner_group_id ON contract_ownership(owner_group_id);
-CREATE INDEX IF NOT EXISTS idx_contract_ownership_address ON contract_ownership(contract_address);
 CREATE INDEX IF NOT EXISTS idx_effective_permissions_user_org ON effective_permissions_cache(user_id, org_id);
 CREATE INDEX IF NOT EXISTS idx_effective_permissions_expires ON effective_permissions_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_rbac_audit_log_actor ON rbac_audit_log(actor_id);
@@ -237,22 +250,12 @@ VALUES (
 )
 ON CONFLICT (slug) DO NOTHING;
 
--- Create default roles
-INSERT INTO roles (id, org_id, name, description, claims, allow_methods)
-VALUES
-    ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'admin', 'Full administrative access', '["admin", "deployer", "writer", "reader"]'::jsonb, '["eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getBlockByHash", "eth_getBlockByNumber", "eth_getCode", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_call", "eth_estimateGas", "eth_sendRawTransaction", "eth_sendTransaction", "eth_getLogs", "eth_getBlockTransactionCountByHash", "eth_getBlockTransactionCountByNumber", "eth_getUncleCountByBlockHash", "eth_getUncleCountByBlockNumber", "eth_protocolVersion", "eth_syncing", "net_version", "net_listening", "net_peerCount", "web3_clientVersion", "web3_sha3"]'::jsonb),
-    ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'deployer', 'Can deploy contracts', '["deployer", "writer", "reader"]'::jsonb, '["eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getBlockByHash", "eth_getBlockByNumber", "eth_getCode", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_call", "eth_estimateGas", "eth_sendRawTransaction", "eth_sendTransaction", "eth_getLogs", "net_version", "web3_clientVersion"]'::jsonb),
-    ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'user', 'Standard user access', '["writer", "reader"]'::jsonb, '["eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getBlockByHash", "eth_getBlockByNumber", "eth_getCode", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_call", "eth_estimateGas", "eth_sendRawTransaction", "eth_sendTransaction", "eth_getLogs", "net_version"]'::jsonb),
-    ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'reader', 'Read-only access', '["reader"]'::jsonb, '["eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getBlockByHash", "eth_getBlockByNumber", "eth_getCode", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_call", "eth_getLogs", "net_version"]'::jsonb)
-ON CONFLICT (org_id, name) DO NOTHING;
-
--- Create default root group (with admin role)
-INSERT INTO groups (id, org_id, parent_id, role_id, slug, name, description, depth, path)
+-- Create default root group
+INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000001',
     NULL,
-    '00000000-0000-0000-0000-000000000001',
     'default',
     'Default Group',
     'Default group for all users',
@@ -261,15 +264,13 @@ VALUES (
 )
 ON CONFLICT (org_id, slug) DO NOTHING;
 
--- Create default group permissions (allow common JSON-RPC methods)
-INSERT INTO group_permissions (id, group_id, allow_methods, allow_addresses, owned_addresses, address_functions)
+-- Create default group access (allow common JSON-RPC methods)
+INSERT INTO group_access (id, group_id, allowed_methods, default_claims)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000001',
-    '["eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getBlockByHash", "eth_getBlockByNumber", "eth_getCode", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_call", "eth_estimateGas", "eth_sendRawTransaction", "eth_sendTransaction", "eth_getLogs", "eth_getBlockTransactionCountByHash", "eth_getBlockTransactionCountByNumber", "eth_getUncleCountByBlockHash", "eth_getUncleCountByBlockNumber", "eth_protocolVersion", "eth_syncing", "net_version", "net_listening", "net_peerCount", "web3_clientVersion", "web3_sha3"]'::jsonb,
-    '[]'::jsonb,
-    '[]'::jsonb,
-    '{}'::jsonb
+    ARRAY['eth_blockNumber', 'eth_chainId', 'eth_gasPrice', 'eth_getBalance', 'eth_getBlockByHash', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getStorageAt', 'eth_getTransactionByHash', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_call', 'eth_estimateGas', 'eth_sendRawTransaction', 'eth_sendTransaction', 'eth_getLogs', 'eth_getBlockTransactionCountByHash', 'eth_getBlockTransactionCountByNumber', 'eth_getUncleCountByBlockHash', 'eth_getUncleCountByBlockNumber', 'eth_protocolVersion', 'eth_syncing', 'net_version', 'net_listening', 'net_peerCount', 'web3_clientVersion', 'web3_sha3'],
+    ARRAY['read', 'write'] -- Default claims for unregistered contracts
 )
 ON CONFLICT (group_id) DO NOTHING;
 
@@ -281,16 +282,14 @@ DROP INDEX IF EXISTS idx_rbac_audit_log_resource;
 DROP INDEX IF EXISTS idx_rbac_audit_log_actor;
 DROP INDEX IF EXISTS idx_effective_permissions_expires;
 DROP INDEX IF EXISTS idx_effective_permissions_user_org;
-DROP INDEX IF EXISTS idx_contract_ownership_address;
-DROP INDEX IF EXISTS idx_contract_ownership_owner_group_id;
-DROP INDEX IF EXISTS idx_contract_ownership_org_id;
 DROP INDEX IF EXISTS idx_user_memberships_group_id;
 DROP INDEX IF EXISTS idx_user_memberships_user_id;
 DROP INDEX IF EXISTS idx_users_external_id;
-DROP INDEX IF EXISTS idx_group_permissions_address_functions;
-DROP INDEX IF EXISTS idx_group_permissions_group_id;
-DROP INDEX IF EXISTS idx_roles_org_id;
-DROP INDEX IF EXISTS idx_groups_role_id;
+DROP INDEX IF EXISTS idx_group_access_group_id;
+DROP INDEX IF EXISTS idx_contract_grants_group_id;
+DROP INDEX IF EXISTS idx_contract_grants_contract_id;
+DROP INDEX IF EXISTS idx_contracts_address;
+DROP INDEX IF EXISTS idx_contracts_org_id;
 DROP INDEX IF EXISTS idx_groups_path;
 DROP INDEX IF EXISTS idx_groups_parent_id;
 DROP INDEX IF EXISTS idx_groups_org_id;
@@ -307,12 +306,12 @@ DROP INDEX IF EXISTS idx_logs_external_id;
 -- Drop all tables (in reverse dependency order)
 DROP TABLE IF EXISTS rbac_audit_log;
 DROP TABLE IF EXISTS effective_permissions_cache;
-DROP TABLE IF EXISTS contract_ownership;
 DROP TABLE IF EXISTS user_memberships;
 DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS group_permissions;
+DROP TABLE IF EXISTS group_access;
+DROP TABLE IF EXISTS contract_grants;
+DROP TABLE IF EXISTS contracts;
 DROP TABLE IF EXISTS groups;
-DROP TABLE IF EXISTS roles;
 DROP TABLE IF EXISTS organizations;
 DROP TABLE IF EXISTS eth_address_links;
 DROP TABLE IF EXISTS revoked_tokens;

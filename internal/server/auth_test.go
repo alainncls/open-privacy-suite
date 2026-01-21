@@ -134,7 +134,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 		db:              database,
 		privadoVerifier: mockVerifier,
 		jwtService:      jwtService,
-		rbacAccessCtrl:  rbac.NewAccessController(database, 5*time.Minute, true),
+		rbacAccessCtrl:  rbac.NewAccessController(database, 5*time.Minute),
 		proxy:           nil, // Not needed for auth tests
 		sessionStore:    auth.NewSessionStore(10*time.Minute, 1*time.Minute),
 		config:          cfg,

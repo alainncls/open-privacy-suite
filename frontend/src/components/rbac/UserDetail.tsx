@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { User, MembershipWithDetails, EffectivePermissions } from '@/types/rbac';
 import { useOrgContext } from './RBACManager';
@@ -37,6 +37,8 @@ interface UserDetailProps {
 interface LinkedAddress {
   address: string;
   verified_at: string;
+  ens_name?: string;
+  ens_resolved_at?: string;
 }
 
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
@@ -48,9 +50,21 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [showMembershipForm, setShowMembershipForm] = useState(false);
 
-  // ENS name resolution for linked addresses
+  // Build cache of ENS names from API response
+  const cachedEnsNames = useMemo(() => {
+    const cache: Record<string, string | null> = {};
+    for (const addr of linkedAddresses) {
+      if (addr.ens_name !== undefined) {
+        cache[addr.address.toLowerCase()] = addr.ens_name || null;
+      }
+    }
+    return cache;
+  }, [linkedAddresses]);
+
+  // ENS name resolution for linked addresses (uses cache from API)
   const { data: ensNames, isLoading: loadingEns } = useEnsNames(
-    linkedAddresses.map(a => a.address)
+    linkedAddresses.map(a => a.address),
+    { cachedNames: cachedEnsNames }
   );
 
   // Edit form state

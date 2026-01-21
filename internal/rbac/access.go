@@ -3,7 +3,6 @@ package rbac
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -12,154 +11,157 @@ import (
 
 // GlobalBlockedMethods contains methods that are NEVER allowed regardless of RBAC permissions.
 // These methods pose security risks and should never be exposed through the proxy.
-var GlobalBlockedMethods = []string{
+// Using map for O(1) lookup instead of slice.
+var GlobalBlockedMethods = map[string]bool{
 	// Debug namespace - information disclosure, DoS risk
-	"debug_accountRange",
-	"debug_backtraceAt",
-	"debug_blockProfile",
-	"debug_chaindbCompact",
-	"debug_chaindbProperty",
-	"debug_cpuProfile",
-	"debug_dbAncient",
-	"debug_dbAncients",
-	"debug_dbGet",
-	"debug_dumpBlock",
-	"debug_freeOSMemory",
-	"debug_freezeClient",
-	"debug_gcStats",
-	"debug_getBadBlocks",
-	"debug_getHeaderRlp",
-	"debug_getModifiedAccountsByHash",
-	"debug_getModifiedAccountsByNumber",
-	"debug_goTrace",
-	"debug_intermediateRoots",
-	"debug_memStats",
-	"debug_mutexProfile",
-	"debug_preimage",
-	"debug_printBlock",
-	"debug_seedHash",
-	"debug_setBlockProfileRate",
-	"debug_setGCPercent",
-	"debug_setHead",
-	"debug_setMutexProfileFraction",
-	"debug_stacks",
-	"debug_standardTraceBadBlockToFile",
-	"debug_standardTraceBlockToFile",
-	"debug_startCPUProfile",
-	"debug_startGoTrace",
-	"debug_stopCPUProfile",
-	"debug_stopGoTrace",
-	"debug_storageRangeAt",
-	"debug_subscribe",
-	"debug_traceBadBlock",
-	"debug_traceBlock",
-	"debug_traceBlockByHash",
-	"debug_traceBlockByNumber",
-	"debug_traceBlockFromFile",
-	"debug_traceCall",
-	"debug_traceChain",
-	"debug_traceTransaction",
-	"debug_unsubscribe",
-	"debug_verbosity",
-	"debug_vmodule",
-	"debug_writeBlockProfile",
-	"debug_writeMemProfile",
-	"debug_writeMutexProfile",
+	"debug_accountRange":                true,
+	"debug_backtraceAt":                 true,
+	"debug_blockProfile":                true,
+	"debug_chaindbCompact":              true,
+	"debug_chaindbProperty":             true,
+	"debug_cpuProfile":                  true,
+	"debug_dbAncient":                   true,
+	"debug_dbAncients":                  true,
+	"debug_dbGet":                       true,
+	"debug_dumpBlock":                   true,
+	"debug_freeOSMemory":                true,
+	"debug_freezeClient":                true,
+	"debug_gcStats":                     true,
+	"debug_getBadBlocks":                true,
+	"debug_getHeaderRlp":                true,
+	"debug_getModifiedAccountsByHash":   true,
+	"debug_getModifiedAccountsByNumber": true,
+	"debug_goTrace":                     true,
+	"debug_intermediateRoots":           true,
+	"debug_memStats":                    true,
+	"debug_mutexProfile":                true,
+	"debug_preimage":                    true,
+	"debug_printBlock":                  true,
+	"debug_seedHash":                    true,
+	"debug_setBlockProfileRate":         true,
+	"debug_setGCPercent":                true,
+	"debug_setHead":                     true,
+	"debug_setMutexProfileFraction":     true,
+	"debug_stacks":                      true,
+	"debug_standardTraceBadBlockToFile": true,
+	"debug_standardTraceBlockToFile":    true,
+	"debug_startCPUProfile":             true,
+	"debug_startGoTrace":                true,
+	"debug_stopCPUProfile":              true,
+	"debug_stopGoTrace":                 true,
+	"debug_storageRangeAt":              true,
+	"debug_subscribe":                   true,
+	"debug_traceBadBlock":               true,
+	"debug_traceBlock":                  true,
+	"debug_traceBlockByHash":            true,
+	"debug_traceBlockByNumber":          true,
+	"debug_traceBlockFromFile":          true,
+	"debug_traceCall":                   true,
+	"debug_traceChain":                  true,
+	"debug_traceTransaction":            true,
+	"debug_unsubscribe":                 true,
+	"debug_verbosity":                   true,
+	"debug_vmodule":                     true,
+	"debug_writeBlockProfile":           true,
+	"debug_writeMemProfile":             true,
+	"debug_writeMutexProfile":           true,
 
 	// Admin namespace - node administration
-	"admin_addPeer",
-	"admin_addTrustedPeer",
-	"admin_clearHistory",
-	"admin_datadir",
-	"admin_exportChain",
-	"admin_importChain",
-	"admin_nodeInfo",
-	"admin_peers",
-	"admin_removePeer",
-	"admin_removeTrustedPeer",
-	"admin_sleep",
-	"admin_sleepBlocks",
-	"admin_startHTTP",
-	"admin_startRPC",
-	"admin_startWS",
-	"admin_stopHTTP",
-	"admin_stopRPC",
-	"admin_stopWS",
+	"admin_addPeer":           true,
+	"admin_addTrustedPeer":    true,
+	"admin_clearHistory":      true,
+	"admin_datadir":           true,
+	"admin_exportChain":       true,
+	"admin_importChain":       true,
+	"admin_nodeInfo":          true,
+	"admin_peers":             true,
+	"admin_removePeer":        true,
+	"admin_removeTrustedPeer": true,
+	"admin_sleep":             true,
+	"admin_sleepBlocks":       true,
+	"admin_startHTTP":         true,
+	"admin_startRPC":          true,
+	"admin_startWS":           true,
+	"admin_stopHTTP":          true,
+	"admin_stopRPC":           true,
+	"admin_stopWS":            true,
 
 	// Personal namespace - key exposure risk
-	"personal_deriveAccount",
-	"personal_ecRecover",
-	"personal_importRawKey",
-	"personal_initializeWallet",
-	"personal_listAccounts",
-	"personal_listWallets",
-	"personal_lockAccount",
-	"personal_newAccount",
-	"personal_openWallet",
-	"personal_sendTransaction",
-	"personal_sign",
-	"personal_signTransaction",
-	"personal_unlockAccount",
-	"personal_unpair",
+	"personal_deriveAccount":    true,
+	"personal_ecRecover":        true,
+	"personal_importRawKey":     true,
+	"personal_initializeWallet": true,
+	"personal_listAccounts":     true,
+	"personal_listWallets":      true,
+	"personal_lockAccount":      true,
+	"personal_newAccount":       true,
+	"personal_openWallet":       true,
+	"personal_sendTransaction":  true,
+	"personal_sign":             true,
+	"personal_signTransaction":  true,
+	"personal_unlockAccount":    true,
+	"personal_unpair":           true,
 
 	// Miner namespace - MEV risk, node control
-	"miner_getHashrate",
-	"miner_setEtherbase",
-	"miner_setExtra",
-	"miner_setGasLimit",
-	"miner_setGasPrice",
-	"miner_setRecommitInterval",
-	"miner_start",
-	"miner_stop",
+	"miner_getHashrate":         true,
+	"miner_setEtherbase":        true,
+	"miner_setExtra":            true,
+	"miner_setGasLimit":         true,
+	"miner_setGasPrice":         true,
+	"miner_setRecommitInterval": true,
+	"miner_start":               true,
+	"miner_stop":                true,
 
 	// Txpool namespace - MEV risk, information disclosure
-	"txpool_content",
-	"txpool_contentFrom",
-	"txpool_inspect",
-	"txpool_status",
+	"txpool_content":     true,
+	"txpool_contentFrom": true,
+	"txpool_inspect":     true,
+	"txpool_status":      true,
 
 	// Signing methods - key exposure risk
-	"eth_sign",
-	"eth_signTransaction",
+	"eth_sign":            true,
+	"eth_signTransaction": true,
 
 	// Clique namespace - consensus manipulation
-	"clique_discard",
-	"clique_getSigners",
-	"clique_getSignersAtHash",
-	"clique_getSnapshot",
-	"clique_getSnapshotAtHash",
-	"clique_proposals",
-	"clique_propose",
-	"clique_status",
+	"clique_discard":           true,
+	"clique_getSigners":        true,
+	"clique_getSignersAtHash":  true,
+	"clique_getSnapshot":       true,
+	"clique_getSnapshotAtHash": true,
+	"clique_proposals":         true,
+	"clique_propose":           true,
+	"clique_status":            true,
 
 	// Les namespace - light client control
-	"les_addBalance",
-	"les_clientInfo",
-	"les_latestCheckpoint",
-	"les_priorityClientInfo",
-	"les_serverInfo",
-	"les_setClientParams",
-	"les_setDefaultParams",
+	"les_addBalance":         true,
+	"les_clientInfo":         true,
+	"les_latestCheckpoint":   true,
+	"les_priorityClientInfo": true,
+	"les_serverInfo":         true,
+	"les_setClientParams":    true,
+	"les_setDefaultParams":   true,
+}
+
+// blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
+var blockedMethodPrefixes = []string{
+	"debug_",
+	"admin_",
+	"personal_",
+	"miner_",
+	"txpool_",
+	"clique_",
+	"les_",
 }
 
 // IsMethodBlocked checks if a method is globally blocked.
 func IsMethodBlocked(method string) bool {
-	// Check exact match
-	if slices.Contains(GlobalBlockedMethods, method) {
+	// Check exact match in map (O(1) lookup)
+	if GlobalBlockedMethods[method] {
 		return true
 	}
 
-	// Also block any method starting with blocked prefixes (for future-proofing)
-	blockedPrefixes := []string{
-		"debug_",
-		"admin_",
-		"personal_",
-		"miner_",
-		"txpool_",
-		"clique_",
-		"les_",
-	}
-	for _, prefix := range blockedPrefixes {
+	// Check prefix matches for future-proofing
+	for _, prefix := range blockedMethodPrefixes {
 		if strings.HasPrefix(method, prefix) {
 			return true
 		}
@@ -177,11 +179,11 @@ var MulticallAddresses = map[string]bool{
 
 // Multicall function selectors (first 4 bytes of keccak256 hash)
 var MulticallSelectors = map[string]string{
-	"0x252dba42": "aggregate",        // aggregate((address,bytes)[])
-	"0x82ad56cb": "aggregate3",       // aggregate3((address,bool,bytes)[])
-	"0x174dea71": "aggregate3Value",  // aggregate3Value((address,bool,uint256,bytes)[])
-	"0xc3077fa9": "blockAndAggregate", // blockAndAggregate((address,bytes)[])
-	"0xbce38bd7": "tryAggregate",     // tryAggregate(bool,(address,bytes)[])
+	"0x252dba42": "aggregate",            // aggregate((address,bytes)[])
+	"0x82ad56cb": "aggregate3",           // aggregate3((address,bool,bytes)[])
+	"0x174dea71": "aggregate3Value",      // aggregate3Value((address,bool,uint256,bytes)[])
+	"0xc3077fa9": "blockAndAggregate",    // blockAndAggregate((address,bytes)[])
+	"0xbce38bd7": "tryAggregate",         // tryAggregate(bool,(address,bytes)[])
 	"0x399542e9": "tryBlockAndAggregate", // tryBlockAndAggregate(bool,(address,bytes)[])
 }
 
@@ -242,21 +244,17 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 // AccessController handles access control decisions for RBAC.
 type AccessController struct {
-	store                      Store
-	resolver                   *Resolver
-	cache                      *Cache
-	allowUnregisteredAddresses bool // If true, addresses not in RBAC bypass permission checks
+	store    Store
+	resolver *Resolver
+	cache    *Cache
 }
 
 // NewAccessController creates a new access controller.
-// allowUnregisteredAddresses: if true, addresses (contracts or EOAs) not registered in RBAC
-// will bypass permission checks (default should be true for backwards compatibility).
-func NewAccessController(store Store, cacheTTL time.Duration, allowUnregisteredAddresses bool) *AccessController {
+func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	return &AccessController{
-		store:                      store,
-		resolver:                   NewResolver(store, cacheTTL),
-		cache:                      NewCache(CacheConfig{TTL: cacheTTL}),
-		allowUnregisteredAddresses: allowUnregisteredAddresses,
+		store:    store,
+		resolver: NewResolver(store, cacheTTL),
+		cache:    NewCache(CacheConfig{TTL: cacheTTL}),
 	}
 }
 
@@ -326,7 +324,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 
 	// Check in-memory cache first
-	cacheKey := user.ID + ":" + org.ID
 	cachedPerms := c.cache.Get(user.ID, org.ID)
 
 	var perms *EffectivePermissions
@@ -351,44 +348,54 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Check address access if specified
+	// Determine required claim based on the operation
+	requiredClaim := ClassifyOperation(req.Method, req.Params)
+
+	// Check contract access if target address is specified
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
 
-		// Determine if this is an "unregistered" address (user has no explicit address restrictions)
-		isUnregisteredAddress := len(perms.AllowAddresses) == 0 && !perms.OwnsAddress(addr)
+		// Get contract access for this address
+		access := perms.GetContractAccess(addr)
 
-		// If bypass is disabled and address is unregistered, check if it's explicitly allowed
-		if isUnregisteredAddress && !c.allowUnregisteredAddresses {
+		// If no access to this contract (not registered and no default claims), deny
+		if access == nil {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("address %s not registered in RBAC (unregistered address access disabled)", req.TargetAddress),
+				Reason:  fmt.Sprintf("no access to contract %s", req.TargetAddress),
 			}, nil
 		}
 
-		// Standard address permission check
-		if !perms.HasAddress(addr) && !perms.OwnsAddress(addr) {
+		// Check if user has the required claim on this contract
+		if requiredClaim != "" && !containsClaim(access.Claims, requiredClaim) {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("address %s not allowed", req.TargetAddress),
+				Reason:  fmt.Sprintf("missing %s claim on contract %s", requiredClaim, req.TargetAddress),
 			}, nil
 		}
 
-		// Check function selector if specified and address has function restrictions
+		// Check function selector if specified
 		if req.FunctionSelector != "" {
-			selector := strings.ToLower(req.FunctionSelector)
-			if !perms.HasFunctionSelector(addr, selector) {
+			if !perms.HasFunctionSelector(addr, req.FunctionSelector) {
 				return &AccessCheckResult{
 					Allowed: false,
-					Reason:  fmt.Sprintf("function %s not allowed on address %s", req.FunctionSelector, req.TargetAddress),
+					Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.TargetAddress),
 				}, nil
 			}
 		}
 	}
 
-	// Check required claims
+	// Check additional required claims from the request
 	for _, claim := range req.RequiredClaims {
-		if !perms.HasClaim(claim) {
+		// For required claims, check if user has it on any registered contract or via default claims
+		hasClaimOnAnyContract := false
+		for _, access := range perms.ContractAccess {
+			if containsClaim(access.Claims, claim) {
+				hasClaimOnAnyContract = true
+				break
+			}
+		}
+		if !hasClaimOnAnyContract && !containsClaim(perms.DefaultClaims, claim) {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  fmt.Sprintf("missing required claim: %s", claim),
@@ -396,40 +403,82 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 	}
 
-	// Use _ to prevent unused variable warning
-	_ = cacheKey
+	// Collect all claims the user has (from all contracts + defaults)
+	allClaims := collectAllClaims(perms)
 
 	return &AccessCheckResult{
 		Allowed:        true,
 		RateLimitRPS:   perms.RateLimitRPS,
 		RateLimitDaily: perms.RateLimitDaily,
-		Claims:         perms.Claims,
+		Claims:         allClaims,
 	}, nil
 }
 
-// ClassifyOperation determines the required claims for a JSON-RPC method.
-func ClassifyOperation(method string, params []any) []Claim {
-	// Deploy operation: eth_sendTransaction with empty "to" field
-	if method == "eth_sendTransaction" && len(params) > 0 {
-		if txObj, ok := params[0].(map[string]any); ok {
-			to, hasTo := txObj["to"]
-			if !hasTo || to == nil || to == "" {
-				return []Claim{ClaimDeployer}
-			}
+// collectAllClaims returns the union of all claims from all contracts and default claims.
+func collectAllClaims(perms *EffectivePermissions) []Claim {
+	claimSet := make(map[Claim]bool)
+
+	// Add default claims
+	for _, c := range perms.DefaultClaims {
+		claimSet[c] = true
+	}
+
+	// Add claims from all contracts
+	for _, access := range perms.ContractAccess {
+		for _, c := range access.Claims {
+			claimSet[c] = true
 		}
 	}
 
-	// Write operations
-	writeOps := []string{
-		"eth_sendTransaction",
-		"eth_sendRawTransaction",
+	result := make([]Claim, 0, len(claimSet))
+	for c := range claimSet {
+		result = append(result, c)
 	}
-	if slices.Contains(writeOps, method) {
-		return []Claim{ClaimWriter}
+	return result
+}
+
+// WriteOpsMap contains write operations that require 'write' claim.
+var WriteOpsMap = map[string]bool{
+	"eth_sendTransaction":    true,
+	"eth_sendRawTransaction": true,
+}
+
+// ReadOpsMap contains read operations that require 'read' claim.
+var ReadOpsMap = map[string]bool{
+	"eth_call":                true,
+	"eth_estimateGas":         true,
+	"eth_getCode":             true,
+	"eth_getBalance":          true,
+	"eth_getStorageAt":        true,
+	"eth_getTransactionCount": true,
+}
+
+// ClassifyOperation determines the required claim for a JSON-RPC method.
+// Returns the claim needed to execute this operation.
+func ClassifyOperation(method string, params []any) Claim {
+	// Write operations require 'write' claim
+	if WriteOpsMap[method] {
+		return ClaimWrite
 	}
 
-	// Read operations (everything else)
-	return []Claim{ClaimReader}
+	// Read operations require 'read' claim
+	if ReadOpsMap[method] {
+		return ClaimRead
+	}
+
+	// Other methods don't require contract-level claims
+	// (e.g., eth_blockNumber, eth_chainId - these are not contract-specific)
+	return ""
+}
+
+// containsClaim checks if a claim is in a slice.
+func containsClaim(claims []Claim, claim Claim) bool {
+	for _, c := range claims {
+		if c == claim {
+			return true
+		}
+	}
+	return false
 }
 
 // GetTargetAddress extracts the target address from JSON-RPC params.
@@ -517,16 +566,13 @@ func (c *AccessController) EnsureUserExists(ctx context.Context, externalID stri
 		return nil, err
 	}
 
-	// Add user to default group with default role
-	defaultOrgID := "00000000-0000-0000-0000-000000000001"
+	// Add user to default group
 	defaultGroupID := "00000000-0000-0000-0000-000000000001"
-	defaultRoleID := "00000000-0000-0000-0000-000000000003" // user role
 
 	membership := &UserMembership{
 		ID:      uuid.New().String(),
 		UserID:  user.ID,
 		GroupID: defaultGroupID,
-		RoleID:  &defaultRoleID,
 		Source:  MembershipSourceAdmin,
 	}
 
@@ -544,7 +590,6 @@ func (c *AccessController) EnsureUserExists(ctx context.Context, externalID stri
 		NewValue: map[string]any{
 			"external_id": externalID,
 			"kyc":         kyc,
-			"org_id":      defaultOrgID,
 		},
 	})
 

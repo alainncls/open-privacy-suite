@@ -44,6 +44,8 @@ export interface EthLinkChallengeResponse {
 export interface EthAddressResponse {
   address: string;
   verified_at: string;
+  ens_name?: string;
+  ens_resolved_at?: string;
 }
 
 export interface EthAddressesResponse {
@@ -146,6 +148,16 @@ export const ethLinkApiMethods = {
   unlinkAddress: async (accessToken: string, address: string): Promise<void> => {
     const client = createAuthenticatedClient(accessToken);
     await client.delete(`/eth/addresses/${address}`);
+  },
+
+  // Refresh ENS name for an address
+  refreshEns: async (
+    accessToken: string,
+    address: string
+  ): Promise<{ address: string; ens_name: string | null }> => {
+    const client = createAuthenticatedClient(accessToken);
+    const response = await client.post(`/eth/addresses/${address}/refresh-ens`);
+    return response.data;
   },
 };
 

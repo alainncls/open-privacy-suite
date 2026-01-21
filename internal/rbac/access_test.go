@@ -6,82 +6,63 @@ import (
 
 func TestClassifyOperation(t *testing.T) {
 	tests := []struct {
-		name           string
-		method         string
-		params         []any
-		expectedClaims []Claim
+		name          string
+		method        string
+		params        []any
+		expectedClaim Claim
 	}{
 		{
-			name:           "Read operation - eth_call",
-			method:         "eth_call",
-			params:         nil,
-			expectedClaims: []Claim{ClaimReader},
+			name:          "Read operation - eth_call",
+			method:        "eth_call",
+			params:        nil,
+			expectedClaim: ClaimRead,
 		},
 		{
-			name:           "Read operation - eth_getBalance",
-			method:         "eth_getBalance",
-			params:         nil,
-			expectedClaims: []Claim{ClaimReader},
+			name:          "Read operation - eth_getBalance",
+			method:        "eth_getBalance",
+			params:        nil,
+			expectedClaim: ClaimRead,
 		},
 		{
-			name:           "Read operation - eth_blockNumber",
-			method:         "eth_blockNumber",
-			params:         nil,
-			expectedClaims: []Claim{ClaimReader},
+			name:          "Read operation - eth_estimateGas",
+			method:        "eth_estimateGas",
+			params:        nil,
+			expectedClaim: ClaimRead,
 		},
 		{
-			name:           "Write operation - eth_sendRawTransaction",
-			method:         "eth_sendRawTransaction",
-			params:         nil,
-			expectedClaims: []Claim{ClaimWriter},
+			name:          "Write operation - eth_sendRawTransaction",
+			method:        "eth_sendRawTransaction",
+			params:        nil,
+			expectedClaim: ClaimWrite,
 		},
 		{
-			name:   "Write operation - eth_sendTransaction with to",
+			name:   "Write operation - eth_sendTransaction",
 			method: "eth_sendTransaction",
 			params: []any{
 				map[string]any{"to": "0x1234", "value": "0x100"},
 			},
-			expectedClaims: []Claim{ClaimWriter},
+			expectedClaim: ClaimWrite,
 		},
 		{
-			name:   "Deploy operation - eth_sendTransaction without to",
-			method: "eth_sendTransaction",
-			params: []any{
-				map[string]any{"data": "0x1234"},
-			},
-			expectedClaims: []Claim{ClaimDeployer},
+			name:          "Other method - no contract claim required",
+			method:        "eth_blockNumber",
+			params:        nil,
+			expectedClaim: "",
 		},
 		{
-			name:   "Deploy operation - eth_sendTransaction with empty to",
-			method: "eth_sendTransaction",
-			params: []any{
-				map[string]any{"to": "", "data": "0x1234"},
-			},
-			expectedClaims: []Claim{ClaimDeployer},
-		},
-		{
-			name:   "Deploy operation - eth_sendTransaction with nil to",
-			method: "eth_sendTransaction",
-			params: []any{
-				map[string]any{"to": nil, "data": "0x1234"},
-			},
-			expectedClaims: []Claim{ClaimDeployer},
+			name:          "Other method - net_version",
+			method:        "net_version",
+			params:        nil,
+			expectedClaim: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			claims := ClassifyOperation(tt.method, tt.params)
+			claim := ClassifyOperation(tt.method, tt.params)
 
-			if len(claims) != len(tt.expectedClaims) {
-				t.Errorf("Expected %d claims, got %d", len(tt.expectedClaims), len(claims))
-				return
-			}
-
-			for i, expected := range tt.expectedClaims {
-				if claims[i] != expected {
-					t.Errorf("Expected claim %v at index %d, got %v", expected, i, claims[i])
-				}
+			if claim != tt.expectedClaim {
+				t.Errorf("Expected claim %v, got %v", tt.expectedClaim, claim)
 			}
 		})
 	}
@@ -162,10 +143,13 @@ func TestGetTargetAddress(t *testing.T) {
 
 func TestEffectivePermissionsMethods(t *testing.T) {
 	perms := &EffectivePermissions{
-		AllowMethods:   []string{"eth_call", "eth_getBalance"},
-		AllowAddresses: []string{"0xaddress1", "0xaddress2"},
-		OwnedAddresses: []string{"0xowned1"},
-		Claims:         []Claim{ClaimReader, ClaimWriter},
+		AllowedMethods: []string{"eth_call", "eth_getBalance"},
+		ContractAccess: map[string]ContractAccess{
+			"0xaddress1": {Claims: []Claim{ClaimRead, ClaimWrite}},
+			"0xaddress2": {Claims: []Claim{ClaimRead}},
+			"0xowned1":   {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+		},
+		DefaultClaims: []Claim{ClaimRead},
 	}
 
 	// Test HasMethod
@@ -176,31 +160,32 @@ func TestEffectivePermissionsMethods(t *testing.T) {
 		t.Error("Expected HasMethod to return false for eth_sendTransaction")
 	}
 
-	// Test HasAddress
-	if !perms.HasAddress("0xaddress1") {
-		t.Error("Expected HasAddress to return true for 0xaddress1")
+	// Test HasContractAccess
+	if !perms.HasContractAccess("0xaddress1") {
+		t.Error("Expected HasContractAccess to return true for 0xaddress1")
 	}
-	if perms.HasAddress("0xunknown") {
-		t.Error("Expected HasAddress to return false for unknown address")
-	}
-
-	// Test OwnsAddress
-	if !perms.OwnsAddress("0xowned1") {
-		t.Error("Expected OwnsAddress to return true for 0xowned1")
-	}
-	if perms.OwnsAddress("0xaddress1") {
-		t.Error("Expected OwnsAddress to return false for allowed but not owned address")
+	if perms.HasContractAccess("0xunknown") {
+		t.Error("Expected HasContractAccess to return false for unknown address")
 	}
 
-	// Test HasClaim
-	if !perms.HasClaim(ClaimReader) {
-		t.Error("Expected HasClaim to return true for reader")
+	// Test HasDefaultClaim
+	if !perms.HasDefaultClaim(ClaimRead) {
+		t.Error("Expected HasDefaultClaim to return true for ClaimRead")
 	}
-	if !perms.HasClaim(ClaimWriter) {
-		t.Error("Expected HasClaim to return true for writer")
+	if perms.HasDefaultClaim(ClaimWrite) {
+		t.Error("Expected HasDefaultClaim to return false for ClaimWrite")
 	}
-	if perms.HasClaim(ClaimDeployer) {
-		t.Error("Expected HasClaim to return false for deployer")
+
+	// Test contract access claims
+	access := perms.ContractAccess["0xaddress1"]
+	if !access.HasClaim(ClaimRead) {
+		t.Error("Expected contract access to have read claim")
+	}
+	if !access.HasClaim(ClaimWrite) {
+		t.Error("Expected contract access to have write claim")
+	}
+	if access.HasClaim(ClaimAdmin) {
+		t.Error("Expected contract access to not have admin claim")
 	}
 }
 

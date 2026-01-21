@@ -311,14 +311,16 @@ func (d *DB) CleanupExpiredTokens() error {
 
 // EthAddressLink represents a link between an Ethereum address and a DID
 type EthAddressLink struct {
-	ID          int     `json:"id"`
-	DID         string  `json:"did"`
-	EthAddress  string  `json:"eth_address"`
-	Signature   string  `json:"signature"`
-	MessageHash string  `json:"message_hash"`
-	VerifiedAt  string  `json:"verified_at"`
-	Revoked     bool    `json:"revoked"`
-	RevokedAt   *string `json:"revoked_at,omitempty"`
+	ID            int     `json:"id"`
+	DID           string  `json:"did"`
+	EthAddress    string  `json:"eth_address"`
+	Signature     string  `json:"signature"`
+	MessageHash   string  `json:"message_hash"`
+	VerifiedAt    string  `json:"verified_at"`
+	Revoked       bool    `json:"revoked"`
+	RevokedAt     *string `json:"revoked_at,omitempty"`
+	ENSName       *string `json:"ens_name,omitempty"`
+	ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
 }
 
 // LinkEthAddress creates a new link between an ETH address and a DID
@@ -332,7 +334,9 @@ func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) erro
 	          message_hash = excluded.message_hash,
 	          verified_at = CURRENT_TIMESTAMP,
 	          revoked = false,
-	          revoked_at = NULL`
+	          revoked_at = NULL,
+	          ens_name = NULL,
+	          ens_resolved_at = NULL`
 
 	_, err := d.conn.Exec(query, did, ethAddress, signature, messageHash)
 	if err != nil {
@@ -343,7 +347,7 @@ func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) erro
 
 // GetEthAddressesByDID retrieves all ETH addresses linked to a DID
 func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
-	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
 	          FROM eth_address_links
 	          WHERE did = $1 AND revoked = false
 	          ORDER BY verified_at DESC`
@@ -357,7 +361,7 @@ func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
 	links := make([]*EthAddressLink, 0)
 	for rows.Next() {
 		var link EthAddressLink
-		var revokedAt sql.NullString
+		var revokedAt, ensName, ensResolvedAt sql.NullString
 
 		if err := rows.Scan(
 			&link.ID,
@@ -368,12 +372,20 @@ func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
 			&link.VerifiedAt,
 			&link.Revoked,
 			&revokedAt,
+			&ensName,
+			&ensResolvedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan ETH address link: %w", err)
 		}
 
 		if revokedAt.Valid {
 			link.RevokedAt = &revokedAt.String
+		}
+		if ensName.Valid {
+			link.ENSName = &ensName.String
+		}
+		if ensResolvedAt.Valid {
+			link.ENSResolvedAt = &ensResolvedAt.String
 		}
 		links = append(links, &link)
 	}
@@ -419,4 +431,58 @@ func (d *DB) RevokeEthAddressLink(did, ethAddress string) error {
 	}
 
 	return nil
+}
+
+// UpdateENSName updates the ENS name for an ETH address
+func (d *DB) UpdateENSName(ethAddress string, ensName *string) error {
+	query := `UPDATE eth_address_links
+	          SET ens_name = $2, ens_resolved_at = CURRENT_TIMESTAMP
+	          WHERE eth_address = $1 AND revoked = false`
+
+	_, err := d.conn.Exec(query, ethAddress, ensName)
+	if err != nil {
+		return fmt.Errorf("failed to update ENS name: %w", err)
+	}
+	return nil
+}
+
+// GetEthAddressLink retrieves a specific ETH address link
+func (d *DB) GetEthAddressLink(ethAddress string) (*EthAddressLink, error) {
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
+	          FROM eth_address_links
+	          WHERE eth_address = $1 AND revoked = false`
+
+	var link EthAddressLink
+	var revokedAt, ensName, ensResolvedAt sql.NullString
+
+	err := d.conn.QueryRow(query, ethAddress).Scan(
+		&link.ID,
+		&link.DID,
+		&link.EthAddress,
+		&link.Signature,
+		&link.MessageHash,
+		&link.VerifiedAt,
+		&link.Revoked,
+		&revokedAt,
+		&ensName,
+		&ensResolvedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ETH address link: %w", err)
+	}
+
+	if revokedAt.Valid {
+		link.RevokedAt = &revokedAt.String
+	}
+	if ensName.Valid {
+		link.ENSName = &ensName.String
+	}
+	if ensResolvedAt.Valid {
+		link.ENSResolvedAt = &ensResolvedAt.String
+	}
+
+	return &link, nil
 }

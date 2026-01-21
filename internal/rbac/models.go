@@ -7,16 +7,20 @@ import (
 	"time"
 )
 
-// Claim represents a permission claim type.
+// Claim represents a permission claim type for contract access.
 type Claim string
 
 const (
-	ClaimReader   Claim = "reader"
-	ClaimWriter   Claim = "writer"
-	ClaimDeployer Claim = "deployer"
-	ClaimAdmin    Claim = "admin"
-	ClaimUpgrade  Claim = "upgrade"
+	ClaimRead    Claim = "read"    // eth_call, eth_estimateGas (view functions)
+	ClaimWrite   Claim = "write"   // eth_sendTransaction (state-changing functions)
+	ClaimAdmin   Claim = "admin"   // Full control, considered "owner" of the contract
+	ClaimUpgrade Claim = "upgrade" // Can upgrade proxy contracts
 )
+
+// AllClaims returns all valid claims.
+func AllClaims() []Claim {
+	return []Claim{ClaimRead, ClaimWrite, ClaimAdmin, ClaimUpgrade}
+}
 
 // MembershipSource indicates how a user obtained membership in a group.
 type MembershipSource string
@@ -28,20 +32,20 @@ const (
 
 // Organization represents a top-level tenant.
 type Organization struct {
-	ID        string            `json:"id"`
-	Slug      string            `json:"slug"`
-	Name      string            `json:"name"`
-	Settings  map[string]any    `json:"settings"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID        string         `json:"id"`
+	Slug      string         `json:"slug"`
+	Name      string         `json:"name"`
+	Settings  map[string]any `json:"settings"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // Group represents a hierarchical permission container within an organization.
+// Note: Permissions come from GroupAccess and ContractGrants, not roles.
 type Group struct {
 	ID          string    `json:"id"`
 	OrgID       string    `json:"org_id"`
 	ParentID    *string   `json:"parent_id,omitempty"`
-	RoleID      *string   `json:"role_id,omitempty"` // Assigned role - all members inherit this role's permissions
 	Slug        string    `json:"slug"`
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
@@ -51,30 +55,41 @@ type Group struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Role represents a named permission set with claims and allowed methods.
-type Role struct {
-	ID           string    `json:"id"`
-	OrgID        string    `json:"org_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	Claims       []Claim   `json:"claims"`
-	AllowMethods []string  `json:"allow_methods"` // Allowed RPC methods for this role
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+// Contract represents a first-class contract resource.
+// "Ownership" is claims-based - a group with 'admin' claim is considered the owner.
+type Contract struct {
+	ID               string         `json:"id"`
+	OrgID            string         `json:"org_id"`
+	Address          string         `json:"address"` // lowercase 0x-prefixed
+	Name             string         `json:"name,omitempty"`
+	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
+	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
+	Metadata         map[string]any `json:"metadata"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// GroupPermissions represents the permissions assigned to a group.
-type GroupPermissions struct {
-	ID               string              `json:"id"`
-	GroupID          string              `json:"group_id"`
-	AllowMethods     []string            `json:"allow_methods"`
-	AllowAddresses   []string            `json:"allow_addresses"`
-	OwnedAddresses   []string            `json:"owned_addresses"`
-	AddressFunctions map[string][]string `json:"address_functions,omitempty"` // address -> allowed function selectors
-	RateLimitRPS     *int                `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily   *int                `json:"rate_limit_daily,omitempty"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+// ContractGrant links a group to a contract with specific claims.
+type ContractGrant struct {
+	ID         string    `json:"id"`
+	ContractID string    `json:"contract_id"`
+	GroupID    string    `json:"group_id"`
+	Claims     []Claim   `json:"claims"`              // read, write, admin, upgrade
+	Functions  []string  `json:"functions,omitempty"` // nil = all functions, or specific selectors
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// GroupAccess represents RPC method permissions and rate limits for a group.
+type GroupAccess struct {
+	ID             string    `json:"id"`
+	GroupID        string    `json:"group_id"`
+	AllowedMethods []string  `json:"allowed_methods"`
+	DefaultClaims  []Claim   `json:"default_claims"` // Claims for unregistered contracts
+	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // User represents a user in the RBAC system.
@@ -89,12 +104,12 @@ type User struct {
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
-// UserMembership links a user to a group with a specific role.
+// UserMembership links a user to a group.
+// Note: No role_id - permissions come from group's access settings.
 type UserMembership struct {
 	ID              string           `json:"id"`
 	UserID          string           `json:"user_id"`
 	GroupID         string           `json:"group_id"`
-	RoleID          *string          `json:"role_id,omitempty"`
 	Source          MembershipSource `json:"source"`
 	ZKCredentialRef string           `json:"zk_credential_ref,omitempty"`
 	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`
@@ -102,33 +117,24 @@ type UserMembership struct {
 	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
-// ContractOwnership tracks deployed contracts and their owner groups.
-type ContractOwnership struct {
-	ID               string         `json:"id"`
-	ContractAddress  string         `json:"contract_address"`
-	OrgID            string         `json:"org_id"`
-	OwnerGroupID     string         `json:"owner_group_id"`
-	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
-	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
-	Metadata         map[string]any `json:"metadata"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+// ContractAccess represents access permissions for a specific contract.
+type ContractAccess struct {
+	Claims    []Claim  `json:"claims"`
+	Functions []string `json:"functions,omitempty"` // nil = all functions allowed
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
 type EffectivePermissions struct {
-	ID               string              `json:"id"`
-	UserID           string              `json:"user_id"`
-	OrgID            string              `json:"org_id"`
-	AllowMethods     []string            `json:"allow_methods"`
-	AllowAddresses   []string            `json:"allow_addresses"`
-	OwnedAddresses   []string            `json:"owned_addresses"`
-	AddressFunctions map[string][]string `json:"address_functions,omitempty"` // address -> allowed function selectors
-	Claims           []Claim             `json:"claims"`
-	RateLimitRPS     *int                `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily   *int                `json:"rate_limit_daily,omitempty"`
-	ComputedAt       time.Time           `json:"computed_at"`
-	ExpiresAt        time.Time           `json:"expires_at"`
+	ID             string                    `json:"id"`
+	UserID         string                    `json:"user_id"`
+	OrgID          string                    `json:"org_id"`
+	AllowedMethods []string                  `json:"allowed_methods"`
+	ContractAccess map[string]ContractAccess `json:"contract_access"` // address -> access
+	DefaultClaims  []Claim                   `json:"default_claims"`  // Claims for unregistered contracts
+	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
+	ComputedAt     time.Time                 `json:"computed_at"`
+	ExpiresAt      time.Time                 `json:"expires_at"`
 }
 
 // AuditLogEntry represents an entry in the RBAC audit log.
@@ -159,17 +165,17 @@ type AccessCheckRequest struct {
 
 // AccessCheckResult represents the result of an access check.
 type AccessCheckResult struct {
-	Allowed        bool     `json:"allowed"`
-	Reason         string   `json:"reason,omitempty"`
-	RateLimitRPS   *int     `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int     `json:"rate_limit_daily,omitempty"`
-	Claims         []Claim  `json:"claims,omitempty"`
+	Allowed        bool    `json:"allowed"`
+	Reason         string  `json:"reason,omitempty"`
+	RateLimitRPS   *int    `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily *int    `json:"rate_limit_daily,omitempty"`
+	Claims         []Claim `json:"claims,omitempty"`
 }
 
-// GroupWithPermissions combines a Group with its associated permissions.
-type GroupWithPermissions struct {
-	Group       *Group            `json:"group"`
-	Permissions *GroupPermissions `json:"permissions"`
+// GroupWithAccess combines a Group with its access settings.
+type GroupWithAccess struct {
+	Group  *Group       `json:"group"`
+	Access *GroupAccess `json:"access"`
 }
 
 // UserWithMemberships combines a User with their group memberships.
@@ -178,65 +184,103 @@ type UserWithMemberships struct {
 	Memberships []*UserMembership `json:"memberships"`
 }
 
-// MembershipWithDetails includes membership with group and role information.
+// MembershipWithDetails includes membership with group information.
 type MembershipWithDetails struct {
 	Membership *UserMembership `json:"membership"`
 	Group      *Group          `json:"group"`
-	Role       *Role           `json:"role,omitempty"`
 }
 
-// HasClaim checks if the effective permissions include a specific claim.
-func (e *EffectivePermissions) HasClaim(claim Claim) bool {
-	return slices.Contains(e.Claims, claim)
+// ContractWithGrants combines a Contract with its grants.
+type ContractWithGrants struct {
+	Contract *Contract        `json:"contract"`
+	Grants   []*ContractGrant `json:"grants"`
+}
+
+// ContractGrantWithGroup includes grant with group details.
+type ContractGrantWithGroup struct {
+	Grant *ContractGrant `json:"grant"`
+	Group *Group         `json:"group"`
 }
 
 // HasMethod checks if the effective permissions allow a specific method.
 func (e *EffectivePermissions) HasMethod(method string) bool {
-	return slices.Contains(e.AllowMethods, method)
+	return slices.Contains(e.AllowedMethods, method)
 }
 
-// HasAddress checks if the effective permissions allow a specific address.
-// If AllowAddresses is empty, all addresses are allowed (no restriction).
-func (e *EffectivePermissions) HasAddress(address string) bool {
-	// Empty allow_addresses means no address restriction - allow all
-	if len(e.AllowAddresses) == 0 {
-		return true
+// GetContractAccess returns the access for a specific contract address.
+// If the contract is not registered, returns access based on default_claims.
+func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess {
+	addr := strings.ToLower(address)
+	if access, ok := e.ContractAccess[addr]; ok {
+		return &access
 	}
-	return slices.Contains(e.AllowAddresses, address)
+	// Return access based on default claims for unregistered contracts
+	if len(e.DefaultClaims) > 0 {
+		return &ContractAccess{
+			Claims:    e.DefaultClaims,
+			Functions: nil, // All functions allowed for default
+		}
+	}
+	return nil
 }
 
-// OwnsAddress checks if the effective permissions include ownership of an address.
-func (e *EffectivePermissions) OwnsAddress(address string) bool {
-	return slices.Contains(e.OwnedAddresses, address)
+// HasContractClaim checks if the user has a specific claim on a contract.
+func (e *EffectivePermissions) HasContractClaim(address string, claim Claim) bool {
+	access := e.GetContractAccess(address)
+	if access == nil {
+		return false
+	}
+	return slices.Contains(access.Claims, claim)
 }
 
 // HasFunctionSelector checks if a function selector is allowed for an address.
-// If the address has no specific function restrictions, all functions are allowed.
-// The selector should be the first 4 bytes of calldata (e.g., "0xa9059cbb" for transfer).
+// If the contract has no specific function restrictions, all functions are allowed.
 func (e *EffectivePermissions) HasFunctionSelector(address, selector string) bool {
-	// If no function restrictions defined, all functions are allowed
-	if e.AddressFunctions == nil || len(e.AddressFunctions) == 0 {
-		return true
-	}
-
-	// Check if this specific address has function restrictions
-	allowedSelectors, hasRestrictions := e.AddressFunctions[address]
-	if !hasRestrictions {
-		// Address not in the map, all functions allowed
-		return true
-	}
-
-	// Empty list means no functions allowed
-	if len(allowedSelectors) == 0 {
+	access := e.GetContractAccess(address)
+	if access == nil {
 		return false
 	}
 
+	// If no function restrictions defined, all functions are allowed
+	if access.Functions == nil || len(access.Functions) == 0 {
+		return true
+	}
+
 	// Check if selector is in the allowed list (case-insensitive)
-	for _, allowed := range allowedSelectors {
+	for _, allowed := range access.Functions {
 		if strings.EqualFold(allowed, selector) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// IsContractRegistered checks if a contract is explicitly registered in RBAC.
+func (e *EffectivePermissions) IsContractRegistered(address string) bool {
+	addr := strings.ToLower(address)
+	_, ok := e.ContractAccess[addr]
+	return ok
+}
+
+// HasAdminOnContract checks if the user has admin claim on a contract (i.e., is owner).
+func (e *EffectivePermissions) HasAdminOnContract(address string) bool {
+	return e.HasContractClaim(address, ClaimAdmin)
+}
+
+// HasContractAccess checks if the user has any access defined for a contract.
+func (e *EffectivePermissions) HasContractAccess(address string) bool {
+	addr := strings.ToLower(address)
+	_, ok := e.ContractAccess[addr]
+	return ok
+}
+
+// HasDefaultClaim checks if the user has a specific default claim.
+func (e *EffectivePermissions) HasDefaultClaim(claim Claim) bool {
+	return slices.Contains(e.DefaultClaims, claim)
+}
+
+// HasClaim checks if a ContractAccess includes a specific claim.
+func (ca ContractAccess) HasClaim(claim Claim) bool {
+	return slices.Contains(ca.Claims, claim)
 }

@@ -18,6 +18,7 @@ type Config struct {
 	BillionsIssuerDID          string // Billions issuer DID for ProofOfHumanity verification
 	RequireProofOfHumanity     bool   // Whether to require ProofOfHumanity credential (default: true in prod)
 	AllowUnregisteredAddresses bool   // If true, addresses not in RBAC bypass permission checks (default: true)
+	ENSResolverURL             string // Ethereum mainnet RPC URL for ENS resolution
 }
 
 func Load() *Config {
@@ -49,9 +50,10 @@ func Load() *Config {
 		BaseURL:                getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
 		Port:                   getEnv("PORT", "8080"),                                        // Server port
 		Environment:                env,
-		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""),  // Billions issuer DID for PoH
+		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""),                  // Billions issuer DID for PoH
 		RequireProofOfHumanity:     requirePoHBool,
 		AllowUnregisteredAddresses: allowUnregisteredBool,
+		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 	}
 }
 

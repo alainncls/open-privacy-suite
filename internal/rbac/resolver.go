@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,18 @@ import (
 type Resolver struct {
 	store    Store
 	cacheTTL time.Duration
+
+	// inFlight tracks computations that are in progress to prevent cache stampede
+	inFlight   map[string]*inFlightEntry
+	inFlightMu sync.RWMutex
+}
+
+// inFlightEntry holds the result of an in-progress permission computation.
+type inFlightEntry struct {
+	result chan struct {
+		perms *EffectivePermissions
+		err   error
+	}
 }
 
 // NewResolver creates a new permission resolver.
@@ -20,13 +33,18 @@ func NewResolver(store Store, cacheTTL time.Duration) *Resolver {
 	return &Resolver{
 		store:    store,
 		cacheTTL: cacheTTL,
+		inFlight: make(map[string]*inFlightEntry),
 	}
 }
 
 // ResolvePermissions computes the effective permissions for a user in an organization.
 // It first checks the cache, then computes permissions if not cached.
+// Uses single-flight pattern to prevent cache stampede when multiple requests
+// come in simultaneously for the same user+org combination.
 func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
-	// Check cache first
+	cacheKey := userID + ":" + orgID
+
+	// Check in-memory cache first (fast path)
 	cached, err := r.store.GetCachedPermissions(ctx, userID, orgID)
 	if err != nil {
 		return nil, err
@@ -35,33 +53,82 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 		return cached, nil
 	}
 
+	// Check if another goroutine is already computing this permission
+	r.inFlightMu.RLock()
+	entry, exists := r.inFlight[cacheKey]
+	r.inFlightMu.RUnlock()
+
+	if exists {
+		// Wait for the in-progress computation
+		select {
+		case res := <-entry.result:
+			return res.perms, res.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	// No computation in progress, start one
+	entry = &inFlightEntry{
+		result: make(chan struct {
+			perms *EffectivePermissions
+			err   error
+		}, 1),
+	}
+
+	r.inFlightMu.Lock()
+	// Double-check after acquiring write lock
+	if existing, exists := r.inFlight[cacheKey]; exists {
+		// Another goroutine beat us, wait on their computation
+		r.inFlightMu.Unlock()
+		select {
+		case res := <-existing.result:
+			return res.perms, res.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	r.inFlight[cacheKey] = entry
+	r.inFlightMu.Unlock()
+
 	// Compute permissions
 	perms, err := r.computePermissions(ctx, userID, orgID)
+
+	// Store result and signal waiting goroutines
+	entry.result <- struct {
+		perms *EffectivePermissions
+		err   error
+	}{perms, err}
+
+	// Clean up in-flight entry
+	r.inFlightMu.Lock()
+	delete(r.inFlight, cacheKey)
+	r.inFlightMu.Unlock()
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Cache the result
-	if err := r.store.SetCachedPermissions(ctx, perms); err != nil {
-		// Log error but don't fail - caching is optional
-		_ = err
-	}
+	// Cache the result (fire and forget - errors are logged but not critical)
+	go func() {
+		if err := r.store.SetCachedPermissions(ctx, perms); err != nil {
+			// Log error but don't fail
+		}
+	}()
 
 	return perms, nil
 }
 
-// computePermissions calculates effective permissions using the simplified RBAC model.
+// computePermissions calculates effective permissions using the contract-centric RBAC model.
 //
-// New Algorithm:
-// 1. Get user's memberships in the org
-// 2. For each membership:
-//    a. Get the Role (from Group.RoleID or Membership.RoleID for backward compatibility)
-//    b. Collect claims and allowed methods from the Role
-//    c. Traverse group hierarchy for contract scope (allow_contracts, owned_contracts)
-//    d. Apply INTERSECTION for contracts within hierarchy
-//    e. Apply UNION for owned contracts (ownership propagates down)
-// 3. Merge permissions across multiple group memberships (UNION for methods, contracts, claims)
-// 4. Take MAXIMUM for rate limits (most permissive wins across memberships)
+// Algorithm:
+//  1. Get user's memberships in the org
+//  2. For each membership:
+//     a. Get the group hierarchy (root -> ... -> current)
+//     b. Compute permissions through hierarchy with INTERSECTION (child narrows parent)
+//     c. Collect contract grants and group access along the hierarchy
+//  3. Merge permissions across multiple group memberships (UNION - user benefits from all groups)
+//  4. Rate limits: MINIMUM within hierarchy, MAXIMUM across memberships
 func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	// Get user's memberships in this org with details
 	memberships, err := r.store.ListUserMembershipsInOrg(ctx, userID, orgID)
@@ -72,25 +139,21 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	if len(memberships) == 0 {
 		// User has no memberships - return empty permissions
 		return &EffectivePermissions{
-			ID:                uuid.New().String(),
-			UserID:            userID,
-			OrgID:             orgID,
-			AllowMethods:      []string{},
-			AllowAddresses:    []string{},
-			OwnedAddresses:    []string{},
-			AddressFunctions: make(map[string][]string),
-			Claims:            []Claim{},
-			ComputedAt:        time.Now(),
-			ExpiresAt:         time.Now().Add(r.cacheTTL),
+			ID:             uuid.New().String(),
+			UserID:         userID,
+			OrgID:          orgID,
+			AllowedMethods: []string{},
+			ContractAccess: make(map[string]ContractAccess),
+			DefaultClaims:  []Claim{},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(r.cacheTTL),
 		}, nil
 	}
 
 	// Track final merged permissions across all memberships
 	var finalMethods []string
-	var finalAddresses []string
-	var finalOwnedAddresses []string
-	var finalAddressFunctions map[string][]string
-	var finalClaims []Claim
+	finalContractAccess := make(map[string]ContractAccess)
+	var finalDefaultClaims []Claim
 	var finalRateLimitRPS *int
 	var finalRateLimitDaily *int
 	firstMembership := true
@@ -102,148 +165,155 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			return nil, err
 		}
 
-		// Compute contract scope permissions using restrictive inheritance
-		membershipPerms, err := r.computeMembershipPermissions(ctx, hierarchy)
+		// Compute permissions through the hierarchy with restrictive inheritance
+		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy, orgID)
 		if err != nil {
 			return nil, err
 		}
 
-		// Get methods and claims from the Role
-		// Priority: Group.RoleID > Membership.RoleID (for backward compatibility)
-		var role *Role
-		if m.Group.RoleID != nil {
-			role, err = r.store.GetRole(ctx, *m.Group.RoleID)
-			if err != nil {
-				return nil, err
-			}
-		} else if m.Role != nil {
-			// Backward compatibility: use role from membership if group has no role
-			role = m.Role
-		}
-
-		// Collect methods from both Role and GroupPermissions
-		// Role.AllowMethods takes precedence, but GroupPermissions.AllowMethods provides backward compatibility
-		var membershipMethods []string
-		if role != nil && len(role.AllowMethods) > 0 {
-			membershipMethods = role.AllowMethods
-		} else if len(membershipPerms.AllowMethods) > 0 {
-			// Backward compatibility: use GroupPermissions.AllowMethods if role has none
-			membershipMethods = membershipPerms.AllowMethods
-		}
-
-		// Collect claims from the role
-		if role != nil {
-			for _, claim := range role.Claims {
-				if !slices.Contains(finalClaims, claim) {
-					finalClaims = append(finalClaims, claim)
-				}
-			}
-		}
-
 		if firstMembership {
 			// First membership - use its permissions as baseline
-			finalMethods = membershipMethods
-			finalAddresses = membershipPerms.AllowAddresses
-			finalOwnedAddresses = membershipPerms.OwnedAddresses
-			finalAddressFunctions = membershipPerms.AddressFunctions
+			finalMethods = membershipPerms.AllowedMethods
+			finalContractAccess = membershipPerms.ContractAccess
+			finalDefaultClaims = membershipPerms.DefaultClaims
 			finalRateLimitRPS = membershipPerms.RateLimitRPS
 			finalRateLimitDaily = membershipPerms.RateLimitDaily
 			firstMembership = false
 		} else {
-			// Subsequent memberships - UNION the permissions
-			finalMethods = unionStrings(finalMethods, membershipMethods)
-			finalAddresses = unionStrings(finalAddresses, membershipPerms.AllowAddresses)
-			finalOwnedAddresses = unionStrings(finalOwnedAddresses, membershipPerms.OwnedAddresses)
-			finalAddressFunctions = unionAddressFunctions(finalAddressFunctions, membershipPerms.AddressFunctions)
+			// Subsequent memberships - UNION the permissions (user benefits from all groups)
+			finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
+			finalContractAccess = unionContractAccess(finalContractAccess, membershipPerms.ContractAccess)
+			finalDefaultClaims = unionClaims(finalDefaultClaims, membershipPerms.DefaultClaims)
 
 			// For rate limits across memberships, take the MAXIMUM (most permissive)
-			// because user should benefit from their best membership
 			finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
 			finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
 		}
 	}
 
 	return &EffectivePermissions{
-		ID:                uuid.New().String(),
-		UserID:            userID,
-		OrgID:             orgID,
-		AllowMethods:      finalMethods,
-		AllowAddresses:    finalAddresses,
-		OwnedAddresses:    finalOwnedAddresses,
-		AddressFunctions: finalAddressFunctions,
-		Claims:            finalClaims,
-		RateLimitRPS:      finalRateLimitRPS,
-		RateLimitDaily:    finalRateLimitDaily,
-		ComputedAt:        time.Now(),
-		ExpiresAt:         time.Now().Add(r.cacheTTL),
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		OrgID:          orgID,
+		AllowedMethods: finalMethods,
+		ContractAccess: finalContractAccess,
+		DefaultClaims:  finalDefaultClaims,
+		RateLimitRPS:   finalRateLimitRPS,
+		RateLimitDaily: finalRateLimitDaily,
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(r.cacheTTL),
 	}, nil
 }
 
-// computeMembershipPermissions computes contract scope permissions for a single membership
-// by traversing the group hierarchy with restrictive inheritance.
-//
-// Note: In the simplified RBAC model, methods come from the Role (not GroupPermissions).
-// This function focuses on contract scope: allow_contracts, owned_contracts, contract_functions, rate_limits.
-func (r *Resolver) computeMembershipPermissions(ctx context.Context, hierarchy []*Group) (*GroupPermissions, error) {
+// hierarchyPerms holds permissions computed through a group hierarchy.
+type hierarchyPerms struct {
+	AllowedMethods []string
+	ContractAccess map[string]ContractAccess // address -> access
+	DefaultClaims  []Claim
+	RateLimitRPS   *int
+	RateLimitDaily *int
+}
+
+// computeHierarchyPermissions computes permissions by traversing the group hierarchy
+// from root to leaf, applying INTERSECTION at each level (child narrows parent).
+func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []*Group, orgID string) (*hierarchyPerms, error) {
 	if len(hierarchy) == 0 {
-		return &GroupPermissions{
-			AllowMethods:      []string{},
-			AllowAddresses:    []string{},
-			OwnedAddresses:    []string{},
-			AddressFunctions: make(map[string][]string),
+		return &hierarchyPerms{
+			AllowedMethods: []string{},
+			ContractAccess: make(map[string]ContractAccess),
+			DefaultClaims:  []Claim{},
 		}, nil
 	}
 
-	// Start with no restrictions
-	result := &GroupPermissions{
-		AllowMethods:      nil, // nil means "all allowed" until we see the first actual permissions
-		AllowAddresses:    nil, // nil means "all allowed" until we see the first actual permissions
-		OwnedAddresses:    []string{},
-		AddressFunctions: make(map[string][]string),
+	// Start with no restrictions (nil means "all allowed" until we see the first actual permissions)
+	result := &hierarchyPerms{
+		AllowedMethods: nil,
+		ContractAccess: nil, // nil means "all allowed" until first group has grants
+		DefaultClaims:  nil,
 	}
 
+	// Track contract grants we've seen (need to load contracts to get addresses)
+	contractAddresses := make(map[string]string) // contractID -> address
+
 	for _, group := range hierarchy {
-		perms, err := r.store.GetGroupPermissions(ctx, group.ID)
+		// Get group access settings
+		access, err := r.store.GetGroupAccess(ctx, group.ID)
 		if err != nil {
 			return nil, err
 		}
-		if perms == nil {
-			continue // Group has no permissions defined, skip
+
+		if access != nil {
+			// Apply INTERSECTION for allowed methods (restrictive inheritance)
+			if result.AllowedMethods == nil {
+				result.AllowedMethods = access.AllowedMethods
+			} else if len(access.AllowedMethods) > 0 {
+				result.AllowedMethods = intersectStrings(result.AllowedMethods, access.AllowedMethods)
+			}
+
+			// Apply INTERSECTION for default claims
+			if result.DefaultClaims == nil {
+				result.DefaultClaims = access.DefaultClaims
+			} else if len(access.DefaultClaims) > 0 {
+				result.DefaultClaims = intersectClaims(result.DefaultClaims, access.DefaultClaims)
+			}
+
+			// Apply MINIMUM for rate limits (most restrictive wins within hierarchy)
+			result.RateLimitRPS = minIntPtr(result.RateLimitRPS, access.RateLimitRPS)
+			result.RateLimitDaily = minIntPtr(result.RateLimitDaily, access.RateLimitDaily)
 		}
 
-		// Apply INTERSECTION for methods (restrictive inheritance)
-		// This provides backward compatibility - methods can come from GroupPermissions
-		if result.AllowMethods == nil {
-			result.AllowMethods = perms.AllowMethods
-		} else if len(perms.AllowMethods) > 0 {
-			result.AllowMethods = intersectStrings(result.AllowMethods, perms.AllowMethods)
+		// Get contract grants for this group
+		grants, err := r.store.ListContractGrantsByGroup(ctx, group.ID)
+		if err != nil {
+			return nil, err
 		}
 
-		// Apply INTERSECTION for contracts (restrictive)
-		if result.AllowAddresses == nil {
-			result.AllowAddresses = perms.AllowAddresses
-		} else if len(perms.AllowAddresses) > 0 {
-			result.AllowAddresses = intersectStrings(result.AllowAddresses, perms.AllowAddresses)
+		for _, grant := range grants {
+			// Get contract address if not already cached
+			address, ok := contractAddresses[grant.ContractID]
+			if !ok {
+				contract, err := r.store.GetContract(ctx, grant.ContractID)
+				if err != nil {
+					return nil, err
+				}
+				if contract == nil {
+					continue // Contract deleted, skip
+				}
+				address = strings.ToLower(contract.Address)
+				contractAddresses[grant.ContractID] = address
+			}
+
+			// Initialize result.ContractAccess if this is the first grant we've seen
+			if result.ContractAccess == nil {
+				result.ContractAccess = make(map[string]ContractAccess)
+			}
+
+			// Apply contract grant with INTERSECTION logic
+			if existing, ok := result.ContractAccess[address]; ok {
+				// Child narrows parent - intersect claims and functions
+				result.ContractAccess[address] = ContractAccess{
+					Claims:    intersectClaims(existing.Claims, grant.Claims),
+					Functions: intersectFunctions(existing.Functions, grant.Functions),
+				}
+			} else {
+				// First time seeing this contract in hierarchy - use grant as-is
+				result.ContractAccess[address] = ContractAccess{
+					Claims:    grant.Claims,
+					Functions: grant.Functions,
+				}
+			}
 		}
-
-		// Apply UNION for owned contracts (ownership propagates down)
-		result.OwnedAddresses = unionStrings(result.OwnedAddresses, perms.OwnedAddresses)
-
-		// Apply INTERSECTION for contract functions (restrictive per contract)
-		// If child specifies functions for a contract, they narrow the parent's
-		result.AddressFunctions = intersectAddressFunctions(result.AddressFunctions, perms.AddressFunctions)
-
-		// Apply MINIMUM for rate limits (most restrictive wins)
-		result.RateLimitRPS = minIntPtr(result.RateLimitRPS, perms.RateLimitRPS)
-		result.RateLimitDaily = minIntPtr(result.RateLimitDaily, perms.RateLimitDaily)
 	}
 
-	// Ensure we return empty slices instead of nil
-	if result.AllowMethods == nil {
-		result.AllowMethods = []string{}
+	// Ensure we return empty values instead of nil
+	if result.AllowedMethods == nil {
+		result.AllowedMethods = []string{}
 	}
-	if result.AllowAddresses == nil {
-		result.AllowAddresses = []string{}
+	if result.ContractAccess == nil {
+		result.ContractAccess = make(map[string]ContractAccess)
+	}
+	if result.DefaultClaims == nil {
+		result.DefaultClaims = []Claim{}
 	}
 
 	return result, nil
@@ -266,7 +336,7 @@ func (r *Resolver) InvalidateGroupPermissions(ctx context.Context, groupID strin
 
 // Helper functions
 
-// intersectStrings returns the intersection of two string slices.
+// intersectStrings returns the intersection of two string slices (case-insensitive).
 func intersectStrings(a, b []string) []string {
 	if len(a) == 0 || len(b) == 0 {
 		return []string{}
@@ -307,6 +377,121 @@ func unionStrings(a, b []string) []string {
 	return result
 }
 
+// intersectClaims returns the intersection of two claim slices.
+func intersectClaims(a, b []Claim) []Claim {
+	if len(a) == 0 || len(b) == 0 {
+		return []Claim{}
+	}
+
+	set := make(map[Claim]bool)
+	for _, c := range a {
+		set[c] = true
+	}
+
+	var result []Claim
+	for _, c := range b {
+		if set[c] {
+			result = append(result, c)
+		}
+	}
+
+	return result
+}
+
+// unionClaims returns the union of two claim slices.
+func unionClaims(a, b []Claim) []Claim {
+	set := make(map[Claim]bool)
+	for _, c := range a {
+		set[c] = true
+	}
+	for _, c := range b {
+		set[c] = true
+	}
+
+	result := make([]Claim, 0, len(set))
+	for c := range set {
+		result = append(result, c)
+	}
+	return result
+}
+
+// intersectFunctions returns the intersection of two function selector slices.
+// If either is nil, it means "all functions allowed" - return the other.
+// If both are nil, return nil (all allowed).
+// If both have values, return the intersection.
+func intersectFunctions(a, b []string) []string {
+	// nil means "all functions allowed"
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	// Both have restrictions - intersect them
+	return intersectStrings(a, b)
+}
+
+// unionFunctions returns the union of two function selector slices.
+// If either is nil, it means "all functions allowed" - return nil.
+// If both have values, return the union.
+func unionFunctions(a, b []string) []string {
+	// nil means "all functions allowed" - if either is unrestricted, result is unrestricted
+	if a == nil || b == nil {
+		return nil
+	}
+
+	// Both have restrictions - union them (user gets all allowed functions)
+	return unionStrings(a, b)
+}
+
+// unionContractAccess merges two ContractAccess maps, taking the UNION of claims and functions.
+// Used when merging permissions across multiple memberships - user benefits from all groups.
+func unionContractAccess(a, b map[string]ContractAccess) map[string]ContractAccess {
+	if len(a) == 0 && len(b) == 0 {
+		return make(map[string]ContractAccess)
+	}
+	if len(a) == 0 {
+		// Return a copy of b
+		result := make(map[string]ContractAccess, len(b))
+		for k, v := range b {
+			result[k] = v
+		}
+		return result
+	}
+	if len(b) == 0 {
+		// Return a copy of a
+		result := make(map[string]ContractAccess, len(a))
+		for k, v := range a {
+			result[k] = v
+		}
+		return result
+	}
+
+	result := make(map[string]ContractAccess)
+
+	// Copy all from a
+	for addr, access := range a {
+		result[strings.ToLower(addr)] = access
+	}
+
+	// Merge in all from b
+	for addr, access := range b {
+		lc := strings.ToLower(addr)
+		if existing, has := result[lc]; has {
+			// Union the claims and functions for this contract
+			result[lc] = ContractAccess{
+				Claims:    unionClaims(existing.Claims, access.Claims),
+				Functions: unionFunctions(existing.Functions, access.Functions),
+			}
+		} else {
+			result[lc] = access
+		}
+	}
+
+	return result
+}
+
 // minIntPtr returns the minimum of two *int values, treating nil as "unlimited".
 func minIntPtr(a, b *int) *int {
 	if a == nil {
@@ -332,77 +517,7 @@ func maxIntPtr(a, b *int) *int {
 	return b
 }
 
-// intersectAddressFunctions applies INTERSECTION logic for contract function restrictions.
-// If both maps have the same contract, the result is the intersection of their selectors.
-// If only one map has a contract, that contract's selectors are used (restrictive).
-func intersectAddressFunctions(a, b map[string][]string) map[string][]string {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-
-	result := make(map[string][]string)
-
-	// Include all contracts from both maps
-	allContracts := make(map[string]bool)
-	for c := range a {
-		allContracts[strings.ToLower(c)] = true
-	}
-	for c := range b {
-		allContracts[strings.ToLower(c)] = true
-	}
-
-	for contract := range allContracts {
-		aSelectors, aHas := a[contract]
-		bSelectors, bHas := b[contract]
-
-		if aHas && bHas {
-			// Both have the contract - intersect the selectors
-			result[contract] = intersectStrings(aSelectors, bSelectors)
-		} else if aHas {
-			// Only a has the contract - use a's restrictions
-			result[contract] = aSelectors
-		} else {
-			// Only b has the contract - use b's restrictions
-			result[contract] = bSelectors
-		}
-	}
-
-	return result
-}
-
-// unionAddressFunctions applies UNION logic for contract function permissions.
-// Used when merging permissions across multiple memberships - user gets all allowed functions.
-func unionAddressFunctions(a, b map[string][]string) map[string][]string {
-	if len(a) == 0 && len(b) == 0 {
-		return make(map[string][]string)
-	}
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-
-	result := make(map[string][]string)
-
-	// Copy all from a
-	for contract, selectors := range a {
-		result[strings.ToLower(contract)] = append([]string{}, selectors...)
-	}
-
-	// Merge in all from b
-	for contract, selectors := range b {
-		lc := strings.ToLower(contract)
-		if existing, has := result[lc]; has {
-			// Union the selectors for this contract
-			result[lc] = unionStrings(existing, selectors)
-		} else {
-			result[lc] = append([]string{}, selectors...)
-		}
-	}
-
-	return result
+// HasClaim is a helper to check if a claim exists in a slice.
+func HasClaim(claims []Claim, claim Claim) bool {
+	return slices.Contains(claims, claim)
 }

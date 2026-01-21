@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"strings"
@@ -122,8 +123,10 @@ type VerifyLinkRequest struct {
 
 // EthAddressResponse represents a linked ETH address in API responses
 type EthAddressResponse struct {
-	Address    string `json:"address"`
-	VerifiedAt string `json:"verified_at"`
+	Address       string  `json:"address"`
+	VerifiedAt    string  `json:"verified_at"`
+	ENSName       *string `json:"ens_name,omitempty"`
+	ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
 }
 
 // handleEthLinkChallenge handles POST /eth/link/challenge - create a challenge to sign
@@ -206,6 +209,11 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		return
 	}
 
+	// Resolve ENS name in background (non-blocking)
+	if s.ensResolver != nil {
+		go s.resolveAndStoreENS(normalizedAddr)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "address linked successfully",
 		"address": normalizedAddr,
@@ -238,8 +246,10 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	addresses := make([]EthAddressResponse, 0, len(links))
 	for _, link := range links {
 		addresses = append(addresses, EthAddressResponse{
-			Address:    link.EthAddress,
-			VerifiedAt: link.VerifiedAt,
+			Address:       link.EthAddress,
+			VerifiedAt:    link.VerifiedAt,
+			ENSName:       link.ENSName,
+			ENSResolvedAt: link.ENSResolvedAt,
 		})
 	}
 
@@ -280,4 +290,91 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "address unlinked successfully"})
+}
+
+// handleRefreshENS handles POST /eth/addresses/:address/refresh-ens - refresh ENS name for an address
+func (s *Server) handleRefreshENS(c *gin.Context) {
+	// Get user DID from JWT context
+	subject, exists := c.Get("subject")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		return
+	}
+
+	userDID, ok := subject.(string)
+	if !ok || userDID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		return
+	}
+
+	// Get and normalize the address
+	address := c.Param("address")
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address parameter required"})
+		return
+	}
+	normalizedAddr := strings.ToLower(address)
+
+	// Check ENS resolver is available
+	if s.ensResolver == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ENS resolver not available"})
+		return
+	}
+
+	// Verify the address is linked to this user
+	link, err := s.db.GetEthAddressLink(normalizedAddr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get address: " + err.Error()})
+		return
+	}
+	if link == nil || link.DID != userDID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "address not found or not linked to your account"})
+		return
+	}
+
+	// Resolve ENS name
+	ensName, err := s.ensResolver.ResolveAddress(c.Request.Context(), normalizedAddr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve ENS name: " + err.Error()})
+		return
+	}
+
+	// Store the result (even if empty - it means no ENS name)
+	var ensNamePtr *string
+	if ensName != "" {
+		ensNamePtr = &ensName
+	}
+	if err := s.db.UpdateENSName(normalizedAddr, ensNamePtr); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update ENS name: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"address":  normalizedAddr,
+		"ens_name": ensNamePtr,
+	})
+}
+
+// resolveAndStoreENS resolves the ENS name for an address and stores it in the database
+// This is called in a goroutine after linking an address
+func (s *Server) resolveAndStoreENS(address string) {
+	if s.ensResolver == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ensName, err := s.ensResolver.ResolveAddress(ctx, address)
+	if err != nil {
+		// Log but don't fail - ENS resolution is optional
+		return
+	}
+
+	var ensNamePtr *string
+	if ensName != "" {
+		ensNamePtr = &ensName
+	}
+
+	_ = s.db.UpdateENSName(address, ensNamePtr)
 }

@@ -2,11 +2,11 @@ import axios from 'axios';
 import type {
   Organization,
   Group,
-  Role,
   User,
   UserMembership,
-  GroupPermissions,
-  ContractOwnership,
+  GroupAccess,
+  Contract,
+  ContractGrant,
   EffectivePermissions,
   AccessCheckRequest,
   AccessCheckResult,
@@ -15,13 +15,13 @@ import type {
   UpdateOrganizationInput,
   CreateGroupInput,
   UpdateGroupInput,
-  CreateRoleInput,
-  UpdateRoleInput,
   UpdateUserInput,
   CreateMembershipInput,
-  SetGroupPermissionsInput,
-  CreateContractOwnershipInput,
-  UpdateContractOwnershipInput,
+  SetGroupAccessInput,
+  CreateContractInput,
+  UpdateContractInput,
+  CreateContractGrantInput,
+  UpdateContractGrantInput,
   MembershipWithDetails,
 } from '../types/rbac';
 
@@ -54,23 +54,11 @@ export const rbacApi = {
       api.put<Group>(`/orgs/${orgId}/groups/${groupId}`, input),
     delete: (orgId: string, groupId: string) =>
       api.delete(`/orgs/${orgId}/groups/${groupId}`),
-    getPermissions: (orgId: string, groupId: string) =>
-      api.get<GroupPermissions>(`/orgs/${orgId}/groups/${groupId}/permissions`),
-    setPermissions: (orgId: string, groupId: string, input: SetGroupPermissionsInput) =>
-      api.put<GroupPermissions>(`/orgs/${orgId}/groups/${groupId}/permissions`, input),
-  },
-
-  // Roles
-  roles: {
-    list: (orgId: string) => api.get<Role[]>(`/orgs/${orgId}/roles`),
-    get: (orgId: string, roleId: string) =>
-      api.get<Role>(`/orgs/${orgId}/roles/${roleId}`),
-    create: (orgId: string, input: CreateRoleInput) =>
-      api.post<Role>(`/orgs/${orgId}/roles`, input),
-    update: (orgId: string, roleId: string, input: UpdateRoleInput) =>
-      api.put<Role>(`/orgs/${orgId}/roles/${roleId}`, input),
-    delete: (orgId: string, roleId: string) =>
-      api.delete(`/orgs/${orgId}/roles/${roleId}`),
+    // Group access (replaces old permissions and roles)
+    getAccess: (orgId: string, groupId: string) =>
+      api.get<GroupAccess>(`/orgs/${orgId}/groups/${groupId}/access`),
+    setAccess: (orgId: string, groupId: string, input: SetGroupAccessInput) =>
+      api.put<GroupAccess>(`/orgs/${orgId}/groups/${groupId}/access`, input),
   },
 
   // Users
@@ -96,15 +84,26 @@ export const rbacApi = {
       ),
   },
 
-  // Contracts
+  // Contracts (first-class resources)
   contracts: {
-    list: (orgId: string) => api.get<ContractOwnership[]>(`/orgs/${orgId}/contracts`),
-    create: (orgId: string, input: CreateContractOwnershipInput) =>
-      api.post<ContractOwnership>(`/orgs/${orgId}/contracts`, input),
-    update: (orgId: string, address: string, input: UpdateContractOwnershipInput) =>
-      api.put<ContractOwnership>(`/orgs/${orgId}/contracts/${address}`, input),
+    list: (orgId: string) => api.get<Contract[]>(`/orgs/${orgId}/contracts`),
+    get: (orgId: string, address: string) =>
+      api.get<Contract>(`/orgs/${orgId}/contracts/${address}`),
+    create: (orgId: string, input: CreateContractInput) =>
+      api.post<Contract>(`/orgs/${orgId}/contracts`, input),
+    update: (orgId: string, address: string, input: UpdateContractInput) =>
+      api.put<Contract>(`/orgs/${orgId}/contracts/${address}`, input),
     delete: (orgId: string, address: string) =>
       api.delete(`/orgs/${orgId}/contracts/${address}`),
+    // Contract grants
+    listGrants: (orgId: string, address: string) =>
+      api.get<ContractGrant[]>(`/orgs/${orgId}/contracts/${address}/grants`),
+    createGrant: (orgId: string, address: string, input: CreateContractGrantInput) =>
+      api.post<ContractGrant>(`/orgs/${orgId}/contracts/${address}/grants`, input),
+    updateGrant: (orgId: string, address: string, groupId: string, input: UpdateContractGrantInput) =>
+      api.put<ContractGrant>(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`, input),
+    deleteGrant: (orgId: string, address: string, groupId: string) =>
+      api.delete(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`),
   },
 
   // Utilities
