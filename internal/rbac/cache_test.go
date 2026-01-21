@@ -1,6 +1,8 @@
 package rbac
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -224,5 +226,128 @@ func TestCacheSetWithCustomTTL(t *testing.T) {
 	// Should be expired
 	if cache.Get("user1", "org1") != nil {
 		t.Error("Expected entry to be expired after custom TTL")
+	}
+}
+
+func TestCacheConcurrency(t *testing.T) {
+	cache := NewCache(CacheConfig{
+		TTL:        5 * time.Minute,
+		MaxEntries: 1000,
+	})
+	defer cache.Stop()
+
+	const numGoroutines = 100
+	const opsPerGoroutine = 50
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines * 4) // Set, Get, InvalidateUser, InvalidateOrg
+
+	// Concurrent Sets
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				cache.Set(&EffectivePermissions{
+					UserID:         fmt.Sprintf("user%d", workerID),
+					OrgID:          fmt.Sprintf("org%d", j%10),
+					AllowedMethods: []string{"eth_call"},
+					DefaultClaims:  []Claim{ClaimRead},
+				})
+			}
+		}(i)
+	}
+
+	// Concurrent Gets
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				cache.Get(fmt.Sprintf("user%d", workerID), fmt.Sprintf("org%d", j%10))
+			}
+		}(i)
+	}
+
+	// Concurrent InvalidateUser
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine/10; j++ {
+				cache.InvalidateUser(fmt.Sprintf("user%d", (workerID+j)%numGoroutines))
+			}
+		}(i)
+	}
+
+	// Concurrent InvalidateOrg
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine/10; j++ {
+				cache.InvalidateOrg(fmt.Sprintf("org%d", j%10))
+			}
+		}(i)
+	}
+
+	// Wait with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - no data race or deadlock
+	case <-time.After(10 * time.Second):
+		t.Fatal("Test timed out - possible deadlock")
+	}
+}
+
+func TestCacheConcurrentEviction(t *testing.T) {
+	// Test concurrent access with LRU eviction happening
+	cache := NewCache(CacheConfig{
+		TTL:        5 * time.Minute,
+		MaxEntries: 10, // Small cache to force evictions
+	})
+	defer cache.Stop()
+
+	const numGoroutines = 50
+	const opsPerGoroutine = 100
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				// This will cause many evictions due to small cache size
+				cache.Set(&EffectivePermissions{
+					UserID:         fmt.Sprintf("user%d_%d", workerID, j),
+					OrgID:          "org1",
+					AllowedMethods: []string{"eth_call"},
+				})
+				cache.Get(fmt.Sprintf("user%d_%d", workerID, j), "org1")
+			}
+		}(i)
+	}
+
+	// Wait with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - no data race or deadlock under eviction pressure
+	case <-time.After(10 * time.Second):
+		t.Fatal("Test timed out - possible deadlock during eviction")
+	}
+
+	// Verify cache is still in valid state
+	stats := cache.Stats()
+	if stats.Entries > stats.MaxEntries {
+		t.Errorf("Cache size %d exceeds max entries %d", stats.Entries, stats.MaxEntries)
 	}
 }

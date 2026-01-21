@@ -20,7 +20,7 @@ interface LinkState {
 
 export function LinkWalletPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, accessToken, logout } = useAuth();
+  const { isAuthenticated, accessToken, logout, isLoading } = useAuth();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
@@ -42,12 +42,12 @@ export function LinkWalletPage() {
     setTimeout(() => setCopiedAddress(null), 2000);
   };
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated (wait for auth to load first)
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isLoading && !isAuthenticated) {
       navigate('/login');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, isLoading, navigate]);
 
   // Load existing linked addresses
   useEffect(() => {

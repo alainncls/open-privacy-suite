@@ -9,19 +9,19 @@ import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
 
 export function SuccessPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, accessToken, userDID, logout } = useAuth();
+  const { isAuthenticated, accessToken, userDID, logout, isLoading } = useAuth();
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
 
   const rpcEndpoint = getRpcEndpoint();
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated (wait for auth to load first)
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isLoading && !isAuthenticated) {
       navigate('/login');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, isLoading, navigate]);
 
   // Load linked addresses
   useEffect(() => {

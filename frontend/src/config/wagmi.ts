@@ -46,8 +46,8 @@ export const wagmiConfig = createConfig({
 // Get RPC endpoint URL based on current origin
 export function getRpcEndpoint(): string {
   const origin = window.location.origin;
-  // The RPC endpoint is the same as the API server
-  return origin;
+  // The RPC endpoint is at /rpc path
+  return `${origin}/rpc`;
 }
 
 // Generate Add to MetaMask params

@@ -33,6 +33,11 @@ export default defineConfig({
                     });
                 },
             },
+            // Proxy JSON-RPC requests to backend
+            '/rpc': {
+                target: process.env.VITE_API_TARGET || 'http://localhost:8080',
+                changeOrigin: true,
+            },
         },
     },
 });
