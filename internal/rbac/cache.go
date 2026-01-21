@@ -13,6 +13,7 @@ type Cache struct {
 	ttl         time.Duration
 	maxEntries  int
 	accessOrder []string // For LRU eviction
+	stopCh      chan struct{}
 }
 
 type cacheEntry struct {
@@ -48,6 +49,7 @@ func NewCache(config CacheConfig) *Cache {
 		ttl:         config.TTL,
 		maxEntries:  config.MaxEntries,
 		accessOrder: make([]string, 0),
+		stopCh:      make(chan struct{}),
 	}
 
 	// Start background cleanup goroutine
@@ -244,9 +246,19 @@ func (c *Cache) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.cleanup()
+	for {
+		select {
+		case <-ticker.C:
+			c.cleanup()
+		case <-c.stopCh:
+			return
+		}
 	}
+}
+
+// Stop stops the cleanup goroutine.
+func (c *Cache) Stop() {
+	close(c.stopCh)
 }
 
 // cleanup removes expired entries from the cache.

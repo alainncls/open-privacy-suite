@@ -31,6 +31,14 @@ const (
 	MembershipSourceZKAttested MembershipSource = "zk_attested"
 )
 
+// Default IDs for seeded data (matching database migrations).
+const (
+	// DefaultOrgID is the ID of the default organization created on first run.
+	DefaultOrgID = "00000000-0000-0000-0000-000000000001"
+	// DefaultGroupID is the ID of the default group that new users are added to.
+	DefaultGroupID = "00000000-0000-0000-0000-000000000001"
+)
+
 // Organization represents a top-level tenant.
 type Organization struct {
 	ID        string         `json:"id"`

@@ -14,10 +14,15 @@ type Proxy struct {
 	client    *http.Client
 }
 
+// DefaultTimeout is the default timeout for HTTP requests to the target node.
+const DefaultTimeout = 30 * time.Second
+
 func New(targetURL string) *Proxy {
 	return &Proxy{
 		targetURL: targetURL,
-		client:    &http.Client{},
+		client: &http.Client{
+			Timeout: DefaultTimeout,
+		},
 	}
 }
 

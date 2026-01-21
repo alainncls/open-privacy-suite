@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -307,6 +308,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 
 	// Determine organization
+	// Default to "default" org for single-tenant deployments or when org not specified.
+	// The default org is seeded in migrations and provides baseline permissions.
 	orgSlug := req.OrgSlug
 	if orgSlug == "" {
 		orgSlug = "default"
@@ -567,18 +570,16 @@ func (c *AccessController) EnsureUserExists(ctx context.Context, externalID stri
 	}
 
 	// Add user to default group
-	defaultGroupID := "00000000-0000-0000-0000-000000000001"
-
 	membership := &UserMembership{
 		ID:      uuid.New().String(),
 		UserID:  user.ID,
-		GroupID: defaultGroupID,
+		GroupID: DefaultGroupID,
 		Source:  MembershipSourceAdmin,
 	}
 
 	if err := c.store.CreateMembership(ctx, membership); err != nil {
 		// Log but don't fail - user is created
-		_ = err
+		log.Printf("Warning: failed to add user %s to default group: %v", user.ID, err)
 	}
 
 	// Audit log
@@ -647,4 +648,9 @@ func (c *AccessController) GetEffectivePermissions(ctx context.Context, userExte
 // CacheStats returns statistics about the in-memory cache.
 func (c *AccessController) CacheStats() CacheStats {
 	return c.cache.Stats()
+}
+
+// Stop stops the access controller's background goroutines.
+func (c *AccessController) Stop() {
+	c.cache.Stop()
 }

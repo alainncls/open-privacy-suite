@@ -203,9 +203,15 @@ func (rl *RateLimiter) Stats() RateLimiterStats {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
 
+	// Count total timestamp entries across all RPS windows
+	totalTimestamps := 0
+	for _, window := range rl.rpsWindows {
+		totalTimestamps += len(window.timestamps)
+	}
+
 	return RateLimiterStats{
 		TrackedUsers:      len(rl.rpsWindows),
-		RPSWindowEntries:  len(rl.rpsWindows),
+		RPSWindowEntries:  totalTimestamps,
 		DailyCountEntries: len(rl.dailyCounts),
 	}
 }
