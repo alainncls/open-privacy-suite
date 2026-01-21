@@ -3,15 +3,19 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/tern/v2/migrate"
+
+	"privacy-proxy/internal/db/migrations"
 )
 
 type DB struct {
-	conn *sql.DB
+	conn        *sql.DB
+	databaseURL string
 }
 
 // Conn returns the underlying database connection (for testing)
@@ -19,218 +23,132 @@ func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
 
-type AccessPolicy struct {
-	ExternalID   string   `json:"external_id"`
-	KYC          bool     `json:"kyc"`
-	AllowMethods []string `json:"allow_methods"`
-	Banned       bool     `json:"banned"`
-	Note         string   `json:"note"`
-}
-
-// PolicyStore is an interface for policy storage operations
-// This allows business logic to be tested with mocks instead of requiring a real database
-type PolicyStore interface {
-	GetPolicy(externalID string) (*AccessPolicy, error)
-	SetPolicy(policy *AccessPolicy) error
-	ListPolicies() ([]*AccessPolicy, error)
-	DeletePolicy(externalID string) error
-}
-
 func New(databaseURL string) (*DB, error) {
 	conn, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	
+
 	// Test connection
 	ctx := context.Background()
 	if err := conn.PingContext(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-	
-	db := &DB{conn: conn}
-	
-	if err := db.Migrate(); err != nil {
+
+	db := &DB{conn: conn, databaseURL: databaseURL}
+
+	if err := db.Migrate(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
-	
+
 	return db, nil
+}
+
+// NewWithoutMigrate creates a database connection without running migrations.
+// Use this when you need to check migration status or run migrations manually.
+func NewWithoutMigrate(databaseURL string) (*DB, error) {
+	conn, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Test connection
+	ctx := context.Background()
+	if err := conn.PingContext(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	return &DB{conn: conn, databaseURL: databaseURL}, nil
 }
 
 func (d *DB) Close() error {
 	return d.conn.Close()
 }
 
-func (d *DB) Migrate() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS access_policies (
-		external_id VARCHAR(255) PRIMARY KEY,
-		kyc BOOLEAN NOT NULL DEFAULT false,
-		allow_methods JSONB NOT NULL DEFAULT '[]'::jsonb,
-		banned BOOLEAN NOT NULL DEFAULT false,
-		note TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	
-	CREATE TABLE IF NOT EXISTS access_logs (
-		id SERIAL PRIMARY KEY,
-		external_id VARCHAR(255) NOT NULL,
-		method VARCHAR(100) NOT NULL,
-		status_code INTEGER NOT NULL,
-		ip_address VARCHAR(45),
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	
-	-- Drop foreign key constraint if it exists (for existing databases)
-	DO $$ 
-	BEGIN
-		IF EXISTS (
-			SELECT 1 FROM information_schema.table_constraints 
-			WHERE constraint_name = 'access_logs_external_id_fkey'
-		) THEN
-			ALTER TABLE access_logs DROP CONSTRAINT access_logs_external_id_fkey;
-		END IF;
-	END $$;
-	
-	CREATE TABLE IF NOT EXISTS refresh_tokens (
-		token_hash VARCHAR(255) PRIMARY KEY,
-		subject VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		expires_at TIMESTAMP NOT NULL,
-		revoked BOOLEAN NOT NULL DEFAULT false,
-		revoked_at TIMESTAMP
-	);
-	
-	CREATE TABLE IF NOT EXISTS revoked_tokens (
-		token_id VARCHAR(255) PRIMARY KEY,
-		subject VARCHAR(255) NOT NULL,
-		revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		expires_at TIMESTAMP NOT NULL
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_logs_external_id ON access_logs(external_id);
-	CREATE INDEX IF NOT EXISTS idx_logs_created_at ON access_logs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_subject ON refresh_tokens(subject);
-	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
-	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_subject ON revoked_tokens(subject);
-	CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
-	`
-	
-	_, err := d.conn.Exec(query)
-	return err
-}
-
-func (d *DB) GetPolicy(externalID string) (*AccessPolicy, error) {
-	query := `SELECT external_id, kyc, allow_methods, banned, note 
-	          FROM access_policies WHERE external_id = $1`
-	
-	var policy AccessPolicy
-	var methodsJSON []byte
-	
-	err := d.conn.QueryRow(query, externalID).Scan(
-		&policy.ExternalID,
-		&policy.KYC,
-		&methodsJSON,
-		&policy.Banned,
-		&policy.Note,
-	)
-	
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+// Migrate runs all pending database migrations using tern.
+func (d *DB) Migrate(ctx context.Context) error {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get policy: %w", err)
+		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
-	
-	if err := json.Unmarshal(methodsJSON, &policy.AllowMethods); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal methods: %w", err)
-	}
-	// Ensure AllowMethods is never nil
-	if policy.AllowMethods == nil {
-		policy.AllowMethods = []string{}
-	}
-	
-	return &policy, nil
-}
+	defer pgxConn.Close(ctx)
 
-func (d *DB) SetPolicy(policy *AccessPolicy) error {
-	// Ensure AllowMethods is never nil
-	if policy.AllowMethods == nil {
-		policy.AllowMethods = []string{}
-	}
-	methodsJSON, err := json.Marshal(policy.AllowMethods)
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
 	if err != nil {
-		return fmt.Errorf("failed to marshal methods: %w", err)
+		return fmt.Errorf("failed to create migrator: %w", err)
 	}
-	
-	query := `INSERT INTO access_policies 
-	          (external_id, kyc, allow_methods, banned, note, updated_at)
-	          VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-	          ON CONFLICT(external_id) DO UPDATE SET
-	          kyc = excluded.kyc,
-	          allow_methods = excluded.allow_methods,
-	          banned = excluded.banned,
-	          note = excluded.note,
-	          updated_at = CURRENT_TIMESTAMP`
-	
-	_, err = d.conn.Exec(query,
-		policy.ExternalID,
-		policy.KYC,
-		methodsJSON,
-		policy.Banned,
-		policy.Note,
-	)
-	
-	return err
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	if err := migrator.Migrate(ctx); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	return nil
 }
 
-func (d *DB) ListPolicies() ([]*AccessPolicy, error) {
-	query := `SELECT external_id, kyc, allow_methods, banned, note 
-	          FROM access_policies ORDER BY created_at DESC`
-	
-	rows, err := d.conn.Query(query)
+// MigrateWithProgress runs migrations with a progress callback for CLI usage.
+// The callback receives: sequence number, migration name, direction ("up"/"down"), and SQL.
+func (d *DB) MigrateWithProgress(ctx context.Context, onStart func(sequence int32, name, direction, sql string)) error {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list policies: %w", err)
+		return fmt.Errorf("failed to connect for migrations: %w", err)
 	}
-	defer rows.Close()
-	
-	var policies []*AccessPolicy
-	
-	for rows.Next() {
-		var policy AccessPolicy
-		var methodsJSON []byte
-		
-		if err := rows.Scan(
-			&policy.ExternalID,
-			&policy.KYC,
-			&methodsJSON,
-			&policy.Banned,
-			&policy.Note,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan policy: %w", err)
-		}
-		
-		if err := json.Unmarshal(methodsJSON, &policy.AllowMethods); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal methods: %w", err)
-		}
-		// Ensure AllowMethods is never nil
-		if policy.AllowMethods == nil {
-			policy.AllowMethods = []string{}
-		}
-		
-		policies = append(policies, &policy)
+	defer pgxConn.Close(ctx)
+
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	if err != nil {
+		return fmt.Errorf("failed to create migrator: %w", err)
 	}
-	
-	return policies, nil
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	if onStart != nil {
+		migrator.OnStart = onStart
+	}
+
+	if err := migrator.Migrate(ctx); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	return nil
 }
 
-func (d *DB) DeletePolicy(externalID string) error {
-	query := `DELETE FROM access_policies WHERE external_id = $1`
-	_, err := d.conn.Exec(query, externalID)
-	return err
+// GetMigrationStatus returns the current migration version and pending migrations.
+func (d *DB) GetMigrationStatus(ctx context.Context) (currentVersion int32, pendingCount int, err error) {
+	pgxConn, err := pgx.Connect(ctx, d.databaseURL)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to connect for migrations: %w", err)
+	}
+	defer pgxConn.Close(ctx)
+
+	migrator, err := migrate.NewMigrator(ctx, pgxConn, "schema_version")
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	if err := migrator.LoadMigrations(migrations.FS); err != nil {
+		return 0, 0, fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	version, err := migrator.GetCurrentVersion(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	pending := len(migrator.Migrations) - int(version)
+	if pending < 0 {
+		pending = 0
+	}
+
+	return version, pending, nil
 }
 
 func (d *DB) LogAccess(externalID, method string, statusCode int, ipAddress string) error {
@@ -262,8 +180,8 @@ func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
 	}
 	defer rows.Close()
 	
-	var logs []*AccessLog
-	
+	logs := make([]*AccessLog, 0)
+
 	for rows.Next() {
 		var log AccessLog
 		if err := rows.Scan(
@@ -276,10 +194,10 @@ func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
-		
+
 		logs = append(logs, &log)
 	}
-	
+
 	return logs, nil
 }
 
@@ -375,18 +293,130 @@ func (d *DB) IsAccessTokenRevoked(tokenID string) (bool, error) {
 func (d *DB) CleanupExpiredTokens() error {
 	// Use current time from Go to ensure consistency with how tokens are stored
 	now := time.Now()
-	
+
 	// Clean up expired refresh tokens
 	_, err := d.conn.Exec(`DELETE FROM refresh_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
 	}
-	
+
 	// Clean up expired revoked tokens
 	_, err = d.conn.Exec(`DELETE FROM revoked_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired revoked tokens: %w", err)
 	}
-	
+
+	return nil
+}
+
+// EthAddressLink represents a link between an Ethereum address and a DID
+type EthAddressLink struct {
+	ID          int     `json:"id"`
+	DID         string  `json:"did"`
+	EthAddress  string  `json:"eth_address"`
+	Signature   string  `json:"signature"`
+	MessageHash string  `json:"message_hash"`
+	VerifiedAt  string  `json:"verified_at"`
+	Revoked     bool    `json:"revoked"`
+	RevokedAt   *string `json:"revoked_at,omitempty"`
+}
+
+// LinkEthAddress creates a new link between an ETH address and a DID
+// The ETH address must not already be linked to another DID
+func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) error {
+	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
+	          VALUES ($1, $2, $3, $4)
+	          ON CONFLICT (eth_address) DO UPDATE SET
+	          did = excluded.did,
+	          signature = excluded.signature,
+	          message_hash = excluded.message_hash,
+	          verified_at = CURRENT_TIMESTAMP,
+	          revoked = false,
+	          revoked_at = NULL`
+
+	_, err := d.conn.Exec(query, did, ethAddress, signature, messageHash)
+	if err != nil {
+		return fmt.Errorf("failed to link ETH address: %w", err)
+	}
+	return nil
+}
+
+// GetEthAddressesByDID retrieves all ETH addresses linked to a DID
+func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at
+	          FROM eth_address_links
+	          WHERE did = $1 AND revoked = false
+	          ORDER BY verified_at DESC`
+
+	rows, err := d.conn.Query(query, did)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ETH addresses: %w", err)
+	}
+	defer rows.Close()
+
+	links := make([]*EthAddressLink, 0)
+	for rows.Next() {
+		var link EthAddressLink
+		var revokedAt sql.NullString
+
+		if err := rows.Scan(
+			&link.ID,
+			&link.DID,
+			&link.EthAddress,
+			&link.Signature,
+			&link.MessageHash,
+			&link.VerifiedAt,
+			&link.Revoked,
+			&revokedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan ETH address link: %w", err)
+		}
+
+		if revokedAt.Valid {
+			link.RevokedAt = &revokedAt.String
+		}
+		links = append(links, &link)
+	}
+
+	return links, nil
+}
+
+// GetDIDByEthAddress retrieves the DID linked to an ETH address
+func (d *DB) GetDIDByEthAddress(ethAddress string) (string, error) {
+	query := `SELECT did FROM eth_address_links
+	          WHERE eth_address = $1 AND revoked = false`
+
+	var did string
+	err := d.conn.QueryRow(query, ethAddress).Scan(&did)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get DID by ETH address: %w", err)
+	}
+	return did, nil
+}
+
+// RevokeEthAddressLink revokes a link between an ETH address and a DID
+// Only the DID owner can revoke their own links
+func (d *DB) RevokeEthAddressLink(did, ethAddress string) error {
+	query := `UPDATE eth_address_links
+	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
+	          WHERE did = $1 AND eth_address = $2`
+
+	result, err := d.conn.Exec(query, did, ethAddress)
+	if err != nil {
+		return fmt.Errorf("failed to revoke ETH address link: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no matching link found")
+	}
+
 	return nil
 }

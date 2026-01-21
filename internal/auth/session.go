@@ -15,6 +15,11 @@ type Session struct {
 	AuthRequest   *protocol.AuthorizationRequestMessage
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
+	// Completion fields - set when wallet callback succeeds
+	Completed     bool
+	AccessToken   string
+	RefreshToken  string
+	CompletedAt   time.Time
 }
 
 // SessionStore manages authentication sessions
@@ -90,6 +95,25 @@ func (s *SessionStore) UpdateSession(sessionID string, authRequest *protocol.Aut
 
 	session := value.(*Session)
 	session.AuthRequest = authRequest
+	s.sessions.Store(sessionID, session)
+	return nil
+}
+
+// CompleteSession marks a session as completed with tokens
+// Keeps the session alive for a short time so the frontend can poll for completion
+func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken string) error {
+	value, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	session := value.(*Session)
+	session.Completed = true
+	session.AccessToken = accessToken
+	session.RefreshToken = refreshToken
+	session.CompletedAt = time.Now()
+	// Extend expiry so frontend has time to poll and get the tokens
+	session.ExpiresAt = time.Now().Add(2 * time.Minute)
 	s.sessions.Store(sessionID, session)
 	return nil
 }

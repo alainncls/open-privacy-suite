@@ -10,20 +10,15 @@ The `docker-compose.yml` file sets up a complete development environment with al
    - Database: `privacy_proxy`
    - User: `postgres` / Password: `postgres`
 
-2. **Mock Billions Service** (port 9000)
-   - Identity verification endpoint: `GET /verify`
-   - Accepts `Authorization: Bearer <token>`
-   - Returns: `{subject, kyc, claims}`
-
-3. **Mock Erigon Node** (port 8545)
+2. **Anvil** (port 8545)
+   - Local Ethereum node (Foundry)
    - JSON-RPC endpoint: `POST /`
-   - Mock responses for common methods
 
-4. **Backend API** (port 8080)
+3. **Backend API** (port 8080)
    - Proxy endpoint: `POST /`
    - Management API: `GET /api/*` (localhost-only)
 
-5. **Frontend UI** (port 5173)
+4. **Frontend UI** (port 5173)
    - React dev server
    - Proxies `/api` to backend
 
@@ -48,8 +43,7 @@ docker-compose down -v
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8080
 - **Management API**: http://localhost:8080/api (localhost-only)
-- **Mock Billions**: http://localhost:9000
-- **Mock Erigon**: http://localhost:8545
+- **Anvil (Ethereum)**: http://localhost:8545
 - **PostgreSQL**: localhost:5432
 
 ## Testing the Setup
@@ -118,7 +112,7 @@ docker-compose up -d
 ### Option 2: Backend in Docker, Frontend Local
 ```bash
 # Start backend services
-docker-compose up -d postgres billions-mock erigon-mock proxy-backend
+docker-compose up -d postgres anvil proxy-backend
 
 # Run frontend locally
 cd frontend && npm run dev
@@ -126,8 +120,8 @@ cd frontend && npm run dev
 
 ### Option 3: Everything Local
 ```bash
-# Start only mocks and database
-docker-compose up -d postgres billions-mock erigon-mock
+# Start only database and Ethereum node
+docker-compose up -d postgres anvil
 
 # Run backend locally
 make dev

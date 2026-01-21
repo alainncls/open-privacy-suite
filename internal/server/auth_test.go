@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"privacy-proxy/internal/access"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -24,8 +24,9 @@ import (
 
 // mockPrivadoVerifier is a mock for testing (implements PrivadoVerifier interface)
 type mockPrivadoVerifier struct {
-	createRequestFunc func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
-	verifyFunc        func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
+	createRequestFunc         func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	createHumanityRequestFunc func(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error)
+	verifyFunc                func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 }
 
 func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {
@@ -39,6 +40,32 @@ func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
+		},
+	}, nil
+}
+
+func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
+	if m.createHumanityRequestFunc != nil {
+		return m.createHumanityRequestFunc(verifierID, callbackURL, reason, issuerDID)
+	}
+	// Return a mock authorization request with PoH scope
+	return &protocol.AuthorizationRequestMessage{
+		ID:   "mock-request-id",
+		Type: "https://iden3-communication.io/authorization/1.0/request",
+		Body: protocol.AuthorizationRequestMessageBody{
+			CallbackURL: callbackURL,
+			Reason:      reason,
+			Scope: []protocol.ZeroKnowledgeProofRequest{
+				{
+					ID:        1,
+					CircuitID: "credentialAtomicQueryMTPV2",
+					Query: map[string]any{
+						"allowedIssuers":    []string{issuerDID},
+						"credentialSubject": map[string]any{"isHuman": map[string]any{"$eq": 1}},
+						"type":              "ProofOfHumanity",
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -71,12 +98,10 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 		t.Fatalf("failed to create test DB: %v", err)
 	}
 
-	// Clean up tables
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	// Reset database (drops all tables and runs migrations)
+	if err := db.ResetTestDatabase(database); err != nil {
+		t.Fatalf("failed to reset test database: %v", err)
+	}
 
 	// Create JWT service
 	jwtService, err := auth.NewJWTService(
@@ -109,7 +134,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 		db:              database,
 		privadoVerifier: mockVerifier,
 		jwtService:      jwtService,
-		accessCtrl:      access.NewController(database),
+		rbacAccessCtrl:  rbac.NewAccessController(database, 5*time.Minute, true),
 		proxy:           nil, // Not needed for auth tests
 		sessionStore:    auth.NewSessionStore(10*time.Minute, 1*time.Minute),
 		config:          cfg,

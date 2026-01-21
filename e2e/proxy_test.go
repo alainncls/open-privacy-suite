@@ -14,8 +14,10 @@ import (
 
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/server"
 
+	"github.com/google/uuid"
 	"github.com/iden3/iden3comm/v2/protocol"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -32,6 +34,28 @@ func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL
 		Body: protocol.AuthorizationRequestMessageBody{
 			CallbackURL: callbackURL,
 			Reason:      reason,
+		},
+	}, nil
+}
+
+func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
+	return &protocol.AuthorizationRequestMessage{
+		ID:   "mock-request-id",
+		Type: "https://iden3-communication.io/authorization/1.0/request",
+		Body: protocol.AuthorizationRequestMessageBody{
+			CallbackURL: callbackURL,
+			Reason:      reason,
+			Scope: []protocol.ZeroKnowledgeProofRequest{
+				{
+					ID:        1,
+					CircuitID: "credentialAtomicQueryMTPV2",
+					Query: map[string]any{
+						"allowedIssuers":    []string{issuerDID},
+						"credentialSubject": map[string]any{"isHuman": map[string]any{"$eq": 1}},
+						"type":              "ProofOfHumanity",
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -83,7 +107,6 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	cfg := &config.Config{
 		NodeURL:          "http://localhost:8545",
 		DatabaseURL:      dbURL,
-		BillionsURL:      "http://localhost:9000", // Not used anymore, but kept for compatibility
 		PrivadoRPCURL:    "https://rpc-mainnet.privado.id",
 		IPFSGateway:      "https://ipfs-proxy-cache.privado.id",
 		JWTSecret:        "test-secret",
@@ -129,43 +152,40 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	return srv, serverURL, cleanup
 }
 
-// getJWTToken uses the new two-step auth flow to get JWT token
+// getJWTToken performs the auth flow and returns a JWT access token
 func getJWTToken(t *testing.T, serverURL, userDID string) string {
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Step 1: Request authorization (create proof request)
-	req1, _ := http.NewRequest("POST", serverURL+"/auth/request", nil)
-	req1.Header.Set("Content-Type", "application/json")
-	resp1, err := client.Do(req1)
+	// Step 1: Request authorization
+	req, _ := http.NewRequest("POST", serverURL+"/auth/request", nil)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("auth request failed: %v", err)
 	}
-	defer resp1.Body.Close()
+	defer resp.Body.Close()
 
-	if resp1.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp1.Body)
-		t.Fatalf("auth request failed with status %d: %s", resp1.StatusCode, string(body))
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("auth request returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var authReqResp map[string]interface{}
-	if err := json.NewDecoder(resp1.Body).Decode(&authReqResp); err != nil {
-		t.Fatalf("failed to decode auth request response: %v", err)
+	var authResp struct {
+		SessionID string `json:"session_id"`
 	}
+	json.NewDecoder(resp.Body).Decode(&authResp)
 
-	sessionID, ok := authReqResp["session_id"].(string)
-	if !ok {
-		t.Fatalf("session_id not found in response: %v", authReqResp)
+	// Step 2: Verify with mock token (dev mode)
+	verifyBody := map[string]any{
+		"session_id": authResp.SessionID,
+		"jwz_token":  "mock." + userDID, // Mock token format
 	}
+	jsonBody, _ := json.Marshal(verifyBody)
 
-	// Step 2: Verify with mock JWZ token (using /auth/verify in dev mode)
-	verifyReq := map[string]interface{}{
-		"session_id": sessionID,
-		"jwz_token":  "mock.jwz.token." + userDID,
-	}
-	verifyBody, _ := json.Marshal(verifyReq)
-
-	req2, _ := http.NewRequest("POST", serverURL+"/auth/verify", bytes.NewReader(verifyBody))
+	req2, _ := http.NewRequest("POST", serverURL+"/auth/verify", bytes.NewReader(jsonBody))
 	req2.Header.Set("Content-Type", "application/json")
+
 	resp2, err := client.Do(req2)
 	if err != nil {
 		t.Fatalf("auth verify failed: %v", err)
@@ -174,23 +194,53 @@ func getJWTToken(t *testing.T, serverURL, userDID string) string {
 
 	if resp2.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp2.Body)
-		t.Fatalf("auth verify failed with status %d: %s", resp2.StatusCode, string(body))
+		t.Fatalf("auth verify returned %d: %s", resp2.StatusCode, string(body))
 	}
 
-	var authResp map[string]interface{}
-	if err := json.NewDecoder(resp2.Body).Decode(&authResp); err != nil {
-		t.Fatalf("failed to decode auth response: %v", err)
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
 	}
+	json.NewDecoder(resp2.Body).Decode(&tokenResp)
 
-	accessToken, ok := authResp["access_token"].(string)
-	if !ok {
-		t.Fatalf("access_token not found in response: %v", authResp)
-	}
-
-	return accessToken
+	return tokenResp.AccessToken
 }
 
-func TestE2E_AuthorizedRequest(t *testing.T) {
+// createRBACUser creates a user in the RBAC system with the specified properties
+func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banned bool) {
+	ctx := context.Background()
+	// database implements rbac.Store interface
+
+	// Create user
+	user := &rbac.User{
+		ID:         uuid.New().String(),
+		ExternalID: externalID,
+		KYC:        kyc,
+		Banned:     banned,
+		Metadata:   make(map[string]any),
+	}
+
+	if err := database.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to create RBAC user: %v", err)
+	}
+
+	// Add to default group with default role
+	defaultGroupID := "00000000-0000-0000-0000-000000000001"
+	defaultRoleID := "00000000-0000-0000-0000-000000000003" // user role
+
+	membership := &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  user.ID,
+		GroupID: defaultGroupID,
+		RoleID:  &defaultRoleID,
+		Source:  rbac.MembershipSourceAdmin,
+	}
+
+	if err := database.CreateMembership(ctx, membership); err != nil {
+		t.Fatalf("failed to create RBAC membership: %v", err)
+	}
+}
+
+func TestE2E_Proxy_JSONRPCWithAuth(t *testing.T) {
 	userDID := "did:privado:test_user"
 
 	// Setup server with mock verifier
@@ -198,32 +248,17 @@ func TestE2E_AuthorizedRequest(t *testing.T) {
 	srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
 	defer cleanup()
 
-	// Get database and create policy
-	database := srv.DB()
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	// Create RBAC user with KYC=true (required for access)
+	createRBACUser(t, srv.DB(), userDID, true, false)
 
-	policy := &db.AccessPolicy{
-		ExternalID:   userDID,
-		KYC:          true,
-		AllowMethods: []string{"eth_call", "eth_getBalance"},
-		Banned:       false,
-	}
-	database.SetPolicy(policy)
-
-	// Get JWT token using the new two-step auth flow:
-	// 1. Request authorization (/auth/request) to get session ID and auth request
-	// 2. Verify proof (/auth/verify in dev mode) to get JWT tokens
+	// Get JWT token using the auth flow
 	accessToken := getJWTToken(t, serverURL, userDID)
 
 	// Make JSON-RPC request with JWT token
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "eth_call",
-		"params":  []interface{}{},
+		"params":  []any{},
 		"id":      1,
 	}
 
@@ -250,10 +285,10 @@ func TestE2E_UnauthorizedRequest_NoToken(t *testing.T) {
 	_, serverURL, cleanup := setupE2E(t)
 	defer cleanup()
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "eth_call",
-		"params":  []interface{}{},
+		"params":  []any{},
 		"id":      1,
 	}
 
@@ -275,37 +310,24 @@ func TestE2E_UnauthorizedRequest_NoToken(t *testing.T) {
 }
 
 func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
-	userDID := "did:privado:test_user"
+	userDID := "did:privado:restricted_user"
 
 	// Setup server with mock verifier
 	mockVerifier := &mockPrivadoVerifier{userDID: userDID}
 	srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
 	defer cleanup()
 
-	// Get database and create policy with restricted methods
-	database := srv.DB()
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	// Create RBAC user with KYC=true
+	createRBACUser(t, srv.DB(), userDID, true, false)
 
-	policy := &db.AccessPolicy{
-		ExternalID:   userDID,
-		KYC:          true,
-		AllowMethods: []string{"eth_call"}, // Only eth_call allowed
-		Banned:       false,
-	}
-	database.SetPolicy(policy)
-
-	// Get JWT token by calling /auth
+	// Get JWT token
 	accessToken := getJWTToken(t, serverURL, userDID)
 
-	// Try to call disallowed method
-	reqBody := map[string]interface{}{
+	// Try to call a method not in the default allowed list (debug_traceTransaction)
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "eth_sendTransaction",
-		"params":  []interface{}{},
+		"method":  "debug_traceTransaction",
+		"params":  []any{"0x123"},
 		"id":      1,
 	}
 
@@ -336,29 +358,16 @@ func TestE2E_BannedUser(t *testing.T) {
 	srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
 	defer cleanup()
 
-	// Get database and create banned policy
-	database := srv.DB()
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	// Create RBAC user with KYC=true but Banned=true
+	createRBACUser(t, srv.DB(), userDID, true, true)
 
-	policy := &db.AccessPolicy{
-		ExternalID:   userDID,
-		KYC:          true,
-		AllowMethods: []string{"eth_call"},
-		Banned:       true,
-	}
-	database.SetPolicy(policy)
-
-	// Get JWT token by calling /auth (even banned users can get tokens, but requests will be blocked)
+	// Get JWT token (even banned users can get tokens, but requests will be blocked)
 	accessToken := getJWTToken(t, serverURL, userDID)
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "eth_call",
-		"params":  []interface{}{},
+		"params":  []any{},
 		"id":      1,
 	}
 
@@ -389,29 +398,16 @@ func TestE2E_NoKYC(t *testing.T) {
 	srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
 	defer cleanup()
 
-	// Get database and create policy without KYC
-	database := srv.DB()
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS access_policies")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Migrate()
+	// Create RBAC user with KYC=false
+	createRBACUser(t, srv.DB(), userDID, false, false)
 
-	policy := &db.AccessPolicy{
-		ExternalID:   userDID,
-		KYC:          false,
-		AllowMethods: []string{"eth_call"},
-		Banned:       false,
-	}
-	database.SetPolicy(policy)
-
-	// Get JWT token by calling /auth (even non-KYC users can get tokens, but requests will be blocked)
+	// Get JWT token (even non-KYC users can get tokens, but requests will be blocked)
 	accessToken := getJWTToken(t, serverURL, userDID)
 
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "eth_call",
-		"params":  []interface{}{},
+		"params":  []any{},
 		"id":      1,
 	}
 

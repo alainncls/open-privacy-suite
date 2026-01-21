@@ -20,7 +20,6 @@ func main() {
 	
 	log.Printf("Starting privacy proxy server on port %s", port)
 	log.Printf("Node URL: %s", cfg.NodeURL)
-	log.Printf("Billions URL: %s", cfg.BillionsURL)
 	if err := srv.Run(":" + port); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

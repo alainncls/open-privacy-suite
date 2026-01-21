@@ -7,6 +7,64 @@ import (
 	"testing"
 )
 
+func TestIsBatchRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{
+			name:     "Single request",
+			body:     `{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`,
+			expected: false,
+		},
+		{
+			name:     "Batch request",
+			body:     `[{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1},{"jsonrpc":"2.0","method":"eth_getBalance","params":[],"id":2}]`,
+			expected: true,
+		},
+		{
+			name:     "Empty batch",
+			body:     `[]`,
+			expected: true,
+		},
+		{
+			name:     "Whitespace before array",
+			body:     `  [{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}]`,
+			expected: true,
+		},
+		{
+			name:     "Newlines before array",
+			body:     "\n\t[{\"jsonrpc\":\"2.0\",\"method\":\"eth_call\",\"params\":[],\"id\":1}]",
+			expected: true,
+		},
+		{
+			name:     "Whitespace before object",
+			body:     `  {"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`,
+			expected: false,
+		},
+		{
+			name:     "Empty body",
+			body:     ``,
+			expected: false,
+		},
+		{
+			name:     "Whitespace only",
+			body:     `   `,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsBatchRequest([]byte(tt.body))
+			if result != tt.expected {
+				t.Errorf("IsBatchRequest(%q) = %v, expected %v", tt.body, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestParseMethod(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -38,6 +96,12 @@ func TestParseMethod(t *testing.T) {
 			want:    "",
 			wantErr: false, // Method will be empty string, not an error
 		},
+		{
+			name:    "batch request should error",
+			body:    `[{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}]`,
+			want:    "",
+			wantErr: true, // Batch requests return ErrBatchRequest
+		},
 	}
 	
 	for _, tt := range tests {
@@ -58,6 +122,75 @@ func TestParseMethod(t *testing.T) {
 			
 			if method != tt.want {
 				t.Errorf("got method %q, want %q", method, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantMethod string
+		wantErr    bool
+		errType    error
+	}{
+		{
+			name:       "valid request",
+			body:       `{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`,
+			wantMethod: "eth_call",
+			wantErr:    false,
+		},
+		{
+			name:       "request with params",
+			body:       `{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x123", "latest"],"id":2}`,
+			wantMethod: "eth_getBalance",
+			wantErr:    false,
+		},
+		{
+			name:       "invalid JSON",
+			body:       `{"jsonrpc":"2.0"`,
+			wantMethod: "",
+			wantErr:    true,
+		},
+		{
+			name:       "batch request",
+			body:       `[{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}]`,
+			wantMethod: "",
+			wantErr:    true,
+			errType:    ErrBatchRequest,
+		},
+		{
+			name:       "batch request multiple",
+			body:       `[{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1},{"jsonrpc":"2.0","method":"eth_getBalance","params":[],"id":2}]`,
+			wantMethod: "",
+			wantErr:    true,
+			errType:    ErrBatchRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			method, _, err := ParseRequest([]byte(tt.body))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error but got none")
+					return
+				}
+				if tt.errType != nil && err != tt.errType {
+					t.Errorf("expected error %v, got %v", tt.errType, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if method != tt.wantMethod {
+				t.Errorf("got method %q, want %q", method, tt.wantMethod)
 			}
 		})
 	}

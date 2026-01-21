@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL database
   postgres:
@@ -20,45 +18,20 @@ services:
       timeout: 5s
       retries: 5
 
-  # Mock Billions identity service
-  billions-mock:
-    image: node:20-alpine
-    ports:
-      - "9000:9000"
-    volumes:
-      - ./e2e/mock-billions:/app
-    working_dir: /app
-    environment:
-      - PORT=9000
-    networks:
-      - proxy-network
-    command: sh /app/start.sh
-    healthcheck:
-      test: ["CMD", "node", "/app/healthcheck.js"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
-  # Mock Erigon node for testing
-  erigon-mock:
-    image: node:20-alpine
+  # Anvil (Foundry's local Ethereum node)
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
     ports:
       - "8545:8545"
-    volumes:
-      - ./e2e/mock-node:/app
-    working_dir: /app
-    environment:
-      - PORT=8545
     networks:
       - proxy-network
-    command: sh /app/start.sh
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
     healthcheck:
-      test: ["CMD", "node", "/app/healthcheck.js"]
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
       interval: 5s
       timeout: 3s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 5s
 
   # Privacy proxy backend
   proxy-backend:
@@ -68,16 +41,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - NODE_URL=http://erigon-mock:8545
+      - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
-      - BILLIONS_URL=http://billions-mock:9000
       - PORT=8080
+      - ENVIRONMENT=development
+      - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
     depends_on:
       postgres:
         condition: service_healthy
-      billions-mock:
-        condition: service_healthy
-      erigon-mock:
+      anvil:
         condition: service_healthy
     networks:
       - proxy-network
@@ -98,6 +70,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - VITE_API_TARGET=http://proxy-backend:8080
     depends_on:
       proxy-backend:
         condition: service_started

@@ -79,6 +79,43 @@ func EnsureTestDatabase(dbURL string) error {
 	return nil
 }
 
+// ResetTestDatabase drops all tables and runs migrations to get a clean slate.
+// This is useful when using an external PostgreSQL database that may have leftover data.
+func ResetTestDatabase(database *DB) error {
+	ctx := context.Background()
+	conn := database.Conn()
+
+	// Get all tables in the public schema (excluding system tables)
+	rows, err := conn.Query(`
+		SELECT tablename FROM pg_tables
+		WHERE schemaname = 'public'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to list tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tables = append(tables, table)
+	}
+
+	// Drop all tables with CASCADE to handle foreign keys
+	for _, table := range tables {
+		_, err := conn.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", table))
+		if err != nil {
+			return fmt.Errorf("failed to drop table %s: %w", table, err)
+		}
+	}
+
+	// Run migrations to recreate all tables
+	return database.Migrate(ctx)
+}
+
 // SetupTestContainer starts a PostgreSQL testcontainer and returns the connection string
 // This is the recommended approach for tests - no need for external PostgreSQL
 // The container is automatically cleaned up when the test finishes

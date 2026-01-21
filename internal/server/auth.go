@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"privacy-proxy/internal/auth"
@@ -13,6 +14,51 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
 )
+
+// getPublicURL extracts the public-facing URL from request headers.
+// This allows the callback URL to work dynamically regardless of how the server is accessed
+// (e.g., via localhost, Tailscale hostname, or behind a reverse proxy).
+// Priority: X-Forwarded-Host > Host header > fallback to config BaseURL
+func (s *Server) getPublicURL(c *gin.Context) string {
+	// Check for forwarded headers (reverse proxy scenarios)
+	proto := c.GetHeader("X-Forwarded-Proto")
+	if proto == "" {
+		// Default to http for development, https for production
+		if s.config.IsProduction() {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	// Get the host from headers
+	host := c.GetHeader("X-Forwarded-Host")
+	if host == "" {
+		host = c.Request.Host
+	}
+
+	// If we have a valid host, construct the URL
+	if host != "" {
+		// Strip any port from the forwarded host - the callback needs to go
+		// directly to the backend port, not the frontend proxy port
+		hostname := host
+		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+			// Check it's not an IPv6 address (which has colons but is wrapped in [])
+			if !strings.Contains(host, "[") || strings.HasSuffix(host, "]") == false {
+				hostname = host[:colonIdx]
+			}
+		}
+		// Use the backend's actual port from config or default to 8080
+		port := s.config.Port
+		if port == "" {
+			port = "8080"
+		}
+		return fmt.Sprintf("%s://%s:%s", proto, hostname, port)
+	}
+
+	// Fall back to configured BaseURL
+	return s.config.BaseURL
+}
 
 // AuthRequest represents the request body for /auth endpoint
 type AuthRequest struct {
@@ -56,15 +102,30 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 	// Generate session ID first (needed for callback URL)
 	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
 
-	// Build callback URL with session ID
-	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", s.config.BaseURL, sessionID)
+	// Build callback URL with session ID using dynamic host detection
+	// This allows the QR code to work from any hostname (localhost, Tailscale, etc.)
+	baseURL := s.getPublicURL(c)
+	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
 
-	// Create authorization request with proper callback URL
-	authReq, err := s.privadoVerifier.CreateAuthorizationRequest(
-		s.config.VerifierID,
-		callbackURL,
-		"Authenticate to access Ethereum node",
-	)
+	var authReq *protocol.AuthorizationRequestMessage
+	var err error
+
+	// Use ProofOfHumanity auth request when enabled and issuer DID is configured
+	if s.config.RequireProofOfHumanity && s.config.BillionsIssuerDID != "" {
+		authReq, err = s.privadoVerifier.CreateHumanityAuthRequest(
+			s.config.VerifierID,
+			callbackURL,
+			"Authenticate and verify humanity to access Ethereum node",
+			s.config.BillionsIssuerDID,
+		)
+	} else {
+		// Fall back to basic auth (just DID proof)
+		authReq, err = s.privadoVerifier.CreateAuthorizationRequest(
+			s.config.VerifierID,
+			callbackURL,
+			"Authenticate to access Ethereum node",
+		)
+	}
 	if err != nil {
 		s.sessionStore.DeleteSession(sessionID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create authorization request: " + err.Error()})
@@ -166,25 +227,66 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// HumanityVerificationError represents a failure to verify ProofOfHumanity
+type HumanityVerificationError struct {
+	Error      string `json:"error"`
+	Message    string `json:"message"`
+	VerifyURL  string `json:"verify_url"`
+}
+
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
 // Returns the response or sends error and returns nil
 func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
-	// Verify JWZ token against the original authorization request
-	ctx := context.Background()
-	userDID, err := s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
-		return nil, err
+	var userDID string
+	var err error
+
+	// In development mode, support mock tokens for testing
+	// Mock token format: mock.{userDID} or mock.jwz.token.{userDID}
+	if !s.config.IsProduction() && len(jwzToken) > 5 && jwzToken[:5] == "mock." {
+		// Extract DID from mock token
+		parts := strings.Split(jwzToken, ".")
+		if len(parts) >= 2 {
+			// Get the last part which should be the DID
+			userDID = parts[len(parts)-1]
+			// If DID doesn't have expected prefix, it might be the full mock token
+			if !strings.HasPrefix(userDID, "did:") {
+				userDID = "did:privado:" + userDID
+			}
+		}
+		if userDID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mock token format"})
+			return nil, fmt.Errorf("invalid mock token format")
+		}
+	} else {
+		// Verify JWZ token against the original authorization request
+		ctx := context.Background()
+		userDID, err = s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
+		if err != nil {
+			// Check if this is a humanity verification failure
+			if strings.Contains(err.Error(), "humanity") || strings.Contains(err.Error(), "ProofOfHumanity") {
+				c.JSON(http.StatusForbidden, HumanityVerificationError{
+					Error:     "humanity_verification_required",
+					Message:   "Please complete ProofOfHumanity verification at Billions",
+					VerifyURL: "https://app.billions.network",
+				})
+				return nil, err
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
+			return nil, err
+		}
 	}
 
-	// Delete session after successful verification
-	s.sessionStore.DeleteSession(sessionID)
-
-	// Check if user has a policy (to determine KYC status)
-	policy, _ := s.db.GetPolicy(userDID)
+	// Ensure user exists in RBAC system and get their KYC status
+	// New users default to KYC=false; KYC status is updated through admin API
 	kyc := false
-	if policy != nil {
-		kyc = policy.KYC
+	if s.rbacAccessCtrl != nil {
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), userDID, kyc)
+		if err != nil {
+			// Log error but continue - auth can proceed without RBAC user creation
+			_ = err
+		} else if user != nil {
+			kyc = user.KYC
+		}
 	}
 
 	// Issue access token (short-lived)
@@ -209,12 +311,58 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		return nil, err
 	}
 
+	// Mark session as completed with tokens (keep alive for frontend polling)
+	// Session will auto-expire after 2 minutes giving frontend time to poll
+	if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
+		// Session may have been deleted or expired - log but continue
+		// The wallet still gets the tokens directly from the callback response
+		_ = err
+	}
+
 	return &AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
 		ExpiresIn:    1800, // 30 minutes in seconds
 	}, nil
+}
+
+// SessionStatusResponse represents the response for session status polling
+type SessionStatusResponse struct {
+	Completed bool          `json:"completed"`
+	Tokens    *AuthResponse `json:"tokens,omitempty"`
+}
+
+// handleAuthSessionStatus handles GET /api/auth/session/:id/status - poll for session completion
+// Frontend polls this after displaying QR code to check if wallet has completed auth
+func (s *Server) handleAuthSessionStatus(c *gin.Context) {
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session ID required"})
+		return
+	}
+
+	session := s.sessionStore.GetSession(sessionID)
+	if session == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
+		return
+	}
+
+	if !session.Completed {
+		c.JSON(http.StatusOK, SessionStatusResponse{Completed: false})
+		return
+	}
+
+	// Session is completed - return tokens
+	c.JSON(http.StatusOK, SessionStatusResponse{
+		Completed: true,
+		Tokens: &AuthResponse{
+			AccessToken:  session.AccessToken,
+			RefreshToken: session.RefreshToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    1800,
+		},
+	})
 }
 
 // handleRefresh handles POST /refresh - issues new access token from refresh token
@@ -261,11 +409,13 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		return
 	}
 
-	// Get user policy to determine KYC status
-	policy, _ := s.db.GetPolicy(claims.Subject)
+	// Get user KYC status from RBAC
 	kyc := false
-	if policy != nil {
-		kyc = policy.KYC
+	if s.rbacAccessCtrl != nil {
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), claims.Subject, false)
+		if err == nil && user != nil {
+			kyc = user.KYC
+		}
 	}
 
 	// Issue new access token
