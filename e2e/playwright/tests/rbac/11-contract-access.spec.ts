@@ -13,7 +13,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
     await ctx.cleanup();
   });
 
-  test('allows contract in allow_contracts', async ({ request }) => {
+  test('allows contract in allow_addresses', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractalloworg');
     const group = await ctx.fixture.createGroup(org.id, 'contractallowgroup');
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -21,7 +21,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contractAddr],
+      allow_addresses: [contractAddr],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -33,13 +33,13 @@ test.describe('RBAC Contract Access Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: contractAddr,
+      target_address: contractAddr,
     });
 
     expect(result.allowed).toBe(true);
   });
 
-  test('denies contract NOT in allow_contracts', async ({ request }) => {
+  test('denies contract NOT in allow_addresses', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractdenyorg');
     const group = await ctx.fixture.createGroup(org.id, 'contractdenygroup');
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -48,7 +48,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [allowedContract],
+      allow_addresses: [allowedContract],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -60,24 +60,24 @@ test.describe('RBAC Contract Access Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: deniedContract,
+      target_address: deniedContract,
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('contract');
+    expect(result.reason).toContain('address');
   });
 
-  test('owned contract bypasses allow_contracts list', async ({ request }) => {
+  test('owned contract bypasses allow_addresses list', async ({ request }) => {
     const org = await ctx.fixture.createOrg('ownedbypassorg');
     const group = await ctx.fixture.createGroup(org.id, 'ownedbypassgroup');
     const role = await ctx.fixture.createReaderRole(org.id);
     const ownedContract = ctx.contractAddress().toLowerCase();
 
-    // Set permissions without the contract in allow_contracts
+    // Set permissions without the contract in allow_addresses
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [], // Empty allow list
-      owned_contracts: [ownedContract], // But contract is owned
+      allow_addresses: [], // Empty allow list
+      owned_addresses: [ownedContract], // But contract is owned
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -89,13 +89,13 @@ test.describe('RBAC Contract Access Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: ownedContract,
+      target_address: ownedContract,
     });
 
     expect(result.allowed).toBe(true);
   });
 
-  test('allows any contract when allow_contracts is empty and no contract specified', async ({
+  test('allows any contract when allow_addresses is empty and no contract specified', async ({
     request,
   }) => {
     const org = await ctx.fixture.createOrg('anycontractorg');
@@ -104,7 +104,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_blockNumber'],
-      allow_contracts: [], // Empty - no contract restrictions
+      allow_addresses: [], // Empty - no contract restrictions
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -132,7 +132,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contractAddr],
+      allow_addresses: [contractAddr],
     });
 
     // Create user and add to the test group, removing default membership
@@ -161,7 +161,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [allowedContract],
+      allow_addresses: [allowedContract],
     });
 
     // Create user and add to the test group, removing default membership
@@ -190,7 +190,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1, contract2, contract3],
+      allow_addresses: [contract1, contract2, contract3],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -204,7 +204,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
         user_external_id: did,
         org_slug: org.slug,
         method: 'eth_call',
-        contract_address: contract,
+        target_address: contract,
       });
       expect(result.allowed).toBe(true);
     }
@@ -219,7 +219,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contractLower],
+      allow_addresses: [contractLower],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -232,7 +232,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: contractUpper,
+      target_address: contractUpper,
     });
 
     expect(result.allowed).toBe(true);

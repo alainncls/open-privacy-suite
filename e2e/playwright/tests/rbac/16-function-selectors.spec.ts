@@ -30,8 +30,8 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [testContract],
-      contract_functions: {
+      allow_addresses: [testContract],
+      address_functions: {
         [testContract.toLowerCase()]: [TRANSFER_SELECTOR, BALANCE_OF_SELECTOR],
       },
     });
@@ -46,7 +46,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: testContract,
+      target_address: testContract,
     });
 
     expect(result.allowed).toBe(true);
@@ -62,8 +62,8 @@ test.describe('RBAC Function Selector Enforcement', () => {
     // Only allow balanceOf, not transfer or approve
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [testContract],
-      contract_functions: {
+      allow_addresses: [testContract],
+      address_functions: {
         [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
       },
     });
@@ -78,22 +78,22 @@ test.describe('RBAC Function Selector Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: testContract,
+      target_address: testContract,
     });
     expect(result.allowed).toBe(true);
   });
 
-  test('allows all functions when no contract_functions restriction exists', async ({ request }) => {
+  test('allows all functions when no address_functions restriction exists', async ({ request }) => {
     const org = await ctx.fixture.createOrg('nofuncrestrictorg');
     const group = await ctx.fixture.createGroup(org.id, 'nofuncrestrictgroup');
     const role = await ctx.fixture.createReaderRole(org.id);
 
     const testContract = ctx.contractAddress();
 
-    // No contract_functions specified - all functions allowed
+    // No address_functions specified - all functions allowed
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [testContract],
+      allow_addresses: [testContract],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -105,7 +105,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: testContract,
+      target_address: testContract,
     });
 
     expect(result.allowed).toBe(true);
@@ -119,8 +119,8 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [testContract],
-      contract_functions: {
+      allow_addresses: [testContract],
+      address_functions: {
         [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
       },
     });
@@ -152,8 +152,8 @@ test.describe('RBAC Function Selector Enforcement', () => {
     // Only allow balanceOf
     await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [testContract],
-      contract_functions: {
+      allow_addresses: [testContract],
+      address_functions: {
         [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
       },
     });

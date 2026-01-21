@@ -20,8 +20,8 @@ export interface HierarchyNode {
   name: string;
   permissions?: {
     allow_methods?: string[];
-    allow_contracts?: string[];
-    owned_contracts?: string[];
+    allow_addresses?: string[];
+    owned_addresses?: string[];
     rate_limit_rps?: number;
     rate_limit_daily?: number;
   };
@@ -255,8 +255,8 @@ export class RBACTestFixture {
     if (!opts?.keepDefaultMembership) {
       const memberships = await this.rbac.listUserMemberships(user.id);
       for (const m of memberships) {
-        if (m.group_id === DEFAULT_GROUP_ID) {
-          await this.rbac.deleteMembership(user.id, m.id);
+        if (m.membership.group_id === DEFAULT_GROUP_ID) {
+          await this.rbac.deleteMembership(user.id, m.membership.id);
         }
       }
     }

@@ -37,6 +37,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.GET("/users", s.listRBACUsers)
 	api.GET("/users/:user_id", s.getRBACUser)
 	api.PUT("/users/:user_id", s.updateRBACUser)
+	api.GET("/users/:user_id/linked-addresses", s.getUserLinkedAddresses)
 
 	// Memberships
 	api.GET("/users/:user_id/memberships", s.listUserMemberships)
@@ -553,6 +554,36 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
 
 	c.JSON(http.StatusOK, user)
+}
+
+func (s *Server) getUserLinkedAddresses(c *gin.Context) {
+	userID := c.Param("user_id")
+
+	user, err := s.db.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	links, err := s.db.GetEthAddressesByDID(user.ExternalID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	addresses := make([]gin.H, 0, len(links))
+	for _, link := range links {
+		addresses = append(addresses, gin.H{
+			"address":     link.EthAddress,
+			"verified_at": link.VerifiedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"addresses": addresses})
 }
 
 // Membership handlers

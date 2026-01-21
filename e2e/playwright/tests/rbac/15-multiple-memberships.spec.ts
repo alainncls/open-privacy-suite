@@ -73,13 +73,13 @@ test.describe('RBAC Multiple Memberships', () => {
     // Group A allows contract1
     await ctx.rbac.setGroupPermissions(org.id, groupA.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1],
+      allow_addresses: [contract1],
     });
 
     // Group B allows contract2
     await ctx.rbac.setGroupPermissions(org.id, groupB.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract2],
+      allow_addresses: [contract2],
     });
 
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -96,7 +96,7 @@ test.describe('RBAC Multiple Memberships', () => {
         user_external_id: did,
         org_slug: org.slug,
         method: 'eth_call',
-        contract_address: contract,
+        target_address: contract,
       });
       expect(result.allowed).toBe(true);
     }
@@ -292,11 +292,11 @@ test.describe('RBAC Multiple Memberships', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group1.id, {
       allow_methods: ['eth_call'],
-      owned_contracts: [contract1],
+      owned_addresses: [contract1],
     });
     await ctx.rbac.setGroupPermissions(org.id, group2.id, {
       allow_methods: ['eth_call'],
-      owned_contracts: [contract2],
+      owned_addresses: [contract2],
     });
 
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -309,7 +309,7 @@ test.describe('RBAC Multiple Memberships', () => {
 
     // User should own both contracts
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
-    expect(perms.owned_contracts).toContain(contract1);
-    expect(perms.owned_contracts).toContain(contract2);
+    expect(perms.owned_addresses).toContain(contract1);
+    expect(perms.owned_addresses).toContain(contract2);
   });
 });

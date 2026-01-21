@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { AddressDisplay } from '@/components/ui/AddressDisplay';
+import { useEnsNames } from '@/hooks/useEnsNames';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +26,7 @@ import {
   FolderTree,
   Save,
   AlertCircle,
+  Wallet,
 } from 'lucide-react';
 
 interface UserDetailProps {
@@ -31,12 +34,24 @@ interface UserDetailProps {
   onUpdate: () => void;
 }
 
+interface LinkedAddress {
+  address: string;
+  verified_at: string;
+}
+
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const { organizations, selectedOrg } = useOrgContext();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
   const [effectivePerms, setEffectivePerms] = useState<EffectivePermissions | null>(null);
+  const [linkedAddresses, setLinkedAddresses] = useState<LinkedAddress[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [showMembershipForm, setShowMembershipForm] = useState(false);
+
+  // ENS name resolution for linked addresses
+  const { data: ensNames, isLoading: loadingEns } = useEnsNames(
+    linkedAddresses.map(a => a.address)
+  );
 
   // Edit form state
   const [kyc, setKyc] = useState(user.kyc);
@@ -48,6 +63,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
   useEffect(() => {
     loadMemberships();
+    loadLinkedAddresses();
     if (selectedOrg) {
       loadEffectivePermissions();
     }
@@ -67,6 +83,19 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       setMemberships([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadLinkedAddresses = async () => {
+    try {
+      setLoadingAddresses(true);
+      const response = await rbacApi.users.getLinkedAddresses(user.id);
+      setLinkedAddresses(response.data.addresses || []);
+    } catch (error) {
+      console.error('Failed to load linked addresses:', error);
+      setLinkedAddresses([]);
+    } finally {
+      setLoadingAddresses(false);
     }
   };
 
@@ -225,6 +254,46 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 </>
               )}
             </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Linked Addresses */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-white/70 flex items-center gap-2">
+          <Wallet className="w-4 h-4" />
+          Linked Wallet Addresses
+        </h4>
+
+        {loadingAddresses ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="w-5 h-5 text-white/40 animate-spin" />
+          </div>
+        ) : linkedAddresses.length === 0 ? (
+          <div className="text-center py-6 text-white/40 text-sm">
+            No linked wallet addresses
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {linkedAddresses.map((addr) => (
+              <div
+                key={addr.address}
+                className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+              >
+                <AddressDisplay
+                  address={addr.address}
+                  ensName={ensNames?.[addr.address.toLowerCase()]}
+                />
+                <div className="flex items-center gap-2">
+                  {loadingEns && !ensNames?.[addr.address.toLowerCase()] && (
+                    <Loader2 className="w-3 h-3 text-white/30 animate-spin" />
+                  )}
+                  <span className="text-xs text-white/40">
+                    Verified {new Date(addr.verified_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

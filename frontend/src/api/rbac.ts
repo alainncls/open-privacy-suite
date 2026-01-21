@@ -90,6 +90,10 @@ export const rbacApi = {
       api.get<EffectivePermissions>(`/users/${userId}/effective-permissions`, {
         params: { org: orgSlug },
       }),
+    getLinkedAddresses: (userId: string) =>
+      api.get<{ addresses: Array<{ address: string; verified_at: string }> }>(
+        `/users/${userId}/linked-addresses`
+      ),
   },
 
   // Contracts

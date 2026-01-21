@@ -32,9 +32,9 @@ export interface GroupPermissions {
   id: string;
   group_id: string;
   allow_methods: string[];
-  allow_contracts: string[];
-  owned_contracts: string[];
-  contract_functions?: Record<string, string[]>; // contract_address -> allowed function selectors
+  allow_addresses: string[];
+  owned_addresses: string[];
+  address_functions?: Record<string, string[]>; // address -> allowed function selectors
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
   created_at: string;
@@ -74,6 +74,12 @@ export interface UserMembership {
   updated_at: string;
 }
 
+export interface MembershipWithDetails {
+  membership: UserMembership;
+  group: Group;
+  role: Role | null;
+}
+
 export interface ContractOwnership {
   id: string;
   contract_address: string;
@@ -91,9 +97,9 @@ export interface EffectivePermissions {
   user_id: string;
   org_id: string;
   allow_methods: string[];
-  allow_contracts: string[];
-  owned_contracts: string[];
-  contract_functions?: Record<string, string[]>; // contract_address -> allowed function selectors
+  allow_addresses: string[];
+  owned_addresses: string[];
+  address_functions?: Record<string, string[]>; // address -> allowed function selectors
   claims: Claim[];
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
@@ -105,7 +111,7 @@ export interface AccessCheckRequest {
   user_external_id: string;
   org_slug?: string;
   method: string;
-  contract_address?: string;
+  target_address?: string;
   function_selector?: string; // First 4 bytes of calldata (e.g., "0xa9059cbb")
   required_claims?: Claim[];
 }
@@ -152,9 +158,9 @@ export interface UpdateGroupInput {
 
 export interface SetGroupPermissionsInput {
   allow_methods?: string[];
-  allow_contracts?: string[];
-  owned_contracts?: string[];
-  contract_functions?: Record<string, string[]>; // contract_address -> allowed function selectors
+  allow_addresses?: string[];
+  owned_addresses?: string[];
+  address_functions?: Record<string, string[]>; // address -> allowed function selectors
   rate_limit_rps?: number;
   rate_limit_daily?: number;
 }
@@ -437,13 +443,13 @@ export class RBACApiClient {
 
   // === Memberships ===
 
-  async listUserMemberships(userId: string): Promise<UserMembership[]> {
+  async listUserMemberships(userId: string): Promise<MembershipWithDetails[]> {
     const response = await this.request.get(`${ADMIN_URL}/api/users/${userId}/memberships`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list user memberships: ${response.status()} - ${body}`);
     }
-    const memberships = (await response.json()) as UserMembership[] | null;
+    const memberships = (await response.json()) as MembershipWithDetails[] | null;
     return memberships ?? [];
   }
 

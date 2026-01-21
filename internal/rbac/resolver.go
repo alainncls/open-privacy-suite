@@ -121,10 +121,18 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			role = m.Role
 		}
 
-		// Collect methods and claims from the role
-		var roleMethods []string
+		// Collect methods from both Role and GroupPermissions
+		// Role.AllowMethods takes precedence, but GroupPermissions.AllowMethods provides backward compatibility
+		var membershipMethods []string
+		if role != nil && len(role.AllowMethods) > 0 {
+			membershipMethods = role.AllowMethods
+		} else if len(membershipPerms.AllowMethods) > 0 {
+			// Backward compatibility: use GroupPermissions.AllowMethods if role has none
+			membershipMethods = membershipPerms.AllowMethods
+		}
+
+		// Collect claims from the role
 		if role != nil {
-			roleMethods = role.AllowMethods
 			for _, claim := range role.Claims {
 				if !slices.Contains(finalClaims, claim) {
 					finalClaims = append(finalClaims, claim)
@@ -134,7 +142,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 
 		if firstMembership {
 			// First membership - use its permissions as baseline
-			finalMethods = roleMethods
+			finalMethods = membershipMethods
 			finalAddresses = membershipPerms.AllowAddresses
 			finalOwnedAddresses = membershipPerms.OwnedAddresses
 			finalAddressFunctions = membershipPerms.AddressFunctions
@@ -143,7 +151,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			firstMembership = false
 		} else {
 			// Subsequent memberships - UNION the permissions
-			finalMethods = unionStrings(finalMethods, roleMethods)
+			finalMethods = unionStrings(finalMethods, membershipMethods)
 			finalAddresses = unionStrings(finalAddresses, membershipPerms.AllowAddresses)
 			finalOwnedAddresses = unionStrings(finalOwnedAddresses, membershipPerms.OwnedAddresses)
 			finalAddressFunctions = unionAddressFunctions(finalAddressFunctions, membershipPerms.AddressFunctions)
@@ -188,8 +196,8 @@ func (r *Resolver) computeMembershipPermissions(ctx context.Context, hierarchy [
 
 	// Start with no restrictions
 	result := &GroupPermissions{
-		AllowMethods:      []string{}, // Methods come from Role, not GroupPermissions
-		AllowAddresses:    nil,        // nil means "all allowed" until we see the first actual permissions
+		AllowMethods:      nil, // nil means "all allowed" until we see the first actual permissions
+		AllowAddresses:    nil, // nil means "all allowed" until we see the first actual permissions
 		OwnedAddresses:    []string{},
 		AddressFunctions: make(map[string][]string),
 	}
@@ -203,9 +211,13 @@ func (r *Resolver) computeMembershipPermissions(ctx context.Context, hierarchy [
 			continue // Group has no permissions defined, skip
 		}
 
-		// Note: We no longer apply methods from GroupPermissions - they come from Role
-		// But we still read them for backward compatibility during migration
-		// The resolver's computePermissions() now gets methods from Role.AllowMethods
+		// Apply INTERSECTION for methods (restrictive inheritance)
+		// This provides backward compatibility - methods can come from GroupPermissions
+		if result.AllowMethods == nil {
+			result.AllowMethods = perms.AllowMethods
+		} else if len(perms.AllowMethods) > 0 {
+			result.AllowMethods = intersectStrings(result.AllowMethods, perms.AllowMethods)
+		}
 
 		// Apply INTERSECTION for contracts (restrictive)
 		if result.AllowAddresses == nil {
@@ -227,6 +239,9 @@ func (r *Resolver) computeMembershipPermissions(ctx context.Context, hierarchy [
 	}
 
 	// Ensure we return empty slices instead of nil
+	if result.AllowMethods == nil {
+		result.AllowMethods = []string{}
+	}
 	if result.AllowAddresses == nil {
 		result.AllowAddresses = []string{}
 	}

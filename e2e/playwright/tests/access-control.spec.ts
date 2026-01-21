@@ -117,7 +117,7 @@ test.describe('Access Control', () => {
 
       const memberships = await ctx.rbac.listUserMemberships(user.id);
       for (const m of memberships) {
-        await ctx.rbac.deleteMembership(user.id, m.id);
+        await ctx.rbac.deleteMembership(user.id, m.membership.id);
       }
     }
 

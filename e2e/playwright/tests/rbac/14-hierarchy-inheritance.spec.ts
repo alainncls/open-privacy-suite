@@ -74,13 +74,13 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root allows C1, C2, C3
     await ctx.rbac.setGroupPermissions(org.id, root.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1, contract2, contract3],
+      allow_addresses: [contract1, contract2, contract3],
     });
 
     // Child allows C1, C2 (intersection should be C1, C2)
     await ctx.rbac.setGroupPermissions(org.id, child.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1, contract2],
+      allow_addresses: [contract1, contract2],
     });
 
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -96,7 +96,7 @@ test.describe('RBAC Hierarchy Inheritance', () => {
         user_external_id: did,
         org_slug: org.slug,
         method: 'eth_call',
-        contract_address: contract,
+        target_address: contract,
       });
       expect(result.allowed).toBe(true);
     }
@@ -106,7 +106,7 @@ test.describe('RBAC Hierarchy Inheritance', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: contract3,
+      target_address: contract3,
     });
     expect(resultC3.allowed).toBe(false);
   });
@@ -123,13 +123,13 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root owns C1
     await ctx.rbac.setGroupPermissions(org.id, root.id, {
       allow_methods: ['eth_call'],
-      owned_contracts: [contract1],
+      owned_addresses: [contract1],
     });
 
     // Child owns C2
     await ctx.rbac.setGroupPermissions(org.id, child.id, {
       allow_methods: ['eth_call'],
-      owned_contracts: [contract2],
+      owned_addresses: [contract2],
     });
 
     const role = await ctx.fixture.createReaderRole(org.id);
@@ -141,8 +141,8 @@ test.describe('RBAC Hierarchy Inheritance', () => {
 
     // User should own both C1 (from root) and C2 (from child) via UNION
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
-    expect(perms.owned_contracts).toContain(contract1);
-    expect(perms.owned_contracts).toContain(contract2);
+    expect(perms.owned_addresses).toContain(contract1);
+    expect(perms.owned_addresses).toContain(contract2);
   });
 
   test('rate limits use MINIMUM down hierarchy', async ({ request }) => {

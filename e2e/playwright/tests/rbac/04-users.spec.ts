@@ -138,7 +138,7 @@ test.describe('RBAC Users', () => {
 
     // User has default membership + 2 new ones
     expect(memberships.length).toBeGreaterThanOrEqual(2);
-    const groupIds = memberships.map((m) => m.group_id);
+    const groupIds = memberships.map((m) => m.membership.group_id);
     expect(groupIds).toContain(group1.id);
     expect(groupIds).toContain(group2.id);
   });
@@ -154,14 +154,14 @@ test.describe('RBAC Users', () => {
 
     // Verify membership exists
     let memberships = await ctx.rbac.listUserMemberships(user.id);
-    expect(memberships.map((m) => m.id)).toContain(membership.id);
+    expect(memberships.map((m) => m.membership.id)).toContain(membership.id);
 
     // Delete membership
     await ctx.rbac.deleteMembership(user.id, membership.id);
 
     // Verify it's gone
     memberships = await ctx.rbac.listUserMemberships(user.id);
-    expect(memberships.map((m) => m.id)).not.toContain(membership.id);
+    expect(memberships.map((m) => m.membership.id)).not.toContain(membership.id);
   });
 
   test('creates user with membership using fixture helper', async ({ request }) => {
@@ -190,7 +190,7 @@ test.describe('RBAC Users', () => {
     await ctx.fixture.addMembership(user.id, group2.id, role.id);
 
     const memberships = await ctx.rbac.listUserMemberships(user.id);
-    const groupIds = memberships.map((m) => m.group_id);
+    const groupIds = memberships.map((m) => m.membership.group_id);
     expect(groupIds).toContain(group1.id);
     expect(groupIds).toContain(group2.id);
   });

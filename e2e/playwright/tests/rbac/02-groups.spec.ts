@@ -64,16 +64,16 @@ test.describe('RBAC Groups', () => {
 
     const perms = await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call', 'eth_getBalance'],
-      allow_contracts: ['0xabc123'],
-      owned_contracts: ['0xdef456'],
+      allow_addresses: ['0xabc123'],
+      owned_addresses: ['0xdef456'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
 
     expect(perms.group_id).toBe(group.id);
     expect(perms.allow_methods).toEqual(['eth_call', 'eth_getBalance']);
-    expect(perms.allow_contracts).toEqual(['0xabc123']);
-    expect(perms.owned_contracts).toEqual(['0xdef456']);
+    expect(perms.allow_addresses).toEqual(['0xabc123']);
+    expect(perms.owned_addresses).toEqual(['0xdef456']);
     expect(perms.rate_limit_rps).toBe(100);
     expect(perms.rate_limit_daily).toBe(10000);
 

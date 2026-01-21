@@ -182,7 +182,7 @@ test.describe('RBAC Cache Invalidation', () => {
 
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1],
+      allow_addresses: [contract1],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -195,14 +195,14 @@ test.describe('RBAC Cache Invalidation', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: contract2,
+      target_address: contract2,
     });
     expect(result.allowed).toBe(false);
 
     // Add contract2 to allowlist
     await ctx.rbac.setGroupPermissions(org.id, group.id, {
       allow_methods: ['eth_call'],
-      allow_contracts: [contract1, contract2],
+      allow_addresses: [contract1, contract2],
     });
 
     // Should immediately allow contract2
@@ -210,7 +210,7 @@ test.describe('RBAC Cache Invalidation', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      contract_address: contract2,
+      target_address: contract2,
     });
     expect(result.allowed).toBe(true);
   });
