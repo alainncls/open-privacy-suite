@@ -33,12 +33,6 @@ export default defineConfig({
                     });
                 },
             },
-            '/rpc': {
-                // JSON-RPC endpoint proxy - rewrites /rpc to / on backend
-                target: process.env.VITE_API_TARGET || 'http://localhost:8080',
-                changeOrigin: true,
-                rewrite: function (path) { return path.replace(/^\/rpc/, '/'); },
-            },
         },
     },
 });

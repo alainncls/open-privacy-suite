@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Group, Role } from '@/types/rbac';
+import type { Group } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,12 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { AlertCircle, Save, X, Loader2, FolderTree, Shield } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, FolderTree, Shield, Check } from 'lucide-react';
 
 interface GroupFormProps {
   orgId: string;
   groups: Group[];
-  roles?: Role[];
   group?: Group;
   parentId?: string;
   onClose: () => void;
@@ -26,7 +25,6 @@ interface GroupFormProps {
 export default function GroupForm({
   orgId,
   groups,
-  roles: propRoles,
   group,
   parentId,
   onClose,
@@ -38,34 +36,11 @@ export default function GroupForm({
   const [selectedParentId, setSelectedParentId] = useState<string | undefined>(
     parentId || group?.parent_id || undefined
   );
-  const [selectedRoleId, setSelectedRoleId] = useState<string | undefined>(
-    group?.role_id || undefined
-  );
-  const [roles, setRoles] = useState<Role[]>(propRoles || []);
-  const [loadingRoles, setLoadingRoles] = useState(!propRoles);
+  const [isOrgAdmin, setIsOrgAdmin] = useState(group?.is_org_admin || false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!group;
-
-  useEffect(() => {
-    if (!propRoles) {
-      loadRoles();
-    }
-  }, [orgId, propRoles]);
-
-  const loadRoles = async () => {
-    try {
-      setLoadingRoles(true);
-      const response = await rbacApi.roles.list(orgId);
-      setRoles(response.data || []);
-    } catch (error) {
-      console.error('Failed to load roles:', error);
-      setRoles([]);
-    } finally {
-      setLoadingRoles(false);
-    }
-  };
 
   // Filter out the current group and its descendants from parent options
   const getAvailableParents = () => {
@@ -106,7 +81,7 @@ export default function GroupForm({
         await rbacApi.groups.update(orgId, group.id, {
           name,
           description,
-          role_id: selectedRoleId || null,
+          is_org_admin: isOrgAdmin,
         });
       } else {
         await rbacApi.groups.create(orgId, {
@@ -114,7 +89,7 @@ export default function GroupForm({
           name,
           description,
           parent_id: selectedParentId || null,
-          role_id: selectedRoleId || null,
+          is_org_admin: isOrgAdmin,
         });
       }
       onSave();
@@ -219,52 +194,6 @@ export default function GroupForm({
         </>
       )}
 
-      {/* Role Selector - always shown */}
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
-          Assigned Role
-        </label>
-        {loadingRoles ? (
-          <div className="flex items-center gap-2 text-white/40 py-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Loading roles...</span>
-          </div>
-        ) : (
-          <Select
-            value={selectedRoleId || '_none'}
-            onValueChange={value =>
-              setSelectedRoleId(value === '_none' ? undefined : value)
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="No role assigned" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_none">
-                <div className="flex items-center gap-2 text-white/60">
-                  <Shield className="w-4 h-4" />
-                  <span>No role assigned</span>
-                </div>
-              </SelectItem>
-              {roles.map(role => (
-                <SelectItem key={role.id} value={role.id}>
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-primary-400" />
-                    <span>{role.name}</span>
-                    {role.description && (
-                      <span className="text-white/40 text-xs">- {role.description}</span>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <p className="text-xs text-white/40">
-          All users in this group will inherit the selected role's permissions (methods + claims)
-        </p>
-      </div>
-
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">
           Description (optional)
@@ -275,6 +204,38 @@ export default function GroupForm({
           placeholder="Describe the purpose of this group..."
           className="h-20"
         />
+      </div>
+
+      {/* Organization Admin Toggle */}
+      <div className="space-y-2">
+        <label
+          className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 cursor-pointer hover:bg-amber-500/10 transition-colors"
+          onClick={() => setIsOrgAdmin(!isOrgAdmin)}
+        >
+          <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
+            isOrgAdmin
+              ? 'bg-amber-500 border-amber-500'
+              : 'border-white/30 bg-white/5'
+          }`}>
+            {isOrgAdmin && <Check className="w-3 h-3 text-white" />}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-amber-400" />
+              <span className="text-sm font-medium text-amber-400">Organization Admin</span>
+            </div>
+            <p className="text-xs text-white/50 mt-1">
+              Members of this group get all claims (read, write, admin, upgrade, deploy) on all contracts in the organization. Use with caution.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+        <p className="text-sm text-blue-400">
+          <strong>Tip:</strong> After creating the group, use the settings icon to configure
+          allowed RPC methods, claims, and rate limits.
+        </p>
       </div>
 
       <div className="flex justify-end gap-3 pt-2">

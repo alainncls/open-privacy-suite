@@ -24,21 +24,23 @@ test.describe('RBAC Function Selector Enforcement', () => {
   test('allows function selector in allowlist via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('funcselectororg');
     const group = await ctx.fixture.createGroup(org.id, 'funcselectorgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    const testContract = ctx.contractAddress();
+    const contract = await ctx.fixture.createContract(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [testContract],
-      address_functions: {
-        [testContract.toLowerCase()]: [TRANSFER_SELECTOR, BALANCE_OF_SELECTOR],
-      },
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+
+    // Grant with specific function selectors
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+      functions: [TRANSFER_SELECTOR, BALANCE_OF_SELECTOR],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Transfer should be allowed
@@ -46,7 +48,8 @@ test.describe('RBAC Function Selector Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: testContract,
+      target_address: contract.address,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(true);
@@ -55,22 +58,23 @@ test.describe('RBAC Function Selector Enforcement', () => {
   test('denies function selector NOT in allowlist via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('funcselectordenyorg');
     const group = await ctx.fixture.createGroup(org.id, 'funcselectordenygroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    const testContract = ctx.contractAddress();
+    const contract = await ctx.fixture.createContract(org.id);
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
 
     // Only allow balanceOf, not transfer or approve
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [testContract],
-      address_functions: {
-        [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
-      },
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+      functions: [BALANCE_OF_SELECTOR],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // balanceOf should be allowed
@@ -78,34 +82,39 @@ test.describe('RBAC Function Selector Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: testContract,
+      target_address: contract.address,
+      required_claims: ['read'],
     });
     expect(result.allowed).toBe(true);
   });
 
-  test('allows all functions when no address_functions restriction exists', async ({ request }) => {
+  test('allows all functions when no functions restriction exists', async ({ request }) => {
     const org = await ctx.fixture.createOrg('nofuncrestrictorg');
     const group = await ctx.fixture.createGroup(org.id, 'nofuncrestrictgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    const testContract = ctx.contractAddress();
+    const contract = await ctx.fixture.createContract(org.id);
 
-    // No address_functions specified - all functions allowed
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [testContract],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+
+    // No functions specified in grant - all functions allowed
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: testContract,
+      target_address: contract.address,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(true);
@@ -113,28 +122,30 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
   test('RPC request allowed for function selector in allowlist', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcfuncselectorgroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpcfuncselectorrole', ['reader']);
 
-    const testContract = ctx.contractAddress();
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [testContract],
-      address_functions: {
-        [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
-      },
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+
+    // Grant with specific function selector
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+      functions: [BALANCE_OF_SELECTOR],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
     // Call with allowed function selector
     const { status } = await makeRPCRequest(request, token, 'eth_call', [
       {
-        to: testContract,
+        to: contract.address,
         data: BALANCE_OF_SELECTOR + '0000000000000000000000000000000000000000000000000000000000000001',
       },
       'latest',
@@ -145,29 +156,30 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
   test('RPC request denied for function selector NOT in allowlist', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcfuncselectordenygroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpcfuncselectordenyrole', ['reader']);
 
-    const testContract = ctx.contractAddress();
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
 
     // Only allow balanceOf
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [testContract],
-      address_functions: {
-        [testContract.toLowerCase()]: [BALANCE_OF_SELECTOR],
-      },
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+      functions: [BALANCE_OF_SELECTOR],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
     // Call with disallowed function selector (approve)
     const { status, body } = await makeRPCRequest(request, token, 'eth_call', [
       {
-        to: testContract,
+        to: contract.address,
         data: APPROVE_SELECTOR + '0000000000000000000000000000000000000000000000000000000000000001',
       },
       'latest',

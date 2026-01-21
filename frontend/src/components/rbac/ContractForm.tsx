@@ -1,34 +1,30 @@
 import { useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { ContractOwnership, Group } from '@/types/rbac';
+import type { Contract } from '@/types/rbac';
+
+// Helper to get contract address from either new or legacy format
+const getContractAddress = (contract: Contract): string => {
+  return contract.address || contract.contract_address || '';
+};
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { AlertCircle, Save, X, Loader2, FolderTree } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2 } from 'lucide-react';
 
 interface ContractFormProps {
   orgId: string;
-  groups: Group[];
-  contract?: ContractOwnership;
+  contract?: Contract;
   onClose: () => void;
   onSave: () => void;
 }
 
 export default function ContractForm({
   orgId,
-  groups,
   contract,
   onClose,
   onSave,
 }: ContractFormProps) {
-  const [contractAddress, setContractAddress] = useState(contract?.contract_address || '');
-  const [ownerGroupId, setOwnerGroupId] = useState(contract?.owner_group_id || '');
+  const [address, setAddress] = useState(contract ? getContractAddress(contract) : '');
+  const [name, setName] = useState(contract?.name || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,24 +32,18 @@ export default function ContractForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!ownerGroupId) {
-      setError('Please select an owner group');
-      return;
-    }
-
     setSaving(true);
     setError(null);
 
     try {
       if (isEditing) {
-        await rbacApi.contracts.update(orgId, contract.contract_address, {
-          owner_group_id: ownerGroupId,
+        await rbacApi.contracts.update(orgId, getContractAddress(contract), {
+          name: name || undefined,
         });
       } else {
         await rbacApi.contracts.create(orgId, {
-          contract_address: contractAddress,
-          owner_group_id: ownerGroupId,
+          address: address.toLowerCase(),
+          name: name || undefined,
         });
       }
       onSave();
@@ -87,8 +77,8 @@ export default function ContractForm({
         </label>
         <Input
           type="text"
-          value={contractAddress}
-          onChange={e => setContractAddress(e.target.value)}
+          value={address}
+          onChange={e => setAddress(e.target.value)}
           placeholder="0x..."
           required
           disabled={isEditing}
@@ -102,31 +92,24 @@ export default function ContractForm({
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">Owner Group</label>
-        {groups.length === 0 ? (
-          <p className="text-white/40 text-sm py-2">
-            No groups available. Create a group first.
-          </p>
-        ) : (
-          <Select value={ownerGroupId} onValueChange={setOwnerGroupId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select owner group" />
-            </SelectTrigger>
-            <SelectContent>
-              {groups.map(group => (
-                <SelectItem key={group.id} value={group.id}>
-                  <div className="flex items-center gap-2">
-                    <FolderTree className="w-4 h-4 text-white/40" />
-                    <span>{group.name}</span>
-                    <span className="text-white/40 text-xs font-mono">({group.path})</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+        <label className="block text-sm font-medium text-white/70">
+          Name (optional)
+        </label>
+        <Input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="e.g., MyToken, Governance Contract"
+        />
         <p className="text-xs text-white/40">
-          The group that owns this contract. Members with appropriate role claims can perform actions on it.
+          A human-readable name for this contract
+        </p>
+      </div>
+
+      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+        <p className="text-sm text-blue-400">
+          <strong>Tip:</strong> After registering the contract, add grants to specify
+          which groups can access it and with what claims (read, write, admin, upgrade).
         </p>
       </div>
 
@@ -141,7 +124,7 @@ export default function ContractForm({
           <X className="w-4 h-4" />
           Cancel
         </Button>
-        <Button type="submit" disabled={saving || !ownerGroupId} className="gap-2">
+        <Button type="submit" disabled={saving} className="gap-2">
           {saving ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />

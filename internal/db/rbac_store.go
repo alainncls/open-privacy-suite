@@ -156,18 +156,18 @@ func (d *DB) DeleteOrganization(ctx context.Context, id string) error {
 // Group operations
 
 func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
 		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
-		group.Description, group.Depth, group.Path,
+		group.Description, group.Depth, group.Path, group.IsOrgAdmin,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
 func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
 	group := &rbac.Group{}
@@ -176,7 +176,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-		&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
+		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -196,7 +196,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 }
 
 func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug = $2`
 
 	group := &rbac.Group{}
@@ -205,7 +205,7 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 
 	err := d.conn.QueryRowContext(ctx, query, orgID, slug).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-		&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
+		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -225,15 +225,15 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 }
 
 func (d *DB) UpdateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `UPDATE groups SET slug = $2, name = $3, description = $4, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE groups SET slug = $2, name = $3, description = $4, is_org_admin = $5, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
-	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description)
+	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description, group.IsOrgAdmin)
 	return err
 }
 
 func (d *DB) ListGroups(ctx context.Context, orgID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE org_id = $1 ORDER BY path`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -246,7 +246,7 @@ func (d *DB) ListGroups(ctx context.Context, orgID string) ([]*rbac.Group, error
 }
 
 func (d *DB) ListGroupsByParent(ctx context.Context, parentID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE parent_id = $1 ORDER BY name`
 
 	rows, err := d.conn.QueryContext(ctx, query, parentID)
@@ -277,7 +277,7 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 		args[i+1] = part
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, parent_id, slug, name, description, depth, path, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug IN (%s) ORDER BY depth`, strings.Join(placeholders, ", "))
 
 	rows, err := d.conn.QueryContext(ctx, query, args...)
@@ -303,7 +303,7 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-			&description, &group.Depth, &group.Path, &group.CreatedAt, &group.UpdatedAt,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}
@@ -618,7 +618,7 @@ func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*
 
 func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
 	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.claims, cg.functions, cg.created_at, cg.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM contract_grants cg
 	          JOIN groups g ON cg.group_id = g.id
 	          WHERE cg.group_id = $1 ORDER BY cg.created_at`
@@ -643,7 +643,7 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			&result.Grant.ID, &result.Grant.ContractID, &result.Grant.GroupID,
 			&claims, &functions, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
-			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path,
+			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract grant with group: %w", err)
@@ -911,7 +911,7 @@ func (d *DB) ListUserMemberships(ctx context.Context, userID string) ([]*rbac.Us
 
 func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*rbac.MembershipWithDetails, error) {
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1`
@@ -927,7 +927,7 @@ func (d *DB) ListUserMembershipsWithDetails(ctx context.Context, userID string) 
 
 func (d *DB) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*rbac.MembershipWithDetails, error) {
 	query := `SELECT m.id, m.user_id, m.group_id, m.source, m.zk_credential_ref, m.expires_at, m.created_at, m.updated_at,
-	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.created_at, g.updated_at
+	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM user_memberships m
 	          JOIN groups g ON m.group_id = g.id
 	          WHERE m.user_id = $1 AND g.org_id = $2`
@@ -1041,7 +1041,7 @@ func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, 
 			&result.Membership.Source, &zkCredRef, &expiresAt,
 			&result.Membership.CreatedAt, &result.Membership.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &groupParentID, &result.Group.Slug,
-			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path,
+			&result.Group.Name, &groupDescription, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan membership: %w", err)

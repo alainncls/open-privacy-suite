@@ -1,7 +1,7 @@
 // RBAC TypeScript types mirroring backend models
 
-// Claims: read, write, admin, upgrade (no more deployer - use admin for deploy permissions)
-export type Claim = 'read' | 'write' | 'admin' | 'upgrade';
+// Claims: read, write, admin, upgrade, deploy
+export type Claim = 'read' | 'write' | 'admin' | 'upgrade' | 'deploy';
 
 export type MembershipSource = 'admin' | 'zk_attested';
 
@@ -24,6 +24,7 @@ export interface Group {
   description?: string;
   depth: number;
   path: string; // Materialized path (e.g., "root.engineering.devops")
+  is_org_admin?: boolean; // If true, members get all claims on all contracts in the org
   created_at: string;
   updated_at: string;
 }
@@ -32,14 +33,17 @@ export interface Group {
 export interface Contract {
   id: string;
   org_id: string;
-  address: string; // lowercase 0x-prefixed
+  address?: string; // lowercase 0x-prefixed (new format)
+  contract_address?: string; // legacy format - deprecated
   name?: string;
   deployed_by_user_id?: string | null;
   deployed_at?: string | null;
+  owner_group_id?: string; // legacy format - deprecated
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
+
 
 // ContractGrant - links groups to contracts with claims
 export interface ContractGrant {
@@ -156,11 +160,13 @@ export interface CreateGroupInput {
   name: string;
   description?: string;
   parent_id?: string | null;
+  is_org_admin?: boolean;
 }
 
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
+  is_org_admin?: boolean;
 }
 
 // Input for setting group access
@@ -208,7 +214,7 @@ export interface UpdateContractGrantInput {
 }
 
 // All available claims for reference
-export const ALL_CLAIMS: Claim[] = ['read', 'write', 'admin', 'upgrade'];
+export const ALL_CLAIMS: Claim[] = ['read', 'write', 'admin', 'upgrade', 'deploy'];
 
 // Claim labels for display
 export const CLAIM_LABELS: Record<Claim, string> = {
@@ -216,6 +222,7 @@ export const CLAIM_LABELS: Record<Claim, string> = {
   write: 'Write',
   admin: 'Admin',
   upgrade: 'Upgrade',
+  deploy: 'Deploy',
 };
 
 // Claim descriptions for tooltips
@@ -224,4 +231,5 @@ export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
   write: 'Can write/execute transactions (eth_sendTransaction)',
   admin: 'Full control - considered owner of the contract',
   upgrade: 'Can upgrade proxy contracts',
+  deploy: 'Can deploy new contracts (contract creation transactions)',
 };

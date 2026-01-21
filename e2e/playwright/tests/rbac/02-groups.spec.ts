@@ -58,49 +58,50 @@ test.describe('RBAC Groups', () => {
     expect(level3.path).toBe(`${level1.slug}.${level2.slug}.${level3.slug}`);
   });
 
-  test('sets and retrieves group permissions', async () => {
+  test('sets and retrieves group access', async () => {
     const org = await ctx.fixture.createOrg('permorg');
     const group = await ctx.fixture.createGroup(org.id, 'permgroup');
 
-    const perms = await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance'],
-      allow_addresses: ['0xabc123'],
-      owned_addresses: ['0xdef456'],
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
 
-    expect(perms.group_id).toBe(group.id);
-    expect(perms.allow_methods).toEqual(['eth_call', 'eth_getBalance']);
-    expect(perms.allow_addresses).toEqual(['0xabc123']);
-    expect(perms.owned_addresses).toEqual(['0xdef456']);
-    expect(perms.rate_limit_rps).toBe(100);
-    expect(perms.rate_limit_daily).toBe(10000);
+    expect(access.group_id).toBe(group.id);
+    expect(access.allowed_methods).toEqual(['eth_call', 'eth_getBalance']);
+    expect(access.default_claims).toContain('read');
+    expect(access.default_claims).toContain('write');
+    expect(access.rate_limit_rps).toBe(100);
+    expect(access.rate_limit_daily).toBe(10000);
 
     // Retrieve and verify
-    const retrieved = await ctx.rbac.getGroupPermissions(org.id, group.id);
+    const retrieved = await ctx.rbac.getGroupAccess(org.id, group.id);
     expect(retrieved).not.toBeNull();
-    expect(retrieved?.allow_methods).toEqual(['eth_call', 'eth_getBalance']);
+    expect(retrieved?.allowed_methods).toEqual(['eth_call', 'eth_getBalance']);
     expect(retrieved?.rate_limit_rps).toBe(100);
   });
 
-  test('updates group permissions', async () => {
+  test('updates group access', async () => {
     const org = await ctx.fixture.createOrg('updatepermorg');
     const group = await ctx.fixture.createGroup(org.id, 'updatepermgroup');
 
-    // Set initial permissions
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    // Set initial access
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 50,
     });
 
-    // Update permissions
-    const updated = await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+    // Update access
+    const updated = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
-    expect(updated.allow_methods).toEqual(['eth_call', 'eth_getBalance', 'eth_blockNumber']);
+    expect(updated.allowed_methods).toEqual(['eth_call', 'eth_getBalance', 'eth_blockNumber']);
     expect(updated.rate_limit_rps).toBe(100);
   });
 
@@ -180,16 +181,18 @@ test.describe('RBAC Groups', () => {
       {
         slug: 'root',
         name: 'Root',
-        permissions: {
-          allow_methods: ['eth_call', 'eth_getBalance'],
+        access: {
+          allowed_methods: ['eth_call', 'eth_getBalance'],
+          default_claims: ['read', 'write'],
           rate_limit_rps: 100,
         },
         children: [
           {
             slug: 'engineering',
             name: 'Engineering',
-            permissions: {
-              allow_methods: ['eth_call'],
+            access: {
+              allowed_methods: ['eth_call'],
+              default_claims: ['read', 'write'],
               rate_limit_rps: 50,
             },
             children: [
@@ -224,13 +227,13 @@ test.describe('RBAC Groups', () => {
     expect(devops.depth).toBe(2);
     expect(devops.parent_id).toBe(eng.id);
 
-    // Verify permissions were set
-    const rootPerms = await ctx.rbac.getGroupPermissions(org.id, root.id);
-    expect(rootPerms?.allow_methods).toEqual(['eth_call', 'eth_getBalance']);
-    expect(rootPerms?.rate_limit_rps).toBe(100);
+    // Verify access was set
+    const rootAccess = await ctx.rbac.getGroupAccess(org.id, root.id);
+    expect(rootAccess?.allowed_methods).toEqual(['eth_call', 'eth_getBalance']);
+    expect(rootAccess?.rate_limit_rps).toBe(100);
 
-    const engPerms = await ctx.rbac.getGroupPermissions(org.id, eng.id);
-    expect(engPerms?.allow_methods).toEqual(['eth_call']);
-    expect(engPerms?.rate_limit_rps).toBe(50);
+    const engAccess = await ctx.rbac.getGroupAccess(org.id, eng.id);
+    expect(engAccess?.allowed_methods).toEqual(['eth_call']);
+    expect(engAccess?.rate_limit_rps).toBe(50);
   });
 });

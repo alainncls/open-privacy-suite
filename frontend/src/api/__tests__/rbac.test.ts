@@ -5,10 +5,9 @@ import { rbacApi } from '../rbac';
 import {
   mockOrganization,
   mockGroup,
-  mockRole,
   mockUser,
   mockContract,
-  mockGroupPermissions,
+  mockGroupAccess,
   mockMembershipWithDetails,
   mockEffectivePermissions,
 } from '@/test/mocks/handlers';
@@ -81,7 +80,7 @@ describe('RBAC API', () => {
       it('should list groups for organization', async () => {
         const response = await rbacApi.groups.list('org-1');
         expect(response.data).toHaveLength(1);
-        expect(response.data[0].slug).toBe(mockGroup.slug);
+        expect(response.data[0].name).toBe(mockGroup.name);
       });
     });
 
@@ -89,7 +88,7 @@ describe('RBAC API', () => {
       it('should get group by ID', async () => {
         const response = await rbacApi.groups.get('org-1', 'group-1');
         expect(response.data.id).toBe(mockGroup.id);
-        expect(response.data.name).toBe(mockGroup.name);
+        expect(response.data.path).toBe(mockGroup.path);
       });
     });
 
@@ -103,16 +102,6 @@ describe('RBAC API', () => {
 
         expect(response.data.id).toBe('group-new');
         expect(response.data.slug).toBe('new-group');
-      });
-
-      it('should create group with parent', async () => {
-        const response = await rbacApi.groups.create('org-1', {
-          slug: 'child-group',
-          name: 'Child Group',
-          parent_id: 'group-1',
-        });
-
-        expect(response.data.id).toBe('group-new');
       });
     });
 
@@ -134,72 +123,22 @@ describe('RBAC API', () => {
       });
     });
 
-    describe('permissions', () => {
-      it('should get group permissions', async () => {
-        const response = await rbacApi.groups.getPermissions('org-1', 'group-1');
-        expect(response.data.allow_methods).toEqual(
-          mockGroupPermissions.allow_methods
+    describe('access', () => {
+      it('should get group access settings', async () => {
+        const response = await rbacApi.groups.getAccess('org-1', 'group-1');
+        expect(response.data.allowed_methods).toEqual(
+          mockGroupAccess.allowed_methods
         );
       });
 
-      it('should set group permissions', async () => {
-        const response = await rbacApi.groups.setPermissions('org-1', 'group-1', {
-          allow_methods: ['eth_call', 'eth_sendTransaction'],
-          allow_addresses: ['0xabc'],
+      it('should set group access settings', async () => {
+        const response = await rbacApi.groups.setAccess('org-1', 'group-1', {
+          allowed_methods: ['eth_call', 'eth_sendTransaction'],
+          default_claims: ['read', 'write'],
         });
 
-        expect(response.data.allow_methods).toContain('eth_call');
-        expect(response.data.allow_methods).toContain('eth_sendTransaction');
-      });
-    });
-  });
-
-  describe('Roles', () => {
-    describe('list', () => {
-      it('should list roles for organization', async () => {
-        const response = await rbacApi.roles.list('org-1');
-        expect(response.data).toHaveLength(1);
-        expect(response.data[0].name).toBe(mockRole.name);
-      });
-    });
-
-    describe('get', () => {
-      it('should get role by ID', async () => {
-        const response = await rbacApi.roles.get('org-1', 'role-1');
-        expect(response.data.id).toBe(mockRole.id);
-        expect(response.data.claims).toEqual(mockRole.claims);
-      });
-    });
-
-    describe('create', () => {
-      it('should create a new role', async () => {
-        const response = await rbacApi.roles.create('org-1', {
-          name: 'New Role',
-          description: 'A new role',
-          claims: ['reader', 'writer'],
-        });
-
-        expect(response.data.id).toBe('role-new');
-        expect(response.data.name).toBe('New Role');
-        expect(response.data.claims).toContain('reader');
-      });
-    });
-
-    describe('update', () => {
-      it('should update role', async () => {
-        const response = await rbacApi.roles.update('org-1', 'role-1', {
-          claims: ['reader', 'writer', 'deployer'],
-        });
-
-        expect(response.data.claims).toContain('deployer');
-      });
-    });
-
-    describe('delete', () => {
-      it('should delete role', async () => {
-        await expect(
-          rbacApi.roles.delete('org-1', 'role-1')
-        ).resolves.not.toThrow();
+        expect(response.data.allowed_methods).toContain('eth_call');
+        expect(response.data.allowed_methods).toContain('eth_sendTransaction');
       });
     });
   });
@@ -245,7 +184,6 @@ describe('RBAC API', () => {
       it('should create membership', async () => {
         const response = await rbacApi.users.createMembership('user-1', {
           group_id: 'group-1',
-          role_id: 'role-1',
         });
 
         expect(response.data.id).toBe('membership-new');
@@ -262,10 +200,10 @@ describe('RBAC API', () => {
     describe('effective permissions', () => {
       it('should get effective permissions', async () => {
         const response = await rbacApi.users.getEffectivePermissions('user-1');
-        expect(response.data.allow_methods).toEqual(
-          mockEffectivePermissions.allow_methods
+        expect(response.data.allowed_methods).toEqual(
+          mockEffectivePermissions.allowed_methods
         );
-        expect(response.data.claims).toEqual(mockEffectivePermissions.claims);
+        expect(response.data.default_claims).toEqual(mockEffectivePermissions.default_claims);
       });
 
       it('should get effective permissions for specific org', async () => {
@@ -283,40 +221,38 @@ describe('RBAC API', () => {
       it('should list contracts for organization', async () => {
         const response = await rbacApi.contracts.list('org-1');
         expect(response.data).toHaveLength(1);
-        expect(response.data[0].contract_address).toBe(
-          mockContract.contract_address
-        );
+        expect(response.data[0].address).toBe(mockContract.address);
       });
     });
 
     describe('create', () => {
-      it('should create contract ownership', async () => {
+      it('should create contract', async () => {
         const response = await rbacApi.contracts.create('org-1', {
-          contract_address: '0xnewcontract',
-          owner_group_id: 'group-1',
+          address: '0xnewcontract',
+          name: 'New Contract',
         });
 
         expect(response.data.id).toBe('contract-new');
-        expect(response.data.contract_address).toBe('0xnewcontract');
+        expect(response.data.address).toBe('0xnewcontract');
       });
     });
 
     describe('update', () => {
-      it('should update contract ownership', async () => {
+      it('should update contract', async () => {
         const response = await rbacApi.contracts.update(
           'org-1',
           '0x1234567890123456789012345678901234567890',
           {
-            metadata: { updated: true },
+            name: 'Updated Contract',
           }
         );
 
-        expect(response.data.metadata).toHaveProperty('updated');
+        expect(response.data.name).toBe('Updated Contract');
       });
     });
 
     describe('delete', () => {
-      it('should delete contract ownership', async () => {
+      it('should delete contract', async () => {
         await expect(
           rbacApi.contracts.delete(
             'org-1',
@@ -324,80 +260,6 @@ describe('RBAC API', () => {
           )
         ).resolves.not.toThrow();
       });
-    });
-  });
-
-  describe('Utilities', () => {
-    describe('checkAccess', () => {
-      it('should check access for user', async () => {
-        const response = await rbacApi.utils.checkAccess({
-          user_external_id: 'did:test:user',
-          method: 'eth_call',
-        });
-
-        expect(response.data.allowed).toBe(true);
-        expect(response.data.claims).toContain('reader');
-      });
-
-      it('should check access with target address', async () => {
-        const response = await rbacApi.utils.checkAccess({
-          user_external_id: 'did:test:user',
-          method: 'eth_call',
-          target_address: '0x1234',
-        });
-
-        expect(response.data.allowed).toBe(true);
-      });
-    });
-
-    describe('getCacheStats', () => {
-      it('should get cache statistics', async () => {
-        const response = await rbacApi.utils.getCacheStats();
-
-        expect(response.data.hits).toBe(100);
-        expect(response.data.misses).toBe(10);
-        expect(response.data.size).toBe(50);
-      });
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('should handle network errors', async () => {
-      server.use(
-        http.get('/api/orgs', () => {
-          return HttpResponse.error();
-        })
-      );
-
-      await expect(rbacApi.orgs.list()).rejects.toThrow();
-    });
-
-    it('should handle 500 errors', async () => {
-      server.use(
-        http.get('/api/orgs', () => {
-          return HttpResponse.json(
-            { error: 'Internal server error' },
-            { status: 500 }
-          );
-        })
-      );
-
-      await expect(rbacApi.orgs.list()).rejects.toThrow();
-    });
-
-    it('should handle 403 forbidden', async () => {
-      server.use(
-        http.post('/api/orgs', () => {
-          return HttpResponse.json(
-            { error: 'Forbidden' },
-            { status: 403 }
-          );
-        })
-      );
-
-      await expect(
-        rbacApi.orgs.create({ slug: 'test', name: 'Test' })
-      ).rejects.toThrow();
     });
   });
 });

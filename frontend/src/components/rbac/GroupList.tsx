@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Group, GroupPermissions, Role } from '@/types/rbac';
+import type { Group, GroupAccess } from '@/types/rbac';
 import GroupForm from './GroupForm';
-import GroupPermissionsForm from './GroupPermissionsForm';
+import GroupAccessForm from './GroupAccessForm';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,20 +24,18 @@ import {
   Shield,
 } from 'lucide-react';
 
-interface GroupWithPermissions extends Group {
-  permissions?: GroupPermissions | null;
-  role?: Role | null;
+interface GroupWithAccess extends Group {
+  access?: GroupAccess | null;
 }
 
 export default function GroupList() {
   const { selectedOrg } = useOrgContext();
   const orgId = selectedOrg?.id || '';
-  const [groups, setGroups] = useState<GroupWithPermissions[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
+  const [groups, setGroups] = useState<GroupWithAccess[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
-  const [editingPermissions, setEditingPermissions] = useState<Group | null>(null);
+  const [editingAccess, setEditingAccess] = useState<Group | null>(null);
   const [parentForNew, setParentForNew] = useState<Group | null>(null);
 
   useEffect(() => {
@@ -51,44 +49,33 @@ export default function GroupList() {
     try {
       setLoading(true);
 
-      // Load groups and roles in parallel
-      const [groupsResponse, rolesResponse] = await Promise.all([
-        rbacApi.groups.list(orgId),
-        rbacApi.roles.list(orgId),
-      ]);
+      const groupsResponse = await rbacApi.groups.list(orgId);
       const groupsList = groupsResponse.data || [];
-      const rolesList = rolesResponse.data || [];
-      setRoles(rolesList);
 
-      // Create a map of roles for quick lookup
-      const rolesMap = new Map(rolesList.map(r => [r.id, r]));
-
-      // Load permissions for each group
-      const groupsWithPermissions = await Promise.all(
+      // Load access settings for each group
+      const groupsWithAccess = await Promise.all(
         groupsList.map(async group => {
           try {
-            const permsResponse = await rbacApi.groups.getPermissions(
+            const accessResponse = await rbacApi.groups.getAccess(
               orgId,
               group.id
             );
             return {
               ...group,
-              permissions: permsResponse.data,
-              role: group.role_id ? rolesMap.get(group.role_id) || null : null,
+              access: accessResponse.data,
             };
           } catch {
             return {
               ...group,
-              permissions: null,
-              role: group.role_id ? rolesMap.get(group.role_id) || null : null,
+              access: null,
             };
           }
         })
       );
 
       // Sort by path for hierarchical display
-      groupsWithPermissions.sort((a, b) => a.path.localeCompare(b.path));
-      setGroups(groupsWithPermissions);
+      groupsWithAccess.sort((a, b) => a.path.localeCompare(b.path));
+      setGroups(groupsWithAccess);
     } catch (error) {
       console.error('Failed to load groups:', error);
       setGroups([]);
@@ -117,8 +104,8 @@ export default function GroupList() {
     await loadGroups();
   };
 
-  const handlePermissionsSave = async () => {
-    setEditingPermissions(null);
+  const handleAccessSave = async () => {
+    setEditingAccess(null);
     await loadGroups();
   };
 
@@ -133,11 +120,11 @@ export default function GroupList() {
   const getChildGroups = (parentId: string) =>
     groups.filter(g => g.parent_id === parentId);
 
-  const renderGroup = (group: GroupWithPermissions, level: number = 0) => {
+  const renderGroup = (group: GroupWithAccess, level: number = 0) => {
     const children = getChildGroups(group.id);
-    const hasAddresses =
-      group.permissions &&
-      (group.permissions.allow_addresses?.length || 0) > 0;
+    const hasMethods =
+      group.access &&
+      (group.access.allowed_methods?.length || 0) > 0;
 
     return (
       <div key={group.id} className="animate-fade-in">
@@ -161,20 +148,20 @@ export default function GroupList() {
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
                   {group.slug}
                 </Badge>
-                {group.role && (
-                  <Badge variant="secondary" className="text-xs flex-shrink-0 gap-1">
+                {group.is_org_admin && (
+                  <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 gap-1 flex-shrink-0">
                     <Shield className="w-3 h-3" />
-                    {group.role.name}
+                    Org Admin
                   </Badge>
                 )}
               </div>
               <div className="flex items-center gap-1 text-xs text-white/40 mt-0.5">
                 <span className="font-mono">{group.path}</span>
-                {hasAddresses && (
+                {hasMethods && (
                   <>
                     <ChevronRight className="w-3 h-3" />
                     <span>
-                      {group.permissions?.allow_addresses?.length || 0} addresses
+                      {group.access?.allowed_methods?.length || 0} methods
                     </span>
                   </>
                 )}
@@ -194,8 +181,8 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setEditingPermissions(group)}
-              title="Edit permissions"
+              onClick={() => setEditingAccess(group)}
+              title="Edit access settings"
             >
               <Settings className="w-4 h-4" />
             </Button>
@@ -221,7 +208,7 @@ export default function GroupList() {
 
         {children.length > 0 && (
           <div className="mt-2 space-y-2">
-            {children.map(child => renderGroup(child as GroupWithPermissions, level + 1))}
+            {children.map(child => renderGroup(child as GroupWithAccess, level + 1))}
           </div>
         )}
       </div>
@@ -285,7 +272,6 @@ export default function GroupList() {
           <GroupForm
             orgId={orgId}
             groups={groups}
-            roles={roles}
             parentId={parentForNew?.id}
             onClose={() => {
               setShowForm(false);
@@ -307,7 +293,6 @@ export default function GroupList() {
               key={editing.id}
               orgId={orgId}
               groups={groups}
-              roles={roles}
               group={editing}
               onClose={() => setEditing(null)}
               onSave={handleSave}
@@ -316,23 +301,23 @@ export default function GroupList() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Permissions Dialog */}
+      {/* Edit Access Dialog */}
       <Dialog
-        open={!!editingPermissions}
-        onOpenChange={open => !open && setEditingPermissions(null)}
+        open={!!editingAccess}
+        onOpenChange={open => !open && setEditingAccess(null)}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              Edit Permissions for "{editingPermissions?.name}"
+              Edit Access for "{editingAccess?.name}"
             </DialogTitle>
           </DialogHeader>
-          {editingPermissions && (
-            <GroupPermissionsForm
+          {editingAccess && (
+            <GroupAccessForm
               orgId={orgId}
-              groupId={editingPermissions.id}
-              onClose={() => setEditingPermissions(null)}
-              onSave={handlePermissionsSave}
+              groupId={editingAccess.id}
+              onClose={() => setEditingAccess(null)}
+              onSave={handleAccessSave}
             />
           )}
         </DialogContent>

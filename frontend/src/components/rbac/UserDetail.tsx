@@ -17,7 +17,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  Shield,
   Check,
   X,
   Loader2,
@@ -352,15 +351,6 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 mt-1">
-                      {m.role ? (
-                        <Badge variant="secondary" className="text-xs gap-1">
-                          <Shield className="w-3 h-3" />
-                          {m.role.name}
-                          {m.group?.role_id ? ' (from group)' : ' (legacy)'}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-white/40">No role assigned</span>
-                      )}
                       {m.membership?.source && (
                         <Badge
                           variant="outline"
@@ -403,10 +393,10 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
           {effectivePerms ? (
             <div className="p-4 rounded-lg bg-white/5 space-y-4">
               <div>
-                <label className="text-xs text-white/50 mb-1 block">Claims</label>
-                {effectivePerms.claims && effectivePerms.claims.length > 0 ? (
+                <label className="text-xs text-white/50 mb-1 block">Default Claims</label>
+                {effectivePerms.default_claims && effectivePerms.default_claims.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
-                    {effectivePerms.claims.map(claim => (
+                    {effectivePerms.default_claims.map(claim => (
                       <Badge
                         key={claim}
                         variant="outline"
@@ -423,18 +413,18 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
               <div>
                 <label className="text-xs text-white/50 mb-1 block">
-                  Allowed Methods ({effectivePerms.allow_methods?.length || 0})
+                  Allowed Methods ({effectivePerms.allowed_methods?.length || 0})
                 </label>
-                {effectivePerms.allow_methods && effectivePerms.allow_methods.length > 0 ? (
+                {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
-                    {effectivePerms.allow_methods.slice(0, 10).map(method => (
+                    {effectivePerms.allowed_methods.slice(0, 10).map((method: string) => (
                       <Badge key={method} variant="outline" className="text-xs font-mono">
                         {method}
                       </Badge>
                     ))}
-                    {effectivePerms.allow_methods.length > 10 && (
+                    {effectivePerms.allowed_methods.length > 10 && (
                       <Badge variant="secondary" className="text-xs">
-                        +{effectivePerms.allow_methods.length - 10} more
+                        +{effectivePerms.allowed_methods.length - 10} more
                       </Badge>
                     )}
                   </div>

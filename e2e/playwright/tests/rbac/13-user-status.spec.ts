@@ -16,16 +16,15 @@ test.describe('RBAC User Status Enforcement', () => {
   test('banned user is denied via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('bannedorg');
     const group = await ctx.fixture.createGroup(org.id, 'bannedgroup');
-    const role = await ctx.fixture.createAdminRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       banned: true, // User is banned
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -41,15 +40,14 @@ test.describe('RBAC User Status Enforcement', () => {
   test('banned user denied via RPC request', async ({ request }) => {
     const org = await ctx.fixture.createOrg('bannedrpcorg');
     const group = await ctx.fixture.createGroup(org.id, 'bannedrpcgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { token, user } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Ban the user after they have a token
@@ -65,15 +63,14 @@ test.describe('RBAC User Status Enforcement', () => {
   test('non-KYC user is denied via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('nokycorg');
     const group = await ctx.fixture.createGroup(org.id, 'nokycgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false, // No KYC
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -89,15 +86,14 @@ test.describe('RBAC User Status Enforcement', () => {
   test('non-KYC user denied via RPC request', async ({ request }) => {
     const org = await ctx.fixture.createOrg('nokycrpcorg');
     const group = await ctx.fixture.createGroup(org.id, 'nokycrpcgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false, // No KYC
-      roleId: role.id,
     });
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
@@ -110,15 +106,14 @@ test.describe('RBAC User Status Enforcement', () => {
   test('KYC update enables access', async ({ request }) => {
     const org = await ctx.fixture.createOrg('kycupdateorg');
     const group = await ctx.fixture.createGroup(org.id, 'kycupdategroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did, token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false, // Start without KYC
-      roleId: role.id,
     });
 
     // First request should fail
@@ -145,16 +140,15 @@ test.describe('RBAC User Status Enforcement', () => {
   test('unbanning user restores access', async ({ request }) => {
     const org = await ctx.fixture.createOrg('unbanorg');
     const group = await ctx.fixture.createGroup(org.id, 'unbangroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       banned: true, // Start banned
-      roleId: role.id,
     });
 
     // First request should fail
@@ -194,17 +188,16 @@ test.describe('RBAC User Status Enforcement', () => {
   test('banned takes precedence over other checks', async ({ request }) => {
     const org = await ctx.fixture.createOrg('bannedprecedenceorg');
     const group = await ctx.fixture.createGroup(org.id, 'bannedprecedencegroup');
-    const role = await ctx.fixture.createAdminRole(org.id);
 
     // Even with full permissions
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_sendTransaction'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write', 'deploy', 'admin', 'upgrade'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       banned: true, // Banned overrides everything
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -221,16 +214,15 @@ test.describe('RBAC User Status Enforcement', () => {
   test('KYC check happens after ban check', async ({ request }) => {
     const org = await ctx.fixture.createOrg('orderedcheckorg');
     const group = await ctx.fixture.createGroup(org.id, 'orderedcheckgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false, // No KYC
       banned: true, // Also banned
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({

@@ -17,7 +17,6 @@ import AccessLogs from './components/AccessLogs';
 import RBACManager from './components/rbac/RBACManager';
 import OrganizationList from './components/rbac/OrganizationList';
 import GroupList from './components/rbac/GroupList';
-import RoleList from './components/rbac/RoleList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
 import './index.css';
@@ -55,7 +54,6 @@ function Root() {
                     <Route index element={<Navigate to="organizations" replace />} />
                     <Route path="organizations" element={<OrganizationList />} />
                     <Route path="groups" element={<GroupList />} />
-                    <Route path="roles" element={<RoleList />} />
                     <Route path="users" element={<UserList />} />
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />

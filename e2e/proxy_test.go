@@ -223,15 +223,13 @@ func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banne
 		t.Fatalf("failed to create RBAC user: %v", err)
 	}
 
-	// Add to default group with default role
+	// Add to default group (permissions come from GroupAccess, not roles)
 	defaultGroupID := "00000000-0000-0000-0000-000000000001"
-	defaultRoleID := "00000000-0000-0000-0000-000000000003" // user role
 
 	membership := &rbac.UserMembership{
 		ID:      uuid.New().String(),
 		UserID:  user.ID,
 		GroupID: defaultGroupID,
-		RoleID:  &defaultRoleID,
 		Source:  rbac.MembershipSourceAdmin,
 	}
 

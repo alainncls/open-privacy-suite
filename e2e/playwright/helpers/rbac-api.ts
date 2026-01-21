@@ -4,7 +4,10 @@ const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://loca
 
 // === Types ===
 
-export type Claim = 'reader' | 'writer' | 'deployer' | 'admin' | 'upgrade';
+// Claims: read, write, admin, upgrade, deploy
+export type Claim = 'read' | 'write' | 'admin' | 'upgrade' | 'deploy';
+
+export type MembershipSource = 'admin' | 'zk_attested';
 
 export interface Organization {
   id: string;
@@ -28,25 +31,14 @@ export interface Group {
   updated_at: string;
 }
 
-export interface GroupPermissions {
+// GroupAccess - RPC method permissions and rate limits for a group (replaces old GroupPermissions)
+export interface GroupAccess {
   id: string;
   group_id: string;
-  allow_methods: string[];
-  allow_addresses: string[];
-  owned_addresses: string[];
-  address_functions?: Record<string, string[]>; // address -> allowed function selectors
+  allowed_methods: string[];
+  default_claims: Claim[];
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Role {
-  id: string;
-  org_id: string;
-  name: string;
-  description: string;
-  claims: Claim[];
   created_at: string;
   updated_at: string;
 }
@@ -66,8 +58,7 @@ export interface UserMembership {
   id: string;
   user_id: string;
   group_id: string;
-  role_id: string | null;
-  source: 'admin' | 'zk_attested';
+  source: MembershipSource;
   zk_credential_ref: string;
   expires_at: string | null;
   created_at: string;
@@ -77,30 +68,52 @@ export interface UserMembership {
 export interface MembershipWithDetails {
   membership: UserMembership;
   group: Group;
-  role: Role | null;
 }
 
-export interface ContractOwnership {
+// Contract - first-class resource (replaces old ContractOwnership)
+export interface Contract {
   id: string;
-  contract_address: string;
   org_id: string;
-  owner_group_id: string;
-  deployed_by_user_id: string | null;
-  deployed_at: string | null;
+  address?: string; // new format
+  contract_address?: string; // legacy format - deprecated
+  name?: string;
+  deployed_by_user_id?: string | null;
+  deployed_at?: string | null;
+  owner_group_id?: string; // legacy format - deprecated
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+// Helper to get contract address from either format
+export function getContractAddress(contract: Contract): string {
+  return contract.address || contract.contract_address || '';
+}
+
+// ContractGrant - links groups to contracts with claims
+export interface ContractGrant {
+  id: string;
+  contract_id: string;
+  group_id: string;
+  claims: Claim[];
+  functions?: string[] | null; // null = all functions, or specific selectors
+  created_at: string;
+  updated_at: string;
+}
+
+// ContractAccess - per-contract permissions in EffectivePermissions
+export interface ContractAccess {
+  claims: Claim[];
+  functions?: string[] | null;
 }
 
 export interface EffectivePermissions {
   id: string;
   user_id: string;
   org_id: string;
-  allow_methods: string[];
-  allow_addresses: string[];
-  owned_addresses: string[];
-  address_functions?: Record<string, string[]>; // address -> allowed function selectors
-  claims: Claim[];
+  allowed_methods: string[];
+  contract_access: Record<string, ContractAccess>; // address -> access
+  default_claims: Claim[];
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
   computed_at: string;
@@ -156,25 +169,11 @@ export interface UpdateGroupInput {
   description?: string;
 }
 
-export interface SetGroupPermissionsInput {
-  allow_methods?: string[];
-  allow_addresses?: string[];
-  owned_addresses?: string[];
-  address_functions?: Record<string, string[]>; // address -> allowed function selectors
+export interface SetGroupAccessInput {
+  allowed_methods?: string[];
+  default_claims?: Claim[];
   rate_limit_rps?: number;
   rate_limit_daily?: number;
-}
-
-export interface CreateRoleInput {
-  name: string;
-  description?: string;
-  claims?: Claim[];
-}
-
-export interface UpdateRoleInput {
-  name?: string;
-  description?: string;
-  claims?: Claim[];
 }
 
 export interface UpdateUserInput {
@@ -186,18 +185,28 @@ export interface UpdateUserInput {
 
 export interface CreateMembershipInput {
   group_id: string;
-  role_id?: string;
 }
 
 export interface CreateContractInput {
-  contract_address: string;
-  owner_group_id: string;
+  address: string;
+  name?: string;
   metadata?: Record<string, unknown>;
 }
 
 export interface UpdateContractInput {
-  owner_group_id?: string;
+  name?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface CreateContractGrantInput {
+  group_id: string;
+  claims: Claim[];
+  functions?: string[] | null;
+}
+
+export interface UpdateContractGrantInput {
+  claims?: Claim[];
+  functions?: string[] | null;
 }
 
 // === API Client ===
@@ -309,27 +318,27 @@ export class RBACApiClient {
     }
   }
 
-  async getGroupPermissions(orgId: string, groupId: string): Promise<GroupPermissions | null> {
+  async getGroupAccess(orgId: string, groupId: string): Promise<GroupAccess | null> {
     const response = await this.request.get(
-      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/permissions`
+      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/access`
     );
     if (response.status() === 404) {
       return null;
     }
     if (!response.ok()) {
       const body = await response.text();
-      throw new Error(`Failed to get group permissions: ${response.status()} - ${body}`);
+      throw new Error(`Failed to get group access: ${response.status()} - ${body}`);
     }
-    return (await response.json()) as GroupPermissions;
+    return (await response.json()) as GroupAccess;
   }
 
-  async setGroupPermissions(
+  async setGroupAccess(
     orgId: string,
     groupId: string,
-    input: SetGroupPermissionsInput
-  ): Promise<GroupPermissions> {
+    input: SetGroupAccessInput
+  ): Promise<GroupAccess> {
     const response = await this.request.put(
-      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/permissions`,
+      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/access`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: input,
@@ -337,65 +346,9 @@ export class RBACApiClient {
     );
     if (!response.ok()) {
       const body = await response.text();
-      throw new Error(`Failed to set group permissions: ${response.status()} - ${body}`);
+      throw new Error(`Failed to set group access: ${response.status()} - ${body}`);
     }
-    return (await response.json()) as GroupPermissions;
-  }
-
-  // === Roles ===
-
-  async listRoles(orgId: string): Promise<Role[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/roles`);
-    if (!response.ok()) {
-      const body = await response.text();
-      throw new Error(`Failed to list roles: ${response.status()} - ${body}`);
-    }
-    const roles = (await response.json()) as Role[] | null;
-    return roles ?? [];
-  }
-
-  async createRole(orgId: string, input: CreateRoleInput): Promise<Role> {
-    const response = await this.request.post(`${ADMIN_URL}/api/orgs/${orgId}/roles`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: input,
-    });
-    if (!response.ok()) {
-      const body = await response.text();
-      throw new Error(`Failed to create role: ${response.status()} - ${body}`);
-    }
-    return (await response.json()) as Role;
-  }
-
-  async getRole(orgId: string, roleId: string): Promise<Role | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/roles/${roleId}`);
-    if (response.status() === 404) {
-      return null;
-    }
-    if (!response.ok()) {
-      const body = await response.text();
-      throw new Error(`Failed to get role: ${response.status()} - ${body}`);
-    }
-    return (await response.json()) as Role;
-  }
-
-  async updateRole(orgId: string, roleId: string, input: UpdateRoleInput): Promise<Role> {
-    const response = await this.request.put(`${ADMIN_URL}/api/orgs/${orgId}/roles/${roleId}`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: input,
-    });
-    if (!response.ok()) {
-      const body = await response.text();
-      throw new Error(`Failed to update role: ${response.status()} - ${body}`);
-    }
-    return (await response.json()) as Role;
-  }
-
-  async deleteRole(orgId: string, roleId: string): Promise<void> {
-    const response = await this.request.delete(`${ADMIN_URL}/api/orgs/${orgId}/roles/${roleId}`);
-    if (!response.ok() && response.status() !== 404) {
-      const body = await response.text();
-      throw new Error(`Failed to delete role: ${response.status()} - ${body}`);
-    }
+    return (await response.json()) as GroupAccess;
   }
 
   // === Users ===
@@ -477,17 +430,17 @@ export class RBACApiClient {
 
   // === Contracts ===
 
-  async listContracts(orgId: string): Promise<ContractOwnership[]> {
+  async listContracts(orgId: string): Promise<Contract[]> {
     const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/contracts`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list contracts: ${response.status()} - ${body}`);
     }
-    const contracts = (await response.json()) as ContractOwnership[] | null;
+    const contracts = (await response.json()) as Contract[] | null;
     return contracts ?? [];
   }
 
-  async createContract(orgId: string, input: CreateContractInput): Promise<ContractOwnership> {
+  async createContract(orgId: string, input: CreateContractInput): Promise<Contract> {
     const response = await this.request.post(`${ADMIN_URL}/api/orgs/${orgId}/contracts`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
@@ -496,14 +449,14 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to create contract: ${response.status()} - ${body}`);
     }
-    return (await response.json()) as ContractOwnership;
+    return (await response.json()) as Contract;
   }
 
   async updateContract(
     orgId: string,
     address: string,
     input: UpdateContractInput
-  ): Promise<ContractOwnership> {
+  ): Promise<Contract> {
     const response = await this.request.put(
       `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}`,
       {
@@ -515,7 +468,7 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to update contract: ${response.status()} - ${body}`);
     }
-    return (await response.json()) as ContractOwnership;
+    return (await response.json()) as Contract;
   }
 
   async deleteContract(orgId: string, address: string): Promise<void> {
@@ -525,6 +478,69 @@ export class RBACApiClient {
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
       throw new Error(`Failed to delete contract: ${response.status()} - ${body}`);
+    }
+  }
+
+  // === Contract Grants ===
+
+  async listContractGrants(orgId: string, address: string): Promise<ContractGrant[]> {
+    const response = await this.request.get(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants`
+    );
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to list contract grants: ${response.status()} - ${body}`);
+    }
+    const grants = (await response.json()) as ContractGrant[] | null;
+    return grants ?? [];
+  }
+
+  async createContractGrant(
+    orgId: string,
+    address: string,
+    input: CreateContractGrantInput
+  ): Promise<ContractGrant> {
+    const response = await this.request.post(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants`,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        data: input,
+      }
+    );
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to create contract grant: ${response.status()} - ${body}`);
+    }
+    return (await response.json()) as ContractGrant;
+  }
+
+  async updateContractGrant(
+    orgId: string,
+    address: string,
+    groupId: string,
+    input: UpdateContractGrantInput
+  ): Promise<ContractGrant> {
+    const response = await this.request.put(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants/${groupId}`,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        data: input,
+      }
+    );
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to update contract grant: ${response.status()} - ${body}`);
+    }
+    return (await response.json()) as ContractGrant;
+  }
+
+  async deleteContractGrant(orgId: string, address: string, groupId: string): Promise<void> {
+    const response = await this.request.delete(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants/${groupId}`
+    );
+    if (!response.ok() && response.status() !== 404) {
+      const body = await response.text();
+      throw new Error(`Failed to delete contract grant: ${response.status()} - ${body}`);
     }
   }
 

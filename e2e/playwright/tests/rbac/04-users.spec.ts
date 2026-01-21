@@ -111,18 +111,21 @@ test.describe('RBAC Users', () => {
     expect(membership.source).toBe('admin');
   });
 
-  test('adds membership with role', async ({ request }) => {
+  test('adds membership to group with access', async ({ request }) => {
     const org = await ctx.fixture.createOrg('memberroleorg');
     const group = await ctx.fixture.createGroup(org.id, 'memberrolegroup');
-    const role = await ctx.fixture.createRole(org.id, 'memberrole', ['reader', 'writer']);
     const { user } = await ctx.fixture.createUser(request);
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
+    });
 
     const membership = await ctx.rbac.createMembership(user.id, {
       group_id: group.id,
-      role_id: role.id,
     });
 
-    expect(membership.role_id).toBe(role.id);
+    expect(membership.group_id).toBe(group.id);
   });
 
   test('lists user memberships', async ({ request }) => {
@@ -167,27 +170,28 @@ test.describe('RBAC Users', () => {
   test('creates user with membership using fixture helper', async ({ request }) => {
     const org = await ctx.fixture.createOrg('fixtureorg');
     const group = await ctx.fixture.createGroup(org.id, 'fixturegroup');
-    const role = await ctx.fixture.createRole(org.id, 'fixturerole', ['reader']);
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
+    });
 
     const { user, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     expect(user.kyc).toBe(true);
     expect(membership.group_id).toBe(group.id);
-    expect(membership.role_id).toBe(role.id);
   });
 
   test('adds multiple memberships using fixture helper', async ({ request }) => {
     const org = await ctx.fixture.createOrg('multimemberorg');
     const group1 = await ctx.fixture.createGroup(org.id, 'multi1');
     const group2 = await ctx.fixture.createGroup(org.id, 'multi2');
-    const role = await ctx.fixture.createRole(org.id, 'multirole', ['reader']);
     const { user } = await ctx.fixture.createUser(request);
 
     await ctx.fixture.addMembership(user.id, group1.id);
-    await ctx.fixture.addMembership(user.id, group2.id, role.id);
+    await ctx.fixture.addMembership(user.id, group2.id);
 
     const memberships = await ctx.rbac.listUserMemberships(user.id);
     const groupIds = memberships.map((m) => m.membership.group_id);

@@ -21,15 +21,14 @@ test.describe('Multicall Blocking', () => {
 
   async function createUserWithEthCallPermission(request: Parameters<typeof ctx.fixture.createUserWithMembership>[0]) {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup');
-    const role = await ctx.fixture.createReaderRole(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance'],
+      default_claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 

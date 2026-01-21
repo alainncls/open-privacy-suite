@@ -15,16 +15,15 @@ test.describe('RBAC Cache Invalidation', () => {
   test('permission update reflects immediately', async ({ request }) => {
     const org = await ctx.fixture.createOrg('permcacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'permcachegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
     // Start with only eth_call
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Verify eth_getBalance is denied
@@ -35,9 +34,10 @@ test.describe('RBAC Cache Invalidation', () => {
     });
     expect(result.allowed).toBe(false);
 
-    // Update permissions to add eth_getBalance
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance'],
+    // Update access to add eth_getBalance
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     // Should immediately reflect the change
@@ -49,32 +49,32 @@ test.describe('RBAC Cache Invalidation', () => {
     expect(result.allowed).toBe(true);
   });
 
-  test('role claim update reflects immediately', async ({ request }) => {
+  test('group claim update reflects immediately', async ({ request }) => {
     const org = await ctx.fixture.createOrg('claimcacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'claimcachegroup');
-    const role = await ctx.fixture.createRole(org.id, 'cachedrole', ['reader']);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_sendTransaction'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_sendTransaction'],
+      default_claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
-    // Verify writer claim is missing
+    // Verify write claim is missing
     let result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_sendTransaction',
-      required_claims: ['writer'],
+      required_claims: ['write'],
     });
     expect(result.allowed).toBe(false);
 
-    // Add writer claim to role
-    await ctx.rbac.updateRole(org.id, role.id, {
-      claims: ['reader', 'writer'],
+    // Add write claim to group
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_sendTransaction'],
+      default_claims: ['read', 'write'],
     });
 
     // Should immediately have the new claim
@@ -82,7 +82,7 @@ test.describe('RBAC Cache Invalidation', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_sendTransaction',
-      required_claims: ['writer'],
+      required_claims: ['write'],
     });
     expect(result.allowed).toBe(true);
   });
@@ -91,24 +91,24 @@ test.describe('RBAC Cache Invalidation', () => {
     const org = await ctx.fixture.createOrg('membershipcacheorg');
     const group1 = await ctx.fixture.createGroup(org.id, 'group1');
     const group2 = await ctx.fixture.createGroup(org.id, 'group2');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
     // Group1 only has eth_call
-    await ctx.rbac.setGroupPermissions(org.id, group1.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group1.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     // Group2 has eth_getBalance
-    await ctx.rbac.setGroupPermissions(org.id, group2.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, group2.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     // User in both groups
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
       kyc: true,
-      roleId: role.id,
     });
-    const membership2 = await ctx.fixture.addMembership(user.id, group2.id, role.id);
+    const membership2 = await ctx.fixture.addMembership(user.id, group2.id);
 
     // Verify user has eth_getBalance
     let result = await ctx.rbac.checkAccess({
@@ -141,15 +141,14 @@ test.describe('RBAC Cache Invalidation', () => {
   test('user ban reflects immediately', async ({ request }) => {
     const org = await ctx.fixture.createOrg('bancacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'bancachegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Verify access works
@@ -173,21 +172,27 @@ test.describe('RBAC Cache Invalidation', () => {
     expect(result.reason).toContain('banned');
   });
 
-  test('contract allowlist update reflects', async ({ request }) => {
+  test('contract grant update reflects', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractcacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'contractcachegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const contract1 = ctx.contractAddress().toLowerCase();
-    const contract2 = ctx.contractAddress().toLowerCase();
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contract1],
+    // Create contracts
+    const contract1 = await ctx.fixture.createContract(org.id);
+    const contract2 = await ctx.fixture.createContract(org.id);
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+
+    // Grant access to contract1 only
+    await ctx.rbac.createContractGrant(org.id, contract1.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Verify contract2 is denied
@@ -195,14 +200,15 @@ test.describe('RBAC Cache Invalidation', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: contract2,
+      target_address: contract2.address,
+      required_claims: ['read'],
     });
     expect(result.allowed).toBe(false);
 
-    // Add contract2 to allowlist
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contract1, contract2],
+    // Add grant for contract2
+    await ctx.rbac.createContractGrant(org.id, contract2.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
     });
 
     // Should immediately allow contract2
@@ -210,7 +216,8 @@ test.describe('RBAC Cache Invalidation', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: contract2,
+      target_address: contract2.address,
+      required_claims: ['read'],
     });
     expect(result.allowed).toBe(true);
   });
@@ -218,16 +225,15 @@ test.describe('RBAC Cache Invalidation', () => {
   test('rate limit update reflects', async ({ request }) => {
     const org = await ctx.fixture.createOrg('ratelimitcacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'ratelimitcachegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 50,
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Check initial rate limit
@@ -239,8 +245,9 @@ test.describe('RBAC Cache Invalidation', () => {
     expect(result.rate_limit_rps).toBe(50);
 
     // Update rate limit
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
@@ -256,15 +263,14 @@ test.describe('RBAC Cache Invalidation', () => {
   test('KYC status update reflects', async ({ request }) => {
     const org = await ctx.fixture.createOrg('kyccacheorg');
     const group = await ctx.fixture.createGroup(org.id, 'kyccachegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false, // Start without KYC
-      roleId: role.id,
     });
 
     // Verify denied without KYC
@@ -292,22 +298,22 @@ test.describe('RBAC Cache Invalidation', () => {
     const org = await ctx.fixture.createOrg('newmembershiporg');
     const group1 = await ctx.fixture.createGroup(org.id, 'newgroup1');
     const group2 = await ctx.fixture.createGroup(org.id, 'newgroup2');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
     // Group1 has eth_call
-    await ctx.rbac.setGroupPermissions(org.id, group1.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group1.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     // Group2 has eth_getBalance
-    await ctx.rbac.setGroupPermissions(org.id, group2.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, group2.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     // User starts in group1 only
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Verify eth_getBalance is denied
@@ -321,7 +327,6 @@ test.describe('RBAC Cache Invalidation', () => {
     // Add membership to group2
     await ctx.rbac.createMembership(user.id, {
       group_id: group2.id,
-      role_id: role.id,
     });
 
     // Should immediately have access

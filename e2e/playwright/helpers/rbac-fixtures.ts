@@ -4,10 +4,9 @@ import {
   RBACApiClient,
   Organization,
   Group,
-  Role,
   User,
   UserMembership,
-  ContractOwnership,
+  Contract,
   Claim,
 } from './rbac-api.js';
 import { getJWTToken } from './auth.js';
@@ -18,10 +17,9 @@ import { getJWTToken } from './auth.js';
 export interface HierarchyNode {
   slug: string;
   name: string;
-  permissions?: {
-    allow_methods?: string[];
-    allow_addresses?: string[];
-    owned_addresses?: string[];
+  access?: {
+    allowed_methods?: string[];
+    default_claims?: Claim[];
     rate_limit_rps?: number;
     rate_limit_daily?: number;
   };
@@ -34,7 +32,6 @@ export interface HierarchyNode {
 export interface CreateUserOptions {
   kyc?: boolean;
   banned?: boolean;
-  roleId?: string;
   /**
    * If true, keep the user's default membership to the default group.
    * By default, the default membership is removed so that only the custom membership applies.
@@ -54,7 +51,6 @@ export class RBACTestFixture {
   // Tracked resources for cleanup
   private orgs: Organization[] = [];
   private groups: { orgId: string; group: Group }[] = [];
-  private roles: { orgId: string; role: Role }[] = [];
   private users: User[] = [];
   private memberships: { userId: string; membership: UserMembership }[] = [];
   private contracts: { orgId: string; address: string }[] = [];
@@ -137,9 +133,9 @@ export class RBACTestFixture {
       });
       result.set(node.slug, group);
 
-      // Set permissions if provided
-      if (node.permissions) {
-        await this.rbac.setGroupPermissions(orgId, group.id, node.permissions);
+      // Set access settings if provided
+      if (node.access) {
+        await this.rbac.setGroupAccess(orgId, group.id, node.access);
       }
 
       // Recursively create children
@@ -155,43 +151,6 @@ export class RBACTestFixture {
     }
 
     return result;
-  }
-
-  // === Role Methods ===
-
-  /**
-   * Create a role and track for cleanup.
-   */
-  async createRole(orgId: string, name: string, claims?: Claim[]): Promise<Role> {
-    const roleName = this.slug(name);
-    const role = await this.rbac.createRole(orgId, {
-      name: roleName,
-      description: `Test role ${roleName}`,
-      claims: claims ?? [],
-    });
-    this.roles.push({ orgId, role });
-    return role;
-  }
-
-  /**
-   * Create a role with all available claims (admin role).
-   */
-  async createAdminRole(orgId: string): Promise<Role> {
-    return this.createRole(orgId, 'admin', ['reader', 'writer', 'deployer', 'admin', 'upgrade']);
-  }
-
-  /**
-   * Create a reader-only role.
-   */
-  async createReaderRole(orgId: string): Promise<Role> {
-    return this.createRole(orgId, 'reader', ['reader']);
-  }
-
-  /**
-   * Create a writer role (reader + writer claims).
-   */
-  async createWriterRole(orgId: string): Promise<Role> {
-    return this.createRole(orgId, 'writer', ['reader', 'writer']);
   }
 
   // === User Methods ===
@@ -264,7 +223,6 @@ export class RBACTestFixture {
     // Create membership
     const membership = await this.rbac.createMembership(user.id, {
       group_id: groupId,
-      role_id: opts?.roleId,
     });
     this.memberships.push({ userId: user.id, membership });
 
@@ -276,12 +234,10 @@ export class RBACTestFixture {
    */
   async addMembership(
     userId: string,
-    groupId: string,
-    roleId?: string
+    groupId: string
   ): Promise<UserMembership> {
     const membership = await this.rbac.createMembership(userId, {
       group_id: groupId,
-      role_id: roleId,
     });
     this.memberships.push({ userId, membership });
     return membership;
@@ -290,19 +246,19 @@ export class RBACTestFixture {
   // === Contract Methods ===
 
   /**
-   * Create a contract ownership and track for cleanup.
+   * Create a contract and track for cleanup.
    */
   async createContract(
     orgId: string,
-    ownerGroupId: string,
     opts?: {
       address?: string;
+      name?: string;
     }
-  ): Promise<ContractOwnership> {
+  ): Promise<Contract> {
     const address = opts?.address ?? this.contractAddress();
     const contract = await this.rbac.createContract(orgId, {
-      contract_address: address,
-      owner_group_id: ownerGroupId,
+      address,
+      name: opts?.name,
     });
     this.contracts.push({ orgId, address });
     return contract;
@@ -336,15 +292,6 @@ export class RBACTestFixture {
     // We don't delete users - they remain in the system
     // but are isolated by unique DIDs
 
-    // Delete roles
-    for (const { orgId, role } of [...this.roles].reverse()) {
-      try {
-        await this.rbac.deleteRole(orgId, role.id);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-
     // Delete groups (children first due to reverse order)
     for (const { orgId, group } of [...this.groups].reverse()) {
       try {
@@ -361,7 +308,6 @@ export class RBACTestFixture {
     this.contracts = [];
     this.memberships = [];
     this.users = [];
-    this.roles = [];
     this.groups = [];
     this.orgs = [];
   }

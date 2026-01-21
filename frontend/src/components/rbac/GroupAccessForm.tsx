@@ -1,59 +1,68 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { GroupPermissions } from '@/types/rbac';
+import type { Claim, SetGroupAccessInput } from '@/types/rbac';
+import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { AlertCircle, Save, X, Loader2 } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Check } from 'lucide-react';
 
-interface GroupPermissionsFormProps {
+interface GroupAccessFormProps {
   orgId: string;
   groupId: string;
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function GroupPermissionsForm({
+export default function GroupAccessForm({
   orgId,
   groupId,
   onClose,
   onSave,
-}: GroupPermissionsFormProps) {
+}: GroupAccessFormProps) {
   const [loading, setLoading] = useState(true);
-  const [allowAddresses, setAllowAddresses] = useState('');
-  const [ownedAddresses, setOwnedAddresses] = useState('');
+  const [allowedMethods, setAllowedMethods] = useState('');
+  const [defaultClaims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadPermissions();
+    loadAccess();
   }, [groupId]);
 
-  const loadPermissions = async () => {
+  const loadAccess = async () => {
     try {
       setLoading(true);
-      const response = await rbacApi.groups.getPermissions(orgId, groupId);
-      const perms = response.data;
-      if (perms) {
-        setAllowAddresses((perms.allow_addresses || []).join('\n'));
-        setOwnedAddresses((perms.owned_addresses || []).join('\n'));
-        setRateLimitRPS(perms.rate_limit_rps?.toString() || '');
-        setRateLimitDaily(perms.rate_limit_daily?.toString() || '');
+      const response = await rbacApi.groups.getAccess(orgId, groupId);
+      const access = response.data;
+      if (access) {
+        setAllowedMethods((access.allowed_methods || []).join('\n'));
+        setDefaultClaims(access.default_claims || []);
+        setRateLimitRPS(access.rate_limit_rps?.toString() || '');
+        setRateLimitDaily(access.rate_limit_daily?.toString() || '');
       }
     } catch {
-      // No permissions yet, that's OK
+      // No access settings yet, that's OK
     } finally {
       setLoading(false);
     }
   };
 
-  const parseList = (value: string, separator: RegExp = /[\s,]+/) => {
+  const parseList = (value: string) => {
     return value
-      .split(separator)
+      .split(/[\s\n,]+/)
       .map(v => v.trim())
       .filter(v => v.length > 0);
+  };
+
+  const toggleClaim = (claim: Claim) => {
+    setDefaultClaims(prev =>
+      prev.includes(claim)
+        ? prev.filter(c => c !== claim)
+        : [...prev, claim]
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -62,24 +71,24 @@ export default function GroupPermissionsForm({
     setError(null);
 
     try {
-      const permissions: Partial<GroupPermissions> = {
-        allow_addresses: parseList(allowAddresses, /[\s\n,]+/),
-        owned_addresses: parseList(ownedAddresses, /[\s\n,]+/),
+      const input: SetGroupAccessInput = {
+        allowed_methods: parseList(allowedMethods),
+        default_claims: defaultClaims,
         rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
         rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
       };
 
-      await rbacApi.groups.setPermissions(orgId, groupId, permissions);
+      await rbacApi.groups.setAccess(orgId, groupId, input);
       onSave();
     } catch (err: unknown) {
-      console.error('Failed to save permissions:', err);
+      console.error('Failed to save access settings:', err);
       const axiosError = err as {
         response?: { data?: { error?: string }; status?: number };
       };
       if (axiosError.response?.data?.error) {
         setError(axiosError.response.data.error);
       } else {
-        setError('Failed to save permissions. Please try again.');
+        setError('Failed to save access settings. Please try again.');
       }
     } finally {
       setSaving(false);
@@ -103,41 +112,49 @@ export default function GroupPermissionsForm({
         </div>
       )}
 
-      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 mb-4">
-        <p className="text-sm text-blue-400">
-          <strong>Note:</strong> Allowed methods are now configured on Roles, not Groups.
-          Edit the group's assigned Role to change allowed methods.
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-white/70">
+          Allowed RPC Methods
+        </label>
+        <Textarea
+          value={allowedMethods}
+          onChange={e => setAllowedMethods(e.target.value)}
+          placeholder="eth_call&#10;eth_getBalance&#10;eth_sendTransaction"
+          className="h-24 font-mono text-sm"
+        />
+        <p className="text-xs text-white/40">
+          RPC methods this group can call (one per line). Leave empty for all methods.
         </p>
       </div>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium text-white/70">
-          Allowed Addresses
+          Default Claims
         </label>
-        <Textarea
-          value={allowAddresses}
-          onChange={e => setAllowAddresses(e.target.value)}
-          placeholder="0x1234...&#10;0x5678..."
-          className="h-24 font-mono text-sm"
-        />
-        <p className="text-xs text-white/40">
-          Addresses this group can interact with (one per line)
+        <p className="text-xs text-white/40 mb-2">
+          Claims applied to unregistered contracts (not in the Contracts list)
         </p>
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
-          Owned Addresses
-        </label>
-        <Textarea
-          value={ownedAddresses}
-          onChange={e => setOwnedAddresses(e.target.value)}
-          placeholder="0xabcd...&#10;0xefgh..."
-          className="h-24 font-mono text-sm"
-        />
-        <p className="text-xs text-white/40">
-          Addresses this group owns (one per line)
-        </p>
+        <div className="space-y-2">
+          {ALL_CLAIMS.map(claim => (
+            <label
+              key={claim}
+              className="flex items-start gap-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer"
+              onClick={() => toggleClaim(claim)}
+            >
+              <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
+                defaultClaims.includes(claim)
+                  ? 'bg-primary-500 border-primary-500'
+                  : 'border-white/30 bg-white/5'
+              }`}>
+                {defaultClaims.includes(claim) && <Check className="w-3 h-3 text-white" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium">{CLAIM_LABELS[claim]}</span>
+                <p className="text-xs text-white/40">{CLAIM_DESCRIPTIONS[claim]}</p>
+              </div>
+            </label>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -190,7 +207,7 @@ export default function GroupPermissionsForm({
           ) : (
             <>
               <Save className="w-4 h-4" />
-              Save Permissions
+              Save Access Settings
             </>
           )}
         </Button>

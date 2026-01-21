@@ -13,103 +13,107 @@ test.describe('RBAC Contract Access Enforcement', () => {
     await ctx.cleanup();
   });
 
-  test('allows contract in allow_addresses', async ({ request }) => {
+  test('allows contract with grant via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractalloworg');
     const group = await ctx.fixture.createGroup(org.id, 'contractallowgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const contractAddr = ctx.contractAddress().toLowerCase();
+    const contract = await ctx.fixture.createContract(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contractAddr],
+    // Grant the group access to this contract
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+    });
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [], // No default claims - must have explicit grant
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: contractAddr,
+      target_address: contract.address,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(true);
+    expect(result.claims).toContain('read');
   });
 
-  test('denies contract NOT in allow_addresses', async ({ request }) => {
+  test('denies contract without grant when no default_claims', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractdenyorg');
     const group = await ctx.fixture.createGroup(org.id, 'contractdenygroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const allowedContract = ctx.contractAddress().toLowerCase();
-    const deniedContract = ctx.contractAddress().toLowerCase();
+    const grantedContract = await ctx.fixture.createContract(org.id);
+    const ungrantedAddress = ctx.contractAddress();
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [allowedContract],
+    // Grant the group access to only one contract
+    await ctx.rbac.createContractGrant(org.id, grantedContract.address, {
+      group_id: group.id,
+      claims: ['read'],
+    });
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [], // No default claims for unregistered contracts
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
+    // Access to ungranted contract should fail
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: deniedContract,
+      target_address: ungrantedAddress,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('address');
   });
 
-  test('owned contract bypasses allow_addresses list', async ({ request }) => {
-    const org = await ctx.fixture.createOrg('ownedbypassorg');
-    const group = await ctx.fixture.createGroup(org.id, 'ownedbypassgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const ownedContract = ctx.contractAddress().toLowerCase();
+  test('default_claims allows access to unregistered contracts', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('defaultclaimsorg');
+    const group = await ctx.fixture.createGroup(org.id, 'defaultclaimsgroup');
+    const unknownContract = ctx.contractAddress();
 
-    // Set permissions without the contract in allow_addresses
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [], // Empty allow list
-      owned_addresses: [ownedContract], // But contract is owned
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'], // Allow access to any contract
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: ownedContract,
+      target_address: unknownContract,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(true);
   });
 
-  test('allows any contract when allow_addresses is empty and no contract specified', async ({
-    request,
-  }) => {
-    const org = await ctx.fixture.createOrg('anycontractorg');
-    const group = await ctx.fixture.createGroup(org.id, 'anycontractgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
+  test('allows method without contract address', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('nocontractorg');
+    const group = await ctx.fixture.createGroup(org.id, 'nocontractgroup');
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
-      allow_addresses: [], // Empty - no contract restrictions
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Call without contract address
@@ -117,33 +121,34 @@ test.describe('RBAC Contract Access Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_blockNumber',
-      // No contract_address specified
     });
 
     expect(result.allowed).toBe(true);
   });
 
-  test('RPC eth_call to allowed contract succeeds', async ({ request }) => {
-    // Use the default org since RPC handler always uses default org
+  test('RPC eth_call to contract with grant succeeds', async ({ request }) => {
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpccontractgroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpccontractrole', ['reader']);
-    const contractAddr = ctx.contractAddress().toLowerCase();
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contractAddr],
+    // Grant group access to contract
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
     });
 
-    // Create user and add to the test group, removing default membership
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
+    });
+
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_call', [
-      { to: contractAddr, data: '0x' },
+      { to: contract.address, data: '0x' },
       'latest',
     ]);
 
@@ -151,88 +156,102 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(body).toHaveProperty('jsonrpc', '2.0');
   });
 
-  test('RPC eth_call to disallowed contract fails', async ({ request }) => {
-    // Use the default org since RPC handler always uses default org
+  test('RPC eth_call to unregistered contract allowed with default_claims', async ({ request }) => {
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
-    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcdenycontractgroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpcdenyrole', ['reader']);
-    const allowedContract = ctx.contractAddress().toLowerCase();
-    const deniedContract = ctx.contractAddress().toLowerCase();
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcdefaultgroup');
+    const unknownContract = ctx.contractAddress();
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [allowedContract],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'], // Allow access to any contract
     });
 
-    // Create user and add to the test group, removing default membership
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_call', [
-      { to: deniedContract, data: '0x' },
+      { to: unknownContract, data: '0x' },
       'latest',
     ]);
 
-    expect(status).toBe(403);
-    expect(body).toHaveProperty('error');
+    expect(status).toBe(200);
+    expect(body).toHaveProperty('jsonrpc', '2.0');
   });
 
-  test('allows multiple contracts in allowlist', async ({ request }) => {
-    const org = await ctx.fixture.createOrg('multicontractorg');
-    const group = await ctx.fixture.createGroup(org.id, 'multicontractgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const contract1 = ctx.contractAddress().toLowerCase();
-    const contract2 = ctx.contractAddress().toLowerCase();
-    const contract3 = ctx.contractAddress().toLowerCase();
+  test('grants for multiple contracts work independently', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('multigrantorg');
+    const group = await ctx.fixture.createGroup(org.id, 'multigrantgroup');
+    const contract1 = await ctx.fixture.createContract(org.id);
+    const contract2 = await ctx.fixture.createContract(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contract1, contract2, contract3],
+    // Grant different claims to different contracts
+    await ctx.rbac.createContractGrant(org.id, contract1.address, {
+      group_id: group.id,
+      claims: ['read'],
+    });
+    await ctx.rbac.createContractGrant(org.id, contract2.address, {
+      group_id: group.id,
+      claims: ['read', 'write'],
+    });
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
-    // Test all contracts
-    for (const contract of [contract1, contract2, contract3]) {
-      const result = await ctx.rbac.checkAccess({
-        user_external_id: did,
-        org_slug: org.slug,
-        method: 'eth_call',
-        target_address: contract,
-      });
-      expect(result.allowed).toBe(true);
-    }
+    // Test each contract has correct claims
+    const result1 = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      target_address: contract1.address,
+      required_claims: ['read'],
+    });
+    expect(result1.allowed).toBe(true);
+
+    const result2 = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      target_address: contract2.address,
+      required_claims: ['write'],
+    });
+    expect(result2.allowed).toBe(true);
   });
 
   test('contract address comparison is case-insensitive', async ({ request }) => {
     const org = await ctx.fixture.createOrg('caseorg');
     const group = await ctx.fixture.createGroup(org.id, 'casegroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
-    const contractLower = '0xabcdef1234567890abcdef1234567890abcdef12';
-    const contractUpper = '0xABCDEF1234567890ABCDEF1234567890ABCDEF12';
+    const contract = await ctx.fixture.createContract(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contractLower],
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+      claims: ['read'],
+    });
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Request with uppercase address should still work
+    const upperAddress = contract.address.toUpperCase().replace('0X', '0x');
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      target_address: contractUpper,
+      target_address: upperAddress,
+      required_claims: ['read'],
     });
 
     expect(result.allowed).toBe(true);

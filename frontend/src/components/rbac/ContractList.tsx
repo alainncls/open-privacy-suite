@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { ContractOwnership, Group } from '@/types/rbac';
+import type { Contract } from '@/types/rbac';
+
+// Helper to get contract address from either new or legacy format
+const getContractAddress = (contract: Contract): string => {
+  return contract.address || contract.contract_address || '';
+};
 import ContractForm from './ContractForm';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
@@ -18,33 +23,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { FileCode2, Plus, Pencil, Trash2, Loader2, FolderTree } from 'lucide-react';
+import { FileCode2, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
   const orgId = selectedOrg?.id || '';
-  const [contracts, setContracts] = useState<ContractOwnership[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<ContractOwnership | null>(null);
+  const [editing, setEditing] = useState<Contract | null>(null);
 
   useEffect(() => {
     if (orgId) {
-      loadData();
+      loadContracts();
     }
   }, [orgId]);
 
-  const loadData = async () => {
+  const loadContracts = async () => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const [contractsRes, groupsRes] = await Promise.all([
-        rbacApi.contracts.list(orgId),
-        rbacApi.groups.list(orgId),
-      ]);
-      setContracts(contractsRes.data || []);
-      setGroups(groupsRes.data || []);
+      const response = await rbacApi.contracts.list(orgId);
+      setContracts(response.data || []);
     } catch (error) {
       console.error('Failed to load contracts:', error);
       setContracts([]);
@@ -53,51 +53,51 @@ export default function ContractList() {
     }
   };
 
-  const handleDelete = async (contract: ContractOwnership) => {
+  const handleDelete = async (contract: Contract) => {
+    const addr = getContractAddress(contract);
     if (
       !confirm(
-        `Delete contract ownership for ${contract.contract_address}? This cannot be undone.`
+        `Delete contract "${contract.name || addr}"? This cannot be undone.`
       )
     )
       return;
 
     try {
-      await rbacApi.contracts.delete(orgId, contract.contract_address);
-      await loadData();
+      await rbacApi.contracts.delete(orgId, addr);
+      await loadContracts();
     } catch (error) {
       console.error('Failed to delete contract:', error);
-      alert('Failed to delete contract ownership.');
+      alert('Failed to delete contract.');
     }
   };
 
   const handleSave = async () => {
     setShowForm(false);
     setEditing(null);
-    await loadData();
+    await loadContracts();
   };
 
-  const getGroupName = (groupId: string) => {
-    const group = groups.find(g => g.id === groupId);
-    return group ? group.name : groupId;
-  };
-
-  const getGroupPath = (groupId: string) => {
-    const group = groups.find(g => g.id === groupId);
-    return group ? group.path : '';
-  };
-
-  const truncateAddress = (address: string) => {
+  const truncateAddress = (address: string | undefined) => {
+    if (!address) return '-';
     if (address.length <= 16) return address;
     return `${address.slice(0, 8)}...${address.slice(-6)}`;
+  };
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-white/80">Contract Ownership</h3>
+          <h3 className="text-sm font-medium text-white/80">Contracts</h3>
           <p className="text-xs text-white/50 mt-0.5">
-            Track deployed contracts and their owner groups
+            Registered contracts with access grants for groups
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
@@ -129,8 +129,9 @@ export default function ContractList() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Contract Address</TableHead>
-              <TableHead>Owner Group</TableHead>
+              <TableHead>Address</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -146,20 +147,19 @@ export default function ContractList() {
                     <FileCode2 className="w-4 h-4 text-primary-400" />
                     <span
                       className="font-mono text-sm"
-                      title={contract.contract_address}
+                      title={getContractAddress(contract)}
                     >
-                      {truncateAddress(contract.contract_address)}
+                      {truncateAddress(getContractAddress(contract))}
                     </span>
                   </div>
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-2">
-                    <FolderTree className="w-4 h-4 text-white/40" />
-                    <span className="text-sm">{getGroupName(contract.owner_group_id)}</span>
-                    <span className="text-xs text-white/40 font-mono">
-                      ({getGroupPath(contract.owner_group_id)})
-                    </span>
-                  </div>
+                  <span className="text-sm">{contract.name || '-'}</span>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-white/60">
+                    {formatDate(contract.created_at)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
@@ -196,7 +196,6 @@ export default function ContractList() {
           </DialogHeader>
           <ContractForm
             orgId={orgId}
-            groups={groups}
             onClose={() => setShowForm(false)}
             onSave={handleSave}
           />
@@ -213,7 +212,6 @@ export default function ContractList() {
             <ContractForm
               key={editing.id}
               orgId={orgId}
-              groups={groups}
               contract={editing}
               onClose={() => setEditing(null)}
               onSave={handleSave}

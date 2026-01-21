@@ -18,15 +18,14 @@ test.describe('Access Control', () => {
 
   test('allows method in whitelist', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'allowmethodgroup');
-    const role = await ctx.fixture.createReaderRole(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
@@ -42,15 +41,14 @@ test.describe('Access Control', () => {
 
   test('denies method not in whitelist', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'denymethodgroup');
-    const role = await ctx.fixture.createReaderRole(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
@@ -63,16 +61,15 @@ test.describe('Access Control', () => {
 
   test('denies banned user', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'bannedgroup');
-    const role = await ctx.fixture.createReaderRole(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       banned: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
@@ -85,15 +82,14 @@ test.describe('Access Control', () => {
 
   test('denies user without KYC', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'nokycgroup');
-    const role = await ctx.fixture.createReaderRole(DEFAULT_ORG_ID);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: false,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 

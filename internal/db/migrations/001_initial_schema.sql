@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS groups (
     description TEXT,
     depth INTEGER NOT NULL DEFAULT 0,
     path TEXT NOT NULL, -- Materialized path for efficient queries (e.g., "root.engineering.devops")
+    is_org_admin BOOLEAN NOT NULL DEFAULT false, -- If true, members get all claims on all contracts in the org
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(org_id, slug)

@@ -174,6 +174,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		Name        string  `json:"name" binding:"required"`
 		Description string  `json:"description"`
 		ParentID    *string `json:"parent_id"`
+		IsOrgAdmin  bool    `json:"is_org_admin"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -210,6 +211,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		Description: input.Description,
 		Depth:       depth,
 		Path:        path,
+		IsOrgAdmin:  input.IsOrgAdmin,
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
@@ -250,6 +252,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 	var input struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
+		IsOrgAdmin  *bool   `json:"is_org_admin"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -261,6 +264,9 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.Description != nil {
 		group.Description = *input.Description
+	}
+	if input.IsOrgAdmin != nil {
+		group.IsOrgAdmin = *input.IsOrgAdmin
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {

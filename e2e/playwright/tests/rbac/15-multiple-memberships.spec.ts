@@ -20,23 +20,22 @@ test.describe('RBAC Multiple Memberships', () => {
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
 
     // Group A allows eth_call
-    await ctx.rbac.setGroupPermissions(org.id, groupA.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, groupA.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
     });
 
     // Group B allows eth_getBalance
-    await ctx.rbac.setGroupPermissions(org.id, groupB.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, groupB.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
-
-    const role = await ctx.fixture.createReaderRole(org.id);
 
     // Create user and add to both groups
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, groupB.id, role.id);
+    await ctx.fixture.addMembership(user.id, groupB.id);
 
     // User should have UNION: eth_call + eth_getBalance
     const resultCall = await ctx.rbac.checkAccess({
@@ -64,31 +63,38 @@ test.describe('RBAC Multiple Memberships', () => {
 
   test('contracts UNIONed across memberships', async ({ request }) => {
     const org = await ctx.fixture.createOrg('contractunionorg');
-    const contract1 = ctx.contractAddress().toLowerCase();
-    const contract2 = ctx.contractAddress().toLowerCase();
+
+    // Create contracts
+    const contract1 = await ctx.fixture.createContract(org.id);
+    const contract2 = await ctx.fixture.createContract(org.id);
 
     const groupA = await ctx.fixture.createGroup(org.id, 'groupA');
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
 
     // Group A allows contract1
-    await ctx.rbac.setGroupPermissions(org.id, groupA.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contract1],
+    await ctx.rbac.setGroupAccess(org.id, groupA.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+    await ctx.rbac.createContractGrant(org.id, contract1.address, {
+      group_id: groupA.id,
+      claims: ['read', 'write'],
     });
 
     // Group B allows contract2
-    await ctx.rbac.setGroupPermissions(org.id, groupB.id, {
-      allow_methods: ['eth_call'],
-      allow_addresses: [contract2],
+    await ctx.rbac.setGroupAccess(org.id, groupB.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
     });
-
-    const role = await ctx.fixture.createReaderRole(org.id);
+    await ctx.rbac.createContractGrant(org.id, contract2.address, {
+      group_id: groupB.id,
+      claims: ['read', 'write'],
+    });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, groupB.id, role.id);
+    await ctx.fixture.addMembership(user.id, groupB.id);
 
     // User should have access to both contracts
     for (const contract of [contract1, contract2]) {
@@ -96,46 +102,45 @@ test.describe('RBAC Multiple Memberships', () => {
         user_external_id: did,
         org_slug: org.slug,
         method: 'eth_call',
-        target_address: contract,
+        target_address: contract.address,
+        required_claims: ['read'],
       });
       expect(result.allowed).toBe(true);
     }
   });
 
-  test('claims UNIONed across roles', async ({ request }) => {
+  test('claims UNIONed across groups', async ({ request }) => {
     const org = await ctx.fixture.createOrg('claimunionorg');
 
     const groupA = await ctx.fixture.createGroup(org.id, 'groupA');
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
 
-    await ctx.rbac.setGroupPermissions(org.id, groupA.id, {
-      allow_methods: ['eth_sendTransaction'],
+    // Group A has read claim
+    await ctx.rbac.setGroupAccess(org.id, groupA.id, {
+      allowed_methods: ['eth_sendTransaction'],
+      default_claims: ['read'],
     });
-    await ctx.rbac.setGroupPermissions(org.id, groupB.id, {
-      allow_methods: ['eth_sendTransaction'],
+    // Group B has write claim
+    await ctx.rbac.setGroupAccess(org.id, groupB.id, {
+      allowed_methods: ['eth_sendTransaction'],
+      default_claims: ['write'],
     });
-
-    // Role A has reader
-    const roleA = await ctx.fixture.createRole(org.id, 'roleA', ['reader']);
-    // Role B has writer
-    const roleB = await ctx.fixture.createRole(org.id, 'roleB', ['writer']);
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
       kyc: true,
-      roleId: roleA.id,
     });
-    await ctx.fixture.addMembership(user.id, groupB.id, roleB.id);
+    await ctx.fixture.addMembership(user.id, groupB.id);
 
-    // User should have UNION of claims: reader + writer
+    // User should have UNION of claims: read + write
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_sendTransaction',
-      required_claims: ['reader', 'writer'],
+      required_claims: ['read', 'write'],
     });
     expect(result.allowed).toBe(true);
-    expect(result.claims).toContain('reader');
-    expect(result.claims).toContain('writer');
+    expect(result.claims).toContain('read');
+    expect(result.claims).toContain('write');
   });
 
   test('rate limits take MAX across memberships', async ({ request }) => {
@@ -145,26 +150,25 @@ test.describe('RBAC Multiple Memberships', () => {
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
 
     // Group A: 50 RPS
-    await ctx.rbac.setGroupPermissions(org.id, groupA.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, groupA.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 50,
       rate_limit_daily: 5000,
     });
 
     // Group B: 100 RPS
-    await ctx.rbac.setGroupPermissions(org.id, groupB.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, groupB.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
 
-    const role = await ctx.fixture.createReaderRole(org.id);
-
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, groupB.id, role.id);
+    await ctx.fixture.addMembership(user.id, groupB.id);
 
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
@@ -189,28 +193,28 @@ test.describe('RBAC Multiple Memberships', () => {
     const sibling = await ctx.fixture.createGroup(org.id, 'sibling');
 
     // Root: A, B, C
-    await ctx.rbac.setGroupPermissions(org.id, root.id, {
-      allow_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, root.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     // Child: A, B (intersection with root)
-    await ctx.rbac.setGroupPermissions(org.id, child.id, {
-      allow_methods: ['eth_call', 'eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, child.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     // Sibling: D, E (completely different)
-    await ctx.rbac.setGroupPermissions(org.id, sibling.id, {
-      allow_methods: ['eth_chainId', 'eth_gasPrice'],
+    await ctx.rbac.setGroupAccess(org.id, sibling.id, {
+      allowed_methods: ['eth_chainId', 'eth_gasPrice'],
+      default_claims: ['read', 'write'],
     });
-
-    const role = await ctx.fixture.createReaderRole(org.id);
 
     // User in both child and sibling
     const { user, did } = await ctx.fixture.createUserWithMembership(request, child.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, sibling.id, role.id);
+    await ctx.fixture.addMembership(user.id, sibling.id);
 
     // From child (intersection of root): eth_call, eth_getBalance
     // From sibling: eth_chainId, eth_gasPrice
@@ -241,27 +245,27 @@ test.describe('RBAC Multiple Memberships', () => {
     const group2 = await ctx.fixture.createGroup(org.id, 'group2');
     const group3 = await ctx.fixture.createGroup(org.id, 'group3');
 
-    await ctx.rbac.setGroupPermissions(org.id, group1.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group1.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 30,
     });
-    await ctx.rbac.setGroupPermissions(org.id, group2.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, group2.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 60,
     });
-    await ctx.rbac.setGroupPermissions(org.id, group3.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group3.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 90,
     });
 
-    const role = await ctx.fixture.createReaderRole(org.id);
-
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, group2.id, role.id);
-    await ctx.fixture.addMembership(user.id, group3.id, role.id);
+    await ctx.fixture.addMembership(user.id, group2.id);
+    await ctx.fixture.addMembership(user.id, group3.id);
 
     // Should have all three methods
     for (const method of ['eth_call', 'eth_getBalance', 'eth_blockNumber']) {
@@ -282,34 +286,42 @@ test.describe('RBAC Multiple Memberships', () => {
     expect(result.rate_limit_rps).toBe(90);
   });
 
-  test('owned contracts combine across memberships', async ({ request }) => {
-    const org = await ctx.fixture.createOrg('ownedcombineorg');
-    const contract1 = ctx.contractAddress().toLowerCase();
-    const contract2 = ctx.contractAddress().toLowerCase();
+  test('admin grants combine across memberships', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('admincombineorg');
+
+    // Create contracts
+    const contract1 = await ctx.fixture.createContract(org.id);
+    const contract2 = await ctx.fixture.createContract(org.id);
 
     const group1 = await ctx.fixture.createGroup(org.id, 'group1');
     const group2 = await ctx.fixture.createGroup(org.id, 'group2');
 
-    await ctx.rbac.setGroupPermissions(org.id, group1.id, {
-      allow_methods: ['eth_call'],
-      owned_addresses: [contract1],
+    await ctx.rbac.setGroupAccess(org.id, group1.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
     });
-    await ctx.rbac.setGroupPermissions(org.id, group2.id, {
-      allow_methods: ['eth_call'],
-      owned_addresses: [contract2],
+    await ctx.rbac.createContractGrant(org.id, contract1.address, {
+      group_id: group1.id,
+      claims: ['admin'],
     });
 
-    const role = await ctx.fixture.createReaderRole(org.id);
+    await ctx.rbac.setGroupAccess(org.id, group2.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: [],
+    });
+    await ctx.rbac.createContractGrant(org.id, contract2.address, {
+      group_id: group2.id,
+      claims: ['admin'],
+    });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
       kyc: true,
-      roleId: role.id,
     });
-    await ctx.fixture.addMembership(user.id, group2.id, role.id);
+    await ctx.fixture.addMembership(user.id, group2.id);
 
-    // User should own both contracts
+    // User should have admin on both contracts
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
-    expect(perms.owned_addresses).toContain(contract1);
-    expect(perms.owned_addresses).toContain(contract2);
+    expect(perms.contract_access[contract1.address]?.claims).toContain('admin');
+    expect(perms.contract_access[contract2.address]?.claims).toContain('admin');
   });
 });

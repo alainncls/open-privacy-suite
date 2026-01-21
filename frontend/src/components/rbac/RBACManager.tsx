@@ -25,7 +25,7 @@ import {
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'roles' | 'users' | 'contracts';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -58,7 +58,6 @@ export default function RBACManager() {
   const getActiveTab = (): RBACTab => {
     const path = location.pathname;
     if (path.includes('/groups')) return 'groups';
-    if (path.includes('/roles')) return 'roles';
     if (path.includes('/users')) return 'users';
     if (path.includes('/contracts')) return 'contracts';
     return 'organizations';
@@ -131,7 +130,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgRequiredTabs: RBACTab[] = ['groups', 'roles', 'contracts'];
+    const orgRequiredTabs: RBACTab[] = ['groups', 'contracts'];
     const needsOrg = orgRequiredTabs.includes(tab);
 
     let path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -143,7 +142,7 @@ export default function RBACManager() {
   };
 
   // Tabs that require org selection
-  const orgRequiredTabs: RBACTab[] = ['groups', 'roles', 'contracts'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'contracts'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
 
   return (
@@ -241,11 +240,11 @@ export default function RBACManager() {
                       </li>
                       <li className="flex items-start gap-2">
                         <FolderTree className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
-                        <span><strong className="text-white/80">Groups</strong> define <em>what</em> users can access (methods, contracts, rate limits)</span>
+                        <span><strong className="text-white/80">Groups</strong> define RPC methods, rate limits, and default claims</span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <Shield className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
-                        <span><strong className="text-white/80">Roles</strong> define <em>capabilities</em> (reader, writer, deployer, admin, upgrade)</span>
+                        <FileCode2 className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
+                        <span><strong className="text-white/80">Contracts</strong> with grants define per-contract claims (read, write, admin, upgrade)</span>
                       </li>
                     </ul>
                   </div>
@@ -258,11 +257,11 @@ export default function RBACManager() {
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="text-primary-400 font-mono shrink-0">2.</span>
-                        <span>Optionally assign a <strong className="text-white/80">Role</strong> to the membership</span>
+                        <span>User inherits Group's allowed methods, rate limits, and default claims</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="text-primary-400 font-mono shrink-0">3.</span>
-                        <span>User inherits Group's permissions + Role's claims</span>
+                        <span>Contract grants give specific claims for registered contracts</span>
                       </li>
                     </ul>
                   </div>
@@ -280,10 +279,6 @@ export default function RBACManager() {
               <TabsTrigger value="groups" className="gap-2">
                 <FolderTree className="w-4 h-4" />
                 <span>Groups</span>
-              </TabsTrigger>
-              <TabsTrigger value="roles" className="gap-2">
-                <Shield className="w-4 h-4" />
-                <span>Roles</span>
               </TabsTrigger>
               <TabsTrigger value="users" className="gap-2">
                 <Users className="w-4 h-4" />

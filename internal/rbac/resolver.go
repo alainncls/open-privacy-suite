@@ -123,12 +123,13 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 //
 // Algorithm:
 //  1. Get user's memberships in the org
-//  2. For each membership:
+//  2. Check for org admin memberships - if found, grant all claims on all contracts
+//  3. For each membership:
 //     a. Get the group hierarchy (root -> ... -> current)
 //     b. Compute permissions through hierarchy with INTERSECTION (child narrows parent)
 //     c. Collect contract grants and group access along the hierarchy
-//  3. Merge permissions across multiple group memberships (UNION - user benefits from all groups)
-//  4. Rate limits: MINIMUM within hierarchy, MAXIMUM across memberships
+//  4. Merge permissions across multiple group memberships (UNION - user benefits from all groups)
+//  5. Rate limits: MINIMUM within hierarchy, MAXIMUM across memberships
 func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	// Get user's memberships in this org with details
 	memberships, err := r.store.ListUserMembershipsInOrg(ctx, userID, orgID)
@@ -150,6 +151,20 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		}, nil
 	}
 
+	// Check if user is member of any org admin group
+	isOrgAdmin := false
+	for _, m := range memberships {
+		if m.Group.IsOrgAdmin {
+			isOrgAdmin = true
+			break
+		}
+	}
+
+	// If user is org admin, grant all claims on all contracts
+	if isOrgAdmin {
+		return r.computeOrgAdminPermissions(ctx, userID, orgID, memberships)
+	}
+
 	// Track final merged permissions across all memberships
 	var finalMethods []string
 	finalContractAccess := make(map[string]ContractAccess)
@@ -166,7 +181,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		}
 
 		// Compute permissions through the hierarchy with restrictive inheritance
-		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy, orgID)
+		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy)
 		if err != nil {
 			return nil, err
 		}
@@ -205,6 +220,61 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	}, nil
 }
 
+// computeOrgAdminPermissions computes permissions for org admin users.
+// Org admins get all claims on all contracts in the organization.
+func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID string, memberships []*MembershipWithDetails) (*EffectivePermissions, error) {
+	// Get all contracts in the organization
+	contracts, err := r.store.ListContracts(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build contract access with all claims for each contract
+	allClaims := AllClaims()
+	contractAccess := make(map[string]ContractAccess)
+	for _, contract := range contracts {
+		contractAccess[strings.ToLower(contract.Address)] = ContractAccess{
+			Claims:    allClaims,
+			Functions: nil, // all functions
+		}
+	}
+
+	// Still compute rate limits from memberships (take the most permissive)
+	var finalRateLimitRPS *int
+	var finalRateLimitDaily *int
+	var finalMethods []string
+
+	for _, m := range memberships {
+		// Get the group hierarchy for this membership to get rate limits
+		hierarchy, err := r.store.GetGroupHierarchy(ctx, m.Group.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy)
+		if err != nil {
+			return nil, err
+		}
+
+		finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
+		finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
+		finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
+	}
+
+	return &EffectivePermissions{
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		OrgID:          orgID,
+		AllowedMethods: finalMethods,
+		ContractAccess: contractAccess,
+		DefaultClaims:  allClaims, // Org admins get all default claims too
+		RateLimitRPS:   finalRateLimitRPS,
+		RateLimitDaily: finalRateLimitDaily,
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(r.cacheTTL),
+	}, nil
+}
+
 // hierarchyPerms holds permissions computed through a group hierarchy.
 type hierarchyPerms struct {
 	AllowedMethods []string
@@ -216,7 +286,7 @@ type hierarchyPerms struct {
 
 // computeHierarchyPermissions computes permissions by traversing the group hierarchy
 // from root to leaf, applying INTERSECTION at each level (child narrows parent).
-func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []*Group, orgID string) (*hierarchyPerms, error) {
+func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []*Group) (*hierarchyPerms, error) {
 	if len(hierarchy) == 0 {
 		return &hierarchyPerms{
 			AllowedMethods: []string{},

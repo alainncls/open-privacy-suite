@@ -16,15 +16,14 @@ test.describe('RBAC Method Access Enforcement', () => {
   test('allows method in allowlist via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('methodalloworg');
     const group = await ctx.fixture.createGroup(org.id, 'methodallowgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -40,15 +39,14 @@ test.describe('RBAC Method Access Enforcement', () => {
   test('denies method NOT in allowlist via checkAccess API', async ({ request }) => {
     const org = await ctx.fixture.createOrg('methoddenyorg');
     const group = await ctx.fixture.createGroup(org.id, 'methoddenygroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -65,16 +63,15 @@ test.describe('RBAC Method Access Enforcement', () => {
     // Use the default org since RPC handler always uses default org
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcallowgroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpcrole', ['reader']);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_getBalance'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_getBalance'],
+      default_claims: ['read', 'write'],
     });
 
     // Create user and add to the test group, removing default membership
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
@@ -92,16 +89,15 @@ test.describe('RBAC Method Access Enforcement', () => {
     // Use the default org since RPC handler always uses default org
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcdenygroup');
-    const role = await ctx.fixture.createRole(DEFAULT_ORG_ID, 'rpcdenyrole', ['reader']);
 
-    await ctx.rbac.setGroupPermissions(DEFAULT_ORG_ID, group.id, {
-      allow_methods: ['eth_blockNumber'],
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_blockNumber'],
+      default_claims: ['read', 'write'],
     });
 
     // Create user and add to the test group, removing default membership
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
       keepDefaultMembership: false,
     });
 
@@ -118,15 +114,14 @@ test.describe('RBAC Method Access Enforcement', () => {
   test('allows multiple methods in allowlist', async ({ request }) => {
     const org = await ctx.fixture.createOrg('multimethodorg');
     const group = await ctx.fixture.createGroup(org.id, 'multimethodgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     // Test all methods
@@ -143,15 +138,14 @@ test.describe('RBAC Method Access Enforcement', () => {
   test('denies when allowlist is empty', async ({ request }) => {
     const org = await ctx.fixture.createOrg('emptyalloworg');
     const group = await ctx.fixture.createGroup(org.id, 'emptyallowgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: [],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: [],
+      default_claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({
@@ -167,17 +161,16 @@ test.describe('RBAC Method Access Enforcement', () => {
   test('returns rate limits in access check result', async ({ request }) => {
     const org = await ctx.fixture.createOrg('ratelimitorg');
     const group = await ctx.fixture.createGroup(org.id, 'ratelimitgroup');
-    const role = await ctx.fixture.createReaderRole(org.id);
 
-    await ctx.rbac.setGroupPermissions(org.id, group.id, {
-      allow_methods: ['eth_call'],
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
-      roleId: role.id,
     });
 
     const result = await ctx.rbac.checkAccess({

@@ -59,7 +59,7 @@ export default function OrganizationList() {
       await loadOrganizations();
     } catch (error) {
       console.error('Failed to delete organization:', error);
-      alert('Failed to delete organization. It may have groups, roles, or contracts that need to be deleted first.');
+      alert('Failed to delete organization. It may have groups or contracts that need to be deleted first.');
     }
   };
 
@@ -77,7 +77,7 @@ export default function OrganizationList() {
         <div>
           <h3 className="text-sm font-medium text-white/80">Organizations</h3>
           <p className="text-xs text-white/50 mt-0.5">
-            Top-level tenants that contain groups, roles, and contracts
+            Top-level tenants that contain groups and contracts
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">

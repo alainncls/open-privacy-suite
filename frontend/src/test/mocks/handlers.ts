@@ -6,10 +6,9 @@ import type {
 import type {
   Organization,
   Group,
-  Role,
   User,
-  ContractOwnership,
-  GroupPermissions,
+  Contract,
+  GroupAccess,
   EffectivePermissions,
   UserMembership,
   MembershipWithDetails,
@@ -60,17 +59,6 @@ export const mockGroup: Group = {
   updated_at: '2024-01-01T00:00:00Z',
 };
 
-export const mockRole: Role = {
-  id: 'role-1',
-  org_id: 'org-1',
-  name: 'Developer',
-  description: 'Developer role',
-  claims: ['reader', 'writer'],
-  allow_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
-  created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-01T00:00:00Z',
-};
-
 export const mockUser: User = {
   id: 'user-1',
   external_id: 'did:polygonid:polygon:main:user123',
@@ -82,11 +70,11 @@ export const mockUser: User = {
   updated_at: '2024-01-01T00:00:00Z',
 };
 
-export const mockContract: ContractOwnership = {
+export const mockContract: Contract = {
   id: 'contract-1',
-  contract_address: '0x1234567890123456789012345678901234567890',
+  address: '0x1234567890123456789012345678901234567890',
   org_id: 'org-1',
-  owner_group_id: 'group-1',
+  name: 'Test Contract',
   deployed_by_user_id: null,
   deployed_at: null,
   metadata: {},
@@ -94,12 +82,11 @@ export const mockContract: ContractOwnership = {
   updated_at: '2024-01-01T00:00:00Z',
 };
 
-export const mockGroupPermissions: GroupPermissions = {
-  id: 'perms-1',
+export const mockGroupAccess: GroupAccess = {
+  id: 'access-1',
   group_id: 'group-1',
-  allow_methods: ['eth_call', 'eth_getBalance'],
-  allow_addresses: ['0x1234567890123456789012345678901234567890'],
-  owned_addresses: [],
+  allowed_methods: ['eth_call', 'eth_getBalance'],
+  default_claims: ['read'],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   created_at: '2024-01-01T00:00:00Z',
@@ -110,7 +97,6 @@ export const mockMembership: UserMembership = {
   id: 'membership-1',
   user_id: 'user-1',
   group_id: 'group-1',
-  role_id: 'role-1',
   source: 'admin',
   zk_credential_ref: '',
   expires_at: null,
@@ -121,17 +107,15 @@ export const mockMembership: UserMembership = {
 export const mockMembershipWithDetails: MembershipWithDetails = {
   membership: mockMembership,
   group: mockGroup,
-  role: mockRole,
 };
 
 export const mockEffectivePermissions: EffectivePermissions = {
   id: 'eff-perms-1',
   user_id: 'user-1',
   org_id: 'org-1',
-  allow_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
-  allow_addresses: ['0x1234567890123456789012345678901234567890'],
-  owned_addresses: [],
-  claims: ['reader', 'writer'],
+  allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
+  contract_access: {},
+  default_claims: ['read', 'write'],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   computed_at: '2024-01-01T00:00:00Z',
@@ -292,59 +276,20 @@ export const handlers = [
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
-  http.get('/api/orgs/:orgId/groups/:groupId/permissions', () => {
-    return HttpResponse.json(mockGroupPermissions);
+  http.get('/api/orgs/:orgId/groups/:groupId/access', () => {
+    return HttpResponse.json(mockGroupAccess);
   }),
 
-  http.put('/api/orgs/:orgId/groups/:groupId/permissions', async ({ request }) => {
+  http.put('/api/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
     const body = await request.json() as {
-      allow_methods?: string[];
-      allow_addresses?: string[];
+      allowed_methods?: string[];
+      default_claims?: string[];
     };
     return HttpResponse.json({
-      ...mockGroupPermissions,
-      ...(body.allow_methods && { allow_methods: body.allow_methods }),
-      ...(body.allow_addresses && { allow_addresses: body.allow_addresses }),
+      ...mockGroupAccess,
+      ...(body.allowed_methods && { allowed_methods: body.allowed_methods }),
+      ...(body.default_claims && { default_claims: body.default_claims }),
     });
-  }),
-
-  // Role endpoints
-  http.get('/api/orgs/:orgId/roles', () => {
-    return HttpResponse.json([mockRole]);
-  }),
-
-  http.get('/api/orgs/:orgId/roles/:roleId', ({ params }) => {
-    if (params.roleId === 'role-1') {
-      return HttpResponse.json(mockRole);
-    }
-    return HttpResponse.json({ error: 'Not found' }, { status: 404 });
-  }),
-
-  http.post('/api/orgs/:orgId/roles', async ({ request, params }) => {
-    const body = await request.json() as { name: string; description?: string; claims?: string[] };
-    return HttpResponse.json({
-      ...mockRole,
-      id: 'role-new',
-      org_id: params.orgId as string,
-      name: body.name,
-      description: body.description || '',
-      claims: body.claims || [],
-    });
-  }),
-
-  http.put('/api/orgs/:orgId/roles/:roleId', async ({ request, params }) => {
-    const body = await request.json() as { name?: string; description?: string; claims?: string[] };
-    return HttpResponse.json({
-      ...mockRole,
-      id: params.roleId as string,
-      ...(body.name && { name: body.name }),
-      ...(body.description !== undefined && { description: body.description }),
-      ...(body.claims && { claims: body.claims }),
-    });
-  }),
-
-  http.delete('/api/orgs/:orgId/roles/:roleId', () => {
-    return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // User endpoints
@@ -375,13 +320,12 @@ export const handlers = [
   }),
 
   http.post('/api/users/:userId/memberships', async ({ request, params }) => {
-    const body = await request.json() as { group_id: string; role_id?: string };
+    const body = await request.json() as { group_id: string };
     return HttpResponse.json({
       ...mockMembership,
       id: 'membership-new',
       user_id: params.userId as string,
       group_id: body.group_id,
-      role_id: body.role_id || null,
     });
   }),
 
@@ -400,29 +344,29 @@ export const handlers = [
 
   http.post('/api/orgs/:orgId/contracts', async ({ request, params }) => {
     const body = await request.json() as {
-      contract_address: string;
-      owner_group_id: string;
+      address: string;
+      name?: string;
       metadata?: Record<string, unknown>;
     };
     return HttpResponse.json({
       ...mockContract,
       id: 'contract-new',
       org_id: params.orgId as string,
-      contract_address: body.contract_address,
-      owner_group_id: body.owner_group_id,
+      address: body.address,
+      name: body.name || null,
       metadata: body.metadata || {},
     });
   }),
 
   http.put('/api/orgs/:orgId/contracts/:address', async ({ request, params }) => {
     const body = await request.json() as {
-      owner_group_id?: string;
+      name?: string;
       metadata?: Record<string, unknown>;
     };
     return HttpResponse.json({
       ...mockContract,
-      contract_address: params.address as string,
-      ...(body.owner_group_id && { owner_group_id: body.owner_group_id }),
+      address: params.address as string,
+      ...(body.name && { name: body.name }),
       ...(body.metadata && { metadata: body.metadata }),
     });
   }),
@@ -437,7 +381,7 @@ export const handlers = [
       allowed: true,
       reason: 'Access granted',
       rate_limit_rps: 100,
-      claims: ['reader'],
+      claims: ['read'],
     });
   }),
 
