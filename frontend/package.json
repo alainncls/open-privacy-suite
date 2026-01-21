@@ -36,6 +36,10 @@
     "viem": "^2.9.0",
     "wagmi": "^2.5.0"
   },
+  "overrides": {
+    "@coinbase/cdp-sdk": "npm:empty-npm-package@1.0.0",
+    "@solana/web3.js": "npm:empty-npm-package@1.0.0"
+  },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^14.0.0",

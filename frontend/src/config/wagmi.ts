@@ -1,11 +1,45 @@
-import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { connectorsForWallets } from '@rainbow-me/rainbowkit';
+import {
+  metaMaskWallet,
+  walletConnectWallet,
+  rainbowWallet,
+  injectedWallet,
+} from '@rainbow-me/rainbowkit/wallets';
+import { createConfig, http } from 'wagmi';
 import { mainnet, polygon, arbitrum, optimism, base } from 'wagmi/chains';
 
+const projectId = 'privacy-proxy-dev'; // For development - replace with real WalletConnect project ID in production
+
+// Explicitly define wallets to exclude Coinbase (which pulls in LGPL dependencies)
+const connectors = connectorsForWallets(
+  [
+    {
+      groupName: 'Popular',
+      wallets: [
+        metaMaskWallet,
+        rainbowWallet,
+        walletConnectWallet,
+        injectedWallet,
+      ],
+    },
+  ],
+  {
+    appName: 'Privacy Proxy',
+    projectId,
+  }
+);
+
 // RainbowKit configuration
-export const wagmiConfig = getDefaultConfig({
-  appName: 'Privacy Proxy',
-  projectId: 'privacy-proxy-dev', // For development - replace with real WalletConnect project ID in production
+export const wagmiConfig = createConfig({
+  connectors,
   chains: [mainnet, polygon, arbitrum, optimism, base],
+  transports: {
+    [mainnet.id]: http(),
+    [polygon.id]: http(),
+    [arbitrum.id]: http(),
+    [optimism.id]: http(),
+    [base.id]: http(),
+  },
   ssr: false,
 });
 
