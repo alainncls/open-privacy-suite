@@ -116,6 +116,32 @@ func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract,
 	return scanContracts(rows)
 }
 
+func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*rbac.Contract, int, error) {
+	// Get total count
+	var total int
+	countQuery := `SELECT COUNT(*) FROM contracts WHERE org_id = $1`
+	if err := d.conn.QueryRowContext(ctx, countQuery, orgID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count contracts: %w", err)
+	}
+
+	// Get paginated results
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+
+	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list contracts: %w", err)
+	}
+	defer rows.Close()
+
+	contracts, err := scanContracts(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return contracts, total, nil
+}
+
 func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
 	return err

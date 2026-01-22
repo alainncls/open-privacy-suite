@@ -20,6 +20,7 @@ type Store interface {
 	GetGroupBySlug(ctx context.Context, orgID, slug string) (*Group, error)
 	UpdateGroup(ctx context.Context, group *Group) error
 	ListGroups(ctx context.Context, orgID string) ([]*Group, error)
+	ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) // Returns groups, total count
 	ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error)
 	GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) // Returns groups from root to the specified group
 	DeleteGroup(ctx context.Context, id string) error
@@ -37,6 +38,7 @@ type Store interface {
 	GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error)
 	UpdateContract(ctx context.Context, contract *Contract) error
 	ListContracts(ctx context.Context, orgID string) ([]*Contract, error)
+	ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) // Returns contracts, total count
 	DeleteContract(ctx context.Context, id string) error
 
 	// Contract Grant operations

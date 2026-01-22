@@ -163,7 +163,10 @@ func (m *MockStore) ListOrganizations(ctx context.Context) ([]*Organization, err
 func (m *MockStore) DeleteOrganization(ctx context.Context, id string) error         { return nil }
 func (m *MockStore) CreateGroup(ctx context.Context, group *Group) error             { return nil }
 func (m *MockStore) UpdateGroup(ctx context.Context, group *Group) error             { return nil }
-func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error)  { return nil, nil }
+func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
+func (m *MockStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) {
+	return nil, 0, nil
+}
 func (m *MockStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) {
 	return nil, nil
 }
@@ -226,7 +229,10 @@ func (m *MockStore) UpdateContract(ctx context.Context, contract *Contract) erro
 func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteContract(ctx context.Context, id string) error                 { return nil }
+func (m *MockStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) {
+	return nil, 0, nil
+}
+func (m *MockStore) DeleteContract(ctx context.Context, id string) error { return nil }
 func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil
