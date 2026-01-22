@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,11 +17,11 @@ func TestSaveRefreshToken(t *testing.T) {
 	tokenHash := "test-token-hash-123"
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 
-	err := database.SaveRefreshToken(tokenHash, subject, expiresAt)
+	err := database.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
 	require.NoError(t, err)
 
 	// Retrieve the token
-	token, err := database.GetRefreshToken(tokenHash)
+	token, err := database.GetRefreshToken(context.Background(), tokenHash)
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, subject, token.Subject)
@@ -32,7 +33,7 @@ func TestGetRefreshToken_NotFound(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	token, err := database.GetRefreshToken("non-existent-hash")
+	token, err := database.GetRefreshToken(context.Background(), "non-existent-hash")
 	require.NoError(t, err)
 	assert.Nil(t, token)
 }
@@ -46,15 +47,15 @@ func TestRevokeRefreshToken(t *testing.T) {
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 
 	// Save token
-	err := database.SaveRefreshToken(tokenHash, subject, expiresAt)
+	err := database.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
 	require.NoError(t, err)
 
 	// Revoke token
-	err = database.RevokeRefreshToken(tokenHash)
+	err = database.RevokeRefreshToken(context.Background(), tokenHash)
 	require.NoError(t, err)
 
 	// Verify token is revoked
-	token, err := database.GetRefreshToken(tokenHash)
+	token, err := database.GetRefreshToken(context.Background(), tokenHash)
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.True(t, token.Revoked)
@@ -69,11 +70,11 @@ func TestRevokeAccessToken(t *testing.T) {
 	subject := "did:privado:test123"
 	expiresAt := time.Now().Add(30 * time.Minute)
 
-	err := database.RevokeAccessToken(tokenID, subject, expiresAt)
+	err := database.RevokeAccessToken(context.Background(), tokenID, subject, expiresAt)
 	require.NoError(t, err)
 
 	// Check if token is revoked
-	revoked, err := database.IsAccessTokenRevoked(tokenID)
+	revoked, err := database.IsAccessTokenRevoked(context.Background(), tokenID)
 	require.NoError(t, err)
 	assert.True(t, revoked)
 }
@@ -82,7 +83,7 @@ func TestIsAccessTokenRevoked_NotRevoked(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
 
-	revoked, err := database.IsAccessTokenRevoked("non-existent-token-id")
+	revoked, err := database.IsAccessTokenRevoked(context.Background(), "non-existent-token-id")
 	require.NoError(t, err)
 	assert.False(t, revoked)
 }
@@ -94,25 +95,25 @@ func TestCleanupExpiredTokens(t *testing.T) {
 	// Create expired refresh token
 	expiredHash := "expired-token-hash"
 	expiredAt := time.Now().Add(-1 * time.Hour) // 1 hour ago
-	err := database.SaveRefreshToken(expiredHash, "did:privado:test123", expiredAt)
+	err := database.SaveRefreshToken(context.Background(), expiredHash, "did:privado:test123", expiredAt)
 	require.NoError(t, err)
 
 	// Create expired revoked token
 	expiredTokenID := "expired-revoked-token"
 	expiredRevokedAt := time.Now().Add(-1 * time.Hour)
-	err = database.RevokeAccessToken(expiredTokenID, "did:privado:test123", expiredRevokedAt)
+	err = database.RevokeAccessToken(context.Background(), expiredTokenID, "did:privado:test123", expiredRevokedAt)
 	require.NoError(t, err)
 
 	// Cleanup
-	err = database.CleanupExpiredTokens()
+	err = database.CleanupExpiredTokens(context.Background())
 	require.NoError(t, err)
 
 	// Verify expired tokens are removed
-	token, err := database.GetRefreshToken(expiredHash)
+	token, err := database.GetRefreshToken(context.Background(), expiredHash)
 	require.NoError(t, err)
 	assert.Nil(t, token) // Should be deleted
 
-	revoked, err := database.IsAccessTokenRevoked(expiredTokenID)
+	revoked, err := database.IsAccessTokenRevoked(context.Background(), expiredTokenID)
 	require.NoError(t, err)
 	assert.False(t, revoked) // Should be deleted
 }

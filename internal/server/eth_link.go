@@ -213,17 +213,21 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 	// Normalize the address
 	normalizedAddr := auth.NormalizeAddress(req.Address)
 
-	// Verify the signature
-	if err := auth.VerifyAddressOwnership(normalizedAddr, challenge.Message, req.Signature); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "signature verification failed: " + err.Error()})
-		return
+	// Verify the signature (unless mock mode is enabled for demos)
+	if s.config.MockSignatures {
+		log.Printf("Warning: Mock signature mode enabled - skipping signature verification for address %s", normalizedAddr)
+	} else {
+		if err := auth.VerifyAddressOwnership(normalizedAddr, challenge.Message, req.Signature); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "signature verification failed: " + err.Error()})
+			return
+		}
 	}
 
 	// Get the message hash for storage
 	messageHash := auth.MessageHashHex(challenge.Message)
 
 	// Store the link in the database
-	if err := s.db.LinkEthAddress(userDID, normalizedAddr, req.Signature, messageHash); err != nil {
+	if err := s.db.LinkEthAddress(c.Request.Context(), userDID, normalizedAddr, req.Signature, messageHash); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to link address: " + err.Error()})
 		return
 	}
@@ -255,7 +259,7 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	}
 
 	// Get linked addresses
-	links, err := s.db.GetEthAddressesByDID(userDID)
+	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), userDID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get addresses: " + err.Error()})
 		return
@@ -299,7 +303,7 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 	normalizedAddr := strings.ToLower(address)
 
 	// Revoke the link
-	if err := s.db.RevokeEthAddressLink(userDID, normalizedAddr); err != nil {
+	if err := s.db.RevokeEthAddressLink(c.Request.Context(), userDID, normalizedAddr); err != nil {
 		if strings.Contains(err.Error(), "no matching link") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "address not found or not linked to your account"})
 			return
@@ -341,7 +345,7 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 	}
 
 	// Verify the address is linked to this user
-	link, err := s.db.GetEthAddressLink(normalizedAddr)
+	link, err := s.db.GetEthAddressLink(c.Request.Context(), normalizedAddr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get address: " + err.Error()})
 		return
@@ -363,7 +367,7 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 	if ensName != "" {
 		ensNamePtr = &ensName
 	}
-	if err := s.db.UpdateENSName(normalizedAddr, ensNamePtr); err != nil {
+	if err := s.db.UpdateENSName(c.Request.Context(), normalizedAddr, ensNamePtr); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update ENS name: " + err.Error()})
 		return
 	}
@@ -395,7 +399,7 @@ func (s *Server) resolveAndStoreENS(address string) {
 		ensNamePtr = &ensName
 	}
 
-	if err := s.db.UpdateENSName(address, ensNamePtr); err != nil {
+	if err := s.db.UpdateENSName(ctx, address, ensNamePtr); err != nil {
 		log.Printf("Warning: failed to update ENS name for %s: %v", address, err)
 	}
 }

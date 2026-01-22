@@ -161,11 +161,11 @@ func (d *DB) GetMigrationStatus(ctx context.Context) (currentVersion int32, pend
 	return version, pending, nil
 }
 
-func (d *DB) LogAccess(externalID, method string, statusCode int, ipAddress string) error {
+func (d *DB) LogAccess(ctx context.Context, externalID, method string, statusCode int, ipAddress string) error {
 	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address)
 	          VALUES ($1, $2, $3, $4)`
-	
-	_, err := d.conn.Exec(query, externalID, method, statusCode, ipAddress)
+
+	_, err := d.conn.ExecContext(ctx, query, externalID, method, statusCode, ipAddress)
 	return err
 }
 
@@ -178,13 +178,13 @@ type AccessLog struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-func (d *DB) GetAccessLogs(limit int) ([]*AccessLog, error) {
+func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error) {
 	query := `SELECT id, external_id, method, status_code, ip_address, created_at
-	          FROM access_logs 
-	          ORDER BY created_at DESC 
+	          FROM access_logs
+	          ORDER BY created_at DESC
 	          LIMIT $1`
-	
-	rows, err := d.conn.Query(query, limit)
+
+	rows, err := d.conn.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get logs: %w", err)
 	}
@@ -222,27 +222,27 @@ type RefreshToken struct {
 }
 
 // SaveRefreshToken saves a refresh token to the database
-func (d *DB) SaveRefreshToken(tokenHash, subject string, expiresAt time.Time) error {
+func (d *DB) SaveRefreshToken(ctx context.Context, tokenHash, subject string, expiresAt time.Time) error {
 	query := `INSERT INTO refresh_tokens (token_hash, subject, expires_at)
 	          VALUES ($1, $2, $3)
 	          ON CONFLICT(token_hash) DO UPDATE SET
 	          expires_at = excluded.expires_at,
 	          revoked = false,
 	          revoked_at = NULL`
-	
-	_, err := d.conn.Exec(query, tokenHash, subject, expiresAt)
+
+	_, err := d.conn.ExecContext(ctx, query, tokenHash, subject, expiresAt)
 	return err
 }
 
 // GetRefreshToken retrieves a refresh token by hash
-func (d *DB) GetRefreshToken(tokenHash string) (*RefreshToken, error) {
+func (d *DB) GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error) {
 	query := `SELECT token_hash, subject, created_at, expires_at, revoked, revoked_at
 	          FROM refresh_tokens WHERE token_hash = $1`
-	
+
 	var token RefreshToken
 	var revokedAt sql.NullString
-	
-	err := d.conn.QueryRow(query, tokenHash).Scan(
+
+	err := d.conn.QueryRowContext(ctx, query, tokenHash).Scan(
 		&token.TokenHash,
 		&token.Subject,
 		&token.CreatedAt,
@@ -267,51 +267,51 @@ func (d *DB) GetRefreshToken(tokenHash string) (*RefreshToken, error) {
 }
 
 // RevokeRefreshToken marks a refresh token as revoked
-func (d *DB) RevokeRefreshToken(tokenHash string) error {
-	query := `UPDATE refresh_tokens 
+func (d *DB) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+	query := `UPDATE refresh_tokens
 	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
 	          WHERE token_hash = $1`
-	
-	_, err := d.conn.Exec(query, tokenHash)
+
+	_, err := d.conn.ExecContext(ctx, query, tokenHash)
 	return err
 }
 
 // RevokeAccessToken stores a revoked access token (for blacklist checking)
-func (d *DB) RevokeAccessToken(tokenID, subject string, expiresAt time.Time) error {
+func (d *DB) RevokeAccessToken(ctx context.Context, tokenID, subject string, expiresAt time.Time) error {
 	query := `INSERT INTO revoked_tokens (token_id, subject, expires_at)
 	          VALUES ($1, $2, $3)
 	          ON CONFLICT(token_id) DO NOTHING`
-	
-	_, err := d.conn.Exec(query, tokenID, subject, expiresAt)
+
+	_, err := d.conn.ExecContext(ctx, query, tokenID, subject, expiresAt)
 	return err
 }
 
 // IsAccessTokenRevoked checks if an access token is revoked
-func (d *DB) IsAccessTokenRevoked(tokenID string) (bool, error) {
+func (d *DB) IsAccessTokenRevoked(ctx context.Context, tokenID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM revoked_tokens WHERE token_id = $1)`
-	
+
 	var exists bool
-	err := d.conn.QueryRow(query, tokenID).Scan(&exists)
+	err := d.conn.QueryRowContext(ctx, query, tokenID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check revoked token: %w", err)
 	}
-	
+
 	return exists, nil
 }
 
 // CleanupExpiredTokens removes expired tokens from the database
-func (d *DB) CleanupExpiredTokens() error {
+func (d *DB) CleanupExpiredTokens(ctx context.Context) error {
 	// Use current time from Go to ensure consistency with how tokens are stored
 	now := time.Now()
 
 	// Clean up expired refresh tokens
-	_, err := d.conn.Exec(`DELETE FROM refresh_tokens WHERE expires_at < $1`, now)
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
 	}
 
 	// Clean up expired revoked tokens
-	_, err = d.conn.Exec(`DELETE FROM revoked_tokens WHERE expires_at < $1`, now)
+	_, err = d.conn.ExecContext(ctx, `DELETE FROM revoked_tokens WHERE expires_at < $1`, now)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup expired revoked tokens: %w", err)
 	}
@@ -335,7 +335,7 @@ type EthAddressLink struct {
 
 // LinkEthAddress creates a new link between an ETH address and a DID
 // The ETH address must not already be linked to another DID
-func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) error {
+func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, messageHash string) error {
 	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
 	          VALUES ($1, $2, $3, $4)
 	          ON CONFLICT (eth_address) DO UPDATE SET
@@ -348,7 +348,7 @@ func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) erro
 	          ens_name = NULL,
 	          ens_resolved_at = NULL`
 
-	_, err := d.conn.Exec(query, did, ethAddress, signature, messageHash)
+	_, err := d.conn.ExecContext(ctx, query, did, ethAddress, signature, messageHash)
 	if err != nil {
 		return fmt.Errorf("failed to link ETH address: %w", err)
 	}
@@ -356,13 +356,13 @@ func (d *DB) LinkEthAddress(did, ethAddress, signature, messageHash string) erro
 }
 
 // GetEthAddressesByDID retrieves all ETH addresses linked to a DID
-func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
+func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddressLink, error) {
 	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
 	          FROM eth_address_links
 	          WHERE did = $1 AND revoked = false
 	          ORDER BY verified_at DESC`
 
-	rows, err := d.conn.Query(query, did)
+	rows, err := d.conn.QueryContext(ctx, query, did)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ETH addresses: %w", err)
 	}
@@ -404,12 +404,12 @@ func (d *DB) GetEthAddressesByDID(did string) ([]*EthAddressLink, error) {
 }
 
 // GetDIDByEthAddress retrieves the DID linked to an ETH address
-func (d *DB) GetDIDByEthAddress(ethAddress string) (string, error) {
+func (d *DB) GetDIDByEthAddress(ctx context.Context, ethAddress string) (string, error) {
 	query := `SELECT did FROM eth_address_links
 	          WHERE eth_address = $1 AND revoked = false`
 
 	var did string
-	err := d.conn.QueryRow(query, ethAddress).Scan(&did)
+	err := d.conn.QueryRowContext(ctx, query, ethAddress).Scan(&did)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -421,12 +421,12 @@ func (d *DB) GetDIDByEthAddress(ethAddress string) (string, error) {
 
 // RevokeEthAddressLink revokes a link between an ETH address and a DID
 // Only the DID owner can revoke their own links
-func (d *DB) RevokeEthAddressLink(did, ethAddress string) error {
+func (d *DB) RevokeEthAddressLink(ctx context.Context, did, ethAddress string) error {
 	query := `UPDATE eth_address_links
 	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
 	          WHERE did = $1 AND eth_address = $2`
 
-	result, err := d.conn.Exec(query, did, ethAddress)
+	result, err := d.conn.ExecContext(ctx, query, did, ethAddress)
 	if err != nil {
 		return fmt.Errorf("failed to revoke ETH address link: %w", err)
 	}
@@ -444,12 +444,12 @@ func (d *DB) RevokeEthAddressLink(did, ethAddress string) error {
 }
 
 // UpdateENSName updates the ENS name for an ETH address
-func (d *DB) UpdateENSName(ethAddress string, ensName *string) error {
+func (d *DB) UpdateENSName(ctx context.Context, ethAddress string, ensName *string) error {
 	query := `UPDATE eth_address_links
 	          SET ens_name = $2, ens_resolved_at = CURRENT_TIMESTAMP
 	          WHERE eth_address = $1 AND revoked = false`
 
-	_, err := d.conn.Exec(query, ethAddress, ensName)
+	_, err := d.conn.ExecContext(ctx, query, ethAddress, ensName)
 	if err != nil {
 		return fmt.Errorf("failed to update ENS name: %w", err)
 	}
@@ -457,7 +457,7 @@ func (d *DB) UpdateENSName(ethAddress string, ensName *string) error {
 }
 
 // GetEthAddressLink retrieves a specific ETH address link
-func (d *DB) GetEthAddressLink(ethAddress string) (*EthAddressLink, error) {
+func (d *DB) GetEthAddressLink(ctx context.Context, ethAddress string) (*EthAddressLink, error) {
 	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
 	          FROM eth_address_links
 	          WHERE eth_address = $1 AND revoked = false`
@@ -465,7 +465,7 @@ func (d *DB) GetEthAddressLink(ethAddress string) (*EthAddressLink, error) {
 	var link EthAddressLink
 	var revokedAt, ensName, ensResolvedAt sql.NullString
 
-	err := d.conn.QueryRow(query, ethAddress).Scan(
+	err := d.conn.QueryRowContext(ctx, query, ethAddress).Scan(
 		&link.ID,
 		&link.DID,
 		&link.EthAddress,

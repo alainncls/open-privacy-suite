@@ -299,12 +299,12 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
-		s.db.LogAccess(subjectStr, method, http.StatusInternalServerError, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusInternalServerError, c.ClientIP())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "access check failed: " + err.Error()})
 		return
 	}
 	if !result.Allowed {
-		s.db.LogAccess(subjectStr, method, http.StatusForbidden, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusForbidden, c.ClientIP())
 		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + result.Reason})
 		return
 	}
@@ -312,7 +312,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	// Check rate limits
 	allowed, rateLimitReason := s.rateLimiter.CheckAndIncrement(subjectStr, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
-		s.db.LogAccess(subjectStr, method, http.StatusTooManyRequests, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusTooManyRequests, c.ClientIP())
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": rateLimitReason})
 		return
 	}
@@ -324,13 +324,13 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 	responseBody, statusCode, err := s.proxy.Forward(body)
 	if err != nil {
 		// Log error
-		s.db.LogAccess(subjectStr, method, http.StatusBadGateway, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to forward request: " + err.Error()})
 		return
 	}
 
 	// Log successful access
-	s.db.LogAccess(subjectStr, method, statusCode, c.ClientIP())
+	s.db.LogAccess(c.Request.Context(), subjectStr, method, statusCode, c.ClientIP())
 
 	// Return response from node
 	c.Data(statusCode, "application/json", responseBody)
@@ -344,7 +344,7 @@ func (s *Server) getLogs(c *gin.Context) {
 		}
 	}
 
-	logs, err := s.db.GetAccessLogs(limit)
+	logs, err := s.db.GetAccessLogs(c.Request.Context(), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -515,7 +515,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	}
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
-		s.db.LogAccess(testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
 		c.JSON(http.StatusOK, TestRequestResponse{
 			Success:   false,
 			Error:     "access check failed: " + err.Error(),
@@ -525,7 +525,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 	if !result.Allowed {
-		s.db.LogAccess(testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
 		c.JSON(http.StatusOK, TestRequestResponse{
 			Success:   false,
 			Error:     result.Reason,
@@ -550,7 +550,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
-		s.db.LogAccess(testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusOK, TestRequestResponse{
 			Success:   false,
 			Error:     err.Error(),
@@ -563,7 +563,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// Parse response
 	var rpcResp proxy.JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		s.db.LogAccess(testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
+		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
 		c.JSON(http.StatusOK, TestRequestResponse{
 			Success:   false,
 			Error:     "invalid JSON-RPC response",
@@ -574,7 +574,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	}
 
 	// Log successful access
-	s.db.LogAccess(testIdentity, input.Method, statusCode, c.ClientIP())
+	s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, statusCode, c.ClientIP())
 
 	if rpcResp.Error != nil {
 		c.JSON(http.StatusOK, TestRequestResponse{

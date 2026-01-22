@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -280,8 +279,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		}
 	} else {
 		// Verify JWZ token against the original authorization request
-		ctx := context.Background()
-		userDID, err = s.privadoVerifier.VerifyJWZ(ctx, jwzToken, authRequest, s.config.VerifierID)
+		userDID, err = s.privadoVerifier.VerifyJWZ(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)
 		if err != nil {
 			// Check if this is a humanity verification failure
 			if strings.Contains(err.Error(), "humanity") || strings.Contains(err.Error(), "ProofOfHumanity") {
@@ -301,7 +299,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// New users default to KYC=false; KYC status is updated through admin API
 	kyc := false
 	if s.rbacAccessCtrl != nil {
-		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), userDID, kyc)
+		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc)
 		if err != nil {
 			// Log error but continue - auth can proceed without RBAC user creation
 			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
@@ -327,7 +325,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Store refresh token in database
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
-	if err := s.db.SaveRefreshToken(tokenHash, userDID, expiresAt); err != nil {
+	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, userDID, expiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
 		return nil, err
 	}
@@ -407,7 +405,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 
 	// Check if refresh token is revoked in database
 	tokenHash := auth.HashToken(req.RefreshToken)
-	storedToken, err := s.db.GetRefreshToken(tokenHash)
+	storedToken, err := s.db.GetRefreshToken(c.Request.Context(), tokenHash)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check refresh token: " + err.Error()})
 		return
@@ -433,7 +431,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// Get user KYC status from RBAC
 	kyc := false
 	if s.rbacAccessCtrl != nil {
-		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), claims.Subject, false)
+		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), claims.Subject, false)
 		if err == nil && user != nil {
 			kyc = user.KYC
 		}
@@ -455,7 +453,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	}
 
 	// Revoke old refresh token
-	if err := s.db.RevokeRefreshToken(tokenHash); err != nil {
+	if err := s.db.RevokeRefreshToken(c.Request.Context(), tokenHash); err != nil {
 		// Log error but continue (non-critical)
 		log.Printf("Warning: failed to revoke old refresh token: %v", err)
 	}
@@ -463,7 +461,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// Store new refresh token
 	newTokenHash := auth.HashToken(newRefreshToken)
 	newExpiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
-	if err := s.db.SaveRefreshToken(newTokenHash, claims.Subject, newExpiresAt); err != nil {
+	if err := s.db.SaveRefreshToken(c.Request.Context(), newTokenHash, claims.Subject, newExpiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save new refresh token: " + err.Error()})
 		return
 	}
@@ -494,7 +492,7 @@ func (s *Server) handleRevoke(c *gin.Context) {
 
 	// Revoke refresh token
 	tokenHash := auth.HashToken(req.RefreshToken)
-	if err := s.db.RevokeRefreshToken(tokenHash); err != nil {
+	if err := s.db.RevokeRefreshToken(c.Request.Context(), tokenHash); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token: " + err.Error()})
 		return
 	}

@@ -353,7 +353,7 @@ func TestHandleRefresh_Success(t *testing.T) {
 	// Save refresh token to DB
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	err = srv.db.SaveRefreshToken(tokenHash, subject, expiresAt)
+	err = srv.db.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -413,11 +413,11 @@ func TestHandleRefresh_RevokedToken(t *testing.T) {
 
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	err = srv.db.SaveRefreshToken(tokenHash, subject, expiresAt)
+	err = srv.db.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
 	require.NoError(t, err)
 
 	// Revoke the token
-	err = srv.db.RevokeRefreshToken(tokenHash)
+	err = srv.db.RevokeRefreshToken(context.Background(), tokenHash)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -448,7 +448,7 @@ func TestHandleRevoke_Success(t *testing.T) {
 
 	tokenHash := auth.HashToken(refreshToken)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	err = srv.db.SaveRefreshToken(tokenHash, subject, expiresAt)
+	err = srv.db.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -468,7 +468,7 @@ func TestHandleRevoke_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Verify token is revoked
-	token, err := srv.db.GetRefreshToken(tokenHash)
+	token, err := srv.db.GetRefreshToken(context.Background(), tokenHash)
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.True(t, token.Revoked)

@@ -48,11 +48,11 @@ func TestLogAccess(t *testing.T) {
 	defer cleanupTestDB(t, database)
 
 	// Log access (no policy required anymore - RBAC handles access control)
-	if err := database.LogAccess("did:privado:test_user", "eth_call", 200, "127.0.0.1"); err != nil {
+	if err := database.LogAccess(context.Background(), "did:privado:test_user", "eth_call", 200, "127.0.0.1"); err != nil {
 		t.Fatalf("failed to log access: %v", err)
 	}
 
-	logs, err := database.GetAccessLogs(10)
+	logs, err := database.GetAccessLogs(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("failed to get logs: %v", err)
 	}

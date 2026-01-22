@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -46,7 +47,7 @@ func JWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.Handler
 		if db != nil {
 			// Use hash of token as ID for revocation tracking
 			tokenID := getTokenID(tokenString)
-			revoked, err := db.IsAccessTokenRevoked(tokenID)
+			revoked, err := db.IsAccessTokenRevoked(c.Request.Context(), tokenID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check token revocation"})
 				c.Abort()
@@ -70,7 +71,7 @@ func JWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.Handler
 
 // RevocationChecker interface for checking token revocation
 type RevocationChecker interface {
-	IsAccessTokenRevoked(tokenID string) (bool, error)
+	IsAccessTokenRevoked(ctx context.Context, tokenID string) (bool, error)
 }
 
 // getTokenID generates a hash ID from token string for revocation tracking

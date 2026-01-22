@@ -771,7 +771,7 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 		return
 	}
 
-	links, err := s.db.GetEthAddressesByDID(user.ExternalID)
+	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), user.ExternalID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

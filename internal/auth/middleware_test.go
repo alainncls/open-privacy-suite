@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,7 +17,7 @@ type mockRevocationChecker struct {
 	revokedTokens map[string]bool
 }
 
-func (m *mockRevocationChecker) IsAccessTokenRevoked(tokenID string) (bool, error) {
+func (m *mockRevocationChecker) IsAccessTokenRevoked(_ context.Context, tokenID string) (bool, error) {
 	return m.revokedTokens[tokenID], nil
 }
 
