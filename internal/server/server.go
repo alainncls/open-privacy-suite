@@ -53,6 +53,9 @@ func (s *Server) Stop() {
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.Stop()
 	}
+	if s.db != nil {
+		s.db.Close()
+	}
 }
 
 // PrivadoVerifier interface for Privado ID operations
@@ -62,17 +65,17 @@ type PrivadoVerifier interface {
 	VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 }
 
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config) (*Server, error) {
 	return NewWithVerifier(cfg, nil)
 }
 
 // NewWithVerifier creates a new server with an optional PrivadoVerifier
 // If verifier is nil, creates a real PrivadoVerifier from config
 // This allows injecting a mock verifier for testing
-func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
+func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, error) {
 	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
 
 	// Initialize Privado ID verifier
@@ -82,7 +85,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 	} else {
 		privadoVerifier, err = auth.NewPrivadoVerifier(cfg.PrivadoRPCURL, cfg.IPFSGateway)
 		if err != nil {
-			panic(fmt.Errorf("failed to create Privado verifier: %w", err))
+			database.Close()
+			return nil, fmt.Errorf("failed to create Privado verifier: %w", err)
 		}
 	}
 
@@ -95,7 +99,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 		7*24*time.Hour, // Refresh token TTL
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create JWT service: %w", err))
+		database.Close()
+		return nil, fmt.Errorf("failed to create JWT service: %w", err)
 	}
 
 	proxySvc := proxy.New(cfg.NodeURL)
@@ -134,7 +139,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) *Server {
 		rateLimiter:     rateLimiter,
 		config:          cfg,
 		ensResolver:     ensResolver,
-	}
+	}, nil
 }
 
 func (s *Server) Run(addr string) error {

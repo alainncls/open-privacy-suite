@@ -117,7 +117,10 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 	}
 
 	// Use mock verifier if provided, otherwise create real one
-	srv := server.NewWithVerifier(cfg, verifier)
+	srv, err := server.NewWithVerifier(cfg, verifier)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
 
 	// Start server in goroutine
 	go func() {

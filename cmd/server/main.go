@@ -16,7 +16,18 @@ import (
 func main() {
 	cfg := config.Load()
 
-	srv := server.New(cfg) // Migrations run automatically in db.New()
+	// Warn loudly if mock signatures mode is enabled
+	if cfg.MockSignatures {
+		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		log.Println("!!! WARNING: MOCK_SIGNATURES=true - Signature verification DISABLED")
+		log.Println("!!! This should ONLY be used for demo recording, never in production!")
+		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+	}
+
+	srv, err := server.New(cfg) // Migrations run automatically in db.New()
+	if err != nil {
+		log.Fatalf("Failed to create server: %v", err)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
