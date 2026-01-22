@@ -84,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshWithToken = async (refreshToken: string): Promise<boolean> => {
     try {
-      const response = await fetch('/refresh', {
+      const response = await fetch('/api/v1/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refreshToken }),
@@ -152,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Access token revocation ensures immediate logout (vs 30 min expiry)
     if (state.refreshToken) {
       try {
-        await fetch('/revoke', {
+        await fetch('/api/v1/revoke', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

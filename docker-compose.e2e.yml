@@ -53,6 +53,8 @@ services:
       - PORT=8080
       - ENVIRONMENT=test
       - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000
+      - MOCK_SIGNATURES=true
+      - ALLOW_MOCK_LOGIN=true
     depends_on:
       postgres:
         condition: service_healthy

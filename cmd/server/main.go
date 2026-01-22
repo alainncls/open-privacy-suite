@@ -13,6 +13,8 @@ import (
 	"privacy-proxy/internal/server"
 )
 
+const Version = "0.1.0"
+
 func main() {
 	cfg := config.Load()
 
