@@ -89,24 +89,24 @@ export function SuccessPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4" data-testid="success-page">
+    <div className="min-h-screen bg-[#F1F5F9] flex items-center justify-center p-4" data-testid="success-page">
       <div className="w-full max-w-lg animate-fade-in-up">
         {/* Success Header */}
         <div className="text-center mb-8" data-testid="success-header">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-green-500 to-accent-500 flex items-center justify-center shadow-lg shadow-green-500/30 animate-scale-in">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#22C55E] to-[#8950FA] flex items-center justify-center shadow-lg shadow-primary animate-scale-in">
             <Shield className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white/95" data-testid="success-title">You're All Set!</h1>
-          <p className="text-white/60 mt-2">
+          <h1 className="text-3xl font-bold text-[#0F0F0F]" data-testid="success-title">You're All Set!</h1>
+          <p className="text-[#6B7280] mt-2">
             Your authenticated RPC endpoint is ready to use
           </p>
         </div>
 
         {/* RPC Endpoint Card */}
-        <Card variant="glassSolid" className="mb-4" data-testid="rpc-card">
+        <Card variant="default" className="mb-4" data-testid="rpc-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Key className="w-5 h-5 text-primary-400" />
+              <Key className="w-5 h-5 text-[#8950FA]" />
               Your RPC Endpoint
             </CardTitle>
             <CardDescription>
@@ -116,11 +116,11 @@ export function SuccessPage() {
           <CardContent className="space-y-4">
             {/* RPC URL */}
             <div className="space-y-2">
-              <label className="text-xs text-white/50 uppercase tracking-wide">
+              <label className="text-xs text-[#94A3B8] uppercase tracking-wide">
                 RPC URL
               </label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-sm text-white/90 overflow-x-auto" data-testid="rpc-endpoint">
+                <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-sm text-[#0F0F0F] overflow-x-auto" data-testid="rpc-endpoint">
                   {rpcEndpoint}
                 </code>
                 <Button
@@ -131,7 +131,7 @@ export function SuccessPage() {
                   data-testid="copy-rpc-btn"
                 >
                   {copied === 'rpc' ? (
-                    <Check className="w-4 h-4 text-green-400" />
+                    <Check className="w-4 h-4 text-[#166534]" />
                   ) : (
                     <Copy className="w-4 h-4" />
                   )}
@@ -142,11 +142,11 @@ export function SuccessPage() {
             {/* Access Token */}
             {accessToken && (
               <div className="space-y-2">
-                <label className="text-xs text-white/50 uppercase tracking-wide">
+                <label className="text-xs text-[#94A3B8] uppercase tracking-wide">
                   Access Token (for Authorization header)
                 </label>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-xs text-white/70 overflow-hidden text-ellipsis">
+                  <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-xs text-[#374151] overflow-hidden text-ellipsis">
                     Bearer {accessToken.slice(0, 20)}...{accessToken.slice(-10)}
                   </code>
                   <Button
@@ -156,7 +156,7 @@ export function SuccessPage() {
                     className="flex-shrink-0"
                   >
                     {copied === 'token' ? (
-                      <Check className="w-4 h-4 text-green-400" />
+                      <Check className="w-4 h-4 text-[#166534]" />
                     ) : (
                       <Copy className="w-4 h-4" />
                     )}
@@ -168,7 +168,7 @@ export function SuccessPage() {
             {/* Add to MetaMask */}
             <Button
               onClick={handleAddToMetaMask}
-              variant="glassPrimary"
+              variant="default"
               className="w-full"
               disabled={isAddingNetwork}
               data-testid="add-metamask-btn"
@@ -214,47 +214,47 @@ export function SuccessPage() {
         </Card>
 
         {/* Identity Info */}
-        <Card variant="glass" className="mb-4">
+        <Card variant="default" className="mb-4">
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-primary-500/20 flex items-center justify-center">
-                  <Shield className="w-5 h-5 text-primary-400" />
+                <div className="w-10 h-10 rounded-full bg-[#F5F3FF] flex items-center justify-center">
+                  <Shield className="w-5 h-5 text-[#8950FA]" />
                 </div>
                 <div>
-                  <p className="text-white/90 text-sm font-medium">Privado ID</p>
-                  <p className="text-white/50 text-xs font-mono break-all">
+                  <p className="text-[#0F0F0F] text-sm font-medium">Privado ID</p>
+                  <p className="text-[#94A3B8] text-xs font-mono break-all">
                     {userDID || 'Connected'}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-green-400 text-xs">
-                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <div className="flex items-center gap-2 text-[#166534] text-xs">
+                <div className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
                 Verified
               </div>
             </div>
 
             {/* Linked wallets */}
             {linkedAddresses.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-white/10">
-                <p className="text-xs text-white/50 mb-2">Linked Wallets</p>
+              <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
+                <p className="text-xs text-[#94A3B8] mb-2">Linked Wallets</p>
                 <div className="space-y-2">
                   {linkedAddresses.map((addr) => (
                     <div
                       key={addr.address}
-                      className="flex items-center gap-2 p-2 bg-white/5 rounded-lg"
+                      className="flex items-center gap-2 p-2 bg-[#F1F5F9] rounded-lg"
                     >
-                      <Wallet className="w-3 h-3 text-accent-400 flex-shrink-0" />
-                      <span className="text-white/70 font-mono text-xs break-all flex-1">
+                      <Wallet className="w-3 h-3 text-[#8950FA] flex-shrink-0" />
+                      <span className="text-[#374151] font-mono text-xs break-all flex-1">
                         {addr.address}
                       </span>
                       <button
                         onClick={() => copyToClipboard(addr.address, addr.address)}
-                        className="text-white/40 hover:text-white/70 p-1 flex-shrink-0"
+                        className="text-[#94A3B8] hover:text-[#374151] p-1 flex-shrink-0"
                         title="Copy address"
                       >
                         {copied === addr.address ? (
-                          <Check className="w-3 h-3 text-green-400" />
+                          <Check className="w-3 h-3 text-[#166534]" />
                         ) : (
                           <Copy className="w-3 h-3" />
                         )}
@@ -268,14 +268,14 @@ export function SuccessPage() {
         </Card>
 
         {/* Usage Examples */}
-        <Card variant="glass">
+        <Card variant="default">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Quick Start</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <p className="text-xs text-white/50 mb-1">cURL</p>
-              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-white/70 overflow-x-auto">
+              <p className="text-xs text-[#94A3B8] mb-1">cURL</p>
+              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-[#374151] overflow-x-auto">
 {`curl ${rpcEndpoint} \\
   -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
@@ -284,8 +284,8 @@ export function SuccessPage() {
             </div>
 
             <div>
-              <p className="text-xs text-white/50 mb-1">ethers.js</p>
-              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-white/70 overflow-x-auto">
+              <p className="text-xs text-[#94A3B8] mb-1">ethers.js</p>
+              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-[#374151] overflow-x-auto">
 {`const provider = new ethers.JsonRpcProvider(
   "${rpcEndpoint}",
   undefined,
@@ -309,7 +309,7 @@ export function SuccessPage() {
 
           <button
             onClick={logout}
-            className="text-white/40 text-sm hover:text-white/60"
+            className="text-[#94A3B8] text-sm hover:text-[#6B7280]"
           >
             Sign out
           </button>

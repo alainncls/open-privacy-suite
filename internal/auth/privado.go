@@ -30,7 +30,7 @@ func NewPrivadoVerifier(rpcURL, ipfsGateway string) (*PrivadoVerifier, error) {
 
 	// Use embedded keys for verification (included in the library)
 	keyLoader := loaders.NewEmbeddedKeyLoader()
-	
+
 	// Use provided IPFS gateway (or default)
 	ipfsGW := ipfsGateway
 	if ipfsGW == "" {

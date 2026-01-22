@@ -95,8 +95,8 @@ export default function ContractList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-white/80">Contracts</h3>
-          <p className="text-xs text-white/50 mt-0.5">
+          <h3 className="text-sm font-medium text-[#374151]">Contracts</h3>
+          <p className="text-xs text-[#6B7280] mt-0.5">
             Registered contracts with access grants for groups
           </p>
         </div>
@@ -108,14 +108,14 @@ export default function ContractList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
         </div>
       ) : contracts.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-            <FileCode2 className="w-8 h-8 text-white/30" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+            <FileCode2 className="w-8 h-8 text-[#94A3B8]" />
           </div>
-          <p className="text-white/50 mb-4">No contracts registered</p>
+          <p className="text-[#6B7280] mb-4">No contracts registered</p>
           <Button
             variant="outline"
             onClick={() => setShowForm(true)}
@@ -144,7 +144,7 @@ export default function ContractList() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <FileCode2 className="w-4 h-4 text-primary-400" />
+                    <FileCode2 className="w-4 h-4 text-[#8950FA]" />
                     <span
                       className="font-mono text-sm"
                       title={getContractAddress(contract)}
@@ -157,7 +157,7 @@ export default function ContractList() {
                   <span className="text-sm">{contract.name || '-'}</span>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-white/60">
+                  <span className="text-sm text-[#6B7280]">
                     {formatDate(contract.created_at)}
                   </span>
                 </TableCell>
@@ -175,7 +175,7 @@ export default function ContractList() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(contract)}
-                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
                       title="Delete contract"
                     >
                       <Trash2 className="w-4 h-4" />

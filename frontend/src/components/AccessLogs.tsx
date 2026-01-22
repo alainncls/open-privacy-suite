@@ -61,14 +61,14 @@ function AccessLogs() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
-              <ScrollText className="w-5 h-5 text-accent-400" />
+            <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+              <ScrollText className="w-5 h-5 text-[#8950FA]" />
             </div>
             <div>
               <CardTitle className="text-lg">Access Logs</CardTitle>
               <div className="flex items-center gap-2 mt-1" role="status" aria-live="polite">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
-                <span className="text-xs text-white/60">Auto-refreshing every 5s</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" aria-hidden="true" />
+                <span className="text-xs text-[#6B7280]">Auto-refreshing every 5s</span>
               </div>
             </div>
           </div>
@@ -87,16 +87,16 @@ function AccessLogs() {
       <CardContent>
         {loading && logs.length === 0 ? (
           <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
-            <Loader2 className="w-6 h-6 text-white/50 animate-spin" aria-hidden="true" />
+            <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" aria-hidden="true" />
             <span className="sr-only">Loading access logs...</span>
           </div>
         ) : logs.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-              <Clock className="w-8 h-8 text-white/30" />
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F5F3FF] flex items-center justify-center">
+              <Clock className="w-8 h-8 text-[#94A3B8]" />
             </div>
-            <p className="text-white/50">No access logs yet</p>
-            <p className="text-white/30 text-sm mt-1">Logs will appear here when requests are made</p>
+            <p className="text-[#94A3B8]">No access logs yet</p>
+            <p className="text-[#94A3B8] text-sm mt-1">Logs will appear here when requests are made</p>
           </div>
         ) : (
           <Table>
@@ -120,11 +120,11 @@ function AccessLogs() {
                   >
                     <TableCell>
                       <div className="flex flex-col">
-                        <span className="font-mono text-xs text-white/80">{time}</span>
-                        <span className="font-mono text-xs text-white/40">{date}</span>
+                        <span className="font-mono text-xs text-[#374151]">{time}</span>
+                        <span className="font-mono text-xs text-[#94A3B8]">{date}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-sm text-white/80">
+                    <TableCell className="font-mono text-sm text-[#374151]">
                       {log.external_id}
                     </TableCell>
                     <TableCell>
@@ -137,7 +137,7 @@ function AccessLogs() {
                         {log.status_code}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-white/60">
+                    <TableCell className="font-mono text-xs text-[#6B7280]">
                       {log.ip_address || '-'}
                     </TableCell>
                   </TableRow>

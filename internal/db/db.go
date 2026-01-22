@@ -189,7 +189,7 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 		return nil, fmt.Errorf("failed to get logs: %w", err)
 	}
 	defer rows.Close()
-	
+
 	logs := make([]*AccessLog, 0)
 
 	for rows.Next() {
@@ -250,19 +250,19 @@ func (d *DB) GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshTok
 		&token.Revoked,
 		&revokedAt,
 	)
-	
+
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get refresh token: %w", err)
 	}
-	
+
 	if revokedAt.Valid {
 		revokedAtStr := revokedAt.String
 		token.RevokedAt = &revokedAtStr
 	}
-	
+
 	return &token, nil
 }
 

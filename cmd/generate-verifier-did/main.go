@@ -18,7 +18,7 @@ func generateVerifierDID() string {
 	if _, err := rand.Read(bytes); err != nil {
 		log.Fatalf("Failed to generate random bytes: %v", err)
 	}
-	
+
 	// Convert to hex and format as DID
 	randomHex := hex.EncodeToString(bytes)
 	return fmt.Sprintf("did:privado:verifier:%s", randomHex)
@@ -26,7 +26,7 @@ func generateVerifierDID() string {
 
 func main() {
 	verifierDID := generateVerifierDID()
-	
+
 	fmt.Println("Generated Verifier DID:")
 	fmt.Println(verifierDID)
 	fmt.Println()
@@ -35,7 +35,7 @@ func main() {
 	fmt.Println()
 	fmt.Println("Or add to your .env file:")
 	fmt.Printf("VERIFIER_ID=%s\n", verifierDID)
-	
+
 	// Optionally write to .env file if it exists
 	if _, err := os.Stat(".env"); err == nil {
 		fmt.Println()

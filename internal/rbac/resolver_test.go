@@ -159,11 +159,11 @@ func (m *MockStore) GetContractsByIDs(ctx context.Context, ids []string) (map[st
 // Stub implementations for other Store methods
 func (m *MockStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
+func (m *MockStore) ListOrganizations(ctx context.Context) ([]*Organization, error)  { return nil, nil }
 func (m *MockStore) DeleteOrganization(ctx context.Context, id string) error         { return nil }
 func (m *MockStore) CreateGroup(ctx context.Context, group *Group) error             { return nil }
 func (m *MockStore) UpdateGroup(ctx context.Context, group *Group) error             { return nil }
-func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
+func (m *MockStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error)  { return nil, nil }
 func (m *MockStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) {
 	return nil, 0, nil
 }
@@ -194,8 +194,10 @@ func (m *MockStore) UpdateUser(ctx context.Context, user *User) error { return n
 func (m *MockStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteUser(ctx context.Context, id string) error                       { return nil }
-func (m *MockStore) CreateMembership(ctx context.Context, membership *UserMembership) error { return nil }
+func (m *MockStore) DeleteUser(ctx context.Context, id string) error { return nil }
+func (m *MockStore) CreateMembership(ctx context.Context, membership *UserMembership) error {
+	return nil
+}
 func (m *MockStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) {
 	return nil, nil
 }
@@ -214,9 +216,9 @@ func (m *MockStore) ListUserMembershipsWithDetails(ctx context.Context, userID s
 func (m *MockStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteMembership(ctx context.Context, id string) error           { return nil }
-func (m *MockStore) DeleteExpiredMemberships(ctx context.Context) (int64, error)     { return 0, nil }
-func (m *MockStore) CreateContract(ctx context.Context, contract *Contract) error    { return nil }
+func (m *MockStore) DeleteMembership(ctx context.Context, id string) error        { return nil }
+func (m *MockStore) DeleteExpiredMemberships(ctx context.Context) (int64, error)  { return 0, nil }
+func (m *MockStore) CreateContract(ctx context.Context, contract *Contract) error { return nil }
 func (m *MockStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
 	for _, c := range m.contracts {
 		if c.OrgID == orgID && c.Address == address {
@@ -232,7 +234,7 @@ func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contrac
 func (m *MockStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) {
 	return nil, 0, nil
 }
-func (m *MockStore) DeleteContract(ctx context.Context, id string) error { return nil }
+func (m *MockStore) DeleteContract(ctx context.Context, id string) error                 { return nil }
 func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil
@@ -244,8 +246,8 @@ func (m *MockStore) UpdateContractGrant(ctx context.Context, grant *ContractGran
 func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)       { return 0, nil }
+func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error       { return nil }
+func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
 	return nil, nil

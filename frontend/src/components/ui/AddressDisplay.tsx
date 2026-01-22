@@ -25,10 +25,10 @@ export function AddressDisplay({ address, ensName, showFull = false }: AddressDi
     <div className="flex items-center gap-2">
       <div className="flex flex-col">
         {ensName && (
-          <span className="text-sm font-medium text-primary-400">{ensName}</span>
+          <span className="text-sm font-medium text-[#8950FA]">{ensName}</span>
         )}
         <span
-          className="font-mono text-xs text-white/60"
+          className="font-mono text-xs text-[#6B7280]"
           title={address}
         >
           {truncatedAddress}
@@ -38,11 +38,11 @@ export function AddressDisplay({ address, ensName, showFull = false }: AddressDi
         variant="ghost"
         size="sm"
         onClick={handleCopy}
-        className="h-6 w-6 p-0 text-white/40 hover:text-white/60"
+        className="h-6 w-6 p-0 text-[#94A3B8] hover:text-[#6B7280]"
         title="Copy address"
       >
         {copied ? (
-          <Check className="w-3 h-3 text-green-400" />
+          <Check className="w-3 h-3 text-[#22C55E]" />
         ) : (
           <Copy className="w-3 h-3" />
         )}

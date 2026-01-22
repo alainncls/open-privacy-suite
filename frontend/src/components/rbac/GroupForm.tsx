@@ -118,14 +118,14 @@ export default function GroupForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-400 text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+          <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">Name</label>
+        <label className="block text-sm font-medium text-[#374151]">Name</label>
         <Input
           type="text"
           value={name}
@@ -138,7 +138,7 @@ export default function GroupForm({
       {!isEditing && (
         <>
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-white/70">Slug</label>
+            <label className="block text-sm font-medium text-[#374151]">Slug</label>
             <Input
               type="text"
               value={slug}
@@ -148,13 +148,13 @@ export default function GroupForm({
               pattern="^[a-z0-9]+(_[a-z0-9]+)*$"
               title="Lowercase letters, numbers, and underscores only"
             />
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-[#94A3B8]">
               URL-friendly identifier (lowercase, underscores allowed)
             </p>
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-white/70">
+            <label className="block text-sm font-medium text-[#374151]">
               Parent Group (optional)
             </label>
             <Select
@@ -168,7 +168,7 @@ export default function GroupForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="_none">
-                  <div className="flex items-center gap-2 text-white/60">
+                  <div className="flex items-center gap-2 text-[#6B7280]">
                     <FolderTree className="w-4 h-4" />
                     <span>No parent (root level)</span>
                   </div>
@@ -176,9 +176,9 @@ export default function GroupForm({
                 {availableParents.map(g => (
                   <SelectItem key={g.id} value={g.id}>
                     <div className="flex items-center gap-2">
-                      <FolderTree className="w-4 h-4 text-white/40" />
+                      <FolderTree className="w-4 h-4 text-[#94A3B8]" />
                       <span>{g.name}</span>
-                      <span className="text-white/40 text-xs">({g.path})</span>
+                      <span className="text-[#94A3B8] text-xs">({g.path})</span>
                     </div>
                   </SelectItem>
                 ))}
@@ -187,15 +187,15 @@ export default function GroupForm({
           </div>
 
           {/* Path Preview */}
-          <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-            <p className="text-xs text-white/50 mb-1">Path preview:</p>
-            <code className="text-sm text-primary-400 font-mono">{previewPath}</code>
+          <div className="p-3 rounded-lg bg-[#F1F5F9] border border-[#E2E8F0]">
+            <p className="text-xs text-[#6B7280] mb-1">Path preview:</p>
+            <code className="text-sm text-[#8950FA] font-mono">{previewPath}</code>
           </div>
         </>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
+        <label className="block text-sm font-medium text-[#374151]">
           Description (optional)
         </label>
         <Textarea
@@ -209,30 +209,30 @@ export default function GroupForm({
       {/* Organization Admin Toggle */}
       <div className="space-y-2">
         <label
-          className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 cursor-pointer hover:bg-amber-500/10 transition-colors"
+          className="flex items-start gap-3 p-3 rounded-lg bg-[#FEF9C3] border border-[#FDE047] cursor-pointer hover:bg-[#FEF08A] transition-colors"
           onClick={() => setIsOrgAdmin(!isOrgAdmin)}
         >
           <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
             isOrgAdmin
-              ? 'bg-amber-500 border-amber-500'
-              : 'border-white/30 bg-white/5'
+              ? 'bg-[#EAB308] border-[#EAB308]'
+              : 'border-[#CBD5E1] bg-white'
           }`}>
             {isOrgAdmin && <Check className="w-3 h-3 text-white" />}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-amber-400" />
-              <span className="text-sm font-medium text-amber-400">Organization Admin</span>
+              <Shield className="w-4 h-4 text-[#854D0E]" />
+              <span className="text-sm font-medium text-[#854D0E]">Organization Admin</span>
             </div>
-            <p className="text-xs text-white/50 mt-1">
+            <p className="text-xs text-[#6B7280] mt-1">
               Members of this group get all claims (read, write, admin, upgrade, deploy) on all contracts in the organization. Use with caution.
             </p>
           </div>
         </label>
       </div>
 
-      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-        <p className="text-sm text-blue-400">
+      <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
+        <p className="text-sm text-[#6B3DD4]">
           <strong>Tip:</strong> After creating the group, use the settings icon to configure
           allowed RPC methods, claims, and rate limits.
         </p>

@@ -67,16 +67,16 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_EnvOverride(t *testing.T) {
 	// Set environment variables
 	testEnv := map[string]string{
-		"NODE_URL":           "http://custom-node:8545",
-		"DATABASE_URL":       "postgres://user:pass@db:5432/test",
-		"PRIVADO_RPC_URL":    "https://custom-rpc.privado.id",
-		"IPFS_GATEWAY":       "https://custom-ipfs.io",
-		"JWT_SECRET":         "super-secret-jwt",
-		"JWT_REFRESH_SECRET": "super-secret-refresh",
-		"VERIFIER_ID":        "did:test:verifier",
-		"BASE_URL":           "https://api.example.com",
-		"PORT":               "3000",
-		"ENVIRONMENT":        "staging",
+		"NODE_URL":            "http://custom-node:8545",
+		"DATABASE_URL":        "postgres://user:pass@db:5432/test",
+		"PRIVADO_RPC_URL":     "https://custom-rpc.privado.id",
+		"IPFS_GATEWAY":        "https://custom-ipfs.io",
+		"JWT_SECRET":          "super-secret-jwt",
+		"JWT_REFRESH_SECRET":  "super-secret-refresh",
+		"VERIFIER_ID":         "did:test:verifier",
+		"BASE_URL":            "https://api.example.com",
+		"PORT":                "3000",
+		"ENVIRONMENT":         "staging",
 		"BILLIONS_ISSUER_DID": "did:test:billions",
 	}
 

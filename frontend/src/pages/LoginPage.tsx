@@ -164,7 +164,7 @@ export function LoginPage() {
                 aria-hidden="true"
               />
             </div>
-            <p className="text-sm text-white/80 text-center">
+            <p className="text-sm text-[#6B7280] text-center">
               Scan with your Privado ID wallet
             </p>
           </div>
@@ -175,7 +175,7 @@ export function LoginPage() {
           <Button
             onClick={handleMobileAuth}
             className="w-full"
-            variant="glassPrimary"
+            variant="default"
             size="lg"
           >
             <Smartphone className="w-5 h-5 mr-2" />
@@ -185,8 +185,8 @@ export function LoginPage() {
 
         {/* Desktop: also show button as fallback */}
         {!isMobile && (
-          <div className="pt-4 border-t border-white/10">
-            <p className="text-xs text-white/70 text-center mb-3">
+          <div className="pt-4 border-t border-[#E2E8F0]">
+            <p className="text-xs text-[#374151] text-center mb-3">
               Or open the wallet on this device
             </p>
             <Button
@@ -202,7 +202,7 @@ export function LoginPage() {
         )}
 
         {/* Polling indicator */}
-        <div className="flex items-center justify-center gap-2 text-white/70 text-sm" role="status" aria-live="polite">
+        <div className="flex items-center justify-center gap-2 text-[#374151] text-sm" role="status" aria-live="polite">
           <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
           <span>Waiting for wallet confirmation...</span>
         </div>
@@ -211,19 +211,19 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4 overflow-x-hidden" data-testid="login-page">
+    <div className="min-h-screen bg-[#F1F5F9] flex items-center justify-center p-4 overflow-x-hidden" data-testid="login-page">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Logo Header */}
         <div className="text-center mb-8" data-testid="login-header">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/30">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#8950FA] to-[#A478FC] flex items-center justify-center shadow-lg shadow-primary">
             <Shield className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white/95">Privacy Proxy</h1>
-          <p className="text-white/80 mt-1">Authenticated RPC Access</p>
+          <h1 className="text-2xl font-bold text-[#0F0F0F]">Privacy Proxy</h1>
+          <p className="text-[#6B7280] mt-1">Authenticated RPC Access</p>
         </div>
 
         {/* Auth Card */}
-        <Card variant="glassSolid" data-testid="auth-card">
+        <Card variant="default" data-testid="auth-card">
           <CardHeader className="text-center">
             <CardTitle data-testid="auth-title">Authenticate with Privado ID</CardTitle>
             <CardDescription>
@@ -234,8 +234,8 @@ export function LoginPage() {
             {/* Loading state */}
             {state.step === 'loading' && (
               <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite" data-testid="auth-loading">
-                <Loader2 className="w-8 h-8 animate-spin text-primary-400" aria-hidden="true" />
-                <p className="text-white/80">Preparing authentication...</p>
+                <Loader2 className="w-8 h-8 animate-spin text-[#8950FA]" aria-hidden="true" />
+                <p className="text-[#6B7280]">Preparing authentication...</p>
               </div>
             )}
 
@@ -245,29 +245,29 @@ export function LoginPage() {
             {/* Success state */}
             {state.step === 'success' && (
               <div className="flex flex-col items-center gap-4 py-8" data-testid="auth-success">
-                <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-green-400" />
+                <div className="w-16 h-16 rounded-full bg-[#DCFCE7] flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8 text-[#166534]" />
                 </div>
-                <p className="text-white/90 font-medium">Authentication successful!</p>
-                <p className="text-white/80 text-sm">Redirecting to wallet linking...</p>
+                <p className="text-[#0F0F0F] font-medium">Authentication successful!</p>
+                <p className="text-[#6B7280] text-sm">Redirecting to wallet linking...</p>
               </div>
             )}
 
             {/* Humanity verification required */}
             {state.step === 'humanity_required' && (
               <div className="flex flex-col items-center gap-4 py-6">
-                <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                  <AlertCircle className="w-8 h-8 text-yellow-400" />
+                <div className="w-16 h-16 rounded-full bg-[#FEF9C3] flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8 text-[#854D0E]" />
                 </div>
                 <div className="text-center">
-                  <p className="text-white/90 font-medium mb-2">Humanity Verification Required</p>
-                  <p className="text-white/80 text-sm mb-4">
+                  <p className="text-[#0F0F0F] font-medium mb-2">Humanity Verification Required</p>
+                  <p className="text-[#6B7280] text-sm mb-4">
                     Please complete your ProofOfHumanity verification with Billions to continue.
                   </p>
                 </div>
                 <Button
                   onClick={() => window.open(state.humanityVerifyUrl!, '_blank')}
-                  variant="glassPrimary"
+                  variant="default"
                   size="lg"
                   className="w-full"
                 >
@@ -288,14 +288,14 @@ export function LoginPage() {
             {/* Error state */}
             {state.step === 'error' && (
               <div className="flex flex-col items-center gap-4 py-6" data-testid="auth-error">
-                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center">
-                  <AlertCircle className="w-8 h-8 text-red-400" />
+                <div className="w-16 h-16 rounded-full bg-[#FEE2E2] flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8 text-[#991B1B]" />
                 </div>
                 <div className="text-center">
-                  <p className="text-white/90 font-medium mb-2">Authentication Failed</p>
-                  <p className="text-white/80 text-sm">{state.error}</p>
+                  <p className="text-[#0F0F0F] font-medium mb-2">Authentication Failed</p>
+                  <p className="text-[#6B7280] text-sm">{state.error}</p>
                 </div>
-                <Button onClick={startAuth} variant="glassPrimary" className="w-full mt-2" data-testid="try-again-btn">
+                <Button onClick={startAuth} variant="default" className="w-full mt-2" data-testid="try-again-btn">
                   Try Again
                 </Button>
               </div>
@@ -305,13 +305,13 @@ export function LoginPage() {
 
         {/* Help text */}
         <div className="mt-6 text-center">
-          <p className="text-white/70 text-sm">
+          <p className="text-[#374151] text-sm">
             Don't have Privado ID?{' '}
             <a
               href="https://docs.privado.id/docs/wallet/wallet-app/privadoid-app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary-400 hover:text-primary-300 underline underline-offset-2"
+              className="text-[#8950FA] hover:text-[#A478FC] underline underline-offset-2"
             >
               Download the wallet
             </a>
@@ -320,9 +320,9 @@ export function LoginPage() {
 
         {/* Mock login - requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true */}
         {allowMockLogin && (
-          <div className="mt-6 pt-6 border-t border-white/10" data-testid="dev-tools">
+          <div className="mt-6 pt-6 border-t border-[#E2E8F0]" data-testid="dev-tools">
             <div className="text-center mb-3">
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-medium">
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#FEF9C3] text-[#854D0E] text-xs font-medium">
                 <FlaskConical className="w-3 h-3" />
                 Development Only
               </span>
@@ -330,7 +330,7 @@ export function LoginPage() {
             <Button
               onClick={handleMockLogin}
               variant="outline"
-              className="w-full border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+              className="w-full border-[#FDE047] text-[#854D0E] hover:bg-[#FEF9C3]"
               disabled={state.step === 'loading'}
               data-testid="mock-login-btn"
             >

@@ -166,7 +166,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const getClaimColor = (claim: string) => {
     switch (claim) {
       case 'admin':
-        return 'bg-red-500/20 text-red-400 border-red-500/30';
+        return 'bg-red-500/20 text-[#991B1B] border-red-500/30';
       case 'deployer':
         return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
       case 'upgrade':
@@ -176,29 +176,29 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       case 'reader':
         return 'bg-green-500/20 text-green-400 border-green-500/30';
       default:
-        return 'bg-white/10 text-white/60 border-white/20';
+        return 'bg-white/10 text-white/60 border-[#CBD5E1]';
     }
   };
 
   return (
     <div className="space-y-6">
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-400 text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+          <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
 
       {/* User Info */}
-      <div className="p-4 rounded-lg bg-white/5 space-y-4">
-        <h4 className="text-sm font-medium text-white/70">User Information</h4>
+      <div className="p-4 rounded-lg bg-[#F1F5F9] space-y-4">
+        <h4 className="text-sm font-medium text-[#374151]">User Information</h4>
 
         <div className="space-y-2">
-          <label className="block text-xs text-white/50">External ID (DID)</label>
+          <label className="block text-xs text-[#6B7280]">External ID (DID)</label>
           <Input
             value={user.external_id}
             disabled
-            className="font-mono text-sm bg-white/5"
+            className="font-mono text-sm bg-[#F1F5F9]"
           />
         </div>
 
@@ -211,13 +211,13 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 onChange={e => setKyc(e.target.checked)}
                 className="peer sr-only"
               />
-              <div className="w-5 h-5 rounded border border-white/20 bg-white/5 peer-checked:bg-green-500 peer-checked:border-green-500 transition-all flex items-center justify-center">
+              <div className="w-5 h-5 rounded border border-[#CBD5E1] bg-[#F1F5F9] peer-checked:bg-green-500 peer-checked:border-green-500 transition-all flex items-center justify-center">
                 {kyc && (
                   <Check className="w-3 h-3 text-white" />
                 )}
               </div>
             </div>
-            <span className="text-sm text-white/80 group-hover:text-white/90 transition-colors">
+            <span className="text-sm text-[#374151] group-hover:text-[#0F0F0F] transition-colors">
               KYC Verified
             </span>
           </label>
@@ -230,20 +230,20 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 onChange={e => setBanned(e.target.checked)}
                 className="peer sr-only"
               />
-              <div className="w-5 h-5 rounded border border-white/20 bg-white/5 peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
+              <div className="w-5 h-5 rounded border border-[#CBD5E1] bg-[#F1F5F9] peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
                 {banned && (
                   <X className="w-3 h-3 text-white" />
                 )}
               </div>
             </div>
-            <span className="text-sm text-white/80 group-hover:text-white/90 transition-colors">
+            <span className="text-sm text-[#374151] group-hover:text-[#0F0F0F] transition-colors">
               Banned
             </span>
           </label>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs text-white/50">Note</label>
+          <label className="block text-xs text-[#6B7280]">Note</label>
           <Textarea
             value={note}
             onChange={e => setNote(e.target.value)}
@@ -273,17 +273,17 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
       {/* Linked Addresses */}
       <div className="space-y-3">
-        <h4 className="text-sm font-medium text-white/70 flex items-center gap-2">
+        <h4 className="text-sm font-medium text-[#374151] flex items-center gap-2">
           <Wallet className="w-4 h-4" />
           Linked Wallet Addresses
         </h4>
 
         {loadingAddresses ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 text-white/40 animate-spin" />
+            <Loader2 className="w-5 h-5 text-[#94A3B8] animate-spin" />
           </div>
         ) : linkedAddresses.length === 0 ? (
-          <div className="text-center py-6 text-white/40 text-sm">
+          <div className="text-center py-6 text-[#94A3B8] text-sm">
             No linked wallet addresses
           </div>
         ) : (
@@ -291,7 +291,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
             {linkedAddresses.map((addr) => (
               <div
                 key={addr.address}
-                className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+                className="flex items-center justify-between p-3 rounded-lg bg-[#F1F5F9]"
               >
                 <AddressDisplay
                   address={addr.address}
@@ -301,7 +301,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                   {loadingEns && !ensNames?.[addr.address.toLowerCase()] && (
                     <Loader2 className="w-3 h-3 text-white/30 animate-spin" />
                   )}
-                  <span className="text-xs text-white/40">
+                  <span className="text-xs text-[#94A3B8]">
                     Verified {new Date(addr.verified_at).toLocaleDateString()}
                   </span>
                 </div>
@@ -314,7 +314,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       {/* Memberships */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-white/70">Group Memberships</h4>
+          <h4 className="text-sm font-medium text-[#374151]">Group Memberships</h4>
           <Button
             onClick={() => setShowMembershipForm(true)}
             size="sm"
@@ -328,10 +328,10 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
         {loading ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 text-white/40 animate-spin" />
+            <Loader2 className="w-5 h-5 text-[#94A3B8] animate-spin" />
           </div>
         ) : memberships.length === 0 ? (
-          <div className="text-center py-6 text-white/40 text-sm">
+          <div className="text-center py-6 text-[#94A3B8] text-sm">
             No group memberships
           </div>
         ) : (
@@ -339,10 +339,10 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
             {memberships.map((m, idx) => (
               <div
                 key={m.membership?.id || idx}
-                className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+                className="flex items-center justify-between p-3 rounded-lg bg-[#F1F5F9]"
               >
                 <div className="flex items-center gap-3">
-                  <FolderTree className="w-4 h-4 text-primary-400" />
+                  <FolderTree className="w-4 h-4 text-[#8950FA]" />
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{m.group?.name || 'Unknown Group'}</span>
@@ -357,7 +357,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                           className={`text-xs ${
                             m.membership.source === 'zk_attested'
                               ? 'text-purple-400 border-purple-500/30'
-                              : 'text-white/50'
+                              : 'text-[#6B7280]'
                           }`}
                         >
                           {m.membership.source}
@@ -371,7 +371,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => handleDeleteMembership(m.membership.id)}
-                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                    className="text-[#991B1B] hover:text-red-300 hover:bg-red-500/10"
                     title="Remove membership"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -386,14 +386,14 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       {/* Effective Permissions */}
       {selectedOrg && (
         <div className="space-y-3">
-          <h4 className="text-sm font-medium text-white/70">
+          <h4 className="text-sm font-medium text-[#374151]">
             Effective Permissions ({selectedOrg.name})
           </h4>
 
           {effectivePerms ? (
-            <div className="p-4 rounded-lg bg-white/5 space-y-4">
+            <div className="p-4 rounded-lg bg-[#F1F5F9] space-y-4">
               <div>
-                <label className="text-xs text-white/50 mb-1 block">Default Claims</label>
+                <label className="text-xs text-[#6B7280] mb-1 block">Default Claims</label>
                 {effectivePerms.default_claims && effectivePerms.default_claims.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {effectivePerms.default_claims.map(claim => (
@@ -407,12 +407,12 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                     ))}
                   </div>
                 ) : (
-                  <span className="text-white/40 text-sm">None</span>
+                  <span className="text-[#94A3B8] text-sm">None</span>
                 )}
               </div>
 
               <div>
-                <label className="text-xs text-white/50 mb-1 block">
+                <label className="text-xs text-[#6B7280] mb-1 block">
                   Allowed Methods ({effectivePerms.allowed_methods?.length || 0})
                 </label>
                 {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0 ? (
@@ -429,19 +429,19 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                     )}
                   </div>
                 ) : (
-                  <span className="text-white/40 text-sm">None</span>
+                  <span className="text-[#94A3B8] text-sm">None</span>
                 )}
               </div>
 
               <div className="flex gap-4">
                 <div>
-                  <label className="text-xs text-white/50 mb-1 block">Rate Limit (RPS)</label>
+                  <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (RPS)</label>
                   <span className="text-sm">
                     {effectivePerms.rate_limit_rps ?? 'Unlimited'}
                   </span>
                 </div>
                 <div>
-                  <label className="text-xs text-white/50 mb-1 block">Rate Limit (Daily)</label>
+                  <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (Daily)</label>
                   <span className="text-sm">
                     {effectivePerms.rate_limit_daily ?? 'Unlimited'}
                   </span>
@@ -449,7 +449,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
               </div>
             </div>
           ) : (
-            <div className="text-center py-6 text-white/40 text-sm">
+            <div className="text-center py-6 text-[#94A3B8] text-sm">
               No permissions in this organization
             </div>
           )}

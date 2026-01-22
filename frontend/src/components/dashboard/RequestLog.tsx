@@ -57,19 +57,19 @@ export function RequestLog() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
-              <ScrollText className="w-5 h-5 text-cyan-400" />
+            <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+              <ScrollText className="w-5 h-5 text-[#8950FA]" />
             </div>
             <CardTitle className="text-lg">Request Log</CardTitle>
             {!isPaused && !loading && (
-              <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-green-500/10" role="status" aria-live="polite">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden="true" />
-                <span className="text-xs text-green-400">Live</span>
+              <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-[#DCFCE7]" role="status" aria-live="polite">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" aria-hidden="true" />
+                <span className="text-xs text-[#166534]">Live</span>
               </div>
             )}
           </div>
           <Button
-            variant={isPaused ? 'glassPrimary' : 'outline'}
+            variant={isPaused ? 'default' : 'outline'}
             size="sm"
             onClick={() => setIsPaused(!isPaused)}
             className="gap-2"
@@ -92,11 +92,11 @@ export function RequestLog() {
       <CardContent>
         {loading ? (
           <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
-            <Loader2 className="w-6 h-6 text-white/50 animate-spin" aria-hidden="true" />
+            <Loader2 className="w-6 h-6 text-[#6B7280] animate-spin" aria-hidden="true" />
             <span className="sr-only">Loading request logs...</span>
           </div>
         ) : logs.length === 0 ? (
-          <div className="text-center py-8 text-white/50">
+          <div className="text-center py-8 text-[#6B7280]">
             No requests yet
           </div>
         ) : (
@@ -117,7 +117,7 @@ export function RequestLog() {
                   className="animate-fade-in"
                   style={{ animationDelay: `${index * 20}ms` }}
                 >
-                  <TableCell className="font-mono text-xs text-white/60">
+                  <TableCell className="font-mono text-xs text-[#6B7280]">
                     {formatTime(log.created_at)}
                   </TableCell>
                   <TableCell>
@@ -130,10 +130,10 @@ export function RequestLog() {
                       {log.status_code}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-white/70 truncate max-w-[150px]">
+                  <TableCell className="font-mono text-xs text-[#374151] truncate max-w-[150px]">
                     {log.external_id}
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-white/60">
+                  <TableCell className="font-mono text-xs text-[#6B7280]">
                     {log.ip_address}
                   </TableCell>
                 </TableRow>

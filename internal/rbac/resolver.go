@@ -303,9 +303,9 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 	}
 
 	// Track contract data for batch loading
-	contractAddresses := make(map[string]string)         // contractID -> address
-	groupGrants := make(map[string][]*ContractGrant)     // groupID -> grants
-	var contractIDs []string                             // IDs to batch load
+	contractAddresses := make(map[string]string)     // contractID -> address
+	groupGrants := make(map[string][]*ContractGrant) // groupID -> grants
+	var contractIDs []string                         // IDs to batch load
 
 	for _, group := range hierarchy {
 		// Get group access settings

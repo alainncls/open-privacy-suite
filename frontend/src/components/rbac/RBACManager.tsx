@@ -158,12 +158,12 @@ export default function RBACManager() {
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-primary-400" />
+              <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+                <Shield className="w-5 h-5 text-[#8950FA]" />
               </div>
               <div>
                 <CardTitle className="text-lg" data-testid="rbac-title">Access Control</CardTitle>
-                <p className="text-sm text-white/50 mt-0.5">
+                <p className="text-sm text-[#6B7280] mt-0.5">
                   Manage organizations, groups, roles, and permissions
                 </p>
               </div>
@@ -171,19 +171,19 @@ export default function RBACManager() {
 
             {/* Organization Selector - always visible, disabled on global tabs */}
             <div className="flex items-center gap-3">
-              <span className="text-sm text-white/60">Scope:</span>
+              <span className="text-sm text-[#6B7280]">Scope:</span>
               {loading ? (
-                <div className="flex items-center gap-2 text-white/40">
+                <div className="flex items-center gap-2 text-[#94A3B8]">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm">Loading...</span>
                 </div>
               ) : !requiresOrg ? (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-white/5 text-white/50">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#F1F5F9] text-[#6B7280]">
                   <Globe className="w-4 h-4" />
                   <span className="text-sm">Global (all organizations)</span>
                 </div>
               ) : organizations.length === 0 ? (
-                <Badge variant="outline" className="text-white/50">
+                <Badge variant="outline" className="text-[#6B7280]">
                   No organizations
                 </Badge>
               ) : (
@@ -198,9 +198,9 @@ export default function RBACManager() {
                     {organizations.map(org => (
                       <SelectItem key={org.id} value={org.id}>
                         <div className="flex items-center gap-2 whitespace-nowrap">
-                          <Building2 className="w-4 h-4 text-white/40 shrink-0" />
+                          <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
                           <span className="truncate">{org.name}</span>
-                          <span className="text-white/40 text-xs shrink-0">
+                          <span className="text-[#94A3B8] text-xs shrink-0">
                             ({org.slug})
                           </span>
                         </div>
@@ -218,7 +218,7 @@ export default function RBACManager() {
           <div className="mb-4">
             <button
               onClick={() => setShowHowItWorks(!showHowItWorks)}
-              className="flex items-center gap-2 text-sm text-white/60 hover:text-white/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 rounded-md px-2 py-1 -ml-2"
+              className="flex items-center gap-2 text-sm text-[#6B7280] hover:text-[#374151] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8950FA]/40 rounded-md px-2 py-1 -ml-2"
               aria-expanded={showHowItWorks}
               aria-controls="how-permissions-work"
             >
@@ -231,38 +231,38 @@ export default function RBACManager() {
               )}
             </button>
             {showHowItWorks && (
-              <div id="how-permissions-work" className="mt-3 p-4 rounded-lg bg-white/5 border border-white/10 text-sm animate-fade-in">
+              <div id="how-permissions-work" className="mt-3 p-4 rounded-lg bg-[#F1F5F9] border border-[#E2E8F0] text-sm animate-fade-in">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <h4 className="font-medium text-white/80 mb-2">Permission Model</h4>
-                    <ul className="space-y-1.5 text-white/60 text-xs">
+                    <h4 className="font-medium text-[#374151] mb-2">Permission Model</h4>
+                    <ul className="space-y-1.5 text-[#6B7280] text-xs">
                       <li className="flex items-start gap-2">
-                        <Building2 className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
-                        <span><strong className="text-white/80">Organizations</strong> are top-level tenants</span>
+                        <Building2 className="w-3.5 h-3.5 mt-0.5 text-[#8950FA] shrink-0" />
+                        <span><strong className="text-[#374151]">Organizations</strong> are top-level tenants</span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <FolderTree className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
-                        <span><strong className="text-white/80">Groups</strong> define RPC methods, rate limits, and default claims</span>
+                        <FolderTree className="w-3.5 h-3.5 mt-0.5 text-[#8950FA] shrink-0" />
+                        <span><strong className="text-[#374151]">Groups</strong> define RPC methods, rate limits, and default claims</span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <FileCode2 className="w-3.5 h-3.5 mt-0.5 text-primary-400 shrink-0" />
-                        <span><strong className="text-white/80">Contracts</strong> with grants define per-contract claims (read, write, admin, upgrade)</span>
+                        <FileCode2 className="w-3.5 h-3.5 mt-0.5 text-[#8950FA] shrink-0" />
+                        <span><strong className="text-[#374151]">Contracts</strong> with grants define per-contract claims (read, write, admin, upgrade)</span>
                       </li>
                     </ul>
                   </div>
                   <div>
-                    <h4 className="font-medium text-white/80 mb-2">How Users Get Permissions</h4>
-                    <ul className="space-y-1.5 text-white/60 text-xs">
+                    <h4 className="font-medium text-[#374151] mb-2">How Users Get Permissions</h4>
+                    <ul className="space-y-1.5 text-[#6B7280] text-xs">
                       <li className="flex items-start gap-2">
-                        <span className="text-primary-400 font-mono shrink-0">1.</span>
-                        <span>Add a <strong className="text-white/80">User</strong> to a <strong className="text-white/80">Group</strong></span>
+                        <span className="text-[#8950FA] font-mono shrink-0">1.</span>
+                        <span>Add a <strong className="text-[#374151]">User</strong> to a <strong className="text-[#374151]">Group</strong></span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <span className="text-primary-400 font-mono shrink-0">2.</span>
+                        <span className="text-[#8950FA] font-mono shrink-0">2.</span>
                         <span>User inherits Group's allowed methods, rate limits, and default claims</span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <span className="text-primary-400 font-mono shrink-0">3.</span>
+                        <span className="text-[#8950FA] font-mono shrink-0">3.</span>
                         <span>Contract grants give specific claims for registered contracts</span>
                       </li>
                     </ul>
@@ -304,11 +304,11 @@ export default function RBACManager() {
 function NoOrgSelected() {
   return (
     <div className="text-center py-12">
-      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-        <Building2 className="w-8 h-8 text-white/30" />
+      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+        <Building2 className="w-8 h-8 text-[#94A3B8]" />
       </div>
-      <p className="text-white/50 mb-2">No organization selected</p>
-      <p className="text-white/40 text-sm">
+      <p className="text-[#6B7280] mb-2">No organization selected</p>
+      <p className="text-[#94A3B8] text-sm">
         Select an organization from the dropdown above to manage this resource
       </p>
     </div>

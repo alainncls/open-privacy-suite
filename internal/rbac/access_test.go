@@ -112,15 +112,15 @@ func TestGetTargetAddress(t *testing.T) {
 			expected: "0xabcd1234",
 		},
 		{
-			name:   "eth_getCode with address",
-			method: "eth_getCode",
-			params: []any{"0xABCD1234", "latest"},
+			name:     "eth_getCode with address",
+			method:   "eth_getCode",
+			params:   []any{"0xABCD1234", "latest"},
 			expected: "0xabcd1234",
 		},
 		{
-			name:   "eth_getBalance with address",
-			method: "eth_getBalance",
-			params: []any{"0xABCD1234", "latest"},
+			name:     "eth_getBalance with address",
+			method:   "eth_getBalance",
+			params:   []any{"0xABCD1234", "latest"},
 			expected: "0xabcd1234",
 		},
 		{

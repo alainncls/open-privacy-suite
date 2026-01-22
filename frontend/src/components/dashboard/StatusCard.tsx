@@ -45,9 +45,9 @@ function getStatusConfig(status: string): {
 }
 
 function getLatencyColor(latency: number): string {
-  if (latency < 100) return 'text-green-400';
-  if (latency < 300) return 'text-yellow-400';
-  return 'text-red-400';
+  if (latency < 100) return 'text-[#166534]';
+  if (latency < 300) return 'text-[#854D0E]';
+  return 'text-[#991B1B]';
 }
 
 export function StatusCard({ title, status, port, url, latency, error }: StatusCardProps) {
@@ -59,38 +59,38 @@ export function StatusCard({ title, status, port, url, latency, error }: StatusC
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
+            <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center group-hover:bg-[#EDE9FE] transition-colors">
               {isProxy ? (
-                <Server className="w-5 h-5 text-primary-400" />
+                <Server className="w-5 h-5 text-[#8950FA]" />
               ) : (
-                <Activity className="w-5 h-5 text-accent-400" />
+                <Activity className="w-5 h-5 text-[#8950FA]" />
               )}
             </div>
             <CardTitle className="text-lg">{title}</CardTitle>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5" role="status">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F1F5F9]" role="status">
             <div className={statusConfig.dotClass} aria-hidden="true" />
-            <span className="text-sm text-white/90 capitalize">{statusConfig.label}</span>
+            <span className="text-sm text-[#374151] capitalize">{statusConfig.label}</span>
           </div>
         </div>
       </CardHeader>
       <CardContent className="flex-1">
         <div className="space-y-2">
           {port && (
-            <div className="flex justify-between items-center p-2.5 rounded-lg bg-white/5">
-              <span className="text-white/70 text-sm">Port</span>
-              <span className="font-mono text-sm text-white/90">{port}</span>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-[#F1F5F9]">
+              <span className="text-[#6B7280] text-sm">Port</span>
+              <span className="font-mono text-sm text-[#0F0F0F]">{port}</span>
             </div>
           )}
           {url && (
-            <div className="flex justify-between items-center p-2.5 rounded-lg bg-white/5">
-              <span className="text-white/70 text-sm">URL</span>
-              <span className="font-mono text-xs text-white/90 truncate max-w-[200px]">{url}</span>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-[#F1F5F9]">
+              <span className="text-[#6B7280] text-sm">URL</span>
+              <span className="font-mono text-xs text-[#0F0F0F] truncate max-w-[200px]">{url}</span>
             </div>
           )}
           {latency !== undefined && (
-            <div className="flex justify-between items-center p-2.5 rounded-lg bg-white/5">
-              <span className="text-white/70 text-sm">Latency</span>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-[#F1F5F9]">
+              <span className="text-[#6B7280] text-sm">Latency</span>
               <span className={`font-mono text-sm ${getLatencyColor(latency)}`}>
                 {latency}ms
                 <span className="sr-only">
@@ -100,10 +100,10 @@ export function StatusCard({ title, status, port, url, latency, error }: StatusC
             </div>
           )}
           {error && (
-            <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+            <div className="mt-3 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA]">
               <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-                <span className="text-red-400 text-sm">{error}</span>
+                <AlertCircle className="w-4 h-4 text-[#991B1B] mt-0.5 flex-shrink-0" />
+                <span className="text-[#991B1B] text-sm">{error}</span>
               </div>
             </div>
           )}

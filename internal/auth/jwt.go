@@ -28,9 +28,9 @@ type JWTService struct {
 
 // TokenClaims represents the claims in our JWT tokens
 type TokenClaims struct {
-	Subject      string        `json:"sub"`                 // User DID from Privado ID
-	KYC          bool          `json:"kyc"`                 // KYC status (from verified proof)
-	ZKRoleClaims *ZKRoleClaims `json:"zk_roles,omitempty"`  // Optional ZK-attested role claims
+	Subject      string        `json:"sub"`                // User DID from Privado ID
+	KYC          bool          `json:"kyc"`                // KYC status (from verified proof)
+	ZKRoleClaims *ZKRoleClaims `json:"zk_roles,omitempty"` // Optional ZK-attested role claims
 	jwt.RegisteredClaims
 }
 

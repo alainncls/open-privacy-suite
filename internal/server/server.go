@@ -26,10 +26,10 @@ const (
 	RefreshTokenTTL = 7 * 24 * time.Hour
 
 	// Cache and store TTLs
-	RBACCacheTTL          = 5 * time.Minute
-	SessionTTL            = 10 * time.Minute
-	SessionCleanupInterval = 1 * time.Minute
-	ChallengeTTL          = 5 * time.Minute
+	RBACCacheTTL             = 5 * time.Minute
+	SessionTTL               = 10 * time.Minute
+	SessionCleanupInterval   = 1 * time.Minute
+	ChallengeTTL             = 5 * time.Minute
 	ChallengeCleanupInterval = 1 * time.Minute
 
 	// Rate limiter cleanup interval
@@ -467,9 +467,9 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 		// Note: Docker networks are isolated by default, so this is safe
 		isAllowed := clientIP == "127.0.0.1" ||
 			clientIP == "::1" ||
-			strings.HasPrefix(clientIP, "172.") ||    // Docker bridge networks (172.16.0.0/12)
+			strings.HasPrefix(clientIP, "172.") || // Docker bridge networks (172.16.0.0/12)
 			strings.HasPrefix(clientIP, "192.168.") || // Docker custom networks (192.168.0.0/16)
-			strings.HasPrefix(clientIP, "100.")       // Tailscale CGNAT (100.64.0.0/10)
+			strings.HasPrefix(clientIP, "100.") // Tailscale CGNAT (100.64.0.0/10)
 
 		if !isAllowed {
 			c.JSON(http.StatusForbidden, gin.H{

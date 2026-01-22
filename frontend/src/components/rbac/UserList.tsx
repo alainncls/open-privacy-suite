@@ -102,8 +102,8 @@ export default function UserList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-white/80">Users</h3>
-          <p className="text-xs text-white/50 mt-0.5">
+          <h3 className="text-sm font-medium text-[#374151]">Users</h3>
+          <p className="text-xs text-[#6B7280] mt-0.5">
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
@@ -111,15 +111,15 @@ export default function UserList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
         </div>
       ) : users.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-            <Users className="w-8 h-8 text-white/30" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+            <Users className="w-8 h-8 text-[#94A3B8]" />
           </div>
-          <p className="text-white/50 mb-2">No users found</p>
-          <p className="text-white/40 text-sm">
+          <p className="text-[#6B7280] mb-2">No users found</p>
+          <p className="text-[#94A3B8] text-sm">
             Users are created automatically when they authenticate
           </p>
         </div>
@@ -139,13 +139,13 @@ export default function UserList() {
             {users.map((user, index) => (
               <TableRow
                 key={user.id}
-                className="animate-fade-in cursor-pointer hover:bg-white/5"
+                className="animate-fade-in cursor-pointer"
                 style={{ animationDelay: `${index * 30}ms` }}
                 onClick={() => navigate(`/admin/rbac/users/${user.id}`)}
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <UserIcon className="w-4 h-4 text-primary-400" />
+                    <UserIcon className="w-4 h-4 text-[#8950FA]" />
                     <span
                       className="font-mono text-sm"
                       title={user.external_id}
@@ -156,12 +156,12 @@ export default function UserList() {
                 </TableCell>
                 <TableCell>
                   {user.kyc ? (
-                    <div className="flex items-center gap-1.5 text-green-400">
+                    <div className="flex items-center gap-1.5 text-[#166534]">
                       <Check className="w-4 h-4" />
                       <span className="text-sm">Verified</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5 text-white/40">
+                    <div className="flex items-center gap-1.5 text-[#94A3B8]">
                       <X className="w-4 h-4" />
                       <span className="text-sm">No</span>
                     </div>
@@ -180,10 +180,10 @@ export default function UserList() {
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="text-white/60 text-sm">
+                <TableCell className="text-[#6B7280] text-sm">
                   {formatDate(user.created_at)}
                 </TableCell>
-                <TableCell className="text-white/60 text-sm max-w-[150px] truncate">
+                <TableCell className="text-[#6B7280] text-sm max-w-[150px] truncate">
                   {user.note || '-'}
                 </TableCell>
                 <TableCell>
@@ -234,7 +234,7 @@ export default function UserList() {
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserIcon className="w-5 h-5 text-primary-400" />
+              <UserIcon className="w-5 h-5 text-[#8950FA]" />
               User Details
             </DialogTitle>
           </DialogHeader>

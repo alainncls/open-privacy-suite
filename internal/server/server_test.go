@@ -138,7 +138,7 @@ func TestLocalhostOnlyMiddleware(t *testing.T) {
 		{
 			name: "External IP trying to spoof X-Forwarded-For",
 			setupRequest: func(req *http.Request) {
-				req.RemoteAddr = "203.0.113.1:12345"          // External attacker
+				req.RemoteAddr = "203.0.113.1:12345"           // External attacker
 				req.Header.Set("X-Forwarded-For", "127.0.0.1") // Trying to spoof localhost
 			},
 			expectedStatus: http.StatusForbidden, // Should be blocked - external IP not trusted

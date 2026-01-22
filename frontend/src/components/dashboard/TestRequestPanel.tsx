@@ -60,8 +60,8 @@ export function TestRequestPanel() {
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
-            <Zap className="w-5 h-5 text-yellow-400" />
+          <div className="w-10 h-10 rounded-lg bg-[#FEF9C3] flex items-center justify-center">
+            <Zap className="w-5 h-5 text-[#854D0E]" />
           </div>
           <CardTitle className="text-lg">Test Request</CardTitle>
         </div>
@@ -96,7 +96,7 @@ export function TestRequestPanel() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-white/70 mb-2">
+          <label className="block text-sm font-medium text-[#374151] mb-2">
             Params (JSON array, optional)
           </label>
           <Textarea
@@ -109,9 +109,9 @@ export function TestRequestPanel() {
         </div>
 
         {error && (
-          <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <span className="text-red-400 text-sm">{error}</span>
+          <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+            <span className="text-[#991B1B] text-sm">{error}</span>
           </div>
         )}
 
@@ -134,20 +134,20 @@ export function TestRequestPanel() {
                   ERROR
                 </Badge>
               )}
-              <span className="text-sm text-white/50">
+              <span className="text-sm text-[#6B7280]">
                 {result.latency_ms}ms
               </span>
             </div>
             {result.success && result.result !== undefined && (
-              <div className="glass-code">
+              <div className="code-block">
                 <pre className="whitespace-pre-wrap break-all">
                   {JSON.stringify(result.result, null, 2)}
                 </pre>
               </div>
             )}
             {result.error && (
-              <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                <span className="text-orange-400 text-sm">{result.error}</span>
+              <div className="p-4 rounded-lg bg-[#FEF9C3] border border-[#FDE047]">
+                <span className="text-[#854D0E] text-sm">{result.error}</span>
               </div>
             )}
           </div>

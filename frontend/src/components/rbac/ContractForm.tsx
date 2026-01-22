@@ -65,14 +65,14 @@ export default function ContractForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-400 text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+          <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
+        <label className="block text-sm font-medium text-[#374151]">
           Contract Address
         </label>
         <Input
@@ -86,13 +86,13 @@ export default function ContractForm({
           title="Enter a valid Ethereum address (0x followed by 40 hex characters)"
           className="font-mono"
         />
-        <p className="text-xs text-white/40">
+        <p className="text-xs text-[#94A3B8]">
           The contract's Ethereum address
         </p>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
+        <label className="block text-sm font-medium text-[#374151]">
           Name (optional)
         </label>
         <Input
@@ -101,13 +101,13 @@ export default function ContractForm({
           onChange={e => setName(e.target.value)}
           placeholder="e.g., MyToken, Governance Contract"
         />
-        <p className="text-xs text-white/40">
+        <p className="text-xs text-[#94A3B8]">
           A human-readable name for this contract
         </p>
       </div>
 
-      <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-        <p className="text-sm text-blue-400">
+      <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
+        <p className="text-sm text-[#6B3DD4]">
           <strong>Tip:</strong> After registering the contract, add grants to specify
           which groups can access it and with what claims (read, write, admin, upgrade).
         </p>

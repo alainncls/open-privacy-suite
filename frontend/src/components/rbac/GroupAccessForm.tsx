@@ -98,7 +98,7 @@ export default function GroupAccessForm({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
       </div>
     );
   }
@@ -106,14 +106,14 @@ export default function GroupAccessForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-400 text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+          <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
+        <label className="block text-sm font-medium text-[#374151]">
           Allowed RPC Methods
         </label>
         <Textarea
@@ -122,35 +122,35 @@ export default function GroupAccessForm({
           placeholder="eth_call&#10;eth_getBalance&#10;eth_sendTransaction"
           className="h-24 font-mono text-sm"
         />
-        <p className="text-xs text-white/40">
+        <p className="text-xs text-[#94A3B8]">
           RPC methods this group can call (one per line). Leave empty for all methods.
         </p>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">
+        <label className="block text-sm font-medium text-[#374151]">
           Default Claims
         </label>
-        <p className="text-xs text-white/40 mb-2">
+        <p className="text-xs text-[#94A3B8] mb-2">
           Claims applied to unregistered contracts (not in the Contracts list)
         </p>
         <div className="space-y-2">
           {ALL_CLAIMS.map(claim => (
             <label
               key={claim}
-              className="flex items-start gap-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer"
+              className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#F5F3FF] cursor-pointer"
               onClick={() => toggleClaim(claim)}
             >
               <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
                 defaultClaims.includes(claim)
-                  ? 'bg-primary-500 border-primary-500'
-                  : 'border-white/30 bg-white/5'
+                  ? 'bg-[#8950FA] border-[#8950FA]'
+                  : 'border-[#CBD5E1] bg-white'
               }`}>
                 {defaultClaims.includes(claim) && <Check className="w-3 h-3 text-white" />}
               </div>
               <div>
-                <span className="text-sm font-medium">{CLAIM_LABELS[claim]}</span>
-                <p className="text-xs text-white/40">{CLAIM_DESCRIPTIONS[claim]}</p>
+                <span className="text-sm font-medium text-[#0F0F0F]">{CLAIM_LABELS[claim]}</span>
+                <p className="text-xs text-[#94A3B8]">{CLAIM_DESCRIPTIONS[claim]}</p>
               </div>
             </label>
           ))}
@@ -159,7 +159,7 @@ export default function GroupAccessForm({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-white/70">
+          <label className="block text-sm font-medium text-[#374151]">
             Rate Limit (RPS)
           </label>
           <Input
@@ -169,11 +169,11 @@ export default function GroupAccessForm({
             placeholder="100"
             min="0"
           />
-          <p className="text-xs text-white/40">Requests per second</p>
+          <p className="text-xs text-[#94A3B8]">Requests per second</p>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-white/70">
+          <label className="block text-sm font-medium text-[#374151]">
             Rate Limit (Daily)
           </label>
           <Input
@@ -183,7 +183,7 @@ export default function GroupAccessForm({
             placeholder="100000"
             min="0"
           />
-          <p className="text-xs text-white/40">Requests per day</p>
+          <p className="text-xs text-[#94A3B8]">Requests per day</p>
         </div>
       </div>
 

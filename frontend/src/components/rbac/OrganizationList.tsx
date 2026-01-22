@@ -75,8 +75,8 @@ export default function OrganizationList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-white/80">Organizations</h3>
-          <p className="text-xs text-white/50 mt-0.5">
+          <h3 className="text-sm font-medium text-[#374151]">Organizations</h3>
+          <p className="text-xs text-[#6B7280] mt-0.5">
             Top-level tenants that contain groups and contracts
           </p>
         </div>
@@ -88,14 +88,14 @@ export default function OrganizationList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
+          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
         </div>
       ) : organizations.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-            <Building2 className="w-8 h-8 text-white/30" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+            <Building2 className="w-8 h-8 text-[#94A3B8]" />
           </div>
-          <p className="text-white/50 mb-4">No organizations found</p>
+          <p className="text-[#6B7280] mb-4">No organizations found</p>
           <Button
             variant="outline"
             onClick={() => setShowForm(true)}
@@ -119,13 +119,13 @@ export default function OrganizationList() {
             {organizations.map((org, index) => (
               <TableRow
                 key={org.id}
-                className="animate-fade-in cursor-pointer hover:bg-white/5"
+                className="animate-fade-in cursor-pointer"
                 style={{ animationDelay: `${index * 30}ms` }}
                 onClick={() => setSelectedOrg(org)}
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-primary-400" />
+                    <Building2 className="w-4 h-4 text-[#8950FA]" />
                     <span className="font-medium">{org.name}</span>
                   </div>
                 </TableCell>
@@ -134,7 +134,7 @@ export default function OrganizationList() {
                     {org.slug}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-white/60 text-sm">
+                <TableCell className="text-[#6B7280] text-sm">
                   {formatDate(org.created_at)}
                 </TableCell>
                 <TableCell>
@@ -157,7 +157,7 @@ export default function OrganizationList() {
                         e.stopPropagation();
                         handleDelete(org);
                       }}
-                      className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
                       title="Delete organization"
                     >
                       <Trash2 className="w-4 h-4" />

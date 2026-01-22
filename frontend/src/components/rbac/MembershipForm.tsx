@@ -89,14 +89,14 @@ export default function MembershipForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-400 text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+          <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">Organization</label>
+        <label className="block text-sm font-medium text-[#374151]">Organization</label>
         <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
           <SelectTrigger>
             <SelectValue placeholder="Select organization" />
@@ -105,9 +105,9 @@ export default function MembershipForm({
             {organizations.map(org => (
               <SelectItem key={org.id} value={org.id}>
                 <div className="flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-white/40" />
+                  <Building2 className="w-4 h-4 text-[#94A3B8]" />
                   <span>{org.name}</span>
-                  <span className="text-white/40 text-xs">({org.slug})</span>
+                  <span className="text-[#94A3B8] text-xs">({org.slug})</span>
                 </div>
               </SelectItem>
             ))}
@@ -116,16 +116,16 @@ export default function MembershipForm({
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-white/70">Group</label>
+        <label className="block text-sm font-medium text-[#374151]">Group</label>
         {loadingGroups ? (
-          <div className="flex items-center gap-2 text-white/40 py-2">
+          <div className="flex items-center gap-2 text-[#94A3B8] py-2">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-sm">Loading groups...</span>
           </div>
         ) : !selectedOrgId ? (
-          <p className="text-white/40 text-sm py-2">Select an organization first</p>
+          <p className="text-[#94A3B8] text-sm py-2">Select an organization first</p>
         ) : groups.length === 0 ? (
-          <p className="text-white/40 text-sm py-2">No groups in this organization</p>
+          <p className="text-[#94A3B8] text-sm py-2">No groups in this organization</p>
         ) : (
           <Select
             value={selectedGroupId}
@@ -139,9 +139,9 @@ export default function MembershipForm({
               {groups.map(group => (
                 <SelectItem key={group.id} value={group.id}>
                   <div className="flex items-center gap-2">
-                    <FolderTree className="w-4 h-4 text-white/40" />
+                    <FolderTree className="w-4 h-4 text-[#94A3B8]" />
                     <span>{group.name}</span>
-                    <span className="text-white/40 text-xs font-mono">({group.path})</span>
+                    <span className="text-[#94A3B8] text-xs font-mono">({group.path})</span>
                   </div>
                 </SelectItem>
               ))}
@@ -152,8 +152,8 @@ export default function MembershipForm({
 
       {/* Info about permissions */}
       {selectedGroupId && (
-        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-          <p className="text-sm text-blue-400">
+        <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
+          <p className="text-sm text-[#6B3DD4]">
             The user will inherit permissions from this group's access settings
             (allowed methods, claims, rate limits).
           </p>

@@ -52,20 +52,20 @@ func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, http.StatusBadGateway, fmt.Errorf("failed to forward request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, http.StatusBadGateway, fmt.Errorf("failed to read response: %w", err)
 	}
-	
+
 	return body, resp.StatusCode, nil
 }
 
