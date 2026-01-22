@@ -45,9 +45,9 @@ type Server struct {
 	proxy            *proxy.Proxy
 	privadoVerifier  PrivadoVerifier
 	jwtService       *auth.JWTService
-	sessionStore     *auth.SessionStore
+	sessionStore     SessionManager
 	challengeStore   *ChallengeStore
-	rateLimiter      *RateLimiter
+	rateLimiter      RateLimiterInterface
 	config           *config.Config
 	ensResolver      *ens.Resolver
 	jsonrpcProcessor *JSONRPCProcessor

@@ -13,7 +13,7 @@ import (
 // and reusable.
 type JSONRPCProcessor struct {
 	rbacAccessCtrl *rbac.AccessController
-	rateLimiter    *RateLimiter
+	rateLimiter    RateLimiterInterface
 	proxy          *proxy.Proxy
 	accessLogger   AccessLogger
 }
@@ -52,7 +52,7 @@ func (e *ProcessError) Error() string {
 // NewJSONRPCProcessor creates a new processor with the given dependencies.
 func NewJSONRPCProcessor(
 	rbacCtrl *rbac.AccessController,
-	rateLimiter *RateLimiter,
+	rateLimiter RateLimiterInterface,
 	proxyClient *proxy.Proxy,
 	logger AccessLogger,
 ) *JSONRPCProcessor {
