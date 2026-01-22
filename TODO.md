@@ -18,13 +18,11 @@
   - `auth.go` (501 lines) → Separate request/callback handlers from token issuance
   - `server.go` (595 lines) → Extract router setup, middleware configuration
 - [ ] **Replace panics with error propagation** - `server.go:75-98` panics on DB/JWT/Privado init errors instead of returning errors
-- [ ] **Fix context leakage** - `auth.go:281,302` uses `context.Background()` instead of request context; no timeout propagation
 - [ ] **Extract business logic from HTTP handlers** - `handleJSONRPC` (server.go:248-337) has 50+ lines of business logic; untestable without HTTP context
 - [ ] **Add missing interface abstractions** - SessionStore, RateLimiter not behind interfaces; tight coupling
 
 ### High Priority - Database
 
-- [ ] **Fix token operations context usage** - `db.go:154-309` uses `Exec()`/`Query()` instead of `*Context()` variants; no cancellation support
 - [ ] **Add batch contract loading** - `resolver.go:336-354` fetches contracts individually in loop (N+1 pattern)
 - [ ] **Add database close to graceful shutdown** - `server.Stop()` manages other components but not DB connection
 
@@ -66,10 +64,19 @@
 - [ ] **Remove alias methods in rbac_store.go** - `SetGroupAccess`, `ListContractGrants`, `ListContractGrantsForGroup` are unnecessary wrappers
 
 ## Done (Recent)
+- [x] **Demo system overhaul** - Complete rewrite of demo generation pipeline:
+  - Added `data-testid` attributes to all frontend components (LoginPage, LinkWalletPage, SuccessPage, App, RBACManager)
+  - Replaced OpenAI TTS with free Edge TTS (no API key required)
+  - Rewrote demo configs (auth-flow.yaml, full-journey.yaml, rbac-management.yaml) with correct selectors
+  - Fixed Playwright viewport from 1280x720 to 1440x900 for better recording quality
+  - Fixed ffmpeg audio merging (changed .mp3 to .m4a for AAC codec)
+  - Full demo pipeline now generates 1080p video with narration
 - [x] **Fix query parameter parsing bug** - Fixed `admin_rbac.go:680-683`; now uses strconv.Atoi to parse limit/offset query params
 - [x] **Add rows.Err() checks** - Added error checks after all 9 row iteration loops in `rbac_store.go`
 - [x] **Fix unlimited body read in auth.go** - Added 1MB limit using io.LimitReader to prevent DoS
 - [x] **Configure connection pool** - Added SetMaxOpenConns(25), SetMaxIdleConns(5), SetConnMaxLifetime(5min) to db.go
+- [x] **Fix context leakage in auth.go** - Now uses c.Request.Context() instead of context.Background() for VerifyJWZ and EnsureUserExists
+- [x] **Fix token operations context usage** - All db.go functions now accept context and use ExecContext/QueryContext variants
 - [x] **Backend mock mode for demos** - Added `MOCK_SIGNATURES=true` env var to skip wallet signature verification. Also added mock auth session support when `VERIFIER_ID` is not configured. Both are development-only with prominent warnings. Demo recording now works end-to-end.
 - [x] **Demo creation system** - Reviewed and fixed. Added missing `__init__.py` files, fixed PYTHONPATH in Makefile, added comprehensive README, updated auth-flow.yaml config for robustness.
 - [x] **Frontend accessibility & polish overhaul** - Comprehensive UI/UX improvements:
