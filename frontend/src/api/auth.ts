@@ -107,9 +107,13 @@ export const authApiMethods = {
     return response.data;
   },
 
-  // Revoke refresh token
-  revoke: async (refreshToken: string): Promise<void> => {
-    await authApi.post('/revoke', { refresh_token: refreshToken });
+  // Revoke tokens - always revokes refresh token, optionally revokes access token
+  // Revoking access token ensures immediate invalidation (vs waiting for 30 min expiry)
+  revoke: async (refreshToken: string, accessToken?: string): Promise<void> => {
+    await authApi.post('/revoke', {
+      refresh_token: refreshToken,
+      ...(accessToken && { access_token: accessToken }),
+    });
   },
 };
 

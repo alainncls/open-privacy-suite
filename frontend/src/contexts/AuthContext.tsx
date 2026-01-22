@@ -148,13 +148,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    // Revoke refresh token on server
+    // Revoke both tokens on server for immediate invalidation
+    // Access token revocation ensures immediate logout (vs 30 min expiry)
     if (state.refreshToken) {
       try {
         await fetch('/revoke', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: state.refreshToken }),
+          body: JSON.stringify({
+            refresh_token: state.refreshToken,
+            access_token: state.accessToken, // Include for immediate invalidation
+          }),
         });
       } catch {
         // Ignore errors, we're logging out anyway
@@ -169,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userDID: null,
       expiresAt: null,
     });
-  }, [state.refreshToken]);
+  }, [state.refreshToken, state.accessToken]);
 
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     if (!state.refreshToken) return false;
