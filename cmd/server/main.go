@@ -16,6 +16,11 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Validate configuration (fails fast in production if required values missing)
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
 	// Warn loudly if mock signatures mode is enabled
 	if cfg.MockSignatures {
 		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")

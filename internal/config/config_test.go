@@ -247,6 +247,86 @@ func TestConfig_IsProduction(t *testing.T) {
 	}
 }
 
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *Config
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "development mode allows empty secrets",
+			config: &Config{
+				Environment:      "development",
+				JWTSecret:        "",
+				JWTRefreshSecret: "",
+				VerifierID:       "",
+			},
+			expectError: false,
+		},
+		{
+			name: "production mode requires JWT_SECRET",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "",
+				JWTRefreshSecret: "secret",
+				VerifierID:       "did:test:verifier",
+			},
+			expectError: true,
+			errorMsg:    "JWT_SECRET is required in production",
+		},
+		{
+			name: "production mode requires JWT_REFRESH_SECRET",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "secret",
+				JWTRefreshSecret: "",
+				VerifierID:       "did:test:verifier",
+			},
+			expectError: true,
+			errorMsg:    "JWT_REFRESH_SECRET is required in production",
+		},
+		{
+			name: "production mode requires VERIFIER_ID",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "secret",
+				JWTRefreshSecret: "refresh-secret",
+				VerifierID:       "",
+			},
+			expectError: true,
+			errorMsg:    "VERIFIER_ID is required in production for authentication",
+		},
+		{
+			name: "production mode with all required values passes",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "secret",
+				JWTRefreshSecret: "refresh-secret",
+				VerifierID:       "did:test:verifier",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Validate() expected error containing %q, got nil", tt.errorMsg)
+				} else if err.Error() != tt.errorMsg {
+					t.Errorf("Validate() error = %q, want %q", err.Error(), tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestGetEnv(t *testing.T) {
 	tests := []struct {
 		name         string

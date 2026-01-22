@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	AllowUnregisteredAddresses bool   // If true, addresses not in RBAC bypass permission checks (default: true)
 	ENSResolverURL             string // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins         string // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
+	MockSignatures             bool   // If true, accept any signature without verification (dev/demo only, NEVER in production)
 }
 
 func Load() *Config {
@@ -50,6 +52,14 @@ func Load() *Config {
 		}
 	}
 
+	// MockSignatures: Only allow in non-production environments
+	// This skips cryptographic signature verification for wallet linking (demo/dev only)
+	mockSigs := getEnv("MOCK_SIGNATURES", "false") == "true"
+	if mockSigs && env == "production" {
+		// Force disable in production - this is a critical security setting
+		mockSigs = false
+	}
+
 	return &Config{
 		NodeURL:                getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:            getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -66,12 +76,36 @@ func Load() *Config {
 		AllowUnregisteredAddresses: allowUnregisteredBool,
 		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:         corsOrigins,
+		MockSignatures:             mockSigs,
 	}
 }
 
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production"
+}
+
+// Validate checks that required configuration is present.
+// In production, certain values must be explicitly configured.
+func (c *Config) Validate() error {
+	if !c.IsProduction() {
+		return nil // Development mode allows auto-generated values
+	}
+
+	// In production, JWT secrets must be explicitly configured
+	if c.JWTSecret == "" {
+		return errors.New("JWT_SECRET is required in production")
+	}
+	if c.JWTRefreshSecret == "" {
+		return errors.New("JWT_REFRESH_SECRET is required in production")
+	}
+
+	// Warn about other important production settings
+	if c.VerifierID == "" {
+		return errors.New("VERIFIER_ID is required in production for authentication")
+	}
+
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
