@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,16 +40,17 @@ const (
 )
 
 type Server struct {
-	db              *db.DB
-	rbacAccessCtrl  *rbac.AccessController
-	proxy           *proxy.Proxy
-	privadoVerifier PrivadoVerifier
-	jwtService      *auth.JWTService
-	sessionStore    *auth.SessionStore
-	challengeStore  *ChallengeStore
-	rateLimiter     *RateLimiter
-	config          *config.Config
-	ensResolver     *ens.Resolver
+	db               *db.DB
+	rbacAccessCtrl   *rbac.AccessController
+	proxy            *proxy.Proxy
+	privadoVerifier  PrivadoVerifier
+	jwtService       *auth.JWTService
+	sessionStore     *auth.SessionStore
+	challengeStore   *ChallengeStore
+	rateLimiter      *RateLimiter
+	config           *config.Config
+	ensResolver      *ens.Resolver
+	jsonrpcProcessor *JSONRPCProcessor
 }
 
 // DB returns the database instance (for testing)
@@ -147,7 +147,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		}
 	}
 
-	return &Server{
+	s := &Server{
 		db:              database,
 		rbacAccessCtrl:  rbacAccessCtrl,
 		proxy:           proxySvc,
@@ -158,7 +158,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rateLimiter:     rateLimiter,
 		config:          cfg,
 		ensResolver:     ensResolver,
-	}, nil
+	}
+
+	// Initialize JSON-RPC processor with dependencies
+	s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+
+	return s, nil
 }
 
 func (s *Server) Run(addr string) error {
@@ -290,74 +295,30 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
-	// Check if body exceeds limit (we read +1 to detect overflow)
-	if len(body) > MaxRequestBodySize {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+	// Parse and validate the request body
+	method, params, parseErr := ParseAndValidateBody(body)
+	if parseErr != nil {
+		c.JSON(parseErr.StatusCode, gin.H{"error": parseErr.Message})
 		return
 	}
 
-	// Parse method and params from JSON-RPC request
-	method, params, err := proxy.ParseRequest(body)
-	if err != nil {
-		// Check specifically for batch request error
-		if err == proxy.ErrBatchRequest {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "batch JSON-RPC requests are not supported for security reasons"})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON-RPC request: " + err.Error()})
+	// Process the request through the business logic layer
+	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
+		UserID:   subjectStr,
+		Method:   method,
+		Params:   params,
+		Body:     body,
+		ClientIP: c.ClientIP(),
+	})
+
+	// Handle errors from processing
+	if result.Error != nil {
+		c.JSON(result.Error.StatusCode, gin.H{"error": result.Error.Message})
 		return
 	}
-
-	// Check access via RBAC
-	var requiredClaims []rbac.Claim
-	if claim := rbac.ClassifyOperation(method, params); claim != "" {
-		requiredClaims = []rbac.Claim{claim}
-	}
-	accessReq := &rbac.AccessCheckRequest{
-		UserExternalID:   subjectStr,
-		Method:           method,
-		Params:           params,
-		TargetAddress:    rbac.GetTargetAddress(method, params),
-		FunctionSelector: rbac.GetFunctionSelector(method, params),
-		RequiredClaims:   requiredClaims,
-	}
-	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
-	if err != nil {
-		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusInternalServerError, c.ClientIP())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "access check failed: " + err.Error()})
-		return
-	}
-	if !result.Allowed {
-		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusForbidden, c.ClientIP())
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: " + result.Reason})
-		return
-	}
-
-	// Check rate limits
-	allowed, rateLimitReason := s.rateLimiter.CheckAndIncrement(subjectStr, result.RateLimitRPS, result.RateLimitDaily)
-	if !allowed {
-		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusTooManyRequests, c.ClientIP())
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": rateLimitReason})
-		return
-	}
-
-	// Restore request body for forwarding (it was consumed by io.ReadAll)
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
-
-	// Forward to node
-	responseBody, statusCode, err := s.proxy.Forward(body)
-	if err != nil {
-		// Log error
-		s.db.LogAccess(c.Request.Context(), subjectStr, method, http.StatusBadGateway, c.ClientIP())
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to forward request: " + err.Error()})
-		return
-	}
-
-	// Log successful access
-	s.db.LogAccess(c.Request.Context(), subjectStr, method, statusCode, c.ClientIP())
 
 	// Return response from node
-	c.Data(statusCode, "application/json", responseBody)
+	c.Data(result.StatusCode, "application/json", result.ResponseBody)
 }
 
 func (s *Server) getLogs(c *gin.Context) {
