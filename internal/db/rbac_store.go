@@ -145,6 +145,10 @@ func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error
 		orgs = append(orgs, org)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating organizations: %w", err)
+	}
+
 	return orgs, nil
 }
 
@@ -317,6 +321,11 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 		groups = append(groups, group)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating groups: %w", err)
+	}
+
 	return groups, nil
 }
 
@@ -532,6 +541,11 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 
 		contracts = append(contracts, contract)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating contracts: %w", err)
+	}
+
 	return contracts, nil
 }
 
@@ -666,6 +680,10 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 		results = append(results, result)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating contract grants: %w", err)
+	}
+
 	return results, nil
 }
 
@@ -723,6 +741,11 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 
 		grants = append(grants, grant)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating contract grants: %w", err)
+	}
+
 	return grants, nil
 }
 
@@ -848,6 +871,10 @@ func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, er
 		}
 
 		users = append(users, user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating users: %w", err)
 	}
 
 	return users, nil
@@ -1021,6 +1048,11 @@ func scanMemberships(rows *sql.Rows) ([]*rbac.UserMembership, error) {
 
 		memberships = append(memberships, membership)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating memberships: %w", err)
+	}
+
 	return memberships, nil
 }
 
@@ -1061,6 +1093,10 @@ func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, 
 		}
 
 		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating memberships: %w", err)
 	}
 
 	return results, nil
@@ -1273,6 +1309,11 @@ func scanAuditLogs(rows *sql.Rows) ([]*rbac.AuditLogEntry, error) {
 
 		entries = append(entries, entry)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating audit logs: %w", err)
+	}
+
 	return entries, nil
 }
 

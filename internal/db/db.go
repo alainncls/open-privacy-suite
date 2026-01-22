@@ -29,6 +29,11 @@ func New(databaseURL string) (*DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Configure connection pool
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
+
 	// Test connection
 	ctx := context.Background()
 	if err := conn.PingContext(ctx); err != nil {
@@ -53,6 +58,11 @@ func NewWithoutMigrate(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Configure connection pool
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	// Test connection
 	ctx := context.Background()

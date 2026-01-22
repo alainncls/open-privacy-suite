@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -677,8 +678,13 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 	offset := 0
 	// Parse query params if provided
 	if l := c.Query("limit"); l != "" {
-		if _, err := c.GetQuery("limit"); err {
-			limit = 100
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
 		}
 	}
 

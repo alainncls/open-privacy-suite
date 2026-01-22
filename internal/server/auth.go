@@ -97,16 +97,27 @@ type AuthVerifyRequest struct {
 // handleAuthRequest handles POST /auth/request - creates authorization request
 // Step 1: Client requests authentication, server creates proof request
 func (s *Server) handleAuthRequest(c *gin.Context) {
-	// Validate verifier ID is configured
-	if s.config.VerifierID == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "VERIFIER_ID not configured"})
-		return
-	}
-
 	// Generate session ID first (needed for callback URL)
 	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
 	if sessionID == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "authentication service at capacity, please try again later"})
+		return
+	}
+
+	// In development mode with VERIFIER_ID not configured, return a mock session
+	// This allows demo recording and testing without Privado infrastructure
+	if s.config.VerifierID == "" {
+		if s.config.IsProduction() {
+			s.sessionStore.DeleteSession(sessionID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "VERIFIER_ID not configured"})
+			return
+		}
+		// Development mode: return mock session for demo/testing
+		log.Printf("Warning: VERIFIER_ID not configured - returning mock auth session for development")
+		c.JSON(http.StatusOK, AuthRequestResponse{
+			SessionID:   sessionID,
+			AuthRequest: nil, // No real auth request in mock mode
+		})
 		return
 	}
 
@@ -173,7 +184,9 @@ func (s *Server) handleAuthCallback(c *gin.Context) {
 
 	// Read JWZ token from request body
 	// Wallet sends it as JSON: {"token": "..."} or just the token string
-	body, err := io.ReadAll(c.Request.Body)
+	// Limit body size to 1MB to prevent DoS attacks
+	const maxBodySize = 1 << 20 // 1MB
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodySize))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 		return
