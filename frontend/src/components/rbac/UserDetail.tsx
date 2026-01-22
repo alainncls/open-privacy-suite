@@ -166,17 +166,17 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const getClaimColor = (claim: string) => {
     switch (claim) {
       case 'admin':
-        return 'bg-red-500/20 text-[#991B1B] border-red-500/30';
+        return 'bg-red-100 text-[#991B1B] border-red-300';
       case 'deployer':
-        return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
+        return 'bg-purple-100 text-purple-700 border-purple-300';
       case 'upgrade':
-        return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+        return 'bg-orange-100 text-orange-700 border-orange-300';
       case 'writer':
-        return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+        return 'bg-blue-100 text-blue-700 border-blue-300';
       case 'reader':
-        return 'bg-green-500/20 text-green-400 border-green-500/30';
+        return 'bg-green-100 text-green-700 border-green-300';
       default:
-        return 'bg-white/10 text-white/60 border-[#CBD5E1]';
+        return 'bg-gray-100 text-gray-600 border-gray-300';
     }
   };
 
@@ -299,7 +299,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 />
                 <div className="flex items-center gap-2">
                   {loadingEns && !ensNames?.[addr.address.toLowerCase()] && (
-                    <Loader2 className="w-3 h-3 text-white/30 animate-spin" />
+                    <Loader2 className="w-3 h-3 text-[#94A3B8] animate-spin" />
                   )}
                   <span className="text-xs text-[#94A3B8]">
                     Verified {new Date(addr.verified_at).toLocaleDateString()}
@@ -356,7 +356,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                           variant="outline"
                           className={`text-xs ${
                             m.membership.source === 'zk_attested'
-                              ? 'text-purple-400 border-purple-500/30'
+                              ? 'text-purple-700 border-purple-300 bg-purple-50'
                               : 'text-[#6B7280]'
                           }`}
                         >

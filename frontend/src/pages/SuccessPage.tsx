@@ -120,7 +120,7 @@ export function SuccessPage() {
                 RPC URL
               </label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-sm text-[#0F0F0F] overflow-x-auto" data-testid="rpc-endpoint">
+                <code className="flex-1 p-3 bg-[#F1F5F9] rounded-lg font-mono text-sm text-[#0F0F0F] overflow-x-auto" data-testid="rpc-endpoint">
                   {rpcEndpoint}
                 </code>
                 <Button
@@ -146,7 +146,7 @@ export function SuccessPage() {
                   Access Token (for Authorization header)
                 </label>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-xs text-[#374151] overflow-hidden text-ellipsis">
+                  <code className="flex-1 p-3 bg-[#F1F5F9] rounded-lg font-mono text-xs text-[#374151] overflow-hidden text-ellipsis">
                     Bearer {accessToken.slice(0, 20)}...{accessToken.slice(-10)}
                   </code>
                   <Button
@@ -275,7 +275,7 @@ export function SuccessPage() {
           <CardContent className="space-y-3">
             <div>
               <p className="text-xs text-[#94A3B8] mb-1">cURL</p>
-              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-[#374151] overflow-x-auto">
+              <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
 {`curl ${rpcEndpoint} \\
   -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
@@ -285,7 +285,7 @@ export function SuccessPage() {
 
             <div>
               <p className="text-xs text-[#94A3B8] mb-1">ethers.js</p>
-              <pre className="p-2 bg-black/30 rounded text-xs font-mono text-[#374151] overflow-x-auto">
+              <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
 {`const provider = new ethers.JsonRpcProvider(
   "${rpcEndpoint}",
   undefined,

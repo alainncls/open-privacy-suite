@@ -185,9 +185,9 @@ body {
   /* Code block */
   .code-block {
     @apply rounded-lg p-4 font-mono text-sm;
-    background: #1A1A1A;
+    background: #F1F5F9;
     border: 1px solid var(--surface-border);
-    color: #E2E8F0;
+    color: #374151;
     overflow-x: auto;
   }
 
