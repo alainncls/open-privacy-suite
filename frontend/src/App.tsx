@@ -80,13 +80,13 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-mesh">
+      <div className="min-h-screen bg-mesh" data-testid="admin-app">
         {/* Glass Navigation Header */}
-        <header className="glass-nav sticky top-0 z-40">
+        <header className="glass-nav sticky top-0 z-40" data-testid="admin-header">
           <div className="max-w-7xl mx-auto px-6 py-4">
             <div className="flex items-center justify-between">
               {/* Logo and Title */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3" data-testid="admin-logo">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/30">
                   <Shield className="w-5 h-5 text-white" />
                 </div>
@@ -97,17 +97,17 @@ function App() {
               </div>
 
               {/* Navigation Tabs */}
-              <Tabs value={activeTab} onValueChange={handleTabChange}>
+              <Tabs value={activeTab} onValueChange={handleTabChange} data-testid="admin-nav">
                 <TabsList className="bg-white/5">
-                  <TabsTrigger value="dashboard" className="gap-2">
+                  <TabsTrigger value="dashboard" className="gap-2" data-testid="nav-dashboard">
                     <LayoutDashboard className="w-4 h-4" />
                     <span className="hidden sm:inline">Dashboard</span>
                   </TabsTrigger>
-                  <TabsTrigger value="logs" className="gap-2">
+                  <TabsTrigger value="logs" className="gap-2" data-testid="nav-logs">
                     <ScrollText className="w-4 h-4" />
                     <span className="hidden sm:inline">Access Logs</span>
                   </TabsTrigger>
-                  <TabsTrigger value="rbac" className="gap-2">
+                  <TabsTrigger value="rbac" className="gap-2" data-testid="nav-rbac">
                     <Users className="w-4 h-4" />
                     <span className="hidden sm:inline">RBAC</span>
                   </TabsTrigger>

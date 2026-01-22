@@ -47,6 +47,8 @@ services:
       - ENVIRONMENT=development
       - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
       - BASE_URL=${BASE_URL:-http://localhost:8080}
+      - MOCK_SIGNATURES=true  # Allow mock signatures for demo recordings (never enable in production)
+      - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
     depends_on:
       postgres:
         condition: service_healthy

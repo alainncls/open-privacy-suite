@@ -16,10 +16,14 @@ class CompositionConfig:
     fps: int = 60
     video_codec: str = "libx264"
     audio_codec: str = "aac"
-    video_bitrate: str = "8M"
-    audio_bitrate: str = "192k"
-    preset: str = "medium"
-    crf: int = 18
+    video_bitrate: str = "25M"
+    audio_bitrate: str = "320k"
+    preset: str = "slow"  # Better compression efficiency
+    crf: int = 15  # Near-lossless quality (lower = higher quality)
+    # Additional high quality settings
+    profile: str = "high"
+    level: str = "4.2"
+    pix_fmt: str = "yuv420p"
 
 
 @dataclass
@@ -76,7 +80,7 @@ class FFmpegProcessor:
         work_dir.mkdir(exist_ok=True)
 
         # Step 1: Create merged audio track
-        merged_audio = work_dir / "merged_audio.mp3"
+        merged_audio = work_dir / "merged_audio.m4a"
         self._merge_audio_segments(
             audio_segments, step_timings, merged_audio, self._get_video_duration(video_path)
         )
@@ -122,28 +126,43 @@ class FFmpegProcessor:
         output_path: Path,
         total_duration: float,
     ) -> None:
-        """Merge audio segments at their correct timestamps."""
+        """Merge audio segments at their correct timestamps, preventing overlap."""
         if not segments:
             # Create silent audio track
             self._create_silent_audio(output_path, total_duration)
             return
 
         # Build FFmpeg filter for placing audio at correct times
+        # Key fix: ensure narrations don't overlap by tracking when each ends
         inputs = []
         filter_parts = []
 
-        for i, segment in enumerate(segments):
+        # Calculate placement times that prevent overlap
+        placement_times = []
+        current_end_time = 0.0
+
+        for segment in segments:
             timing = step_timings.get(segment.id, {})
-            start_ms = timing.get("start", 0)
-            start_sec = start_ms / 1000.0
+            step_start_sec = timing.get("start", 0) / 1000.0
+
+            # Place narration at the later of: step start time, or after previous narration ends
+            # Add a small gap (0.3s) between narrations for natural pacing
+            place_at = max(step_start_sec, current_end_time + 0.3)
+            placement_times.append(place_at)
+
+            # Track when this narration ends
+            current_end_time = place_at + segment.duration
+
+        for i, segment in enumerate(segments):
+            place_at_ms = int(placement_times[i] * 1000)
 
             inputs.extend(["-i", str(segment.audio_path)])
-            # Delay each audio segment to its start time
-            filter_parts.append(f"[{i}:a]adelay={int(start_sec * 1000)}|{int(start_sec * 1000)}[a{i}]")
+            # Delay each audio segment to its calculated placement time
+            filter_parts.append(f"[{i}:a]adelay={place_at_ms}|{place_at_ms}[a{i}]")
 
-        # Mix all delayed audio streams
+        # Mix all delayed audio streams (concat mode to avoid volume reduction)
         mix_inputs = "".join(f"[a{i}]" for i in range(len(segments)))
-        filter_parts.append(f"{mix_inputs}amix=inputs={len(segments)}:duration=longest[aout]")
+        filter_parts.append(f"{mix_inputs}amix=inputs={len(segments)}:duration=longest:normalize=0[aout]")
 
         filter_complex = ";".join(filter_parts)
 
@@ -171,6 +190,9 @@ class FFmpegProcessor:
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", self.config.audio_codec,
             "-b:a", self.config.audio_bitrate,
             "-map", "0:v:0",
@@ -200,6 +222,9 @@ class FFmpegProcessor:
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", "copy",
             str(output_path),
         ]
@@ -238,6 +263,9 @@ class FFmpegProcessor:
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", "copy",
             str(output_path),
         ]
@@ -260,6 +288,9 @@ class FFmpegProcessor:
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", self.config.audio_codec,
             "-b:a", self.config.audio_bitrate,
             str(output_path),
@@ -268,14 +299,33 @@ class FFmpegProcessor:
         subprocess.run(cmd, capture_output=True, check=True)
         concat_file.unlink()
 
-    def _transcode(self, input_path: Path, output_path: Path) -> None:
-        """Transcode video to output format."""
+    def _transcode(
+        self,
+        input_path: Path,
+        output_path: Path,
+        fade_in: float = 0.5,
+        fade_out: float = 0.5,
+    ) -> None:
+        """Transcode video to output format with fade effects."""
+        # Get video duration for fade out calculation
+        duration = self._get_video_duration(input_path)
+        fade_out_start = max(0, duration - fade_out)
+
+        # Build filter for fade effects
+        video_filter = f"fade=t=in:st=0:d={fade_in},fade=t=out:st={fade_out_start}:d={fade_out}"
+        audio_filter = f"afade=t=in:st=0:d={fade_in},afade=t=out:st={fade_out_start}:d={fade_out}"
+
         cmd = [
             "ffmpeg", "-y",
             "-i", str(input_path),
+            "-vf", video_filter,
+            "-af", audio_filter,
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", self.config.audio_codec,
             "-b:a", self.config.audio_bitrate,
             str(output_path),
@@ -357,6 +407,9 @@ class FFmpegProcessor:
             "-c:v", self.config.video_codec,
             "-preset", self.config.preset,
             "-crf", str(self.config.crf),
+            "-profile:v", self.config.profile,
+            "-level:v", self.config.level,
+            "-pix_fmt", self.config.pix_fmt,
             "-c:a", "copy",
             str(output_path),
         ]

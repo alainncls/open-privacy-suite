@@ -14,14 +14,28 @@ class Resolution:
 
 
 @dataclass
+class QualityConfig:
+    """Video encoding quality settings."""
+    preset: str = "slow"  # ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+    crf: int = 15  # 0-51, lower = higher quality (15-18 is near-lossless)
+    bitrate: str = "25M"  # Target bitrate
+    audio_bitrate: str = "320k"
+    profile: str = "high"  # baseline, main, high
+    level: str = "4.2"
+
+
+@dataclass
 class VideoConfig:
     resolution: Resolution
     fps: int = 60
     viewport: Resolution = None
+    quality: QualityConfig = None
 
     def __post_init__(self):
         if self.viewport is None:
             self.viewport = Resolution(width=1280, height=720)
+        if self.quality is None:
+            self.quality = QualityConfig()
 
 
 @dataclass
@@ -156,10 +170,12 @@ def load_config(path: str | Path) -> DemoConfig:
 
     # Parse video config
     video_data = data["video"]
+    quality_data = video_data.get("quality", {})
     video = VideoConfig(
         resolution=Resolution(**video_data["resolution"]),
         fps=video_data.get("fps", 60),
         viewport=Resolution(**video_data.get("viewport", {"width": 1280, "height": 720})),
+        quality=QualityConfig(**quality_data) if quality_data else QualityConfig(),
     )
 
     # Parse voice config

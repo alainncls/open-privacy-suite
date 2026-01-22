@@ -1,0 +1,28 @@
+{
+  "name": "privacy-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Privacy Proxy - KYC authentication gateway with blockchain access control",
+  "scripts": {
+    "prepare": "husky",
+    "lint:go": "go vet ./...",
+    "lint:frontend": "cd frontend && npm run lint",
+    "test:go": "go test ./internal/... -v",
+    "test:frontend": "cd frontend && npm run test:run"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
+  },
+  "lint-staged": {
+    "*.go": [
+      "gofmt -w"
+    ],
+    "frontend/**/*.{ts,tsx}": [
+      "cd frontend && npm run lint -- --fix"
+    ],
+    "frontend/**/*.{json,css,md}": [
+      "prettier --write"
+    ]
+  }
+}

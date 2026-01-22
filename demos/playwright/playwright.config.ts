@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 /**
  * Playwright configuration for demo video recording.
- * Optimized for high-quality 1080p video capture.
+ * Optimized for VERY HIGH QUALITY 1080p video capture.
  */
 export default defineConfig({
   testDir: "./tests",
@@ -11,7 +11,7 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: [["html", { open: "never" }], ["list"]],
-  timeout: 120000,
+  timeout: 180000, // 3 minutes for longer demos
 
   use: {
     baseURL: process.env.BASE_URL || "http://localhost:5173",
@@ -21,9 +21,9 @@ export default defineConfig({
       mode: "on",
       size: { width: 1920, height: 1080 },
     },
-    viewport: { width: 1280, height: 720 },
-    deviceScaleFactor: 2,
-    actionTimeout: 15000,
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 1, // Prevent DPI scaling issues
+    actionTimeout: 30000,  // Increased for high-res screenshots
     navigationTimeout: 30000,
   },
 
@@ -38,6 +38,8 @@ export default defineConfig({
             "--disable-blink-features=AutomationControlled",
             "--disable-infobars",
             "--start-maximized",
+            // Stable rendering for macOS
+            "--disable-gpu-vsync",
           ],
         },
       },

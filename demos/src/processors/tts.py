@@ -1,21 +1,53 @@
-"""OpenAI TTS integration with caching."""
+"""Edge TTS integration with caching (free, no API key required)."""
 
+import asyncio
 import hashlib
-import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-
-import httpx
 
 
 @dataclass
 class TTSConfig:
     """Configuration for TTS generation."""
 
-    voice: str = "alloy"
-    model: str = "tts-1-hd"
-    speed: float = 1.0
+    voice: str = "en-US-AriaNeural"  # Default Edge TTS voice
+    speed: str = "+0%"  # Speed adjustment (e.g., "+10%", "-5%")
+    pitch: str = "+0Hz"  # Pitch adjustment
     response_format: str = "mp3"
+
+
+# Available Edge TTS voices (subset of best quality English voices)
+EDGE_VOICES = {
+    # US English - Natural sounding voices
+    "aria": "en-US-AriaNeural",  # Female, versatile
+    "jenny": "en-US-JennyNeural",  # Female, friendly
+    "guy": "en-US-GuyNeural",  # Male, professional
+    "davis": "en-US-DavisNeural",  # Male, conversational
+    "amber": "en-US-AmberNeural",  # Female, warm
+    "ana": "en-US-AnaNeural",  # Female, child
+    "ashley": "en-US-AshleyNeural",  # Female, casual
+    "brandon": "en-US-BrandonNeural",  # Male, casual
+    "christopher": "en-US-ChristopherNeural",  # Male, professional
+    "cora": "en-US-CoraNeural",  # Female, professional
+    "elizabeth": "en-US-ElizabethNeural",  # Female, professional
+    "eric": "en-US-EricNeural",  # Male, versatile
+    "jacob": "en-US-JacobNeural",  # Male, casual
+    "michelle": "en-US-MichelleNeural",  # Female, friendly
+    "monica": "en-US-MonicaNeural",  # Female, professional
+    "roger": "en-US-RogerNeural",  # Male, professional
+    "steffan": "en-US-SteffanNeural",  # Male, friendly
+    # UK English
+    "sonia": "en-GB-SoniaNeural",  # Female, professional
+    "ryan": "en-GB-RyanNeural",  # Male, professional
+    # Map OpenAI voice names to similar Edge voices for compatibility
+    "alloy": "en-US-JennyNeural",
+    "echo": "en-US-GuyNeural",
+    "fable": "en-GB-SoniaNeural",
+    "onyx": "en-US-DavisNeural",
+    "nova": "en-US-AriaNeural",
+    "shimmer": "en-US-MichelleNeural",
+}
 
 
 @dataclass
@@ -29,16 +61,20 @@ class TTSSegment:
 
 
 class TTSProcessor:
-    """Generates TTS audio using OpenAI's API with local caching."""
+    """Generates TTS audio using Microsoft Edge TTS (free, no API key required)."""
 
-    VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+    VOICES = list(EDGE_VOICES.keys())
 
     def __init__(self, cache_dir: Path, api_key: str | None = None):
+        """Initialize TTS processor.
+
+        Args:
+            cache_dir: Directory for caching generated audio
+            api_key: Ignored (kept for API compatibility with OpenAI version)
+        """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY not set")
+        # Note: api_key is ignored - Edge TTS is free
 
     def generate_narration(
         self,
@@ -82,7 +118,7 @@ class TTSProcessor:
             shutil.copy2(cached, output_path)
         else:
             # Generate new
-            self._call_api(text, output_path, config)
+            asyncio.run(self._generate_audio(text, output_path, config))
             # Cache it
             self._cache_audio(segment_id, output_path, config)
 
@@ -105,30 +141,28 @@ class TTSProcessor:
             return cached_path
 
         # Generate new audio
-        self._call_api(text, cached_path, config)
+        asyncio.run(self._generate_audio(text, cached_path, config))
         return cached_path
 
-    def _call_api(self, text: str, output_path: Path, config: TTSConfig) -> None:
-        """Call OpenAI TTS API."""
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                "https://api.openai.com/v1/audio/speech",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": config.model,
-                    "input": text,
-                    "voice": config.voice,
-                    "speed": config.speed,
-                    "response_format": config.response_format,
-                },
-            )
-            response.raise_for_status()
+    async def _generate_audio(
+        self, text: str, output_path: Path, config: TTSConfig
+    ) -> None:
+        """Generate audio using Edge TTS."""
+        import edge_tts
 
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(response.content)
+        # Resolve voice name (support both short names and full voice IDs)
+        voice = EDGE_VOICES.get(config.voice.lower(), config.voice)
+
+        # Create communicate object
+        communicate = edge_tts.Communicate(
+            text,
+            voice=voice,
+            rate=config.speed,
+            pitch=config.pitch,
+        )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        await communicate.save(str(output_path))
 
     def _get_cached(self, segment_id: str, config: TTSConfig) -> Path | None:
         """Check if audio is already cached."""
@@ -159,8 +193,6 @@ class TTSProcessor:
 
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get duration of audio file using ffprobe."""
-        import subprocess
-
         try:
             result = subprocess.run(
                 [

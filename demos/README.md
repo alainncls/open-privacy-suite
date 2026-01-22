@@ -30,21 +30,24 @@ make demo name=auth-flow
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes (for TTS) | OpenAI API key for text-to-speech narration |
 | `ANTHROPIC_API_KEY` | No | Anthropic API key for social media copy generation |
+| `MOCK_SIGNATURES` | Yes (for demo) | Set to `true` to skip wallet signature verification (backend) |
 
 ### Running Services
 
-For demo recording to work, the full application stack must be running:
+For demo recording to work, the full application stack must be running with mock mode enabled:
 
-1. **Backend server** - The Go proxy server with database
+1. **Backend server** - The Go proxy server with database (with `MOCK_SIGNATURES=true`)
 2. **Frontend** - React development server (auto-started by Playwright)
 
 ```bash
-# Terminal 1: Start backend
-make run
+# Terminal 1: Start backend with mock mode for demo recording
+MOCK_SIGNATURES=true make run
 
 # Terminal 2: Generate demo
 make demo name=auth-flow
 ```
+
+**Note:** `MOCK_SIGNATURES=true` is required because the Playwright mock wallet cannot produce cryptographically valid signatures. This setting is blocked in production environments.
 
 ## Architecture
 
@@ -157,13 +160,14 @@ Place branding assets in `assets/branding/`:
 
 ## Known Limitations
 
-### Mock Wallet Signature Validation
+### Mock Mode Required
 
-The Playwright mock wallet returns simulated signatures that don't cryptographically validate. For demos that require wallet signing:
+The Playwright mock wallet returns simulated signatures that don't cryptographically validate. You **must** run the backend with `MOCK_SIGNATURES=true` for demo recording to work.
 
-**Option 1**: Run backend with mock signature acceptance (recommended for demos)
-**Option 2**: Use a test wallet with known private key
-**Option 3**: Record steps before wallet signing, then manually complete
+When mock mode is enabled:
+- Wallet signature verification is skipped (with warning logged)
+- Auth sessions work without Privado infrastructure (VERIFIER_ID not required)
+- Both features are **blocked in production** for security
 
 ### TTS Caching
 
@@ -181,9 +185,11 @@ Run `make demo-setup` to ensure the virtual environment is properly configured.
 
 ### Recording fails at wallet signing
 
-The backend rejects mock signatures. Either:
-1. Run the backend in mock mode
-2. Skip wallet signing steps in the demo config
+Ensure the backend is running with `MOCK_SIGNATURES=true`:
+
+```bash
+MOCK_SIGNATURES=true make run
+```
 
 ### FFmpeg not found
 

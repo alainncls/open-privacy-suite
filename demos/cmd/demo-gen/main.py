@@ -27,7 +27,7 @@ from demos.src.recorder.spec_generator import SpecGenerator
 from demos.src.recorder.playwright_runner import PlaywrightRunner
 from demos.src.processors.tts import TTSProcessor, TTSConfig
 from demos.src.processors.captions import CaptionGenerator
-from demos.src.processors.ffmpeg import FFmpegProcessor, WatermarkConfig
+from demos.src.processors.ffmpeg import FFmpegProcessor, WatermarkConfig, CompositionConfig
 from demos.src.clippers.scene_clipper import SceneClipper, ClippingConfig
 from demos.src.exporters.platform import PlatformExporter
 from demos.src.generators.copy import CopyGenerator, CopyConfig
@@ -97,7 +97,13 @@ def generate(config_name: str, output: str | None, skip_recording: bool, skip_tt
         task = progress.add_task("Generating captions...", total=None)
         timings_path = output_dir / f"{config.name}_timings.json"
         step_timings = json.loads(timings_path.read_text()) if timings_path.exists() else {}
-        captions_path = _generate_captions(audio_segments, step_timings.get("steps", {}), output_dir / "captions.ass")
+        resolution = (config.video.resolution.width, config.video.resolution.height)
+        captions_path = _generate_captions(
+            audio_segments,
+            step_timings.get("steps", {}),
+            output_dir / "captions.ass",
+            resolution=resolution,
+        )
         progress.update(task, completed=True)
 
         # Step 4: Compose final video
@@ -199,7 +205,13 @@ def process(config_name: str, video: str | None, output: str | None):
 
         # Generate captions
         task = progress.add_task("Generating captions...", total=None)
-        captions_path = _generate_captions(audio_segments, step_timings.get("steps", {}), output_dir / "captions.ass")
+        resolution = (config.video.resolution.width, config.video.resolution.height)
+        captions_path = _generate_captions(
+            audio_segments,
+            step_timings.get("steps", {}),
+            output_dir / "captions.ass",
+            resolution=resolution,
+        )
         progress.update(task, completed=True)
 
         # Compose video
@@ -307,10 +319,21 @@ def _generate_tts(narrations: list[tuple[str, str]], config) -> list:
     return processor.generate_narration(narrations, tts_config)
 
 
-def _generate_captions(audio_segments: list, step_timings: dict, output_path: Path) -> Path:
-    """Generate caption file."""
+def _generate_captions(
+    audio_segments: list,
+    step_timings: dict,
+    output_path: Path,
+    resolution: tuple[int, int] = (1920, 1080),
+) -> Path:
+    """Generate caption file with resolution-aware styling."""
     generator = CaptionGenerator()
-    return generator.generate_from_segments(audio_segments, step_timings, output_path, format="ass")
+    return generator.generate_from_segments(
+        audio_segments,
+        step_timings,
+        output_path,
+        format="ass",
+        resolution=resolution,
+    )
 
 
 def _compose_video(
@@ -322,7 +345,20 @@ def _compose_video(
     config,
 ) -> Path:
     """Compose final video with audio, captions, and branding."""
-    processor = FFmpegProcessor()
+    # Build composition config from demo config quality settings
+    quality = config.video.quality
+    composition_config = CompositionConfig(
+        resolution=(config.video.resolution.width, config.video.resolution.height),
+        fps=config.video.fps,
+        preset=quality.preset,
+        crf=quality.crf,
+        video_bitrate=quality.bitrate,
+        audio_bitrate=quality.audio_bitrate,
+        profile=quality.profile,
+        level=quality.level,
+    )
+
+    processor = FFmpegProcessor(composition_config)
 
     # Check for branding assets
     watermark = None
@@ -361,10 +397,13 @@ def _extract_clips(video_path: Path, output_dir: Path, audio_segments: list) -> 
 
 
 def _export_platforms(clips: list, output_dir: Path, captions_path: Path):
-    """Export clips to all platforms."""
+    """Export clips to compatible platforms (16:9 only for landscape source)."""
     exporter = PlatformExporter(output_dir)
+    # Only export to 16:9 platforms since our source is landscape
+    # Portrait platforms (tiktok, reels, shorts) need special handling
+    platforms = ["twitter", "youtube"]
     for clip in clips:
-        exporter.export_all_platforms(clip, captions_path=captions_path)
+        exporter.export_all_platforms(clip, platforms=platforms, captions_path=captions_path)
 
 
 def _generate_copy(clips: list, config, output_dir: Path):

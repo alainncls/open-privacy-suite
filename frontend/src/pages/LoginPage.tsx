@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { authApiMethods, generatePrivadoLink, isMobileDevice, AuthRequestResponse, HumanityVerificationError } from '@/api/auth';
 
-const isDev = import.meta.env.DEV;
+// Mock login requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true
+const allowMockLogin = import.meta.env.VITE_ALLOW_MOCK_LOGIN === 'true';
 
 type AuthStep = 'init' | 'loading' | 'ready' | 'polling' | 'success' | 'error' | 'humanity_required';
 
@@ -56,9 +57,9 @@ export function LoginPage() {
     }
   }, []);
 
-  // Mock login for development
+  // Mock login for development (requires explicit opt-in)
   const handleMockLogin = useCallback(async () => {
-    if (!isDev) return;
+    if (!allowMockLogin) return;
 
     setState(prev => ({ ...prev, step: 'loading', error: null }));
 
@@ -150,11 +151,11 @@ export function LoginPage() {
     const isMobile = isMobileDevice();
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-6" data-testid="qr-section">
         {/* QR Code for desktop */}
         {!isMobile && (
           <div className="flex flex-col items-center gap-4">
-            <div className="p-4 bg-white rounded-2xl shadow-lg" role="img" aria-label="QR code for Privado ID authentication">
+            <div className="p-4 bg-white rounded-2xl shadow-lg" role="img" aria-label="QR code for Privado ID authentication" data-testid="qr-code">
               <QRCodeSVG
                 value={deepLink}
                 size={200}
@@ -210,10 +211,10 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4 overflow-x-hidden">
+    <div className="min-h-screen bg-mesh flex items-center justify-center p-4 overflow-x-hidden" data-testid="login-page">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Logo Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-8" data-testid="login-header">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/30">
             <Shield className="w-8 h-8 text-white" />
           </div>
@@ -222,9 +223,9 @@ export function LoginPage() {
         </div>
 
         {/* Auth Card */}
-        <Card variant="glassSolid">
+        <Card variant="glassSolid" data-testid="auth-card">
           <CardHeader className="text-center">
-            <CardTitle>Authenticate with Privado ID</CardTitle>
+            <CardTitle data-testid="auth-title">Authenticate with Privado ID</CardTitle>
             <CardDescription>
               Prove your humanity using zero-knowledge proofs
             </CardDescription>
@@ -232,7 +233,7 @@ export function LoginPage() {
           <CardContent>
             {/* Loading state */}
             {state.step === 'loading' && (
-              <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite">
+              <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite" data-testid="auth-loading">
                 <Loader2 className="w-8 h-8 animate-spin text-primary-400" aria-hidden="true" />
                 <p className="text-white/80">Preparing authentication...</p>
               </div>
@@ -243,7 +244,7 @@ export function LoginPage() {
 
             {/* Success state */}
             {state.step === 'success' && (
-              <div className="flex flex-col items-center gap-4 py-8">
+              <div className="flex flex-col items-center gap-4 py-8" data-testid="auth-success">
                 <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center">
                   <CheckCircle2 className="w-8 h-8 text-green-400" />
                 </div>
@@ -286,7 +287,7 @@ export function LoginPage() {
 
             {/* Error state */}
             {state.step === 'error' && (
-              <div className="flex flex-col items-center gap-4 py-6">
+              <div className="flex flex-col items-center gap-4 py-6" data-testid="auth-error">
                 <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center">
                   <AlertCircle className="w-8 h-8 text-red-400" />
                 </div>
@@ -294,7 +295,7 @@ export function LoginPage() {
                   <p className="text-white/90 font-medium mb-2">Authentication Failed</p>
                   <p className="text-white/80 text-sm">{state.error}</p>
                 </div>
-                <Button onClick={startAuth} variant="glassPrimary" className="w-full mt-2">
+                <Button onClick={startAuth} variant="glassPrimary" className="w-full mt-2" data-testid="try-again-btn">
                   Try Again
                 </Button>
               </div>
@@ -317,9 +318,9 @@ export function LoginPage() {
           </p>
         </div>
 
-        {/* Dev-only mock login */}
-        {isDev && (
-          <div className="mt-6 pt-6 border-t border-white/10">
+        {/* Mock login - requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true */}
+        {allowMockLogin && (
+          <div className="mt-6 pt-6 border-t border-white/10" data-testid="dev-tools">
             <div className="text-center mb-3">
               <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-medium">
                 <FlaskConical className="w-3 h-3" />
@@ -331,6 +332,7 @@ export function LoginPage() {
               variant="outline"
               className="w-full border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
               disabled={state.step === 'loading'}
+              data-testid="mock-login-btn"
             >
               {state.step === 'loading' ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />

@@ -52,11 +52,26 @@ test-go:
 test-unit: test-db-ready
 	go test ./internal/... -v
 
+# Minimum coverage threshold (percentage) - start at 45%, increase over time
+MIN_COVERAGE ?= 45
+
 # Run unit tests with coverage
 test-coverage: test-db-ready
 	go test ./internal/... -v -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+# Run unit tests with coverage and enforce minimum threshold
+test-coverage-check: test-db-ready
+	go test ./internal/... -v -coverprofile=coverage.out
+	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	COVERAGE_INT=$${COVERAGE%.*}; \
+	echo "Total coverage: $${COVERAGE}%"; \
+	if [ "$$COVERAGE_INT" -lt "$(MIN_COVERAGE)" ]; then \
+		echo "ERROR: Coverage $${COVERAGE}% is below minimum threshold of $(MIN_COVERAGE)%"; \
+		exit 1; \
+	fi; \
+	echo "Coverage $${COVERAGE}% meets minimum threshold of $(MIN_COVERAGE)%"
 
 # Check if test database is ready
 test-db-ready:
@@ -245,8 +260,19 @@ demo-clean:
 # Git Hooks
 # ============================================================================
 
-# Setup git hooks for pre-commit testing
+# Setup git hooks using husky + lint-staged (faster, targeted checks)
 setup-hooks:
+	@echo "Installing husky and lint-staged..."
+	npm install
+	@echo "Husky pre-commit hook installed at .husky/pre-commit"
+	@echo ""
+	@echo "The hook will run:"
+	@echo "  - gofmt and go vet on staged .go files"
+	@echo "  - eslint on staged frontend files"
+	@echo "  - Go tests on changed packages"
+
+# Legacy: Setup full pre-commit testing (slower, runs all tests)
+setup-hooks-full:
 	@mkdir -p .git/hooks
 	@echo '#!/bin/bash' > .git/hooks/pre-commit
 	@echo 'set -e' >> .git/hooks/pre-commit
@@ -261,4 +287,4 @@ setup-hooks:
 	@echo '' >> .git/hooks/pre-commit
 	@echo 'echo "All tests passed!"' >> .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
-	@echo "Pre-commit hook installed at .git/hooks/pre-commit"
+	@echo "Full pre-commit hook installed at .git/hooks/pre-commit"

@@ -1,4 +1,4 @@
-import { connectorsForWallets } from '@rainbow-me/rainbowkit';
+import { connectorsForWallets, WalletList } from '@rainbow-me/rainbowkit';
 import {
   metaMaskWallet,
   walletConnectWallet,
@@ -8,26 +8,29 @@ import {
 import { createConfig, http } from 'wagmi';
 import { mainnet, polygon, arbitrum, optimism, base } from 'wagmi/chains';
 
-const projectId = 'privacy-proxy-dev'; // For development - replace with real WalletConnect project ID in production
+// WalletConnect project ID - get one at https://cloud.walletconnect.com/
+// Only include WalletConnect wallet when a valid project ID is configured
+const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '';
+const hasWalletConnect = projectId.length > 0;
+
+// Build wallet list based on available configuration
+const wallets: WalletList = [
+  {
+    groupName: 'Popular',
+    wallets: [
+      metaMaskWallet,
+      injectedWallet,
+      // Only include WalletConnect-dependent wallets when projectId is available
+      ...(hasWalletConnect ? [rainbowWallet, walletConnectWallet] : []),
+    ],
+  },
+];
 
 // Explicitly define wallets to exclude Coinbase (which pulls in LGPL dependencies)
-const connectors = connectorsForWallets(
-  [
-    {
-      groupName: 'Popular',
-      wallets: [
-        metaMaskWallet,
-        rainbowWallet,
-        walletConnectWallet,
-        injectedWallet,
-      ],
-    },
-  ],
-  {
-    appName: 'Privacy Proxy',
-    projectId,
-  }
-);
+const connectors = connectorsForWallets(wallets, {
+  appName: 'Privacy Proxy',
+  projectId: projectId || 'placeholder', // RainbowKit requires a non-empty string
+});
 
 // RainbowKit configuration
 export const wagmiConfig = createConfig({

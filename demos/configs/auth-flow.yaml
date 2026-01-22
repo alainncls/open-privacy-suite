@@ -11,78 +11,94 @@ metadata:
 video:
   resolution: { width: 1920, height: 1080 }
   fps: 60
-  viewport: { width: 1280, height: 720 }
+  viewport: { width: 1920, height: 1080 }
+  quality:
+    preset: "slow"
+    crf: 15
+    bitrate: "25M"
+    audio_bitrate: "320k"
+    profile: "high"
+    level: "4.2"
 
 voice:
-  provider: "openai"
-  voice_id: "alloy"
-  speed: 1.0
+  provider: "edge"
+  voice_id: "jenny"  # Friendly female voice
+  speed: "+0%"
 
 steps:
   - id: "intro"
     action: "navigate"
     url: "/login"
-    wait: { selector: "h1:has-text('Privacy Proxy')", timeout: 15000 }
+    wait: { selector: "[data-testid='login-page']", timeout: 15000 }
     narration: "Welcome to Privacy Proxy. Let's explore how we authenticate users without compromising their privacy."
-    pause: 2.0
-
-  - id: "qr_display"
-    action: "wait"
-    wait: { selector: ".bg-white.rounded-2xl", timeout: 10000 }
-    narration: "Unlike traditional logins that expose your identity, we use zero-knowledge proofs. In production, users scan this QR code with the Privado ID app to authenticate."
     pause: 3.0
     screenshot: true
 
-  - id: "mock_login"
-    action: "click"
-    selector: "button:has-text('Mock Login')"
-    wait: { navigation: "/link-wallet", timeout: 15000 }
-    narration: "For this demo, we'll use mock authentication. The ZK proof verifies you meet the criteria without revealing who you are."
-    pause: 2.0
+  - id: "show_auth_card"
+    action: "wait"
+    wait: { selector: "[data-testid='auth-card']", timeout: 5000 }
+    narration: "Unlike traditional logins that expose your identity, we use zero-knowledge proofs. In production, users scan a QR code with the Privado ID app to authenticate."
+    pause: 4.0
+
+  - id: "show_qr_code"
+    action: "wait"
+    wait: { selector: "[data-testid='qr-code']", timeout: 10000 }
+    narration: "Users scan this QR code with their Privado ID wallet to authenticate using zero-knowledge proofs."
+    pause: 4.0
+    screenshot: true
+
+  - id: "wait_for_auth"
+    action: "wait"
+    wait: { selector: "[data-testid='link-wallet-page']", timeout: 15000 }
+    narration: "The proof verifies you meet the criteria without revealing who you are."
+    pause: 3.0
+    screenshot: true
 
   - id: "wallet_page"
     action: "wait"
-    wait: { selector: "h1:has-text('Link Your Wallet')", timeout: 10000 }
+    wait: { selector: "[data-testid='wallet-connected']", timeout: 15000 }
     narration: "Now let's link a wallet. Connect your Ethereum wallet to associate your verified identity with on-chain access control."
-    pause: 2.0
+    pause: 3.0
 
   - id: "wallet_connected"
     action: "wait"
-    wait: { selector: "button:has-text('Sign & Link')", timeout: 10000 }
-    narration: "Our demo wallet is already connected. Users can sign a message to cryptographically link their wallet address to their identity."
-    pause: 2.0
+    wait: { timeout: 2000 }
+    narration: "Our demo wallet is already connected. Users sign a message to cryptographically link their wallet address to their identity."
+    pause: 3.0
     screenshot: true
 
-  - id: "link_wallet"
+  - id: "sign_link"
     action: "click"
-    selector: "button:has-text('Sign & Link')"
-    wait: { selector: "text=Address linked", timeout: 15000 }
+    selector: "[data-testid='sign-link-btn']"
+    wait: { selector: "[data-testid='address-linked']", timeout: 15000 }
     narration: "The signature proves ownership without any transaction fees. Your wallet is now linked."
-    pause: 2.0
+    pause: 3.0
+    screenshot: true
 
   - id: "continue_to_success"
     action: "click"
-    selector: "button:has-text('Continue')"
-    wait: { navigation: "/success", timeout: 10000 }
+    selector: "[data-testid='continue-btn']"
+    wait: { selector: "[data-testid='success-page']", timeout: 10000 }
     narration: "Let's proceed to your dashboard."
-    pause: 1.5
+    pause: 2.0
 
   - id: "success"
     action: "wait"
-    wait: { selector: "h1", timeout: 10000 }
-    narration: "That's it! You now have an authenticated RPC endpoint ready for your dApps. Privacy preserved, access granted."
-    pause: 3.0
+    wait: { selector: "[data-testid='rpc-card']", timeout: 10000 }
+    narration: "That's it! Your authenticated RPC endpoint is ready. Copy this URL and use it in your dApps just like any other RPC provider."
+    pause: 4.0
     screenshot: true
+
+  - id: "copy_endpoint"
+    action: "click"
+    selector: "[data-testid='copy-rpc-btn']"
+    narration: "Privacy preserved, access granted. Welcome to the future of authenticated blockchain access."
+    pause: 3.0
 
 branding:
   watermark:
     position: "bottom-right"
     opacity: 0.7
-  intro:
-    duration: 3
-  outro:
-    cta: "Learn more at gateway.fm/privacy-proxy"
-    duration: 4
 
 captions:
   style: "modern"
@@ -91,5 +107,3 @@ captions:
 
 export:
   - { aspect: "16:9", resolution: "1920x1080" }
-  - { aspect: "9:16", resolution: "1080x1920", suffix: "-vertical" }
-  - { aspect: "1:1", resolution: "1080x1080", suffix: "-square" }

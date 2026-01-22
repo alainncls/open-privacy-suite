@@ -6,9 +6,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Error response helpers provide consistent JSON error responses.
-// Usage: respondBadRequest(c, "invalid input")
-// Output: {"error": "invalid input"} with HTTP 400
+// HTTP Response Helpers
+//
+// These helpers provide consistent JSON error and success responses.
+// Use these instead of inline c.JSON() calls for consistent formatting.
+//
+// ## Error Message Conventions
+//
+// 1. Start with lowercase (e.g., "invalid request" not "Invalid request")
+// 2. Use consistent prefixes:
+//   - "invalid X" for validation errors
+//   - "X not found" for missing resources
+//   - "failed to X" for operation failures
+//   - "missing X" for required fields/context
+//
+// 3. Don't expose internal error details to clients (log them instead)
+// 4. Keep messages concise and actionable
+//
+// ## Examples
+//
+//	respondBadRequest(c, "invalid email format")
+//	respondNotFound(c, "user not found")
+//	respondInternalError(c, "failed to process request")
+//	respondUnauthorized(c, "missing or invalid token")
 
 func respondBadRequest(c *gin.Context, message string) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": message})

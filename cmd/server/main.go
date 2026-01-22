@@ -29,6 +29,11 @@ func main() {
 		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 	}
 
+	// Log if demo auto-auth is enabled
+	if cfg.DemoAutoAuthDelay > 0 {
+		log.Printf("!!! DEMO MODE: Auth sessions will auto-complete after %v", cfg.DemoAutoAuthDelay)
+	}
+
 	srv, err := server.New(cfg) // Migrations run automatically in db.New()
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)

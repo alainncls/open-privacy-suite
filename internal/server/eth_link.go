@@ -12,12 +12,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Common error messages for eth_link handlers (for consistency)
+const (
+	errMissingIdentity = "missing identity in context"
+	errInvalidIdentity = "invalid identity in context"
+)
+
 // LinkChallenge represents a pending ETH address linking challenge
 type LinkChallenge struct {
 	DID       string
 	Nonce     string
-	Address   string    // Optional: pre-specified address
-	Message   string    // The message to be signed
+	Address   string // Optional: pre-specified address
+	Message   string // The message to be signed
 	CreatedAt time.Time
 }
 
@@ -147,24 +153,24 @@ func (s *Server) handleEthLinkChallenge(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		respondUnauthorized(c, errMissingIdentity)
 		return
 	}
 
 	userDID, ok := subject.(string)
 	if !ok || userDID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		respondUnauthorized(c, errInvalidIdentity)
 		return
 	}
 
 	// Create challenge
 	challenge, err := s.challengeStore.CreateChallenge(userDID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create challenge: " + err.Error()})
+		respondInternalError(c, "failed to create challenge")
 		return
 	}
 
-	c.JSON(http.StatusOK, ChallengeResponse{
+	respondOK(c, ChallengeResponse{
 		Nonce:   challenge.Nonce,
 		Message: challenge.Message,
 	})
@@ -175,38 +181,38 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		respondUnauthorized(c, errMissingIdentity)
 		return
 	}
 
 	userDID, ok := subject.(string)
 	if !ok || userDID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		respondUnauthorized(c, errInvalidIdentity)
 		return
 	}
 
 	var req VerifyLinkRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
 	// Get the challenge
 	challenge := s.challengeStore.GetChallenge(req.Nonce)
 	if challenge == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired nonce"})
+		respondBadRequest(c, "invalid or expired nonce")
 		return
 	}
 
 	// Verify the challenge belongs to this user
 	if challenge.DID != userDID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "challenge does not belong to this user"})
+		respondForbidden(c, "challenge does not belong to this user")
 		return
 	}
 
 	// Validate address format
 	if !auth.IsValidAddress(req.Address) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid Ethereum address format"})
+		respondBadRequest(c, "invalid ethereum address format")
 		return
 	}
 
@@ -218,7 +224,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		log.Printf("Warning: Mock signature mode enabled - skipping signature verification for address %s", normalizedAddr)
 	} else {
 		if err := auth.VerifyAddressOwnership(normalizedAddr, challenge.Message, req.Signature); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "signature verification failed: " + err.Error()})
+			respondBadRequest(c, "signature verification failed")
 			return
 		}
 	}
@@ -228,7 +234,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 
 	// Store the link in the database
 	if err := s.db.LinkEthAddress(c.Request.Context(), userDID, normalizedAddr, req.Signature, messageHash); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to link address: " + err.Error()})
+		respondInternalError(c, "failed to link address")
 		return
 	}
 
@@ -237,7 +243,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		go s.resolveAndStoreENS(normalizedAddr)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	respondOK(c, gin.H{
 		"message": "address linked successfully",
 		"address": normalizedAddr,
 	})
@@ -248,20 +254,20 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		respondUnauthorized(c, errMissingIdentity)
 		return
 	}
 
 	userDID, ok := subject.(string)
 	if !ok || userDID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		respondUnauthorized(c, errInvalidIdentity)
 		return
 	}
 
 	// Get linked addresses
 	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), userDID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get addresses: " + err.Error()})
+		respondInternalError(c, "failed to get addresses")
 		return
 	}
 
@@ -276,7 +282,7 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"addresses": addresses})
+	respondOK(c, gin.H{"addresses": addresses})
 }
 
 // handleDeleteEthAddress handles DELETE /eth/addresses/:address - unlink an address
@@ -284,20 +290,20 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		respondUnauthorized(c, errMissingIdentity)
 		return
 	}
 
 	userDID, ok := subject.(string)
 	if !ok || userDID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		respondUnauthorized(c, errInvalidIdentity)
 		return
 	}
 
 	// Get and normalize the address
 	address := c.Param("address")
 	if address == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "address parameter required"})
+		respondBadRequest(c, "address parameter required")
 		return
 	}
 	normalizedAddr := strings.ToLower(address)
@@ -305,14 +311,14 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 	// Revoke the link
 	if err := s.db.RevokeEthAddressLink(c.Request.Context(), userDID, normalizedAddr); err != nil {
 		if strings.Contains(err.Error(), "no matching link") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "address not found or not linked to your account"})
+			respondNotFound(c, "address not found or not linked to your account")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlink address: " + err.Error()})
+		respondInternalError(c, "failed to unlink address")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "address unlinked successfully"})
+	respondMessage(c, "address unlinked successfully")
 }
 
 // handleRefreshENS handles POST /eth/addresses/:address/refresh-ens - refresh ENS name for an address
@@ -320,20 +326,20 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 	// Get user DID from JWT context
 	subject, exists := c.Get("subject")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
+		respondUnauthorized(c, errMissingIdentity)
 		return
 	}
 
 	userDID, ok := subject.(string)
 	if !ok || userDID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
+		respondUnauthorized(c, errInvalidIdentity)
 		return
 	}
 
 	// Get and normalize the address
 	address := c.Param("address")
 	if address == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "address parameter required"})
+		respondBadRequest(c, "address parameter required")
 		return
 	}
 	normalizedAddr := strings.ToLower(address)
@@ -347,18 +353,18 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 	// Verify the address is linked to this user
 	link, err := s.db.GetEthAddressLink(c.Request.Context(), normalizedAddr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get address: " + err.Error()})
+		respondInternalError(c, "failed to get address")
 		return
 	}
 	if link == nil || link.DID != userDID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "address not found or not linked to your account"})
+		respondNotFound(c, "address not found or not linked to your account")
 		return
 	}
 
 	// Resolve ENS name
 	ensName, err := s.ensResolver.ResolveAddress(c.Request.Context(), normalizedAddr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve ENS name: " + err.Error()})
+		respondInternalError(c, "failed to resolve ENS name")
 		return
 	}
 
@@ -368,11 +374,11 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 		ensNamePtr = &ensName
 	}
 	if err := s.db.UpdateENSName(c.Request.Context(), normalizedAddr, ensNamePtr); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update ENS name: " + err.Error()})
+		respondInternalError(c, "failed to update ENS name")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	respondOK(c, gin.H{
 		"address":  normalizedAddr,
 		"ens_name": ensNamePtr,
 	})

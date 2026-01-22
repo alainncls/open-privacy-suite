@@ -154,7 +154,7 @@ export default function RBACManager() {
         refreshOrgs: loadOrganizations,
       }}
     >
-      <Card className="animate-fade-in">
+      <Card className="animate-fade-in" data-testid="rbac-manager">
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -162,7 +162,7 @@ export default function RBACManager() {
                 <Shield className="w-5 h-5 text-primary-400" />
               </div>
               <div>
-                <CardTitle className="text-lg">Access Control</CardTitle>
+                <CardTitle className="text-lg" data-testid="rbac-title">Access Control</CardTitle>
                 <p className="text-sm text-white/50 mt-0.5">
                   Manage organizations, groups, roles, and permissions
                 </p>
@@ -191,7 +191,7 @@ export default function RBACManager() {
                   value={selectedOrg?.id || ''}
                   onValueChange={handleOrgChange}
                 >
-                  <SelectTrigger className="w-[280px]" aria-label="Select organization scope">
+                  <SelectTrigger className="w-[280px]" aria-label="Select organization scope" data-testid="org-selector">
                     <SelectValue placeholder="Select organization" />
                   </SelectTrigger>
                   <SelectContent>
@@ -272,21 +272,21 @@ export default function RBACManager() {
             )}
           </div>
 
-          <Tabs value={activeTab} onValueChange={handleTabChange}>
+          <Tabs value={activeTab} onValueChange={handleTabChange} data-testid="rbac-tabs">
             <TabsList className="w-full justify-start mb-4">
-              <TabsTrigger value="organizations" className="gap-2">
+              <TabsTrigger value="organizations" className="gap-2" data-testid="tab-organizations">
                 <Building2 className="w-4 h-4" />
                 <span>Organizations</span>
               </TabsTrigger>
-              <TabsTrigger value="groups" className="gap-2">
+              <TabsTrigger value="groups" className="gap-2" data-testid="tab-groups">
                 <FolderTree className="w-4 h-4" />
                 <span>Groups</span>
               </TabsTrigger>
-              <TabsTrigger value="users" className="gap-2">
+              <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
                 <Users className="w-4 h-4" />
                 <span>Users</span>
               </TabsTrigger>
-              <TabsTrigger value="contracts" className="gap-2">
+              <TabsTrigger value="contracts" className="gap-2" data-testid="tab-contracts">
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
               </TabsTrigger>

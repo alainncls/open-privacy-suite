@@ -89,21 +89,21 @@ export function SuccessPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4">
+    <div className="min-h-screen bg-mesh flex items-center justify-center p-4" data-testid="success-page">
       <div className="w-full max-w-lg animate-fade-in-up">
         {/* Success Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-8" data-testid="success-header">
           <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-green-500 to-accent-500 flex items-center justify-center shadow-lg shadow-green-500/30 animate-scale-in">
             <Shield className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white/95">You're All Set!</h1>
+          <h1 className="text-3xl font-bold text-white/95" data-testid="success-title">You're All Set!</h1>
           <p className="text-white/60 mt-2">
             Your authenticated RPC endpoint is ready to use
           </p>
         </div>
 
         {/* RPC Endpoint Card */}
-        <Card variant="glassSolid" className="mb-4">
+        <Card variant="glassSolid" className="mb-4" data-testid="rpc-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Key className="w-5 h-5 text-primary-400" />
@@ -120,7 +120,7 @@ export function SuccessPage() {
                 RPC URL
               </label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-sm text-white/90 overflow-x-auto">
+                <code className="flex-1 p-3 bg-black/30 rounded-lg font-mono text-sm text-white/90 overflow-x-auto" data-testid="rpc-endpoint">
                   {rpcEndpoint}
                 </code>
                 <Button
@@ -128,6 +128,7 @@ export function SuccessPage() {
                   variant="outline"
                   size="icon"
                   className="flex-shrink-0"
+                  data-testid="copy-rpc-btn"
                 >
                   {copied === 'rpc' ? (
                     <Check className="w-4 h-4 text-green-400" />
@@ -170,6 +171,7 @@ export function SuccessPage() {
               variant="glassPrimary"
               className="w-full"
               disabled={isAddingNetwork}
+              data-testid="add-metamask-btn"
             >
               {isAddingNetwork ? (
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" />

@@ -6,10 +6,11 @@ httpx>=0.25.0
 # Configuration
 pyyaml>=6.0
 
-# AI/ML
-openai>=1.0.0
+# TTS (free, no API key required)
+edge-tts>=6.1.0
+
+# AI/ML (optional - for copy generation)
 anthropic>=0.7.0
-openai-whisper>=20231117
 
 # Image processing
 Pillow>=10.0.0

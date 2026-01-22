@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,6 +82,12 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+// RevokeRequest represents the request body for /revoke endpoint
+type RevokeRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+	AccessToken  string `json:"access_token"` // Optional: if provided, also revokes the access token
+}
+
 // AuthRequestResponse represents the response from /auth/request endpoint
 type AuthRequestResponse struct {
 	SessionID   string                                `json:"session_id"`
@@ -113,10 +120,29 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		}
 		// Development mode: return mock session for demo/testing
 		log.Printf("Warning: VERIFIER_ID not configured - returning mock auth session for development")
+
+		// Create a mock auth request so the frontend can render the QR code
+		baseURL := s.getPublicURL(c)
+		callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
+		mockAuthReq := &protocol.AuthorizationRequestMessage{
+			ID:   sessionID,
+			Typ:  "application/iden3comm-plain-json",
+			Type: "https://iden3-communication.io/authorization/1.0/request",
+			Body: protocol.AuthorizationRequestMessageBody{
+				CallbackURL: callbackURL,
+				Reason:      "Authenticate to access Privacy Proxy (demo mode)",
+				Scope:       []protocol.ZeroKnowledgeProofRequest{},
+			},
+			From: "did:privado:verifier:demo-mode",
+		}
+
 		c.JSON(http.StatusOK, AuthRequestResponse{
 			SessionID:   sessionID,
-			AuthRequest: nil, // No real auth request in mock mode
+			AuthRequest: mockAuthReq,
 		})
+
+		// Schedule auto-auth for demo mode (if enabled)
+		s.scheduleDemoAutoAuth(sessionID)
 		return
 	}
 
@@ -162,6 +188,62 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		SessionID:   sessionID,
 		AuthRequest: authReq,
 	})
+
+	// Schedule auto-auth for demo mode (if enabled)
+	s.scheduleDemoAutoAuth(sessionID)
+}
+
+// scheduleDemoAutoAuth schedules automatic session completion for demo mode.
+// Spawns a goroutine that completes the session with a mock DID after the configured delay.
+func (s *Server) scheduleDemoAutoAuth(sessionID string) {
+	delay := s.config.DemoAutoAuthDelay
+	if delay <= 0 || s.config.IsProduction() {
+		return
+	}
+
+	go func() {
+		time.Sleep(delay)
+
+		// Check if session still pending (may have been completed or expired)
+		session := s.sessionStore.GetSession(sessionID)
+		if session == nil || session.Completed {
+			return
+		}
+
+		// Generate mock DID and issue tokens
+		mockDID := fmt.Sprintf("did:privado:demo_%d", time.Now().UnixNano())
+		kyc := false
+		if s.rbacAccessCtrl != nil {
+			if user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), mockDID, kyc); err == nil && user != nil {
+				kyc = user.KYC
+			}
+		}
+
+		accessToken, err := s.jwtService.IssueAccessToken(mockDID, kyc)
+		if err != nil {
+			log.Printf("Demo auto-auth: failed to issue access token: %v", err)
+			return
+		}
+		refreshToken, err := s.jwtService.IssueRefreshToken(mockDID)
+		if err != nil {
+			log.Printf("Demo auto-auth: failed to issue refresh token: %v", err)
+			return
+		}
+
+		tokenHash := auth.HashToken(refreshToken)
+		expiresAt := time.Now().Add(RefreshTokenTTL)
+		if err := s.db.SaveRefreshToken(context.Background(), tokenHash, mockDID, expiresAt); err != nil {
+			log.Printf("Demo auto-auth: failed to save refresh token: %v", err)
+			return
+		}
+
+		if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
+			log.Printf("Demo auto-auth: failed to complete session: %v", err)
+			return
+		}
+
+		log.Printf("Demo auto-auth: session %s completed with DID %s", sessionID, mockDID)
+	}()
 }
 
 // handleAuthCallback handles POST /auth/callback - wallet callback with proof
@@ -249,9 +331,9 @@ func (s *Server) handleAuthVerify(c *gin.Context) {
 
 // HumanityVerificationError represents a failure to verify ProofOfHumanity
 type HumanityVerificationError struct {
-	Error      string `json:"error"`
-	Message    string `json:"message"`
-	VerifyURL  string `json:"verify_url"`
+	Error     string `json:"error"`
+	Message   string `json:"message"`
+	VerifyURL string `json:"verify_url"`
 }
 
 // verifyAndIssueTokens is a helper that verifies JWZ proof and issues JWT tokens
@@ -260,9 +342,9 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	var userDID string
 	var err error
 
-	// In development mode, support mock tokens for testing
+	// Support mock tokens for testing when explicitly enabled via ALLOW_MOCK_LOGIN=true
 	// Mock token format: mock.{userDID} or mock.jwz.token.{userDID}
-	if !s.config.IsProduction() && len(jwzToken) > 5 && jwzToken[:5] == "mock." {
+	if s.config.AllowMockLogin && len(jwzToken) > 5 && jwzToken[:5] == "mock." {
 		// Extract DID from mock token
 		parts := strings.Split(jwzToken, ".")
 		if len(parts) >= 2 {
@@ -474,25 +556,40 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	})
 }
 
-// handleRevoke handles POST /revoke - revokes a refresh token
+// handleRevoke handles POST /revoke - revokes refresh and optionally access tokens
 func (s *Server) handleRevoke(c *gin.Context) {
-	var req RefreshRequest
+	var req RevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
 		return
 	}
 
-	// Validate token to get subject (optional, but helps with logging)
+	ctx := c.Request.Context()
+
+	// Revoke access token if provided (for immediate invalidation)
+	if req.AccessToken != "" {
+		accessClaims, err := s.jwtService.ValidateAccessToken(req.AccessToken)
+		if err == nil && accessClaims != nil {
+			// Token is valid, revoke it by adding to blacklist
+			tokenID := auth.HashToken(req.AccessToken)
+			if err := s.db.RevokeAccessToken(ctx, tokenID, accessClaims.Subject, accessClaims.ExpiresAt.Time); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke access token: " + err.Error()})
+				return
+			}
+		}
+		// If access token is invalid/expired, ignore - it's already unusable
+	}
+
+	// Validate refresh token to get subject (optional, but helps with logging)
 	claims, err := s.jwtService.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		// Even if token is invalid/expired, we can still revoke it (defense in depth)
-		// Log but continue
 		_ = claims
 	}
 
 	// Revoke refresh token
 	tokenHash := auth.HashToken(req.RefreshToken)
-	if err := s.db.RevokeRefreshToken(c.Request.Context(), tokenHash); err != nil {
+	if err := s.db.RevokeRefreshToken(ctx, tokenHash); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token: " + err.Error()})
 		return
 	}

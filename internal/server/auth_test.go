@@ -253,7 +253,7 @@ func TestHandleAuthVerify_DevelopmentOnly(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	
+
 	// In development mode, /auth/verify should be available
 	if !srv.config.IsProduction() {
 		router.POST("/auth/request", srv.handleAuthRequest)
@@ -334,7 +334,7 @@ func TestHandleAuthCallback_VerifierIDMismatch(t *testing.T) {
 
 	// Should fail with unauthorized due to verifier ID mismatch
 	assert.Equal(t, http.StatusUnauthorized, w2.Code)
-	
+
 	var errorResp map[string]interface{}
 	err := json.Unmarshal(w2.Body.Bytes(), &errorResp)
 	require.NoError(t, err)
@@ -472,4 +472,57 @@ func TestHandleRevoke_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.True(t, token.Revoked)
+}
+
+func TestHandleRevoke_WithAccessToken(t *testing.T) {
+	srv, jwtService := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	// Issue access and refresh tokens
+	subject := "did:privado:test123"
+	accessToken, err := jwtService.IssueAccessToken(subject, true)
+	require.NoError(t, err)
+	refreshToken, err := jwtService.IssueRefreshToken(subject)
+	require.NoError(t, err)
+
+	// Save refresh token
+	refreshHash := auth.HashToken(refreshToken)
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	err = srv.db.SaveRefreshToken(context.Background(), refreshHash, subject, expiresAt)
+	require.NoError(t, err)
+
+	// Verify access token is NOT revoked initially
+	accessTokenID := auth.HashToken(accessToken)
+	revoked, err := srv.db.IsAccessTokenRevoked(context.Background(), accessTokenID)
+	require.NoError(t, err)
+	assert.False(t, revoked, "access token should not be revoked initially")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/revoke", srv.handleRevoke)
+
+	// Revoke both tokens
+	reqBody := map[string]interface{}{
+		"refresh_token": refreshToken,
+		"access_token":  accessToken,
+	}
+	jsonBody, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest("POST", "/revoke", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify refresh token is revoked
+	token, err := srv.db.GetRefreshToken(context.Background(), refreshHash)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	assert.True(t, token.Revoked, "refresh token should be revoked")
+
+	// Verify access token is now revoked
+	revoked, err = srv.db.IsAccessTokenRevoked(context.Background(), accessTokenID)
+	require.NoError(t, err)
+	assert.True(t, revoked, "access token should be revoked after /revoke call")
 }

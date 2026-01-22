@@ -1,152 +1,146 @@
 # Full Journey Demo
-# Complete end-to-end walkthrough of Privacy Proxy
+# Complete end-to-end walkthrough including authentication, wallet linking, and admin RBAC
 
 version: "1"
 
 metadata:
   name: "full-journey"
   title: "Privacy Proxy: Complete Platform Tour"
-  description: "End-to-end journey from authentication to blockchain access"
+  description: "End-to-end journey from authentication to RBAC management"
 
 video:
   resolution: { width: 1920, height: 1080 }
   fps: 60
-  viewport: { width: 1280, height: 720 }
+  viewport: { width: 1920, height: 1080 }
+  quality:
+    preset: "slow"
+    crf: 15
+    bitrate: "25M"
+    audio_bitrate: "320k"
+    profile: "high"
+    level: "4.2"
 
 voice:
-  provider: "openai"
-  voice_id: "nova"
-  speed: 0.95
+  provider: "edge"
+  voice_id: "guy"  # Professional male voice
+  speed: "+0%"
 
 steps:
-  # Introduction
-  - id: "landing"
+  # === AUTHENTICATION FLOW ===
+  - id: "intro"
     action: "navigate"
-    url: "/"
-    wait: { selector: "[data-testid='hero-section']", timeout: 10000 }
+    url: "/login"
+    wait: { selector: "[data-testid='login-page']", timeout: 15000 }
     narration: "Privacy Proxy is the complete solution for privacy-preserving blockchain access. Let me show you how it works."
-    pause: 2.0
+    pause: 3.0
     screenshot: true
 
-  # Authentication Flow
-  - id: "auth_start"
-    action: "click"
-    selector: "[data-testid='get-started']"
-    wait: { navigation: "/login" }
-    narration: "First, users authenticate using zero-knowledge proofs. No personal data is ever exposed."
-    pause: 1.5
-
-  - id: "auth_qr"
+  - id: "auth_explain"
     action: "wait"
-    wait: { selector: "[data-testid='qr-code']", timeout: 5000 }
-    narration: "In production, the Privado ID app scans this code and generates a proof that you meet the required criteria."
-    pause: 2.0
-    screenshot: true
+    wait: { selector: "[data-testid='auth-card']", timeout: 5000 }
+    narration: "First, users authenticate using zero-knowledge proofs. No personal data is ever exposed to the service."
+    pause: 3.0
 
-  - id: "auth_mock"
-    action: "click"
-    selector: "button:has-text('Mock Login')"
-    wait: { navigation: "/link-wallet", timeout: 10000 }
-    narration: "The system verifies the proof cryptographically, confirming your eligibility without learning anything else about you."
-    pause: 1.5
-
-  # Wallet Connection
-  - id: "wallet_intro"
+  - id: "show_qr_code"
     action: "wait"
-    wait: { selector: "[data-testid='wallet-connect']", timeout: 5000 }
-    narration: "Next, connect a wallet. This creates a link between your verified credentials and your on-chain identity."
-    pause: 1.5
+    wait: { selector: "[data-testid='qr-code']", timeout: 10000 }
+    narration: "Users scan this QR code with their Privado ID wallet to authenticate using zero-knowledge proofs."
+    pause: 4.0
+    screenshot: true
 
-  - id: "wallet_click"
-    action: "click"
-    selector: "button:has-text('Connect Wallet')"
-    wait: { selector: "[data-testid='rk-wallet-option']", timeout: 5000 }
-    pause: 0.5
-
-  - id: "wallet_select"
-    action: "click"
-    selector: "[data-testid='rk-wallet-option-injected']"
-    wait: { navigation: "/dashboard", timeout: 15000 }
-    narration: "We support MetaMask, WalletConnect, Coinbase Wallet, and more through RainbowKit."
-    pause: 1.0
-
-  # User Dashboard
-  - id: "dashboard_overview"
+  - id: "wait_for_auth"
     action: "wait"
-    wait: { selector: "[data-testid='user-dashboard']", timeout: 5000 }
-    narration: "Welcome to your dashboard. Here you can see your RPC endpoints and access permissions."
-    pause: 2.0
-    screenshot: true
+    wait: { selector: "[data-testid='link-wallet-page']", timeout: 15000 }
+    narration: "The system verifies you meet the required criteria without learning anything else about you."
+    pause: 2.5
 
-  - id: "rpc_endpoint"
-    action: "hover"
-    selector: "[data-testid='rpc-endpoint']"
-    narration: "Your personalized RPC endpoint is ready. Use this in your dApps just like any other RPC provider."
-    pause: 1.5
-
-  - id: "copy_endpoint"
-    action: "click"
-    selector: "[data-testid='copy-endpoint']"
-    narration: "Copy the endpoint URL and you're ready to interact with the blockchain."
-    pause: 1.0
-
-  # Show permissions
-  - id: "permissions_tab"
-    action: "click"
-    selector: "[data-testid='tab-permissions']"
-    wait: { selector: "[data-testid='permissions-list']", timeout: 5000 }
-    narration: "The permissions tab shows which contracts and methods you can access based on your organization membership."
-    pause: 2.0
-    screenshot: true
-
-  # Admin Tour (quick)
-  - id: "admin_nav"
-    action: "click"
-    selector: "[data-testid='nav-admin']"
-    wait: { navigation: "/admin", timeout: 5000 }
-    narration: "Administrators manage organizations, groups, and access policies through a dedicated interface."
-    pause: 1.5
-
-  - id: "admin_overview"
+  # === WALLET LINKING ===
+  - id: "wallet_page"
     action: "wait"
-    wait: { selector: "[data-testid='admin-dashboard']", timeout: 5000 }
-    narration: "The admin dashboard provides complete visibility into your access control configuration."
-    pause: 2.0
+    wait: { selector: "[data-testid='wallet-connected']", timeout: 15000 }
+    narration: "Next, link a wallet. This creates a connection between your verified credentials and your on-chain identity."
+    pause: 3.0
+
+  - id: "wallet_connected"
+    action: "wait"
+    wait: { timeout: 2000 }
+    narration: "We support MetaMask, WalletConnect, Coinbase Wallet, and more."
+    pause: 2.5
     screenshot: true
 
-  - id: "admin_orgs"
+  - id: "sign_link"
     action: "click"
-    selector: "[data-testid='nav-organizations']"
-    wait: { selector: "[data-testid='org-list']", timeout: 5000 }
-    narration: "Organizations group related contracts and users. Each can have its own permission structure."
+    selector: "[data-testid='sign-link-btn']"
+    wait: { selector: "[data-testid='address-linked']", timeout: 15000 }
+    narration: "Sign a message to prove wallet ownership. No transaction fees required."
+    pause: 2.5
+
+  - id: "continue_success"
+    action: "click"
+    selector: "[data-testid='continue-btn']"
+    wait: { selector: "[data-testid='success-page']", timeout: 10000 }
     pause: 1.5
 
-  - id: "admin_groups"
-    action: "click"
-    selector: "[data-testid='org-card']:first-child"
-    wait: { selector: "[data-testid='org-detail']", timeout: 5000 }
-    narration: "Within each organization, groups define who can access what at the contract method level."
-    pause: 2.0
+  # === SUCCESS / RPC ENDPOINT ===
+  - id: "success_page"
+    action: "wait"
+    wait: { selector: "[data-testid='rpc-card']", timeout: 10000 }
+    narration: "Your personalized RPC endpoint is ready. Use this URL in your dApps just like any other RPC provider."
+    pause: 3.5
     screenshot: true
 
-  # Conclusion
+  # === ADMIN SECTION ===
+  - id: "nav_admin"
+    action: "navigate"
+    url: "/admin/rbac/organizations"
+    wait: { selector: "[data-testid='rbac-manager']", timeout: 10000 }
+    narration: "Administrators manage access control through a dedicated interface. Let's explore the RBAC system."
+    pause: 3.0
+    screenshot: true
+
+  - id: "rbac_overview"
+    action: "wait"
+    wait: { selector: "[data-testid='rbac-tabs']", timeout: 5000 }
+    narration: "Organizations contain groups, and groups define who can access what at the contract and method level."
+    pause: 3.5
+
+  - id: "tab_groups"
+    action: "click"
+    selector: "[data-testid='tab-groups']"
+    wait: { timeout: 2000 }
+    narration: "Groups define collections of users with shared permissions, rate limits, and default claims."
+    pause: 3.0
+    screenshot: true
+
+  - id: "tab_contracts"
+    action: "click"
+    selector: "[data-testid='tab-contracts']"
+    wait: { timeout: 2000 }
+    narration: "Register smart contracts and define exactly which methods are accessible to each group."
+    pause: 3.0
+    screenshot: true
+
+  - id: "tab_users"
+    action: "click"
+    selector: "[data-testid='tab-users']"
+    wait: { timeout: 2000 }
+    narration: "View and manage users, their linked addresses, and group memberships."
+    pause: 3.0
+    screenshot: true
+
+  # === CONCLUSION ===
   - id: "conclusion"
     action: "navigate"
-    url: "/"
-    wait: { selector: "[data-testid='hero-section']", timeout: 5000 }
+    url: "/login"
+    wait: { selector: "[data-testid='login-page']", timeout: 10000 }
     narration: "Privacy Proxy: Privacy-preserving authentication, fine-grained access control, and seamless blockchain connectivity. The infrastructure Web3 deserves."
-    pause: 3.0
+    pause: 4.0
     screenshot: true
 
 branding:
   watermark:
     position: "bottom-right"
     opacity: 0.7
-  intro:
-    duration: 4
-  outro:
-    cta: "Get started at gateway.fm/privacy-proxy"
-    duration: 5
 
 captions:
   style: "modern"
@@ -155,5 +149,3 @@ captions:
 
 export:
   - { aspect: "16:9", resolution: "1920x1080" }
-  - { aspect: "9:16", resolution: "1080x1920", suffix: "-vertical" }
-  - { aspect: "1:1", resolution: "1080x1080", suffix: "-square" }

@@ -64,3 +64,7 @@ secrets/
 # Temporary files
 tmp/
 .tmp/
+
+# Test results (Playwright)
+test-results/
+playwright-report/

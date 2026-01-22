@@ -144,10 +144,10 @@ export function LinkWalletPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh flex items-center justify-center p-4">
+    <div className="min-h-screen bg-mesh flex items-center justify-center p-4" data-testid="link-wallet-page">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-8" data-testid="link-wallet-header">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-accent-500 to-primary-500 flex items-center justify-center shadow-lg shadow-accent-500/30">
             <Wallet className="w-8 h-8 text-white" />
           </div>
@@ -156,9 +156,9 @@ export function LinkWalletPage() {
         </div>
 
         {/* Main Card */}
-        <Card variant="glassSolid">
+        <Card variant="glassSolid" data-testid="link-wallet-card">
           <CardHeader className="text-center">
-            <CardTitle>Connect & Sign</CardTitle>
+            <CardTitle data-testid="link-wallet-title">Connect & Sign</CardTitle>
             <CardDescription>
               Link your Ethereum wallet to your identity for seamless RPC access
             </CardDescription>
@@ -184,19 +184,20 @@ export function LinkWalletPage() {
                           variant="glassPrimary"
                           size="lg"
                           className="w-full"
+                          data-testid="connect-wallet-btn"
                         >
                           <Wallet className="w-5 h-5 mr-2" />
                           Connect Wallet
                         </Button>
                       ) : (
-                        <div className="glass-card p-4 space-y-3">
+                        <div className="glass-card p-4 space-y-3" data-testid="wallet-connected">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-accent-500/20 flex items-center justify-center">
                                 <Wallet className="w-5 h-5 text-accent-400" />
                               </div>
                               <div>
-                                <p className="text-white/90 font-medium text-sm">
+                                <p className="text-white/90 font-medium text-sm" data-testid="wallet-address">
                                   {account.displayName}
                                 </p>
                                 <button
@@ -222,6 +223,7 @@ export function LinkWalletPage() {
                               disabled={isLinking}
                               variant="glassPrimary"
                               className="w-full"
+                              data-testid="sign-link-btn"
                             >
                               {isLinking ? (
                                 <>
@@ -237,7 +239,7 @@ export function LinkWalletPage() {
                               )}
                             </Button>
                           ) : (
-                            <div className="flex items-center gap-2 text-green-400 text-sm justify-center">
+                            <div className="flex items-center gap-2 text-green-400 text-sm justify-center" data-testid="address-linked">
                               <CheckCircle2 className="w-4 h-4" />
                               Address linked
                             </div>
@@ -263,7 +265,7 @@ export function LinkWalletPage() {
 
             {/* Linked Addresses List */}
             {state.linkedAddresses.length > 0 && (
-              <div className="space-y-3">
+              <div className="space-y-3" data-testid="linked-addresses">
                 <h3 className="text-sm font-medium text-white/70">Linked Addresses</h3>
                 <div className="space-y-2">
                   {state.linkedAddresses.map((linked) => (
@@ -310,6 +312,7 @@ export function LinkWalletPage() {
                 size="lg"
                 className="w-full"
                 disabled={state.linkedAddresses.length === 0}
+                data-testid="continue-btn"
               >
                 Continue
                 <ArrowRight className="w-4 h-4 ml-2" />
@@ -321,6 +324,7 @@ export function LinkWalletPage() {
                   variant="ghost"
                   size="sm"
                   className="w-full text-white/50"
+                  data-testid="skip-btn"
                 >
                   Skip for now
                 </Button>
