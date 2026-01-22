@@ -260,31 +260,8 @@ demo-clean:
 # Git Hooks
 # ============================================================================
 
-# Setup git hooks using husky + lint-staged (faster, targeted checks)
+# Setup git pre-commit hook
 setup-hooks:
-	@echo "Installing husky and lint-staged..."
-	npm install
-	@echo "Husky pre-commit hook installed at .husky/pre-commit"
-	@echo ""
-	@echo "The hook will run:"
-	@echo "  - gofmt and go vet on staged .go files"
-	@echo "  - eslint on staged frontend files"
-	@echo "  - Go tests on changed packages"
-
-# Legacy: Setup full pre-commit testing (slower, runs all tests)
-setup-hooks-full:
-	@mkdir -p .git/hooks
-	@echo '#!/bin/bash' > .git/hooks/pre-commit
-	@echo 'set -e' >> .git/hooks/pre-commit
-	@echo '' >> .git/hooks/pre-commit
-	@echo 'echo "Running pre-commit tests..."' >> .git/hooks/pre-commit
-	@echo '' >> .git/hooks/pre-commit
-	@echo '# Run Go unit tests and frontend tests' >> .git/hooks/pre-commit
-	@echo 'make test' >> .git/hooks/pre-commit
-	@echo '' >> .git/hooks/pre-commit
-	@echo '# Run E2E tests' >> .git/hooks/pre-commit
-	@echo 'make e2e' >> .git/hooks/pre-commit
-	@echo '' >> .git/hooks/pre-commit
-	@echo 'echo "All tests passed!"' >> .git/hooks/pre-commit
+	@cp scripts/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
-	@echo "Full pre-commit hook installed at .git/hooks/pre-commit"
+	@echo "Pre-commit hook installed."
