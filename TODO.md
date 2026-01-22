@@ -17,14 +17,12 @@
   - `admin_rbac.go` (896 lines) → Split by resource type (handler_users.go, handler_groups.go, etc.)
   - `auth.go` (501 lines) → Separate request/callback handlers from token issuance
   - `server.go` (595 lines) → Extract router setup, middleware configuration
-- [ ] **Replace panics with error propagation** - `server.go:75-98` panics on DB/JWT/Privado init errors instead of returning errors
 - [ ] **Extract business logic from HTTP handlers** - `handleJSONRPC` (server.go:248-337) has 50+ lines of business logic; untestable without HTTP context
 - [ ] **Add missing interface abstractions** - SessionStore, RateLimiter not behind interfaces; tight coupling
 
 ### High Priority - Database
 
 - [ ] **Add batch contract loading** - `resolver.go:336-354` fetches contracts individually in loop (N+1 pattern)
-- [ ] **Add database close to graceful shutdown** - `server.Stop()` manages other components but not DB connection
 
 ### High Priority - Security
 
@@ -77,6 +75,8 @@
 - [x] **Configure connection pool** - Added SetMaxOpenConns(25), SetMaxIdleConns(5), SetConnMaxLifetime(5min) to db.go
 - [x] **Fix context leakage in auth.go** - Now uses c.Request.Context() instead of context.Background() for VerifyJWZ and EnsureUserExists
 - [x] **Fix token operations context usage** - All db.go functions now accept context and use ExecContext/QueryContext variants
+- [x] **Replace panics with error propagation** - New/NewWithVerifier now return errors, proper resource cleanup on init failure
+- [x] **Add database close to graceful shutdown** - Server.Stop() now calls db.Close()
 - [x] **Backend mock mode for demos** - Added `MOCK_SIGNATURES=true` env var to skip wallet signature verification. Also added mock auth session support when `VERIFIER_ID` is not configured. Both are development-only with prominent warnings. Demo recording now works end-to-end.
 - [x] **Demo creation system** - Reviewed and fixed. Added missing `__init__.py` files, fixed PYTHONPATH in Makefile, added comprehensive README, updated auth-flow.yaml config for robustness.
 - [x] **Frontend accessibility & polish overhaul** - Comprehensive UI/UX improvements:
