@@ -48,6 +48,7 @@ type Server struct {
 	sessionStore     SessionManager
 	challengeStore   *ChallengeStore
 	rateLimiter      RateLimiterInterface
+	authRateLimiter  *AuthRateLimiter
 	config           *config.Config
 	ensResolver      *ens.Resolver
 	jsonrpcProcessor *JSONRPCProcessor
@@ -66,6 +67,9 @@ func (s *Server) Stop() {
 	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
+	}
+	if s.authRateLimiter != nil {
+		s.authRateLimiter.Stop()
 	}
 	if s.challengeStore != nil {
 		s.challengeStore.Stop()
@@ -137,6 +141,16 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize rate limiter
 	rateLimiter := NewRateLimiter(RateLimiterCleanupInterval)
 
+	// Initialize auth rate limiter for protecting auth endpoints from brute force
+	// Use relaxed limits in development/testing to avoid issues during E2E tests
+	var authRateLimiterCfg AuthRateLimiterConfig
+	if cfg.IsProduction() {
+		authRateLimiterCfg = DefaultAuthRateLimiterConfig()
+	} else {
+		authRateLimiterCfg = DevAuthRateLimiterConfig()
+	}
+	authRateLimiter := NewAuthRateLimiter(authRateLimiterCfg)
+
 	// Initialize ENS resolver (optional - may fail if no mainnet RPC available)
 	var ensResolver *ens.Resolver
 	if cfg.ENSResolverURL != "" {
@@ -156,6 +170,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		sessionStore:    sessionStore,
 		challengeStore:  challengeStore,
 		rateLimiter:     rateLimiter,
+		authRateLimiter: authRateLimiter,
 		config:          cfg,
 		ensResolver:     ensResolver,
 	}
@@ -212,23 +227,26 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.HEAD("/health", healthHandler)
 
 	// Authentication endpoints (no auth required)
+	// Rate limited to prevent brute force attacks
+	authRL := s.authRateLimiter.Middleware()
+
 	// Register at both root level (for direct access) and under /api (for frontend proxy)
-	router.POST("/auth/request", s.handleAuthRequest)
-	router.POST("/auth/callback", s.handleAuthCallback)
-	router.POST("/refresh", s.handleRefresh)
-	router.POST("/revoke", s.handleRevoke)
+	router.POST("/auth/request", authRL, s.handleAuthRequest)
+	router.POST("/auth/callback", authRL, s.handleAuthCallback)
+	router.POST("/refresh", authRL, s.handleRefresh)
+	router.POST("/revoke", authRL, s.handleRevoke)
 
 	// Also register under /api for frontend proxy compatibility
-	router.POST("/api/auth/request", s.handleAuthRequest)
-	router.POST("/api/auth/callback", s.handleAuthCallback)
-	router.GET("/api/auth/session/:id/status", s.handleAuthSessionStatus)
-	router.POST("/api/refresh", s.handleRefresh)
-	router.POST("/api/revoke", s.handleRevoke)
+	router.POST("/api/auth/request", authRL, s.handleAuthRequest)
+	router.POST("/api/auth/callback", authRL, s.handleAuthCallback)
+	router.GET("/api/auth/session/:id/status", s.handleAuthSessionStatus) // Read-only, no rate limit needed
+	router.POST("/api/refresh", authRL, s.handleRefresh)
+	router.POST("/api/revoke", authRL, s.handleRevoke)
 
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
-		router.POST("/auth/verify", s.handleAuthVerify)
-		router.POST("/api/auth/verify", s.handleAuthVerify)
+		router.POST("/auth/verify", authRL, s.handleAuthVerify)
+		router.POST("/api/auth/verify", authRL, s.handleAuthVerify)
 	}
 
 	// ETH address linking endpoints - available at two paths for flexibility:
