@@ -19,7 +19,10 @@ func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
-	metadata, _ := json.Marshal(contract.Metadata)
+	metadata, err := json.Marshal(contract.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal contract metadata: %w", err)
+	}
 
 	return d.conn.QueryRowContext(ctx, query,
 		contract.ID, contract.OrgID, strings.ToLower(contract.Address), contract.Name,
@@ -97,9 +100,12 @@ func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error 
 	query := `UPDATE contracts SET name = $2, metadata = $3, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
-	metadata, _ := json.Marshal(contract.Metadata)
+	metadata, err := json.Marshal(contract.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal contract metadata: %w", err)
+	}
 
-	_, err := d.conn.ExecContext(ctx, query, contract.ID, contract.Name, metadata)
+	_, err = d.conn.ExecContext(ctx, query, contract.ID, contract.Name, metadata)
 	return err
 }
 

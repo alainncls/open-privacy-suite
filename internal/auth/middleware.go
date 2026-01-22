@@ -37,7 +37,7 @@ func JWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.Handler
 			if err == ErrExpiredToken {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
 			} else {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token: " + err.Error()})
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			}
 			c.Abort()
 			return

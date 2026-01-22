@@ -19,6 +19,7 @@ var ErrSessionStoreFull = errors.New("session store is at capacity")
 
 // Session represents an authentication session
 type Session struct {
+	mu          sync.Mutex
 	ID          string
 	AuthRequest *protocol.AuthorizationRequestMessage
 	CreatedAt   time.Time
@@ -35,6 +36,7 @@ type Session struct {
 // Thread-safe using sync.Map
 type SessionStore struct {
 	sessions    sync.Map // map[string]*Session
+	wg          sync.WaitGroup
 	ttl         time.Duration
 	stopCh      chan struct{}
 	maxSessions int
@@ -57,6 +59,7 @@ func NewSessionStoreWithMax(sessionTTL, cleanupInterval time.Duration, maxSessio
 	}
 
 	// Start cleanup goroutine
+	store.wg.Add(1)
 	go store.cleanup(cleanupInterval)
 
 	return store
@@ -124,8 +127,10 @@ func (s *SessionStore) UpdateSession(sessionID string, authRequest *protocol.Aut
 	}
 
 	session := value.(*Session)
+	session.mu.Lock()
 	session.AuthRequest = authRequest
 	s.sessions.Store(sessionID, session)
+	session.mu.Unlock()
 	return nil
 }
 
@@ -138,6 +143,7 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 	}
 
 	session := value.(*Session)
+	session.mu.Lock()
 	session.Completed = true
 	session.AccessToken = accessToken
 	session.RefreshToken = refreshToken
@@ -145,11 +151,13 @@ func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken stri
 	// Extend expiry so frontend has time to poll and get the tokens
 	session.ExpiresAt = time.Now().Add(2 * time.Minute)
 	s.sessions.Store(sessionID, session)
+	session.mu.Unlock()
 	return nil
 }
 
 // cleanup periodically removes expired sessions
 func (s *SessionStore) cleanup(interval time.Duration) {
+	defer s.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -173,6 +181,7 @@ func (s *SessionStore) cleanup(interval time.Duration) {
 // Stop stops the cleanup goroutine
 func (s *SessionStore) Stop() {
 	close(s.stopCh)
+	s.wg.Wait()
 }
 
 // Count returns the current number of sessions.

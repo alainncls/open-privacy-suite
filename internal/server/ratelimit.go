@@ -9,6 +9,7 @@ import (
 // It uses a sliding window for per-second limits and a daily counter for daily limits.
 type RateLimiter struct {
 	mu           sync.RWMutex
+	wg           sync.WaitGroup
 	rpsWindows   map[string]*slidingWindow // userID -> sliding window for RPS
 	dailyCounts  map[string]*dailyCounter  // userID -> daily counter
 	windowSize   time.Duration             // Size of the sliding window (typically 1 second)
@@ -38,6 +39,7 @@ func NewRateLimiter(cleanupEvery time.Duration) *RateLimiter {
 	}
 
 	// Start cleanup goroutine
+	rl.wg.Add(1)
 	go rl.cleanup()
 
 	return rl
@@ -138,6 +140,7 @@ func (rl *RateLimiter) incrementCountersLocked(userID string, now time.Time) {
 
 // cleanup periodically cleans up old entries.
 func (rl *RateLimiter) cleanup() {
+	defer rl.wg.Done()
 	ticker := time.NewTicker(rl.cleanupEvery)
 	defer ticker.Stop()
 
@@ -189,6 +192,7 @@ func (rl *RateLimiter) doCleanup() {
 // Stop stops the cleanup goroutine.
 func (rl *RateLimiter) Stop() {
 	close(rl.stopCleanup)
+	rl.wg.Wait()
 }
 
 // Stats returns statistics about the rate limiter.
