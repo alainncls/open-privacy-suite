@@ -1,29 +1,36 @@
 #!/bin/bash
 set -e
 
-echo "Running pre-commit checks..."
+echo "=========================================="
+echo "Running pre-commit checks (thorough mode)"
+echo "=========================================="
 
 # Format Go code
-echo "Formatting Go code..."
-gofmt -w $(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+echo ""
+echo ">>> Formatting Go code..."
+gofmt -w .
 
 # Run go vet
-echo "Running go vet..."
+echo ""
+echo ">>> Running go vet..."
 go vet ./...
 
-# Run Go tests on changed packages
-CHANGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' | grep -v '_test\.go$' || true)
-if [ -n "$CHANGED_GO_FILES" ]; then
-    echo "Running tests on changed packages..."
-    PACKAGES=$(echo "$CHANGED_GO_FILES" | xargs -I{} dirname {} | sort -u | sed 's|^|./|')
-    go test $PACKAGES -short
-fi
+# Run ALL Go tests
+echo ""
+echo ">>> Running Go unit tests..."
+make test-unit
 
-# Lint frontend if frontend files changed
-CHANGED_FRONTEND=$(git diff --cached --name-only --diff-filter=ACM | grep '^frontend/' || true)
-if [ -n "$CHANGED_FRONTEND" ]; then
-    echo "Linting frontend..."
-    cd frontend && npm run lint
-fi
+# Run frontend tests
+echo ""
+echo ">>> Running frontend tests..."
+make frontend-test
 
-echo "Pre-commit checks passed!"
+# Run E2E tests
+echo ""
+echo ">>> Running E2E tests..."
+make e2e
+
+echo ""
+echo "=========================================="
+echo "All checks passed!"
+echo "=========================================="
