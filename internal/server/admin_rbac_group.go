@@ -50,6 +50,10 @@ func (s *Server) createGroup(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "parent group not found"})
 			return
 		}
+		if parent.OrgID != orgID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "parent group does not belong to the same organization"})
+			return
+		}
 		depth = parent.Depth + 1
 		path = parent.Path + "." + input.Slug
 	} else {

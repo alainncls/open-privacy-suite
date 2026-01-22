@@ -9,6 +9,7 @@ import (
 // It uses a TTL-based expiration with LRU eviction when at capacity.
 type Cache struct {
 	mu          sync.RWMutex
+	wg          sync.WaitGroup
 	entries     map[string]*cacheEntry
 	ttl         time.Duration
 	maxEntries  int
@@ -53,6 +54,7 @@ func NewCache(config CacheConfig) *Cache {
 	}
 
 	// Start background cleanup goroutine
+	c.wg.Add(1)
 	go c.cleanupLoop()
 
 	return c
@@ -243,6 +245,7 @@ func (c *Cache) removeFromAccessOrder(key string) {
 
 // cleanupLoop periodically removes expired entries.
 func (c *Cache) cleanupLoop() {
+	defer c.wg.Done()
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -259,6 +262,7 @@ func (c *Cache) cleanupLoop() {
 // Stop stops the cleanup goroutine.
 func (c *Cache) Stop() {
 	close(c.stopCh)
+	c.wg.Wait()
 }
 
 // cleanup removes expired entries from the cache.
