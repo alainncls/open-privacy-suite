@@ -3,18 +3,26 @@
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
 	demo demo-record demo-process demo-all demo-setup demo-clean \
-	setup-hooks
+	setup-hooks ensure-hooks
+
+# Auto-install hooks on first make usage
+HOOKS_MARKER := .git/.hooks-installed
+$(HOOKS_MARKER):
+	@./scripts/setup-hooks.sh
+	@touch $(HOOKS_MARKER)
+
+ensure-hooks: $(HOOKS_MARKER)
 
 # Build backend
-build:
+build: ensure-hooks
 	go build -o bin/privacy-proxy ./cmd/server
 
 # Build authproxy
-authproxy:
+authproxy: ensure-hooks
 	go build -o bin/authproxy ./cmd/authproxy
 
 # Run full Docker stack (postgres, anvil, backend, frontend)
-run:
+run: ensure-hooks
 	docker-compose up --build -d
 
 # Stop all services
@@ -38,11 +46,11 @@ run-binary: build
 	./bin/privacy-proxy
 
 # Run in dev mode (with hot reload)
-dev:
+dev: ensure-hooks
 	go run ./cmd/server
 
 # Run all tests (Go + Frontend)
-test: test-unit frontend-test
+test: ensure-hooks test-unit frontend-test
 
 # Run Go tests
 test-go:
@@ -87,7 +95,7 @@ test-e2e:
 E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml
 
 # Run Playwright E2E tests with Docker Compose (isolated environment)
-e2e:
+e2e: ensure-hooks
 	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend
 	$(E2E_COMPOSE) run --rm playwright npm test; \
 	status=$$?; \
@@ -260,8 +268,6 @@ demo-clean:
 # Git Hooks
 # ============================================================================
 
-# Setup git pre-commit hook
+# Setup git hooks (run once after cloning)
 setup-hooks:
-	@cp scripts/pre-commit .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo "Pre-commit hook installed."
+	@./scripts/setup-hooks.sh
