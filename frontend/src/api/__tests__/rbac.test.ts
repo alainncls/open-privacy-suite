@@ -23,7 +23,7 @@ describe('RBAC API', () => {
 
       it('should handle empty list', async () => {
         server.use(
-          http.get('/api/orgs', () => {
+          http.get('/api/v1/orgs', () => {
             return HttpResponse.json([]);
           })
         );

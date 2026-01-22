@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// Auth API client - uses /api prefix for consistent proxy handling
+// Auth API client - uses /api/v1 prefix for versioned API
 const authApi = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -55,7 +55,7 @@ export interface EthAddressesResponse {
 // Create authenticated API client
 export function createAuthenticatedClient(accessToken: string) {
   return axios.create({
-    baseURL: '/api',
+    baseURL: '/api/v1',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,

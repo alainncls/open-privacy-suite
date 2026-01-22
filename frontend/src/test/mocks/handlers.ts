@@ -139,11 +139,11 @@ export function resetSessionState() {
 // MSW handlers
 export const handlers = [
   // Auth endpoints
-  http.post('/api/auth/request', () => {
+  http.post('/api/v1/auth/request', () => {
     return HttpResponse.json(mockAuthRequest);
   }),
 
-  http.post('/api/auth/verify', async ({ request }) => {
+  http.post('/api/v1/auth/verify', async ({ request }) => {
     const body = await request.json() as { session_id: string; jwz_token: string };
     if (body.jwz_token.startsWith('mock.')) {
       return HttpResponse.json(mockTokenResponse);
@@ -151,14 +151,14 @@ export const handlers = [
     return HttpResponse.json({ error: 'Invalid token' }, { status: 401 });
   }),
 
-  http.get('/api/auth/session/:sessionId/status', () => {
+  http.get('/api/v1/auth/session/:sessionId/status', () => {
     if (sessionCompleted && sessionTokens) {
       return HttpResponse.json({ completed: true, tokens: sessionTokens });
     }
     return HttpResponse.json({ completed: false });
   }),
 
-  http.post('/api/refresh', async ({ request }) => {
+  http.post('/api/v1/refresh', async ({ request }) => {
     const body = await request.json() as { refresh_token: string };
     if (body.refresh_token) {
       return HttpResponse.json({
@@ -170,19 +170,19 @@ export const handlers = [
     return HttpResponse.json({ error: 'Invalid refresh token' }, { status: 401 });
   }),
 
-  http.post('/api/revoke', () => {
+  http.post('/api/v1/revoke', () => {
     return HttpResponse.json({ message: 'Token revoked' });
   }),
 
   // ETH Link endpoints
-  http.post('/api/eth/link/challenge', () => {
+  http.post('/api/v1/eth/link/challenge', () => {
     return HttpResponse.json({
       nonce: 'test-nonce-123',
       message: 'Link Ethereum address to DID\n\nDID: did:test\nNonce: test-nonce-123',
     });
   }),
 
-  http.post('/api/eth/link/verify', async ({ request }) => {
+  http.post('/api/v1/eth/link/verify', async ({ request }) => {
     const body = await request.json() as { nonce: string; address: string; signature: string };
     return HttpResponse.json({
       message: 'Address linked successfully',
@@ -190,7 +190,7 @@ export const handlers = [
     });
   }),
 
-  http.get('/api/eth/addresses', () => {
+  http.get('/api/v1/eth/addresses', () => {
     return HttpResponse.json({
       addresses: [
         { address: '0x1234567890123456789012345678901234567890', verified_at: '2024-01-01T00:00:00Z' },
@@ -198,23 +198,23 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/eth/addresses/:address', () => {
+  http.delete('/api/v1/eth/addresses/:address', () => {
     return HttpResponse.json({ message: 'Address unlinked' });
   }),
 
   // Organization endpoints
-  http.get('/api/orgs', () => {
+  http.get('/api/v1/orgs', () => {
     return HttpResponse.json([mockOrganization]);
   }),
 
-  http.get('/api/orgs/:orgId', ({ params }) => {
+  http.get('/api/v1/orgs/:orgId', ({ params }) => {
     if (params.orgId === 'org-1') {
       return HttpResponse.json(mockOrganization);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.post('/api/orgs', async ({ request }) => {
+  http.post('/api/v1/orgs', async ({ request }) => {
     const body = await request.json() as { slug: string; name: string };
     return HttpResponse.json({
       ...mockOrganization,
@@ -224,7 +224,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/orgs/:orgId', async ({ request, params }) => {
+  http.put('/api/v1/orgs/:orgId', async ({ request, params }) => {
     const body = await request.json() as { slug?: string; name?: string };
     return HttpResponse.json({
       ...mockOrganization,
@@ -234,23 +234,23 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/orgs/:orgId', () => {
+  http.delete('/api/v1/orgs/:orgId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Group endpoints
-  http.get('/api/orgs/:orgId/groups', () => {
+  http.get('/api/v1/orgs/:orgId/groups', () => {
     return HttpResponse.json([mockGroup]);
   }),
 
-  http.get('/api/orgs/:orgId/groups/:groupId', ({ params }) => {
+  http.get('/api/v1/orgs/:orgId/groups/:groupId', ({ params }) => {
     if (params.groupId === 'group-1') {
       return HttpResponse.json(mockGroup);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.post('/api/orgs/:orgId/groups', async ({ request, params }) => {
+  http.post('/api/v1/orgs/:orgId/groups', async ({ request, params }) => {
     const body = await request.json() as { slug: string; name: string; description?: string };
     return HttpResponse.json({
       ...mockGroup,
@@ -262,7 +262,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/orgs/:orgId/groups/:groupId', async ({ request, params }) => {
+  http.put('/api/v1/orgs/:orgId/groups/:groupId', async ({ request, params }) => {
     const body = await request.json() as { name?: string; description?: string };
     return HttpResponse.json({
       ...mockGroup,
@@ -272,15 +272,15 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/orgs/:orgId/groups/:groupId', () => {
+  http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
-  http.get('/api/orgs/:orgId/groups/:groupId/access', () => {
+  http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
     return HttpResponse.json(mockGroupAccess);
   }),
 
-  http.put('/api/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+  http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
     const body = await request.json() as {
       allowed_methods?: string[];
       default_claims?: string[];
@@ -293,18 +293,18 @@ export const handlers = [
   }),
 
   // User endpoints
-  http.get('/api/users', () => {
+  http.get('/api/v1/users', () => {
     return HttpResponse.json([mockUser]);
   }),
 
-  http.get('/api/users/:userId', ({ params }) => {
+  http.get('/api/v1/users/:userId', ({ params }) => {
     if (params.userId === 'user-1') {
       return HttpResponse.json(mockUser);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.put('/api/users/:userId', async ({ request, params }) => {
+  http.put('/api/v1/users/:userId', async ({ request, params }) => {
     const body = await request.json() as { kyc?: boolean; banned?: boolean; note?: string };
     return HttpResponse.json({
       ...mockUser,
@@ -315,11 +315,11 @@ export const handlers = [
     });
   }),
 
-  http.get('/api/users/:userId/memberships', () => {
+  http.get('/api/v1/users/:userId/memberships', () => {
     return HttpResponse.json([mockMembershipWithDetails]);
   }),
 
-  http.post('/api/users/:userId/memberships', async ({ request, params }) => {
+  http.post('/api/v1/users/:userId/memberships', async ({ request, params }) => {
     const body = await request.json() as { group_id: string };
     return HttpResponse.json({
       ...mockMembership,
@@ -329,20 +329,20 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/users/:userId/memberships/:membershipId', () => {
+  http.delete('/api/v1/users/:userId/memberships/:membershipId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
-  http.get('/api/users/:userId/effective-permissions', () => {
+  http.get('/api/v1/users/:userId/effective-permissions', () => {
     return HttpResponse.json(mockEffectivePermissions);
   }),
 
   // Contract endpoints
-  http.get('/api/orgs/:orgId/contracts', () => {
+  http.get('/api/v1/orgs/:orgId/contracts', () => {
     return HttpResponse.json([mockContract]);
   }),
 
-  http.post('/api/orgs/:orgId/contracts', async ({ request, params }) => {
+  http.post('/api/v1/orgs/:orgId/contracts', async ({ request, params }) => {
     const body = await request.json() as {
       address: string;
       name?: string;
@@ -358,7 +358,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/orgs/:orgId/contracts/:address', async ({ request, params }) => {
+  http.put('/api/v1/orgs/:orgId/contracts/:address', async ({ request, params }) => {
     const body = await request.json() as {
       name?: string;
       metadata?: Record<string, unknown>;
@@ -371,12 +371,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/orgs/:orgId/contracts/:address', () => {
+  http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Utility endpoints
-  http.post('/api/access/check', async () => {
+  http.post('/api/v1/access/check', async () => {
     return HttpResponse.json({
       allowed: true,
       reason: 'Access granted',
@@ -385,7 +385,7 @@ export const handlers = [
     });
   }),
 
-  http.get('/api/cache/stats', () => {
+  http.get('/api/v1/cache/stats', () => {
     return HttpResponse.json({
       hits: 100,
       misses: 10,

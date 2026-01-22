@@ -181,7 +181,7 @@ describe('LinkWalletPage', () => {
 
       // No existing linked addresses
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -226,7 +226,7 @@ describe('LinkWalletPage', () => {
 
       // No existing linked addresses initially
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -240,7 +240,7 @@ describe('LinkWalletPage', () => {
 
       // Update handler to return new address after linking
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({
             addresses: [
               {
@@ -277,7 +277,7 @@ describe('LinkWalletPage', () => {
       });
 
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -310,10 +310,10 @@ describe('LinkWalletPage', () => {
       });
 
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         }),
-        http.post('/api/eth/link/verify', () => {
+        http.post('/api/v1/eth/link/verify', () => {
           return HttpResponse.json(
             { error: 'Signature verification failed' },
             { status: 400 }
@@ -367,7 +367,7 @@ describe('LinkWalletPage', () => {
 
     it('should show skip button when no addresses linked', async () => {
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -381,7 +381,7 @@ describe('LinkWalletPage', () => {
 
     it('should navigate to success when skip is clicked', async () => {
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -422,7 +422,7 @@ describe('LinkWalletPage', () => {
 
     it('should disable continue button when no addresses linked', async () => {
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );

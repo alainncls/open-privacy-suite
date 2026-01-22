@@ -186,7 +186,7 @@ describe('SuccessPage', () => {
 
     it('should not show linked wallets section when no addresses', async () => {
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -315,7 +315,7 @@ describe('SuccessPage', () => {
 
     it('should handle failed address fetch gracefully', async () => {
       server.use(
-        http.get('/api/eth/addresses', () => {
+        http.get('/api/v1/eth/addresses', () => {
           return HttpResponse.json({ error: 'Server error' }, { status: 500 });
         })
       );

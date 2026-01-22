@@ -236,23 +236,33 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/refresh", authRL, s.handleRefresh)
 	router.POST("/revoke", authRL, s.handleRevoke)
 
-	// Also register under /api for frontend proxy compatibility
-	router.POST("/api/auth/request", authRL, s.handleAuthRequest)
-	router.POST("/api/auth/callback", authRL, s.handleAuthCallback)
-	router.GET("/api/auth/session/:id/status", s.handleAuthSessionStatus) // Read-only, no rate limit needed
-	router.POST("/api/refresh", authRL, s.handleRefresh)
-	router.POST("/api/revoke", authRL, s.handleRevoke)
+	// Versioned API auth endpoints (v1) - primary path
+	router.POST("/api/v1/auth/request", authRL, s.handleAuthRequest)
+	router.POST("/api/v1/auth/callback", authRL, s.handleAuthCallback)
+	router.GET("/api/v1/auth/session/:id/status", s.handleAuthSessionStatus)
+	router.POST("/api/v1/refresh", authRL, s.handleRefresh)
+	router.POST("/api/v1/revoke", authRL, s.handleRevoke)
+
+	// Legacy API auth endpoints (unversioned) - deprecated, for backwards compatibility
+	deprecation := s.deprecationMiddleware("/api", "/api/v1")
+	router.POST("/api/auth/request", authRL, deprecation, s.handleAuthRequest)
+	router.POST("/api/auth/callback", authRL, deprecation, s.handleAuthCallback)
+	router.GET("/api/auth/session/:id/status", deprecation, s.handleAuthSessionStatus)
+	router.POST("/api/refresh", authRL, deprecation, s.handleRefresh)
+	router.POST("/api/revoke", authRL, deprecation, s.handleRevoke)
 
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
 		router.POST("/auth/verify", authRL, s.handleAuthVerify)
-		router.POST("/api/auth/verify", authRL, s.handleAuthVerify)
+		router.POST("/api/v1/auth/verify", authRL, s.handleAuthVerify)
+		router.POST("/api/auth/verify", authRL, deprecation, s.handleAuthVerify)
 	}
 
-	// ETH address linking endpoints - available at two paths for flexibility:
-	// - /api/eth/* - for frontend proxy (frontend proxies /api/* to backend)
+	// ETH address linking endpoints - available at multiple paths for flexibility:
+	// - /api/v1/eth/* - versioned API (primary)
+	// - /api/eth/* - legacy unversioned (deprecated)
 	// - /eth/* - for direct API access (mobile apps, CLI tools)
-	// Both require JWT authentication.
+	// All require JWT authentication.
 	ethEndpoints := func(group *gin.RouterGroup) {
 		group.POST("/link/challenge", s.handleEthLinkChallenge)
 		group.POST("/link/verify", s.handleEthLinkVerify)
@@ -261,10 +271,18 @@ func (s *Server) setupRouter() *gin.Engine {
 		group.POST("/addresses/:address/refresh-ens", s.handleRefreshENS)
 	}
 
+	// Versioned API eth endpoints (v1) - primary
+	apiV1Eth := router.Group("/api/v1/eth")
+	apiV1Eth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
+	ethEndpoints(apiV1Eth)
+
+	// Legacy API eth endpoints (unversioned) - deprecated
 	apiEth := router.Group("/api/eth")
 	apiEth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
+	apiEth.Use(deprecation)
 	ethEndpoints(apiEth)
 
+	// Direct eth endpoints (no /api prefix)
 	eth := router.Group("/eth")
 	eth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
 	ethEndpoints(eth)
@@ -275,8 +293,23 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/rpc", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
 	// API endpoints for UI - protected by localhost-only middleware
+	// Register versioned API (v1) - primary path
+	apiV1 := router.Group("/api/v1")
+	apiV1.Use(s.localhostOnlyMiddleware())
+	{
+		apiV1.GET("/logs", s.getLogs)
+		apiV1.GET("/status", s.getStatus)
+		apiV1.POST("/test-request", s.handleTestRequest)
+
+		// RBAC endpoints
+		s.registerRBACRoutes(apiV1)
+	}
+
+	// Legacy API (unversioned) - deprecated, for backwards compatibility
+	// Adds X-Deprecated header to responses
 	api := router.Group("/api")
 	api.Use(s.localhostOnlyMiddleware())
+	api.Use(s.deprecationMiddleware("/api", "/api/v1"))
 	{
 		api.GET("/logs", s.getLogs)
 		api.GET("/status", s.getStatus)
@@ -391,6 +424,18 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		c.Next()
+	}
+}
+
+// deprecationMiddleware adds deprecation headers to responses.
+// It signals to clients that they should migrate to the versioned API.
+func (s *Server) deprecationMiddleware(oldPath, newPath string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Add deprecation headers per RFC 8594
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "2027-01-01T00:00:00Z") // Give clients a year to migrate
+		c.Header("Link", fmt.Sprintf("<%s%s>; rel=\"successor-version\"", newPath, strings.TrimPrefix(c.Request.URL.Path, oldPath)))
 		c.Next()
 	}
 }

@@ -128,7 +128,7 @@ describe('LoginPage', () => {
   describe('Error Handling', () => {
     it('should show error state when auth request fails', async () => {
       server.use(
-        http.post('/api/auth/request', () => {
+        http.post('/api/v1/auth/request', () => {
           return HttpResponse.json(
             { error: 'Service unavailable' },
             { status: 503 }
@@ -148,7 +148,7 @@ describe('LoginPage', () => {
     it('should allow retry after error', async () => {
       // First request fails
       server.use(
-        http.post('/api/auth/request', () => {
+        http.post('/api/v1/auth/request', () => {
           return HttpResponse.json(
             { error: 'Service unavailable' },
             { status: 503 }
@@ -182,7 +182,7 @@ describe('LoginPage', () => {
     it('should show humanity verification required state', async () => {
       // Make poll return humanity verification error
       server.use(
-        http.get('/api/auth/session/:sessionId/status', () => {
+        http.get('/api/v1/auth/session/:sessionId/status', () => {
           return HttpResponse.json(
             {
               error: 'humanity_verification_required',

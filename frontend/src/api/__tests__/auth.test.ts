@@ -32,7 +32,7 @@ describe('Auth API', () => {
 
       it('should handle request failure', async () => {
         server.use(
-          http.post('/api/auth/request', () => {
+          http.post('/api/v1/auth/request', () => {
             return HttpResponse.json(
               { error: 'Service unavailable' },
               { status: 503 }
@@ -81,7 +81,7 @@ describe('Auth API', () => {
 
       it('should handle poll errors gracefully', async () => {
         server.use(
-          http.get('/api/auth/session/:sessionId/status', () => {
+          http.get('/api/v1/auth/session/:sessionId/status', () => {
             return HttpResponse.json(
               { error: 'Session not found' },
               { status: 404 }
@@ -104,7 +104,7 @@ describe('Auth API', () => {
 
       it('should handle refresh failure', async () => {
         server.use(
-          http.post('/api/refresh', () => {
+          http.post('/api/v1/refresh', () => {
             return HttpResponse.json(
               { error: 'Invalid refresh token' },
               { status: 401 }
@@ -183,7 +183,7 @@ describe('Auth API', () => {
     it('should create axios client with authorization header', () => {
       const client = createAuthenticatedClient('test-token');
 
-      expect(client.defaults.baseURL).toBe('/api');
+      expect(client.defaults.baseURL).toBe('/api/v1');
       expect(client.defaults.headers['Authorization']).toBe('Bearer test-token');
       expect(client.defaults.headers['Content-Type']).toBe('application/json');
     });
