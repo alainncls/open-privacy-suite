@@ -146,6 +146,16 @@ func (m *MockStore) GetContract(ctx context.Context, id string) (*Contract, erro
 	return m.contracts[id], nil
 }
 
+func (m *MockStore) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error) {
+	result := make(map[string]*Contract)
+	for _, id := range ids {
+		if c, ok := m.contracts[id]; ok {
+			result[id] = c
+		}
+	}
+	return result, nil
+}
+
 // Stub implementations for other Store methods
 func (m *MockStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }

@@ -302,8 +302,10 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		DefaultClaims:  nil,
 	}
 
-	// Track contract grants we've seen (need to load contracts to get addresses)
-	contractAddresses := make(map[string]string) // contractID -> address
+	// Track contract data for batch loading
+	contractAddresses := make(map[string]string)         // contractID -> address
+	groupGrants := make(map[string][]*ContractGrant)     // groupID -> grants
+	var contractIDs []string                             // IDs to batch load
 
 	for _, group := range hierarchy {
 		// Get group access settings
@@ -337,20 +339,34 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		if err != nil {
 			return nil, err
 		}
+		groupGrants[group.ID] = grants
 
+		// Collect contract IDs we need to load
 		for _, grant := range grants {
-			// Get contract address if not already cached
+			if _, ok := contractAddresses[grant.ContractID]; !ok {
+				contractIDs = append(contractIDs, grant.ContractID)
+			}
+		}
+	}
+
+	// Batch load all contracts we need
+	if len(contractIDs) > 0 {
+		contracts, err := r.store.GetContractsByIDs(ctx, contractIDs)
+		if err != nil {
+			return nil, err
+		}
+		for id, contract := range contracts {
+			contractAddresses[id] = strings.ToLower(contract.Address)
+		}
+	}
+
+	// Now process grants using pre-loaded contract addresses
+	for _, group := range hierarchy {
+		grants := groupGrants[group.ID]
+		for _, grant := range grants {
 			address, ok := contractAddresses[grant.ContractID]
 			if !ok {
-				contract, err := r.store.GetContract(ctx, grant.ContractID)
-				if err != nil {
-					return nil, err
-				}
-				if contract == nil {
-					continue // Contract deleted, skip
-				}
-				address = strings.ToLower(contract.Address)
-				contractAddresses[grant.ContractID] = address
+				continue // Contract deleted, skip
 			}
 
 			// Initialize result.ContractAccess if this is the first grant we've seen

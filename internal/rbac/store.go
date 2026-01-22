@@ -33,6 +33,7 @@ type Store interface {
 	// Contract operations
 	CreateContract(ctx context.Context, contract *Contract) error
 	GetContract(ctx context.Context, id string) (*Contract, error)
+	GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error)
 	GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error)
 	UpdateContract(ctx context.Context, contract *Contract) error
 	ListContracts(ctx context.Context, orgID string) ([]*Contract, error)
