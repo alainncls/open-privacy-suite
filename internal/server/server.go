@@ -20,6 +20,26 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
+// TTL constants for various components
+const (
+	// JWT token TTLs
+	AccessTokenTTL  = 30 * time.Minute
+	RefreshTokenTTL = 7 * 24 * time.Hour
+
+	// Cache and store TTLs
+	RBACCacheTTL          = 5 * time.Minute
+	SessionTTL            = 10 * time.Minute
+	SessionCleanupInterval = 1 * time.Minute
+	ChallengeTTL          = 5 * time.Minute
+	ChallengeCleanupInterval = 1 * time.Minute
+
+	// Rate limiter cleanup interval
+	RateLimiterCleanupInterval = 10 * time.Second
+
+	// ENS resolution timeout
+	ENSResolutionTimeout = 30 * time.Second
+)
+
 type Server struct {
 	db              *db.DB
 	rbacAccessCtrl  *rbac.AccessController
@@ -91,12 +111,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	// Initialize JWT service
-	// Access tokens: 30 minutes, Refresh tokens: 7 days
 	jwtService, err := auth.NewJWTService(
 		cfg.JWTSecret,
 		cfg.JWTRefreshSecret,
-		30*time.Minute, // Access token TTL
-		7*24*time.Hour, // Refresh token TTL
+		AccessTokenTTL,
+		RefreshTokenTTL,
 	)
 	if err != nil {
 		database.Close()
@@ -105,18 +124,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	proxySvc := proxy.New(cfg.NodeURL)
 
-	// Initialize RBAC access controller with 5 minute cache TTL
+	// Initialize RBAC access controller
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
-	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
 
-	// Initialize session store (10 minute TTL, cleanup every minute)
-	sessionStore := auth.NewSessionStore(10*time.Minute, 1*time.Minute)
+	// Initialize session store
+	sessionStore := auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
 
-	// Initialize challenge store for ETH address linking (5 minute TTL, cleanup every minute)
-	challengeStore := NewChallengeStore(5*time.Minute, 1*time.Minute)
+	// Initialize challenge store for ETH address linking
+	challengeStore := NewChallengeStore(ChallengeTTL, ChallengeCleanupInterval)
 
-	// Initialize rate limiter (cleanup every 10 seconds)
-	rateLimiter := NewRateLimiter(10 * time.Second)
+	// Initialize rate limiter
+	rateLimiter := NewRateLimiter(RateLimiterCleanupInterval)
 
 	// Initialize ENS resolver (optional - may fail if no mainnet RPC available)
 	var ensResolver *ens.Resolver

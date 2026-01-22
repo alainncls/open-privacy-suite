@@ -324,7 +324,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 
 	// Store refresh token in database
 	tokenHash := auth.HashToken(refreshToken)
-	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
+	expiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, userDID, expiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
 		return nil, err
@@ -342,7 +342,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    1800, // 30 minutes in seconds
+		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	}, nil
 }
 
@@ -379,7 +379,7 @@ func (s *Server) handleAuthSessionStatus(c *gin.Context) {
 			AccessToken:  session.AccessToken,
 			RefreshToken: session.RefreshToken,
 			TokenType:    "Bearer",
-			ExpiresIn:    1800,
+			ExpiresIn:    int(AccessTokenTTL.Seconds()),
 		},
 	})
 }
@@ -460,7 +460,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 
 	// Store new refresh token
 	newTokenHash := auth.HashToken(newRefreshToken)
-	newExpiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
+	newExpiresAt := time.Now().Add(RefreshTokenTTL)
 	if err := s.db.SaveRefreshToken(c.Request.Context(), newTokenHash, claims.Subject, newExpiresAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save new refresh token: " + err.Error()})
 		return
@@ -470,7 +470,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		AccessToken:  accessToken,
 		RefreshToken: newRefreshToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    1800, // 30 minutes in seconds
+		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
 }
 
