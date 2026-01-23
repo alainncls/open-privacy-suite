@@ -40,6 +40,7 @@ export interface TestRequestResponse {
   error?: string;
   latency_ms: number;
   blocked: boolean;
+  identity?: string;
 }
 
 export const statusApi = {
@@ -47,8 +48,12 @@ export const statusApi = {
 };
 
 export const testApi = {
-  send: (method: string, params: unknown[] = []) =>
-    api.post<TestRequestResponse>('/test-request', { method, params }),
+  send: (method: string, params: unknown[] = [], jwzToken?: string) =>
+    api.post<TestRequestResponse>('/test-request', { 
+      method, 
+      params,
+      ...(jwzToken && { jwz_token: jwzToken })
+    }),
 };
 
 export default api;

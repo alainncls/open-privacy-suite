@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/go-jwz/v2"
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
@@ -534,8 +535,9 @@ func (s *Server) getStatus(c *gin.Context) {
 
 // TestRequestInput represents the input for test request
 type TestRequestInput struct {
-	Method string        `json:"method"`
-	Params []interface{} `json:"params"`
+	Method   string        `json:"method"`
+	Params   []interface{} `json:"params"`
+	JWZToken string        `json:"jwz_token,omitempty"`
 }
 
 // TestRequestResponse represents the response for test request
@@ -545,6 +547,7 @@ type TestRequestResponse struct {
 	Error     string      `json:"error,omitempty"`
 	LatencyMs int64       `json:"latency_ms"`
 	Blocked   bool        `json:"blocked"`
+	Identity  string      `json:"identity,omitempty"` // The identity used for access control
 }
 
 func (s *Server) handleTestRequest(c *gin.Context) {
@@ -554,8 +557,28 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 
-	// Use synthetic identity for test requests
+	// Use synthetic identity for test requests or extract from JWZ token
 	testIdentity := "test:dashboard"
+	if input.JWZToken != "" {
+		// Parse JWZ token without verification for testing
+		token, err := jwz.Parse(input.JWZToken)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWZ token: " + err.Error()})
+			return
+		}
+
+		// Extract payload as AuthorizationResponseMessage
+		var authResponse protocol.AuthorizationResponseMessage
+		if err := json.Unmarshal(token.GetPayload(), &authResponse); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWZ payload: " + err.Error()})
+			return
+		}
+
+		// Use the From field as identity
+		testIdentity = authResponse.From
+
+		// TODO: Extract ZK role claims if available in the scope
+	}
 
 	// Check access via RBAC
 	var testRequiredClaims []rbac.Claim
@@ -578,6 +601,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Error:     "access check failed: " + err.Error(),
 			LatencyMs: 0,
 			Blocked:   true,
+			Identity:  testIdentity,
 		})
 		return
 	}
@@ -588,6 +612,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Error:     result.Reason,
 			LatencyMs: 0,
 			Blocked:   true,
+			Identity:  testIdentity,
 		})
 		return
 	}
@@ -613,6 +638,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Error:     err.Error(),
 			LatencyMs: latency,
 			Blocked:   false,
+			Identity:  testIdentity,
 		})
 		return
 	}
@@ -626,6 +652,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Error:     "invalid JSON-RPC response",
 			LatencyMs: latency,
 			Blocked:   false,
+			Identity:  testIdentity,
 		})
 		return
 	}
@@ -639,6 +666,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Error:     rpcResp.Error.Message,
 			LatencyMs: latency,
 			Blocked:   false,
+			Identity:  testIdentity,
 		})
 		return
 	}
@@ -648,5 +676,6 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		Result:    rpcResp.Result,
 		LatencyMs: latency,
 		Blocked:   false,
+		Identity:  testIdentity,
 	})
 }

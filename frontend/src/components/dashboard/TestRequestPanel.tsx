@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { testApi, TestRequestResponse } from '@/api/client';
-import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 
 const COMMON_METHODS = [
   { value: 'eth_blockNumber', label: 'eth_blockNumber' },
@@ -25,9 +25,11 @@ const COMMON_METHODS = [
 export function TestRequestPanel() {
   const [method, setMethod] = useState('eth_blockNumber');
   const [params, setParams] = useState('');
+  const [jwzToken, setJwzToken] = useState('');
   const [result, setResult] = useState<TestRequestResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleSend = async () => {
     setLoading(true);
@@ -43,7 +45,7 @@ export function TestRequestPanel() {
         }
       }
 
-      const response = await testApi.send(method, parsedParams);
+      const response = await testApi.send(method, parsedParams, jwzToken);
       setResult(response.data);
     } catch (err) {
       if (err instanceof SyntaxError) {
@@ -108,6 +110,39 @@ export function TestRequestPanel() {
           />
         </div>
 
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-2 text-sm text-[#6B7280] hover:text-[#374151] transition-colors"
+          >
+            {showAdvanced ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronRight className="w-4 h-4" />
+            )}
+            Advanced: Test with JWZ Token
+          </button>
+          
+          {showAdvanced && (
+            <div className="mt-3 space-y-2 animate-fade-in">
+              <label className="block text-sm font-medium text-[#374151] mb-2">
+                JWZ Token
+              </label>
+              <Textarea
+                variant="code"
+                value={jwzToken}
+                onChange={(e) => setJwzToken(e.target.value)}
+                placeholder="eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9..."
+                className="h-20"
+              />
+              <p className="text-xs text-[#6B7280]">
+                JWZ token for testing ZK-attested identities. This token contains zero-knowledge proof credentials.
+              </p>
+            </div>
+          )}
+        </div>
+
         {error && (
           <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
@@ -117,7 +152,7 @@ export function TestRequestPanel() {
 
         {result && (
           <div className="space-y-3 animate-fade-in">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {result.blocked ? (
                 <Badge variant="destructive" className="gap-1.5">
                   <ShieldX className="w-3 h-3" />
@@ -137,6 +172,11 @@ export function TestRequestPanel() {
               <span className="text-sm text-[#6B7280]">
                 {result.latency_ms}ms
               </span>
+              {result.identity && (
+                <span className="text-xs text-[#6B7280] font-mono truncate max-w-[300px]" title={result.identity}>
+                  Identity: {result.identity}
+                </span>
+              )}
             </div>
             {result.success && result.result !== undefined && (
               <div className="code-block">
