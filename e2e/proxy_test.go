@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
@@ -68,6 +69,14 @@ func (m *mockPrivadoVerifier) VerifyJWZ(ctx context.Context, jwzToken string, au
 	}
 	// Default: extract DID from token or use a default
 	return "did:privado:test_user", nil
+}
+
+func (m *mockPrivadoVerifier) VerifyJWZWithProofData(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error) {
+	did, err := m.VerifyJWZ(ctx, jwzToken, authRequest, verifierID)
+	if err != nil {
+		return nil, err
+	}
+	return &auth.VerificationResult{UserDID: did}, nil
 }
 
 func setupE2E(t *testing.T) (*server.Server, string, func()) {

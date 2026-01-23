@@ -342,6 +342,7 @@ type HumanityVerificationError struct {
 func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, sessionID string) (*AuthResponse, error) {
 	var userDID string
 	var err error
+	var zkClaims *auth.ZKRoleClaims
 
 	// Support mock tokens for testing when explicitly enabled via ALLOW_MOCK_LOGIN=true
 	// Mock token format: mock.{userDID} or mock.jwz.token.{userDID}
@@ -362,19 +363,37 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		}
 	} else {
 		// Verify JWZ token against the original authorization request
-		userDID, err = s.privadoVerifier.VerifyJWZ(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)
-		if err != nil {
+		// Use VerifyJWZWithProofData to get both the DID and any ZK credential data
+		verificationResult, verifyErr := s.privadoVerifier.VerifyJWZWithProofData(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)
+		if verifyErr != nil {
 			// Check if this is a humanity verification failure
-			if strings.Contains(err.Error(), "humanity") || strings.Contains(err.Error(), "ProofOfHumanity") {
+			if strings.Contains(verifyErr.Error(), "humanity") || strings.Contains(verifyErr.Error(), "ProofOfHumanity") {
 				c.JSON(http.StatusForbidden, HumanityVerificationError{
 					Error:     "humanity_verification_required",
 					Message:   "Please complete ProofOfHumanity verification at Billions",
 					VerifyURL: "https://app.billions.network",
 				})
-				return nil, err
+				return nil, verifyErr
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + err.Error()})
-			return nil, err
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + verifyErr.Error()})
+			return nil, verifyErr
+		}
+		userDID = verificationResult.UserDID
+
+		// Extract ZK role claims from the proof data if available
+		if s.zkRoleExtractor != nil && len(verificationResult.ProofData) > 0 {
+			// Process each proof's credential data
+			for _, proofData := range verificationResult.ProofData {
+				claims, extractErr := s.zkRoleExtractor.ExtractRoleClaims(proofData)
+				if extractErr != nil {
+					log.Printf("Warning: failed to extract ZK role claims: %v", extractErr)
+					continue
+				}
+				if claims != nil && (len(claims.Groups) > 0 || len(claims.Claims) > 0) {
+					zkClaims = claims
+					break // Use the first proof that has role claims
+				}
+			}
 		}
 	}
 
@@ -393,19 +412,11 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		}
 	}
 
-	// Process ZK role claims if available
-	// Note: Currently the Privado verifier only returns the DID, not the full proof data.
-	// When the verifier is enhanced to return proof data, we can extract role claims:
-	// zkClaims, _ := s.zkRoleExtractor.ExtractRoleClaims(proofData)
-	// Then sync memberships based on ZK-attested claims
-	var zkClaims *auth.ZKRoleClaims
-	if s.zkRoleExtractor != nil && user != nil {
-		// TODO: Extract proof data from verified JWZ token when available
-		// For now, zkClaims is nil, so ProcessZKMemberships will be a no-op
-		if zkClaims != nil {
-			if err := s.zkRoleExtractor.ProcessZKMemberships(c.Request.Context(), user.ID, zkClaims); err != nil {
-				log.Printf("Warning: failed to process ZK memberships for %s: %v", userDID, err)
-			}
+	// Process ZK role claims if available and user exists
+	// This synchronizes RBAC memberships based on ZK-attested credentials
+	if s.zkRoleExtractor != nil && user != nil && zkClaims != nil {
+		if err := s.zkRoleExtractor.ProcessZKMemberships(c.Request.Context(), user.ID, zkClaims); err != nil {
+			log.Printf("Warning: failed to process ZK memberships for %s: %v", userDID, err)
 		}
 	}
 

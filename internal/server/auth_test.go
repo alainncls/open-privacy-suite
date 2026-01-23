@@ -24,9 +24,10 @@ import (
 
 // mockPrivadoVerifier is a mock for testing (implements PrivadoVerifier interface)
 type mockPrivadoVerifier struct {
-	createRequestFunc         func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
-	createHumanityRequestFunc func(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error)
-	verifyFunc                func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
+	createRequestFunc              func(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
+	createHumanityRequestFunc      func(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error)
+	verifyFunc                     func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
+	verifyWithProofDataFunc        func(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
 }
 
 func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error) {
@@ -75,6 +76,21 @@ func (m *mockPrivadoVerifier) VerifyJWZ(ctx context.Context, jwzToken string, au
 		return m.verifyFunc(ctx, jwzToken, authRequest, verifierID)
 	}
 	return "did:privado:test123", nil
+}
+
+func (m *mockPrivadoVerifier) VerifyJWZWithProofData(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error) {
+	if m.verifyWithProofDataFunc != nil {
+		return m.verifyWithProofDataFunc(ctx, jwzToken, authRequest, verifierID)
+	}
+	// Default: call the basic verifyFunc and wrap result
+	if m.verifyFunc != nil {
+		did, err := m.verifyFunc(ctx, jwzToken, authRequest, verifierID)
+		if err != nil {
+			return nil, err
+		}
+		return &auth.VerificationResult{UserDID: did}, nil
+	}
+	return &auth.VerificationResult{UserDID: "did:privado:test123"}, nil
 }
 
 func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
