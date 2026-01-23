@@ -9,6 +9,30 @@ import (
 	"github.com/google/uuid"
 )
 
+// ensureDefaultOrgAndGroup creates the default organization and group if they don't exist.
+// This is needed for tests that use rbac.DefaultOrgID and rbac.DefaultGroupID.
+func ensureDefaultOrgAndGroup(t *testing.T, db *DB, ctx context.Context) {
+	// Create default organization if it doesn't exist
+	org := &rbac.Organization{
+		ID:       rbac.DefaultOrgID,
+		Slug:     "default",
+		Name:     "Default Organization",
+		Settings: map[string]any{},
+	}
+	_ = db.CreateOrganization(ctx, org) // Ignore error if already exists
+
+	// Create default group if it doesn't exist
+	group := &rbac.Group{
+		ID:    rbac.DefaultGroupID,
+		OrgID: rbac.DefaultOrgID,
+		Slug:  "default",
+		Name:  "Default Group",
+		Depth: 0,
+		Path:  "default",
+	}
+	_ = db.CreateGroup(ctx, group) // Ignore error if already exists
+}
+
 func TestWithTxCommit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -16,6 +40,7 @@ func TestWithTxCommit(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	// Create a contract within a transaction
 	contract := &rbac.Contract{
@@ -53,6 +78,7 @@ func TestWithTxRollback(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	contractID := uuid.New().String()
 
@@ -92,6 +118,7 @@ func TestCreateContractWithGrant(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	contract := &rbac.Contract{
 		ID:       uuid.New().String(),
@@ -141,6 +168,7 @@ func TestDeleteContractWithGrants(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	// First create a contract with a grant
 	contract := &rbac.Contract{
@@ -194,6 +222,7 @@ func TestDeleteGroupWithDependencies(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	// Create a group
 	group := &rbac.Group{
@@ -285,6 +314,7 @@ func TestBeginTxManualCommit(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	// Test manual transaction management
 	tx, err := db.BeginTx(ctx)
@@ -328,6 +358,7 @@ func TestBeginTxManualRollback(t *testing.T) {
 
 	db := setupTestDB(t)
 	ctx := context.Background()
+	ensureDefaultOrgAndGroup(t, db, ctx)
 
 	contractID := uuid.New().String()
 

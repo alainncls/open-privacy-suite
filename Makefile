@@ -56,22 +56,22 @@ test: ensure-hooks test-unit frontend-test
 test-go:
 	go test ./... -v
 
-# Run unit tests only
+# Run unit tests only (with -p 1 to avoid database conflicts between packages)
 test-unit: test-db-ready
-	go test ./internal/... -v
+	go test ./internal/... -v -p 1
 
 # Minimum coverage threshold (percentage) - start at 45%, increase over time
 MIN_COVERAGE ?= 45
 
 # Run unit tests with coverage
 test-coverage: test-db-ready
-	go test ./internal/... -v -coverprofile=coverage.out
+	go test ./internal/... -v -p 1 -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 # Run unit tests with coverage and enforce minimum threshold
 test-coverage-check: test-db-ready
-	go test ./internal/... -v -coverprofile=coverage.out
+	go test ./internal/... -v -p 1 -coverprofile=coverage.out
 	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	COVERAGE_INT=$${COVERAGE%.*}; \
 	echo "Total coverage: $${COVERAGE}%"; \
@@ -89,7 +89,7 @@ test-db-ready:
 
 # Run Go E2E tests
 test-e2e:
-	go test ./e2e/... -v
+	go test ./e2e/... -v -p 1
 
 # E2E compose command - isolated from local dev
 E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml

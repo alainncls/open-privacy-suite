@@ -122,6 +122,11 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
+	// Reset database for fresh test (clears data, preserves schema)
+	if err := db.ResetTestDatabase(srv.DB()); err != nil {
+		t.Fatalf("failed to reset test database: %v", err)
+	}
+
 	// Start server in goroutine
 	go func() {
 		if err := srv.Run(serverAddr); err != nil {
@@ -212,6 +217,38 @@ func getJWTToken(t *testing.T, serverURL, userDID string) string {
 func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banned bool) {
 	ctx := context.Background()
 	// database implements rbac.Store interface
+
+	// Ensure default organization exists
+	org := &rbac.Organization{
+		ID:       rbac.DefaultOrgID,
+		Slug:     "default",
+		Name:     "Default Organization",
+		Settings: map[string]any{},
+	}
+	_ = database.CreateOrganization(ctx, org) // Ignore error if already exists
+
+	// Ensure default group exists
+	group := &rbac.Group{
+		ID:    rbac.DefaultGroupID,
+		OrgID: rbac.DefaultOrgID,
+		Slug:  "default",
+		Name:  "Default Group",
+		Depth: 0,
+		Path:  "default",
+	}
+	_ = database.CreateGroup(ctx, group) // Ignore error if already exists
+
+	// Ensure default group access exists (defines allowed methods)
+	groupAccess := &rbac.GroupAccess{
+		ID:      rbac.DefaultGroupID, // Use same ID as group for simplicity
+		GroupID: rbac.DefaultGroupID,
+		AllowedMethods: []string{
+			"eth_call", "eth_getBalance", "eth_getTransactionReceipt",
+			"eth_blockNumber", "eth_chainId", "eth_getCode",
+		},
+		DefaultClaims: []rbac.Claim{rbac.ClaimRead},
+	}
+	_ = database.CreateGroupAccess(ctx, groupAccess) // Ignore error if already exists
 
 	// Create user
 	user := &rbac.User{
