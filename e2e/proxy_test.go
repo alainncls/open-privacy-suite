@@ -102,6 +102,16 @@ func setupE2EWithVerifier(t *testing.T, verifier server.PrivadoVerifier) (*serve
 		cleanupDB = func() {}
 	}
 
+	// Connect to database and reset it for clean test state
+	database, err := db.New(dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	if err := db.ResetTestDatabase(database); err != nil {
+		t.Fatalf("Failed to reset test database: %v", err)
+	}
+	database.Close()
+
 	// Find an available port first
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
@@ -247,15 +257,12 @@ func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banne
 	}
 	_ = database.CreateGroup(ctx, group) // Ignore error if already exists
 
-	// Ensure default group access exists (defines allowed methods)
+	// Ensure default group has access permissions
 	groupAccess := &rbac.GroupAccess{
-		ID:      rbac.DefaultGroupID, // Use same ID as group for simplicity
-		GroupID: rbac.DefaultGroupID,
-		AllowedMethods: []string{
-			"eth_call", "eth_getBalance", "eth_getTransactionReceipt",
-			"eth_blockNumber", "eth_chainId", "eth_getCode",
-		},
-		DefaultClaims: []rbac.Claim{rbac.ClaimRead},
+		ID:             uuid.New().String(),
+		GroupID:        rbac.DefaultGroupID,
+		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_estimateGas", "eth_gasPrice", "eth_getCode", "eth_getLogs", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_sendRawTransaction", "net_version"},
+		DefaultClaims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
 	}
 	_ = database.CreateGroupAccess(ctx, groupAccess) // Ignore error if already exists
 

@@ -87,7 +87,7 @@ func ResetTestDatabase(database *DB) error {
 	conn := database.Conn()
 
 	// Delete data from tables in correct order to respect foreign keys
-	// This is safer than DROP TABLE which can cause migration version conflicts
+	// This is safer than TRUNCATE which can cause deadlocks in concurrent tests
 	tables := []string{
 		"rbac_audit_log",
 		"effective_permissions_cache",
@@ -112,7 +112,9 @@ func ResetTestDatabase(database *DB) error {
 		_, err := conn.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", table))
 		if err != nil {
 			// Ignore errors for tables that might not exist
-			continue
+			if !strings.Contains(err.Error(), "does not exist") {
+				return fmt.Errorf("failed to clear table %s: %w", table, err)
+			}
 		}
 	}
 
