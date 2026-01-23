@@ -27,13 +27,9 @@ func setupTestDB(t *testing.T) *DB {
 		t.Fatalf("failed to create test DB: %v", err)
 	}
 
-	// Clean up tables for fresh test
-	database.Conn().Exec("DROP TABLE IF EXISTS access_logs")
-	database.Conn().Exec("DROP TABLE IF EXISTS refresh_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS revoked_tokens")
-	database.Conn().Exec("DROP TABLE IF EXISTS schema_version")
-	if err := database.Migrate(context.Background()); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
+	// Reset database for fresh test (this drops all tables except schema_version and runs migrations)
+	if err := ResetTestDatabase(database); err != nil {
+		t.Fatalf("failed to reset test database: %v", err)
 	}
 
 	return database

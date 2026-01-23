@@ -79,41 +79,46 @@ func EnsureTestDatabase(dbURL string) error {
 	return nil
 }
 
-// ResetTestDatabase drops all tables and runs migrations to get a clean slate.
+// ResetTestDatabase clears all data tables to get a clean slate.
+// This preserves the schema and migration state while clearing test data.
 // This is useful when using an external PostgreSQL database that may have leftover data.
 func ResetTestDatabase(database *DB) error {
 	ctx := context.Background()
 	conn := database.Conn()
 
-	// Get all tables in the public schema (excluding system tables)
-	rows, err := conn.Query(`
-		SELECT tablename FROM pg_tables
-		WHERE schemaname = 'public'
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to list tables: %w", err)
+	// Delete data from tables in correct order to respect foreign keys
+	// This is safer than TRUNCATE which can cause deadlocks in concurrent tests
+	tables := []string{
+		"rbac_audit_log",
+		"effective_permissions_cache",
+		"contract_grants",
+		"contracts",
+		"user_memberships",
+		"group_access",
+		"groups",
+		"users",
+		"organizations",
+		"disclosure_access_events",
+		"disclosure_reports",
+		"disclosure_grants",
+		"disclosure_requests",
+		"refresh_tokens",
+		"revoked_tokens",
+		"access_logs",
+		"eth_address_links",
 	}
-	defer rows.Close()
 
-	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			return fmt.Errorf("failed to scan table name: %w", err)
-		}
-		tables = append(tables, table)
-	}
-
-	// Drop all tables with CASCADE to handle foreign keys
 	for _, table := range tables {
-		_, err := conn.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", table))
+		_, err := conn.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", table))
 		if err != nil {
-			return fmt.Errorf("failed to drop table %s: %w", table, err)
+			// Ignore errors for tables that might not exist
+			if !strings.Contains(err.Error(), "does not exist") {
+				return fmt.Errorf("failed to clear table %s: %w", table, err)
+			}
 		}
 	}
 
-	// Run migrations to recreate all tables
-	return database.Migrate(ctx)
+	return nil
 }
 
 // SetupTestContainer starts a PostgreSQL testcontainer and returns the connection string

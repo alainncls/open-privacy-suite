@@ -85,7 +85,7 @@ func setupTestServerForDisclosure(t *testing.T) (*Server, *auth.JWTService, *db.
 		db:                database,
 		privadoVerifier:   mockVerifier,
 		jwtService:        jwtService,
-		rbacAccessCtrl:    rbac.NewAccessController(database, 5*time.Minute, true),
+		rbacAccessCtrl:    rbac.NewAccessController(database, 5*time.Minute),
 		proxy:             nil,
 		sessionStore:      auth.NewSessionStore(10*time.Minute, 1*time.Minute),
 		disclosureService: disclosureService,
@@ -766,7 +766,7 @@ func TestGetDisclosureLogs(t *testing.T) {
 
 	// Create activity logs
 	for i := 0; i < 5; i++ {
-		database.LogAccess("did:test:logs", "eth_call", 200, "127.0.0.1")
+		database.LogAccess(context.Background(), "did:test:logs", "eth_call", 200, "127.0.0.1")
 	}
 
 	// Create pending request (must be pending to be approved)
@@ -878,7 +878,7 @@ func TestGetDisclosureSummary(t *testing.T) {
 	userID, _ := createTestUser(t, database, jwtService, "did:test:summary")
 
 	for i := 0; i < 10; i++ {
-		database.LogAccess("did:test:summary", "eth_call", 200, "127.0.0.1")
+		database.LogAccess(context.Background(), "did:test:summary", "eth_call", 200, "127.0.0.1")
 	}
 
 	// Create pending request (must be pending to be approved)
@@ -929,7 +929,7 @@ func TestGetDisclosureReport(t *testing.T) {
 	userID, _ := createTestUser(t, database, jwtService, "did:test:report")
 
 	for i := 0; i < 5; i++ {
-		database.LogAccess("did:test:report", "eth_call", 200, "127.0.0.1")
+		database.LogAccess(context.Background(), "did:test:report", "eth_call", 200, "127.0.0.1")
 	}
 
 	// Create pending request (must be pending to be approved)
@@ -1035,7 +1035,7 @@ func TestGetDisclosureEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create some events by accessing logs
-	database.LogAccess("did:test:events", "eth_call", 200, "127.0.0.1")
+	database.LogAccess(context.Background(), "did:test:events", "eth_call", 200, "127.0.0.1")
 
 	// Access logs to generate event
 	logsReq := httptest.NewRequest("GET", "/api/disclosure/grants/"+grantResult.ID+"/logs", nil)
@@ -1210,7 +1210,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 
 	// 2. Create some activity for the target user
 	for i := 0; i < 10; i++ {
-		database.LogAccess("did:test:workflow:target", "eth_call", 200, "127.0.0.1")
+		database.LogAccess(context.Background(), "did:test:workflow:target", "eth_call", 200, "127.0.0.1")
 	}
 
 	// 3. Create a disclosure request (admin action)

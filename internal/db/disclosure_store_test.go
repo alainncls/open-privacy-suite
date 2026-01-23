@@ -829,7 +829,7 @@ func TestDisclosureActivityData(t *testing.T) {
 		if i%2 == 0 {
 			method = "eth_getBalance"
 		}
-		err := database.LogAccess(testUserDID, method, statusCode, "127.0.0.1")
+		err := database.LogAccess(ctx, testUserDID, method, statusCode, "127.0.0.1")
 		require.NoError(t, err)
 	}
 
