@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { testApi, TestRequestResponse } from '@/api/client';
+import { testApi, TestRequestResult } from '@/api/client';
 import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 
 const COMMON_METHODS = [
@@ -26,7 +26,7 @@ export function TestRequestPanel() {
   const [method, setMethod] = useState('eth_blockNumber');
   const [params, setParams] = useState('');
   const [jwzToken, setJwzToken] = useState('');
-  const [result, setResult] = useState<TestRequestResponse | null>(null);
+  const [result, setResult] = useState<TestRequestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -46,7 +46,7 @@ export function TestRequestPanel() {
       }
 
       const response = await testApi.send(method, parsedParams, jwzToken);
-      setResult(response.data);
+      setResult(response);
     } catch (err) {
       if (err instanceof SyntaxError) {
         setError('Invalid JSON in params');
@@ -153,41 +153,43 @@ export function TestRequestPanel() {
         {result && (
           <div className="space-y-3 animate-fade-in">
             <div className="flex items-center gap-3 flex-wrap">
-              {result.blocked ? (
+              {result.status === 403 ? (
                 <Badge variant="destructive" className="gap-1.5">
                   <ShieldX className="w-3 h-3" />
-                  BLOCKED
+                  403 FORBIDDEN
                 </Badge>
-              ) : result.success ? (
+              ) : result.status === 200 ? (
                 <Badge variant="success" className="gap-1.5">
                   <ShieldCheck className="w-3 h-3" />
-                  ALLOWED
+                  200 OK
                 </Badge>
               ) : (
                 <Badge variant="warning" className="gap-1.5">
                   <AlertTriangle className="w-3 h-3" />
-                  ERROR
+                  {result.status} ERROR
                 </Badge>
               )}
-              <span className="text-sm text-[#6B7280]">
-                {result.latency_ms}ms
-              </span>
-              {result.identity && (
-                <span className="text-xs text-[#6B7280] font-mono truncate max-w-[300px]" title={result.identity}>
-                  Identity: {result.identity}
+              {result.data.latency_ms !== undefined && (
+                <span className="text-sm text-[#6B7280]">
+                  {result.data.latency_ms}ms
+                </span>
+              )}
+              {result.data.identity && (
+                <span className="text-xs text-[#6B7280] font-mono truncate max-w-[300px]" title={result.data.identity}>
+                  Identity: {result.data.identity}
                 </span>
               )}
             </div>
-            {result.success && result.result !== undefined && (
+            {result.status === 200 && result.data.result !== undefined && (
               <div className="code-block">
                 <pre className="whitespace-pre-wrap break-all">
-                  {JSON.stringify(result.result, null, 2)}
+                  {JSON.stringify(result.data.result, null, 2)}
                 </pre>
               </div>
             )}
-            {result.error && (
+            {result.data.error && (
               <div className="p-4 rounded-lg bg-[#FEF9C3] border border-[#FDE047]">
-                <span className="text-[#854D0E] text-sm">{result.error}</span>
+                <span className="text-[#854D0E] text-sm">{result.data.error}</span>
               </div>
             )}
           </div>

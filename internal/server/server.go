@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
@@ -542,12 +544,115 @@ type TestRequestInput struct {
 
 // TestRequestResponse represents the response for test request
 type TestRequestResponse struct {
-	Success   bool        `json:"success"`
 	Result    interface{} `json:"result,omitempty"`
 	Error     string      `json:"error,omitempty"`
-	LatencyMs int64       `json:"latency_ms"`
-	Blocked   bool        `json:"blocked"`
+	LatencyMs int64       `json:"latency_ms,omitempty"`
 	Identity  string      `json:"identity,omitempty"` // The identity used for access control
+}
+
+// extractIdentityFromJWZ extracts the user DID from a JWZ token.
+// It first tries the jwz library, then falls back to manual base64 decoding.
+func extractIdentityFromJWZ(jwzToken string) (identity string, err error) {
+	// Recover from any panics in the jwz library
+	defer func() {
+		if r := recover(); r != nil {
+			// Fall back to manual parsing
+			identity, err = extractIdentityManual(jwzToken)
+		}
+	}()
+
+	// Try parsing with the jwz library first
+	token, err := jwz.Parse(jwzToken)
+	if err != nil {
+		// Fall back to manual parsing
+		return extractIdentityManual(jwzToken)
+	}
+
+	// Extract payload as AuthorizationResponseMessage
+	var authResponse protocol.AuthorizationResponseMessage
+	if err := json.Unmarshal(token.GetPayload(), &authResponse); err != nil {
+		return "", fmt.Errorf("invalid JWZ payload: %w", err)
+	}
+
+	if authResponse.From == "" {
+		return "", fmt.Errorf("JWZ token missing 'from' field (user DID)")
+	}
+
+	return authResponse.From, nil
+}
+
+// extractIdentityManual parses a JWZ token by manually decoding the base64 payload.
+// JWZ tokens are formatted as: header.payload.proof (similar to JWT)
+func extractIdentityManual(jwzToken string) (string, error) {
+	parts := strings.Split(jwzToken, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid JWZ token format: expected at least 2 dot-separated parts, got %d", len(parts))
+	}
+
+	// The payload is the second part (index 1)
+	payloadB64 := parts[1]
+
+	// Decode base64url (JWZ uses URL-safe base64 without padding)
+	payload, err := base64.RawURLEncoding.DecodeString(payloadB64)
+	if err != nil {
+		// Try standard base64 with padding
+		payload, err = base64.URLEncoding.DecodeString(payloadB64)
+		if err != nil {
+			// Try standard base64 without padding
+			payload, err = base64.StdEncoding.DecodeString(payloadB64)
+			if err != nil {
+				return "", fmt.Errorf("failed to decode JWZ payload (tried RawURL, URL, Std encodings): %w", err)
+			}
+		}
+	}
+
+	// Log the decoded payload for debugging
+	log.Printf("JWZ payload decoded: %s", string(payload))
+
+	// Try to extract identity from various possible locations in the payload
+	// First try as AuthorizationResponseMessage (standard iden3 auth response)
+	var authResponse protocol.AuthorizationResponseMessage
+	if err := json.Unmarshal(payload, &authResponse); err == nil && authResponse.From != "" {
+		return authResponse.From, nil
+	}
+
+	// Try as a generic map to find DID in various locations
+	var payloadMap map[string]interface{}
+	if err := json.Unmarshal(payload, &payloadMap); err != nil {
+		return "", fmt.Errorf("invalid JWZ payload JSON: %w", err)
+	}
+
+	// Check common DID field locations
+	if from, ok := payloadMap["from"].(string); ok && from != "" {
+		return from, nil
+	}
+	if sub, ok := payloadMap["sub"].(string); ok && sub != "" {
+		return sub, nil
+	}
+	if id, ok := payloadMap["id"].(string); ok && strings.HasPrefix(id, "did:") {
+		return id, nil
+	}
+
+	// Check nested in body
+	if body, ok := payloadMap["body"].(map[string]interface{}); ok {
+		if did, ok := body["did"].(string); ok && did != "" {
+			return did, nil
+		}
+		if id, ok := body["id"].(string); ok && strings.HasPrefix(id, "did:") {
+			return id, nil
+		}
+	}
+
+	// Return the raw payload structure for debugging
+	return "", fmt.Errorf("could not find user DID in JWZ payload. Available fields: %v", getMapKeys(payloadMap))
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (s *Server) handleTestRequest(c *gin.Context) {
@@ -560,24 +665,13 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// Use synthetic identity for test requests or extract from JWZ token
 	testIdentity := "test:dashboard"
 	if input.JWZToken != "" {
-		// Parse JWZ token without verification for testing
-		token, err := jwz.Parse(input.JWZToken)
+		// Try to extract identity from JWZ token
+		identity, err := extractIdentityFromJWZ(input.JWZToken)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWZ token: " + err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-
-		// Extract payload as AuthorizationResponseMessage
-		var authResponse protocol.AuthorizationResponseMessage
-		if err := json.Unmarshal(token.GetPayload(), &authResponse); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWZ payload: " + err.Error()})
-			return
-		}
-
-		// Use the From field as identity
-		testIdentity = authResponse.From
-
-		// TODO: Extract ZK role claims if available in the scope
+		testIdentity = identity
 	}
 
 	// Check access via RBAC
@@ -596,23 +690,17 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), accessReq)
 	if err != nil {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusInternalServerError, c.ClientIP())
-		c.JSON(http.StatusOK, TestRequestResponse{
-			Success:   false,
-			Error:     "access check failed: " + err.Error(),
-			LatencyMs: 0,
-			Blocked:   true,
-			Identity:  testIdentity,
+		c.JSON(http.StatusInternalServerError, TestRequestResponse{
+			Error:    "access check failed: " + err.Error(),
+			Identity: testIdentity,
 		})
 		return
 	}
 	if !result.Allowed {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
-		c.JSON(http.StatusOK, TestRequestResponse{
-			Success:   false,
-			Error:     result.Reason,
-			LatencyMs: 0,
-			Blocked:   true,
-			Identity:  testIdentity,
+		c.JSON(http.StatusForbidden, TestRequestResponse{
+			Error:    result.Reason,
+			Identity: testIdentity,
 		})
 		return
 	}
@@ -633,11 +721,9 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 	if err != nil {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
-		c.JSON(http.StatusOK, TestRequestResponse{
-			Success:   false,
+		c.JSON(http.StatusBadGateway, TestRequestResponse{
 			Error:     err.Error(),
 			LatencyMs: latency,
-			Blocked:   false,
 			Identity:  testIdentity,
 		})
 		return
@@ -647,11 +733,9 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	var rpcResp proxy.JSONRPCResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
 		s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusBadGateway, c.ClientIP())
-		c.JSON(http.StatusOK, TestRequestResponse{
-			Success:   false,
+		c.JSON(http.StatusBadGateway, TestRequestResponse{
 			Error:     "invalid JSON-RPC response",
 			LatencyMs: latency,
-			Blocked:   false,
 			Identity:  testIdentity,
 		})
 		return
@@ -660,22 +744,19 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	// Log successful access
 	s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, statusCode, c.ClientIP())
 
+	// Return JSON-RPC response (may contain RPC-level error, that's fine - HTTP 200)
 	if rpcResp.Error != nil {
 		c.JSON(http.StatusOK, TestRequestResponse{
-			Success:   false,
 			Error:     rpcResp.Error.Message,
 			LatencyMs: latency,
-			Blocked:   false,
 			Identity:  testIdentity,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, TestRequestResponse{
-		Success:   true,
 		Result:    rpcResp.Result,
 		LatencyMs: latency,
-		Blocked:   false,
 		Identity:  testIdentity,
 	})
 }

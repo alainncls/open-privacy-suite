@@ -35,12 +35,15 @@ export interface StatusResponse {
 }
 
 export interface TestRequestResponse {
-  success: boolean;
   result?: unknown;
   error?: string;
-  latency_ms: number;
-  blocked: boolean;
+  latency_ms?: number;
   identity?: string;
+}
+
+export interface TestRequestResult {
+  status: number;
+  data: TestRequestResponse;
 }
 
 export const statusApi = {
@@ -48,12 +51,22 @@ export const statusApi = {
 };
 
 export const testApi = {
-  send: (method: string, params: unknown[] = [], jwzToken?: string) =>
-    api.post<TestRequestResponse>('/test-request', { 
-      method, 
-      params,
-      ...(jwzToken && { jwz_token: jwzToken })
-    }),
+  send: async (method: string, params: unknown[] = [], jwzToken?: string): Promise<TestRequestResult> => {
+    try {
+      const response = await api.post<TestRequestResponse>('/test-request', {
+        method,
+        params,
+        ...(jwzToken && { jwz_token: jwzToken })
+      });
+      return { status: response.status, data: response.data };
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        // Return 4xx/5xx responses as results, not errors
+        return { status: err.response.status, data: err.response.data as TestRequestResponse };
+      }
+      throw err;
+    }
+  },
 };
 
 export default api;
