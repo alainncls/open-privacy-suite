@@ -66,7 +66,7 @@ require (
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/iden3/contracts-abi/onchain-credential-status-resolver/go/abi v1.0.2 // indirect
 	github.com/iden3/contracts-abi/state/go/abi v1.1.0 // indirect
-	github.com/iden3/driver-did-iden3 v0.0.17 // indirect
+	github.com/iden3/driver-did-iden3 v0.0.19-0.20260122140548-e418d5fdf4ad // indirect
 	github.com/iden3/go-circuits/v2 v2.4.3 // indirect
 	github.com/iden3/go-iden3-core/v2 v2.4.0 // indirect
 	github.com/iden3/go-iden3-crypto v0.0.17 // indirect
