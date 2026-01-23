@@ -188,3 +188,42 @@ func (s *SessionStore) Stop() {
 func (s *SessionStore) Count() int64 {
 	return s.count.Load()
 }
+
+// SessionInfo is a safe representation of a session for external consumption.
+// It omits sensitive fields like tokens.
+type SessionInfo struct {
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Completed   bool      `json:"completed"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+}
+
+// ListSessions returns information about all active sessions.
+// Sensitive data (tokens) is not included in the response.
+func (s *SessionStore) ListSessions() []*SessionInfo {
+	var sessions []*SessionInfo
+	now := time.Now()
+
+	s.sessions.Range(func(key, value any) bool {
+		session := value.(*Session)
+		// Skip expired sessions
+		if now.After(session.ExpiresAt) {
+			return true
+		}
+
+		info := &SessionInfo{
+			ID:        session.ID,
+			CreatedAt: session.CreatedAt,
+			ExpiresAt: session.ExpiresAt,
+			Completed: session.Completed,
+		}
+		if session.Completed {
+			info.CompletedAt = session.CompletedAt
+		}
+		sessions = append(sessions, info)
+		return true
+	})
+
+	return sessions
+}

@@ -11,6 +11,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.POST("/orgs", s.createOrganization)
 	api.GET("/orgs/:org_id", s.getOrganization)
 	api.PUT("/orgs/:org_id", s.updateOrganization)
+	api.DELETE("/orgs/:org_id", s.deleteOrganization)
 
 	// Groups
 	api.GET("/orgs/:org_id/groups", s.listGroups)
@@ -40,12 +41,20 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.GET("/users", s.listRBACUsers)
 	api.GET("/users/:user_id", s.getRBACUser)
 	api.PUT("/users/:user_id", s.updateRBACUser)
+	api.DELETE("/users/:user_id", s.deleteRBACUser)
 	api.GET("/users/:user_id/linked-addresses", s.getUserLinkedAddresses)
 
 	// Memberships
 	api.GET("/users/:user_id/memberships", s.listUserMemberships)
 	api.POST("/users/:user_id/memberships", s.createUserMembership)
 	api.DELETE("/users/:user_id/memberships/:membership_id", s.deleteUserMembership)
+
+	// Audit Logs
+	api.GET("/audit-logs", s.listAuditLogs)
+
+	// Sessions
+	api.GET("/sessions", s.listSessions)
+	api.DELETE("/sessions/:session_id", s.deleteSession)
 
 	// Debugging
 	api.GET("/users/:user_id/effective-permissions", s.getEffectivePermissions)

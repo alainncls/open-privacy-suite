@@ -52,6 +52,7 @@ type Server struct {
 	config           *config.Config
 	ensResolver      *ens.Resolver
 	jsonrpcProcessor *JSONRPCProcessor
+	zkRoleExtractor  *auth.ZKRoleExtractor
 }
 
 // DB returns the database instance (for testing)
@@ -161,6 +162,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		}
 	}
 
+	// Initialize ZK role extractor for extracting role claims from Privado proofs
+	zkRoleExtractor := auth.NewZKRoleExtractor(database)
+
 	s := &Server{
 		db:              database,
 		rbacAccessCtrl:  rbacAccessCtrl,
@@ -173,6 +177,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		authRateLimiter: authRateLimiter,
 		config:          cfg,
 		ensResolver:     ensResolver,
+		zkRoleExtractor: zkRoleExtractor,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
@@ -235,6 +240,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/auth/callback", authRL, s.handleAuthCallback)
 	router.POST("/refresh", authRL, s.handleRefresh)
 	router.POST("/revoke", authRL, s.handleRevoke)
+	router.POST("/introspect", authRL, s.handleIntrospect)
 
 	// Versioned API auth endpoints (v1) - primary path
 	router.POST("/api/v1/auth/request", authRL, s.handleAuthRequest)
@@ -242,6 +248,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.GET("/api/v1/auth/session/:id/status", s.handleAuthSessionStatus)
 	router.POST("/api/v1/refresh", authRL, s.handleRefresh)
 	router.POST("/api/v1/revoke", authRL, s.handleRevoke)
+	router.POST("/api/v1/introspect", authRL, s.handleIntrospect)
 
 	// Legacy API auth endpoints (unversioned) - deprecated, for backwards compatibility
 	deprecation := s.deprecationMiddleware("/api", "/api/v1")
@@ -250,6 +257,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.GET("/api/auth/session/:id/status", deprecation, s.handleAuthSessionStatus)
 	router.POST("/api/refresh", authRL, deprecation, s.handleRefresh)
 	router.POST("/api/revoke", authRL, deprecation, s.handleRevoke)
+	router.POST("/api/introspect", authRL, deprecation, s.handleIntrospect)
 
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
