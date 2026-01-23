@@ -101,3 +101,35 @@ func (s *Server) updateOrganization(c *gin.Context) {
 
 	respondOK(c, org)
 }
+
+func (s *Server) deleteOrganization(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	// Prevent deleting the default organization
+	if orgID == rbac.DefaultOrgID {
+		respondBadRequest(c, "cannot delete the default organization")
+		return
+	}
+
+	// Check if organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if org == nil {
+		respondNotFound(c, "organization not found")
+		return
+	}
+
+	// Delete the organization (cascades to groups, contracts, etc. via DB constraints)
+	if err := s.db.DeleteOrganization(c.Request.Context(), orgID); err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+
+	// Invalidate cache for this organization
+	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+
+	respondDeleted(c, "organization")
+}

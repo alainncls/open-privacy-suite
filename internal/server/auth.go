@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -380,13 +381,31 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// Ensure user exists in RBAC system and get their KYC status
 	// New users default to KYC=false; KYC status is updated through admin API
 	kyc := false
+	var user *rbac.User
 	if s.rbacAccessCtrl != nil {
-		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc)
+		var err error
+		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc)
 		if err != nil {
 			// Log error but continue - auth can proceed without RBAC user creation
 			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
 		} else if user != nil {
 			kyc = user.KYC
+		}
+	}
+
+	// Process ZK role claims if available
+	// Note: Currently the Privado verifier only returns the DID, not the full proof data.
+	// When the verifier is enhanced to return proof data, we can extract role claims:
+	// zkClaims, _ := s.zkRoleExtractor.ExtractRoleClaims(proofData)
+	// Then sync memberships based on ZK-attested claims
+	var zkClaims *auth.ZKRoleClaims
+	if s.zkRoleExtractor != nil && user != nil {
+		// TODO: Extract proof data from verified JWZ token when available
+		// For now, zkClaims is nil, so ProcessZKMemberships will be a no-op
+		if zkClaims != nil {
+			if err := s.zkRoleExtractor.ProcessZKMemberships(c.Request.Context(), user.ID, zkClaims); err != nil {
+				log.Printf("Warning: failed to process ZK memberships for %s: %v", userDID, err)
+			}
 		}
 	}
 
@@ -554,6 +573,78 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		TokenType:    "Bearer",
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
+}
+
+// IntrospectRequest represents the request body for /introspect endpoint (RFC 7662)
+type IntrospectRequest struct {
+	Token         string `form:"token" binding:"required"`
+	TokenTypeHint string `form:"token_type_hint"` // Optional: "access_token" or "refresh_token"
+}
+
+// IntrospectResponse represents the response from /introspect endpoint (RFC 7662)
+type IntrospectResponse struct {
+	Active    bool   `json:"active"`
+	Sub       string `json:"sub,omitempty"`        // Subject (user DID)
+	Exp       int64  `json:"exp,omitempty"`        // Expiration time
+	Iat       int64  `json:"iat,omitempty"`        // Issued at time
+	TokenType string `json:"token_type,omitempty"` // "access_token" or "refresh_token"
+	KYC       bool   `json:"kyc,omitempty"`        // KYC status (only for access tokens)
+}
+
+// handleIntrospect handles POST /introspect - token introspection per RFC 7662
+// Allows clients to validate tokens and retrieve basic token metadata
+func (s *Server) handleIntrospect(c *gin.Context) {
+	var req IntrospectRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: token is required"})
+		return
+	}
+
+	// Try to validate as access token first
+	accessClaims, accessErr := s.jwtService.ValidateAccessToken(req.Token)
+	if accessErr == nil && accessClaims != nil {
+		// Check if token is revoked
+		tokenID := auth.HashToken(req.Token)
+		isRevoked, _ := s.db.IsAccessTokenRevoked(c.Request.Context(), tokenID)
+		if isRevoked {
+			c.JSON(http.StatusOK, IntrospectResponse{Active: false})
+			return
+		}
+
+		c.JSON(http.StatusOK, IntrospectResponse{
+			Active:    true,
+			Sub:       accessClaims.Subject,
+			Exp:       accessClaims.ExpiresAt.Unix(),
+			Iat:       accessClaims.IssuedAt.Unix(),
+			TokenType: "access_token",
+			KYC:       accessClaims.KYC,
+		})
+		return
+	}
+
+	// Try to validate as refresh token
+	refreshClaims, refreshErr := s.jwtService.ValidateRefreshToken(req.Token)
+	if refreshErr == nil && refreshClaims != nil {
+		// Check if refresh token is revoked
+		tokenHash := auth.HashToken(req.Token)
+		storedToken, err := s.db.GetRefreshToken(c.Request.Context(), tokenHash)
+		if err != nil || storedToken == nil || storedToken.Revoked {
+			c.JSON(http.StatusOK, IntrospectResponse{Active: false})
+			return
+		}
+
+		c.JSON(http.StatusOK, IntrospectResponse{
+			Active:    true,
+			Sub:       refreshClaims.Subject,
+			Exp:       refreshClaims.ExpiresAt.Unix(),
+			Iat:       refreshClaims.IssuedAt.Unix(),
+			TokenType: "refresh_token",
+		})
+		return
+	}
+
+	// Token is invalid or expired
+	c.JSON(http.StatusOK, IntrospectResponse{Active: false})
 }
 
 // handleRevoke handles POST /revoke - revokes refresh and optionally access tokens

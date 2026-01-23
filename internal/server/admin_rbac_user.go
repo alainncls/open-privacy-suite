@@ -121,6 +121,45 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	c.JSON(http.StatusOK, links)
 }
 
+func (s *Server) deleteRBACUser(c *gin.Context) {
+	userID := c.Param("user_id")
+
+	// Check if user exists
+	user, err := s.db.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	// Delete all memberships for this user first
+	memberships, err := s.db.ListUserMemberships(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, membership := range memberships {
+		if err := s.db.DeleteMembership(c.Request.Context(), membership.ID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership: " + err.Error()})
+			return
+		}
+	}
+
+	// Delete the user
+	if err := s.db.DeleteUser(c.Request.Context(), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Invalidate cache for this user
+	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
+
+	c.JSON(http.StatusOK, gin.H{"message": "user deleted"})
+}
+
 // Membership handlers
 
 func (s *Server) listUserMemberships(c *gin.Context) {

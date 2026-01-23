@@ -24,6 +24,12 @@ type SessionManager interface {
 	// CompleteSession marks a session as completed with tokens.
 	CompleteSession(sessionID, accessToken, refreshToken string) error
 
+	// ListSessions returns information about all active sessions.
+	ListSessions() []*auth.SessionInfo
+
+	// Count returns the current number of sessions.
+	Count() int64
+
 	// Stop stops the cleanup goroutine.
 	Stop()
 }
