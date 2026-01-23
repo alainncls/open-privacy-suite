@@ -234,6 +234,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 
 	// Store the link in the database
 	if err := s.db.LinkEthAddress(c.Request.Context(), userDID, normalizedAddr, req.Signature, messageHash); err != nil {
+		log.Printf("Error linking address %s for user %s: %v", normalizedAddr, userDID, err)
 		respondInternalError(c, "failed to link address")
 		return
 	}
@@ -267,6 +268,7 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	// Get linked addresses
 	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), userDID)
 	if err != nil {
+		log.Printf("Error getting addresses for user %s: %v", userDID, err)
 		respondInternalError(c, "failed to get addresses")
 		return
 	}

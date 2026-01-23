@@ -22,7 +22,7 @@ interface AuthState {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const [state, setState] = useState<AuthState>({
     step: 'init',
     sessionId: null,
@@ -33,10 +33,12 @@ export function LoginPage() {
 
   // Redirect if already authenticated
   useEffect(() => {
+    console.log('[LoginPage] Auth check:', { isAuthenticated, isLoading });
     if (isAuthenticated) {
+      console.log('[LoginPage] Already authenticated, redirecting to /link-wallet');
       navigate('/link-wallet');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, isLoading]);
 
   // Start auth request
   const startAuth = useCallback(async () => {

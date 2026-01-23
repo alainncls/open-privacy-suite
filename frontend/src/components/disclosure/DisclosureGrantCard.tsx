@@ -83,20 +83,20 @@ export function DisclosureGrantCard({
 
   return (
     <>
-      <Card variant="glass" className={isActive ? '' : 'opacity-75'}>
+      <Card variant="default" className={isActive ? '' : 'opacity-75'}>
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                isActive ? 'bg-green-500/20' : 'bg-white/10'
+                isActive ? 'bg-[#DCFCE7]' : 'bg-[#F1F5F9]'
               }`}>
-                <Key className={`w-5 h-5 ${isActive ? 'text-green-400' : 'text-white/40'}`} />
+                <Key className={`w-5 h-5 ${isActive ? 'text-[#166534]' : 'text-[#94A3B8]'}`} />
               </div>
               <div>
                 <CardTitle className="text-base">
                   Data Access Grant
                 </CardTitle>
-                <div className="text-white/60 text-sm mt-0.5">
+                <div className="text-[#6B7280] text-sm mt-0.5">
                   ID: {grant.id.slice(0, 8)}...
                 </div>
               </div>
@@ -108,7 +108,7 @@ export function DisclosureGrantCard({
         <CardContent className="space-y-4">
           {/* Scope */}
           <div>
-            <label className="text-xs text-white/50 uppercase tracking-wide mb-2 block">
+            <label className="text-xs text-[#94A3B8] uppercase tracking-wide mb-2 block">
               Granted Access
             </label>
             <div className="flex flex-wrap gap-2">
@@ -122,23 +122,23 @@ export function DisclosureGrantCard({
 
           {/* Validity Period */}
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm text-white/70">
+            <div className="flex items-center gap-2 text-sm text-[#6B7280]">
               <Clock className="w-4 h-4" />
               <span>Valid: {formatDate(grant.valid_from)} - {formatDate(grant.valid_until)}</span>
             </div>
             {getTimeRemaining() && (
-              <p className="text-sm text-green-400 ml-6">{getTimeRemaining()}</p>
+              <p className="text-sm text-[#166534] ml-6">{getTimeRemaining()}</p>
             )}
           </div>
 
           {/* Revocation Info */}
           {isRevoked && grant.revoked_at && (
-            <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <p className="text-sm text-red-400">
+            <div className="p-3 bg-[#FEE2E2] border border-[#FECACA] rounded-lg">
+              <p className="text-sm text-[#991B1B]">
                 Revoked on {formatDate(grant.revoked_at)}
               </p>
               {grant.revoke_reason && (
-                <p className="text-sm text-white/70 mt-1">
+                <p className="text-sm text-[#374151] mt-1">
                   Reason: {grant.revoke_reason}
                 </p>
               )}
@@ -146,7 +146,7 @@ export function DisclosureGrantCard({
           )}
 
           {/* Timestamps */}
-          <div className="text-xs text-white/40 pt-2 border-t border-white/10">
+          <div className="text-xs text-[#94A3B8] pt-2 border-t border-[#E2E8F0]">
             Granted on {formatDate(grant.created_at)}
           </div>
 
@@ -173,7 +173,7 @@ export function DisclosureGrantCard({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <AlertTriangle className="w-5 h-5 text-[#991B1B]" />
               Revoke Data Access
             </DialogTitle>
             <DialogDescription>
@@ -184,7 +184,7 @@ export function DisclosureGrantCard({
 
           <div className="py-4">
             <div className="mb-4 space-y-2">
-              <p className="text-sm text-white/60">Access being revoked:</p>
+              <p className="text-sm text-[#6B7280]">Access being revoked:</p>
               <div className="flex flex-wrap gap-2">
                 {grant.scope.map((scope) => (
                   <Badge key={scope} variant="outline" className="text-xs">
@@ -194,7 +194,7 @@ export function DisclosureGrantCard({
               </div>
             </div>
 
-            <label className="text-sm text-white/70 block mb-2">
+            <label className="text-sm text-[#6B7280] block mb-2">
               Reason (optional)
             </label>
             <Textarea

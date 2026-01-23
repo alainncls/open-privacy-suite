@@ -75,17 +75,17 @@ export function DisclosureRequestCard({
 
   return (
     <>
-      <Card variant="glass" className="overflow-hidden">
+      <Card variant="default" className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary-500/20 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-primary-400" />
+              <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+                <Shield className="w-5 h-5 text-[#8950FA]" />
               </div>
               <div>
                 <CardTitle className="text-base">{request.requester_name}</CardTitle>
                 {request.requester_org && (
-                  <div className="flex items-center gap-1 text-white/60 text-sm mt-0.5">
+                  <div className="flex items-center gap-1 text-[#6B7280] text-sm mt-0.5">
                     <Building2 className="w-3 h-3" />
                     <span>{request.requester_org}</span>
                   </div>
@@ -101,29 +101,29 @@ export function DisclosureRequestCard({
         <CardContent className="space-y-4">
           {/* Purpose */}
           <div>
-            <label className="text-xs text-white/50 uppercase tracking-wide">Purpose</label>
-            <p className="text-white/90 text-sm mt-1">{request.purpose}</p>
+            <label className="text-xs text-[#94A3B8] uppercase tracking-wide">Purpose</label>
+            <p className="text-[#0F0F0F] text-sm mt-1">{request.purpose}</p>
           </div>
 
           {/* Legal Basis */}
           {request.legal_basis && (
             <div>
-              <label className="text-xs text-white/50 uppercase tracking-wide">Legal Basis</label>
-              <p className="text-white/80 text-sm mt-1">{request.legal_basis}</p>
+              <label className="text-xs text-[#94A3B8] uppercase tracking-wide">Legal Basis</label>
+              <p className="text-[#374151] text-sm mt-1">{request.legal_basis}</p>
             </div>
           )}
 
           {/* Reference */}
           {request.request_reference && (
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-white/40" />
-              <span className="text-white/60 text-sm">Ref: {request.request_reference}</span>
+              <FileText className="w-4 h-4 text-[#94A3B8]" />
+              <span className="text-[#6B7280] text-sm">Ref: {request.request_reference}</span>
             </div>
           )}
 
           {/* Scope */}
           <div>
-            <label className="text-xs text-white/50 uppercase tracking-wide mb-2 block">
+            <label className="text-xs text-[#94A3B8] uppercase tracking-wide mb-2 block">
               Requested Data Access
             </label>
             <div className="flex flex-wrap gap-2">
@@ -144,7 +144,7 @@ export function DisclosureRequestCard({
           {/* Disclosure Level */}
           {request.disclosure_level && (
             <div>
-              <label className="text-xs text-white/50 uppercase tracking-wide mb-2 block">
+              <label className="text-xs text-[#94A3B8] uppercase tracking-wide mb-2 block">
                 Address Visibility
               </label>
               <div
@@ -164,7 +164,7 @@ export function DisclosureRequestCard({
                   {DISCLOSURE_LEVEL_LABELS[request.disclosure_level]}
                 </Badge>
               </div>
-              <p className="text-xs text-white/50 mt-1">
+              <p className="text-xs text-[#94A3B8] mt-1">
                 {DISCLOSURE_LEVEL_DESCRIPTIONS[request.disclosure_level]}
               </p>
             </div>
@@ -172,7 +172,7 @@ export function DisclosureRequestCard({
 
           {/* Validity Period */}
           <div className="flex items-center gap-4 text-sm">
-            <div className="flex items-center gap-2 text-white/60">
+            <div className="flex items-center gap-2 text-[#6B7280]">
               <Clock className="w-4 h-4" />
               <span>
                 {request.valid_from && request.valid_until
@@ -185,18 +185,18 @@ export function DisclosureRequestCard({
           </div>
 
           {/* Request ID and Timestamps */}
-          <div className="text-xs text-white/40 pt-2 border-t border-white/10 space-y-1">
+          <div className="text-xs text-[#94A3B8] pt-2 border-t border-[#E2E8F0] space-y-1">
             <div className="flex items-center justify-between">
               <span>Requested on {formatDate(request.created_at)}</span>
             </div>
             <div className="flex items-center gap-2 font-mono">
-              <span className="text-white/30">ID:</span>
-              <span className="text-white/50">{request.id}</span>
+              <span className="text-[#CBD5E1]">ID:</span>
+              <span className="text-[#94A3B8]">{request.id}</span>
             </div>
             {request.user_id && (
               <div className="flex items-center gap-2 font-mono">
-                <span className="text-white/30">Target User:</span>
-                <span className="text-white/50">{request.user_id}</span>
+                <span className="text-[#CBD5E1]">Target User:</span>
+                <span className="text-[#94A3B8]">{request.user_id}</span>
               </div>
             )}
           </div>
@@ -238,7 +238,7 @@ export function DisclosureRequestCard({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-400" />
+              <AlertTriangle className="w-5 h-5 text-[#CA8A04]" />
               Approve Disclosure Request
             </DialogTitle>
             <DialogDescription>
@@ -249,7 +249,7 @@ export function DisclosureRequestCard({
 
           <div className="py-4 space-y-3">
             <div>
-              <p className="text-sm text-white/60">Data that will be accessible:</p>
+              <p className="text-sm text-[#6B7280]">Data that will be accessible:</p>
               <div className="flex flex-wrap gap-2 mt-1">
                 {request.scope.map((scope) => (
                   <Badge key={scope} variant="outline" className="text-xs">
@@ -260,7 +260,7 @@ export function DisclosureRequestCard({
             </div>
             {request.disclosure_level && (
               <div>
-                <p className="text-sm text-white/60">Address visibility:</p>
+                <p className="text-sm text-[#6B7280]">Address visibility:</p>
                 <div className="mt-1">
                   <Badge
                     variant={
@@ -274,7 +274,7 @@ export function DisclosureRequestCard({
                   >
                     {DISCLOSURE_LEVEL_LABELS[request.disclosure_level]}
                   </Badge>
-                  <p className="text-xs text-white/50 mt-1">
+                  <p className="text-xs text-[#94A3B8] mt-1">
                     {DISCLOSURE_LEVEL_DESCRIPTIONS[request.disclosure_level]}
                   </p>
                 </div>
@@ -313,7 +313,7 @@ export function DisclosureRequestCard({
           </DialogHeader>
 
           <div className="py-4">
-            <label className="text-sm text-white/70 block mb-2">
+            <label className="text-sm text-[#6B7280] block mb-2">
               Reason (optional)
             </label>
             <Textarea
