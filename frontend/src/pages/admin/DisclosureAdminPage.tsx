@@ -91,12 +91,12 @@ export function DisclosureAdminPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-lg shadow-primary-500/30">
-            <Shield className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+            <Shield className="w-5 h-5 text-[#8950FA]" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold text-white/95">Disclosure Management</h1>
-            <p className="text-white/60 text-sm">
+            <h1 className="text-2xl font-semibold text-[#0F0F0F]">Disclosure Management</h1>
+            <p className="text-[#6B7280] text-sm">
               Create and manage data disclosure requests
             </p>
           </div>
@@ -105,9 +105,9 @@ export function DisclosureAdminPage() {
 
       {/* Error/Success Messages */}
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-          <p className="text-red-400 text-sm flex-1">{error}</p>
+        <div className="p-4 bg-[#FEE2E2] border border-[#FECACA] rounded-lg flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0" />
+          <p className="text-[#991B1B] text-sm flex-1">{error}</p>
           <Button
             onClick={() => setError(null)}
             variant="ghost"
@@ -119,9 +119,9 @@ export function DisclosureAdminPage() {
       )}
 
       {successMessage && (
-        <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-3">
-          <Check className="w-5 h-5 text-green-400 flex-shrink-0" />
-          <p className="text-green-400 text-sm flex-1">{successMessage}</p>
+        <div className="p-4 bg-[#DCFCE7] border border-[#BBF7D0] rounded-lg flex items-center gap-3">
+          <Check className="w-5 h-5 text-[#166534] flex-shrink-0" />
+          <p className="text-[#166534] text-sm flex-1">{successMessage}</p>
           <Button
             onClick={() => setSuccessMessage(null)}
             variant="ghost"
@@ -134,58 +134,58 @@ export function DisclosureAdminPage() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card variant="glass" className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">
-              <Clock className="w-4 h-4 text-yellow-400" />
+            <div className="w-8 h-8 rounded-lg bg-[#FEF9C3] flex items-center justify-center">
+              <Clock className="w-4 h-4 text-[#854D0E]" />
             </div>
             <div>
-              <p className="text-2xl font-semibold text-white/95">{pendingRequests.length}</p>
-              <p className="text-xs text-white/50">Pending</p>
+              <p className="text-2xl font-semibold text-[#0F0F0F]">{pendingRequests.length}</p>
+              <p className="text-xs text-[#6B7280]">Pending</p>
             </div>
           </div>
         </Card>
-        <Card variant="glass" className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-              <Check className="w-4 h-4 text-green-400" />
+            <div className="w-8 h-8 rounded-lg bg-[#DCFCE7] flex items-center justify-center">
+              <Check className="w-4 h-4 text-[#166534]" />
             </div>
             <div>
-              <p className="text-2xl font-semibold text-white/95">{approvedRequests.length}</p>
-              <p className="text-xs text-white/50">Approved</p>
+              <p className="text-2xl font-semibold text-[#0F0F0F]">{approvedRequests.length}</p>
+              <p className="text-xs text-[#6B7280]">Approved</p>
             </div>
           </div>
         </Card>
-        <Card variant="glass" className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center">
-              <X className="w-4 h-4 text-red-400" />
+            <div className="w-8 h-8 rounded-lg bg-[#FEE2E2] flex items-center justify-center">
+              <X className="w-4 h-4 text-[#991B1B]" />
             </div>
             <div>
-              <p className="text-2xl font-semibold text-white/95">{rejectedRequests.length}</p>
-              <p className="text-xs text-white/50">Rejected</p>
+              <p className="text-2xl font-semibold text-[#0F0F0F]">{rejectedRequests.length}</p>
+              <p className="text-xs text-[#6B7280]">Rejected</p>
             </div>
           </div>
         </Card>
-        <Card variant="glass" className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center">
-              <X className="w-4 h-4 text-orange-400" />
+            <div className="w-8 h-8 rounded-lg bg-[#FFEDD5] flex items-center justify-center">
+              <X className="w-4 h-4 text-[#9A3412]" />
             </div>
             <div>
-              <p className="text-2xl font-semibold text-white/95">{revokedRequests.length}</p>
-              <p className="text-xs text-white/50">Revoked</p>
+              <p className="text-2xl font-semibold text-[#0F0F0F]">{revokedRequests.length}</p>
+              <p className="text-xs text-[#6B7280]">Revoked</p>
             </div>
           </div>
         </Card>
-        <Card variant="glass" className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-              <FileText className="w-4 h-4 text-white/40" />
+            <div className="w-8 h-8 rounded-lg bg-[#F1F5F9] flex items-center justify-center">
+              <FileText className="w-4 h-4 text-[#94A3B8]" />
             </div>
             <div>
-              <p className="text-2xl font-semibold text-white/95">{expiredRequests.length}</p>
-              <p className="text-xs text-white/50">Expired</p>
+              <p className="text-2xl font-semibold text-[#0F0F0F]">{expiredRequests.length}</p>
+              <p className="text-xs text-[#6B7280]">Expired</p>
             </div>
           </div>
         </Card>
@@ -221,23 +221,24 @@ export function DisclosureAdminPage() {
         {/* All Requests Tab */}
         <TabsContent value="requests" className="mt-0">
           {isLoading ? (
-            <Card variant="glass">
+            <Card>
               <CardContent className="py-12 text-center">
-                <RefreshCw className="w-8 h-8 text-white/40 animate-spin mx-auto mb-3" />
-                <p className="text-white/60">Loading disclosure requests...</p>
+                <RefreshCw className="w-8 h-8 text-[#94A3B8] animate-spin mx-auto mb-3" />
+                <p className="text-[#6B7280]">Loading disclosure requests...</p>
               </CardContent>
             </Card>
           ) : requests.length === 0 ? (
-            <Card variant="glass">
+            <Card>
               <CardContent className="py-12 text-center">
-                <Shield className="w-12 h-12 text-white/20 mx-auto mb-3" />
-                <p className="text-white/60">No disclosure requests yet</p>
-                <p className="text-white/40 text-sm mt-1">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F5F3FF] flex items-center justify-center">
+                  <Shield className="w-8 h-8 text-[#94A3B8]" />
+                </div>
+                <p className="text-[#6B7280]">No disclosure requests yet</p>
+                <p className="text-[#94A3B8] text-sm mt-1">
                   Create a new request to get started
                 </p>
                 <Button
                   onClick={() => setActiveTab('create')}
-                  variant="glassPrimary"
                   className="mt-4"
                 >
                   <Plus className="w-4 h-4 mr-2" />
@@ -250,7 +251,7 @@ export function DisclosureAdminPage() {
               {/* Pending Requests */}
               {pendingRequests.length > 0 && (
                 <div>
-                  <h3 className="text-lg font-medium text-white/90 mb-3 flex items-center gap-2">
+                  <h3 className="text-lg font-medium text-[#0F0F0F] mb-3 flex items-center gap-2">
                     {getStatusIcon('pending')}
                     Pending Requests
                     <Badge variant="warning">{pendingRequests.length}</Badge>
@@ -270,7 +271,7 @@ export function DisclosureAdminPage() {
               {/* Approved Requests */}
               {approvedRequests.length > 0 && (
                 <div>
-                  <h3 className="text-lg font-medium text-white/90 mb-3 flex items-center gap-2">
+                  <h3 className="text-lg font-medium text-[#0F0F0F] mb-3 flex items-center gap-2">
                     {getStatusIcon('approved')}
                     Approved Requests
                     <Badge variant="success">{approvedRequests.length}</Badge>
@@ -289,7 +290,7 @@ export function DisclosureAdminPage() {
 
               {/* Other Requests (collapsed by default) */}
               {(rejectedRequests.length > 0 || revokedRequests.length > 0 || expiredRequests.length > 0) && (
-                <Card variant="glass">
+                <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Other Requests</CardTitle>
                     <CardDescription>
@@ -300,15 +301,15 @@ export function DisclosureAdminPage() {
                     {[...rejectedRequests, ...revokedRequests, ...expiredRequests].map((request) => (
                       <div
                         key={request.id}
-                        className="p-4 bg-white/5 rounded-lg border border-white/10"
+                        className="p-4 bg-[#F1F5F9] rounded-lg border border-[#E2E8F0]"
                       >
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-white/90 font-medium">{request.requester_name}</p>
+                            <p className="text-[#0F0F0F] font-medium">{request.requester_name}</p>
                             {request.requester_org && (
-                              <p className="text-white/50 text-sm">{request.requester_org}</p>
+                              <p className="text-[#6B7280] text-sm">{request.requester_org}</p>
                             )}
-                            <p className="text-white/40 text-xs mt-1">{request.purpose}</p>
+                            <p className="text-[#94A3B8] text-xs mt-1">{request.purpose}</p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant={STATUS_VARIANTS[request.status]}>
