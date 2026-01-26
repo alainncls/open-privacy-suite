@@ -11,6 +11,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -43,19 +44,20 @@ const (
 )
 
 type Server struct {
-	db               *db.DB
-	rbacAccessCtrl   *rbac.AccessController
-	proxy            *proxy.Proxy
-	privadoVerifier  PrivadoVerifier
-	jwtService       *auth.JWTService
-	sessionStore     SessionManager
-	challengeStore   *ChallengeStore
-	rateLimiter      RateLimiterInterface
-	authRateLimiter  *AuthRateLimiter
-	config           *config.Config
-	ensResolver      *ens.Resolver
-	jsonrpcProcessor *JSONRPCProcessor
-	zkRoleExtractor  *auth.ZKRoleExtractor
+	db                *db.DB
+	rbacAccessCtrl    *rbac.AccessController
+	proxy             *proxy.Proxy
+	privadoVerifier   PrivadoVerifier
+	jwtService        *auth.JWTService
+	sessionStore      SessionManager
+	challengeStore    *ChallengeStore
+	rateLimiter       RateLimiterInterface
+	authRateLimiter   *AuthRateLimiter
+	disclosureService *disclosure.DefaultService
+	config            *config.Config
+	ensResolver       *ens.Resolver
+	jsonrpcProcessor  *JSONRPCProcessor
+	zkRoleExtractor   *auth.ZKRoleExtractor
 }
 
 // DB returns the database instance (for testing)
@@ -169,19 +171,23 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize ZK role extractor for extracting role claims from Privado proofs
 	zkRoleExtractor := auth.NewZKRoleExtractor(database)
 
+	// Initialize disclosure service
+	disclosureService := disclosure.NewService(database)
+
 	s := &Server{
-		db:              database,
-		rbacAccessCtrl:  rbacAccessCtrl,
-		proxy:           proxySvc,
-		privadoVerifier: privadoVerifier,
-		jwtService:      jwtService,
-		sessionStore:    sessionStore,
-		challengeStore:  challengeStore,
-		rateLimiter:     rateLimiter,
-		authRateLimiter: authRateLimiter,
-		config:          cfg,
-		ensResolver:     ensResolver,
-		zkRoleExtractor: zkRoleExtractor,
+		db:                database,
+		rbacAccessCtrl:    rbacAccessCtrl,
+		proxy:             proxySvc,
+		privadoVerifier:   privadoVerifier,
+		jwtService:        jwtService,
+		sessionStore:      sessionStore,
+		challengeStore:    challengeStore,
+		rateLimiter:       rateLimiter,
+		authRateLimiter:   authRateLimiter,
+		disclosureService: disclosureService,
+		config:            cfg,
+		ensResolver:       ensResolver,
+		zkRoleExtractor:   zkRoleExtractor,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
@@ -304,6 +310,9 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 	router.POST("/rpc", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
+	// User disclosure endpoints - protected by JWT but accessible from external IPs
+	s.registerUserDisclosureRoutes(router)
+
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
 	apiV1 := router.Group("/api/v1")
@@ -329,6 +338,9 @@ func (s *Server) setupRouter() *gin.Engine {
 
 		// RBAC endpoints
 		s.registerRBACRoutes(api)
+
+		// Disclosure admin endpoints
+		s.registerDisclosureRoutes(api)
 	}
 
 	return router
