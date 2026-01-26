@@ -66,7 +66,11 @@ export function createAuthenticatedClient(accessToken: string) {
 export const authApiMethods = {
   // Step 1: Request auth challenge (returns QR code data)
   requestAuth: async (): Promise<AuthRequestResponse> => {
-    const response = await authApi.post<AuthRequestResponse>('/auth/request');
+    // Pass the browser origin so the backend can construct the correct callback URL
+    // This is more reliable than relying on X-Forwarded-Host headers
+    const response = await authApi.post<AuthRequestResponse>('/auth/request', {
+      callback_origin: window.location.origin,
+    });
     return response.data;
   },
 

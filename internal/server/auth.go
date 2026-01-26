@@ -17,6 +17,46 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
+// getCallbackBaseURL determines the base URL for auth callbacks.
+// Priority: callback_origin from request body > dynamic detection from headers > config
+// The callback_origin approach is most reliable as it comes directly from the browser's address bar.
+func (s *Server) getCallbackBaseURL(c *gin.Context, callbackOrigin string) string {
+	// If the frontend passed its origin, use that hostname with the backend port
+	// This ensures the callback URL works from any hostname (localhost, Tailscale, etc.)
+	if callbackOrigin != "" {
+		// Parse the origin to extract the hostname
+		// Origin format: "http://hostname:port" or "https://hostname:port"
+		// We need to replace the frontend port with the backend port
+		if strings.HasPrefix(callbackOrigin, "http://") || strings.HasPrefix(callbackOrigin, "https://") {
+			// Extract proto and host from origin
+			parts := strings.SplitN(callbackOrigin, "://", 2)
+			if len(parts) == 2 {
+				proto := parts[0]
+				hostWithPort := parts[1]
+				// Strip the port from the origin
+				hostname := hostWithPort
+				if colonIdx := strings.LastIndex(hostWithPort, ":"); colonIdx != -1 {
+					// Check for IPv6 literal
+					isIPv6Literal := strings.Contains(hostWithPort, "[")
+					hasPortAfterBracket := !strings.HasSuffix(hostWithPort, "]")
+					if !isIPv6Literal || hasPortAfterBracket {
+						hostname = hostWithPort[:colonIdx]
+					}
+				}
+				// Add the backend port
+				port := s.config.Port
+				if port == "" {
+					port = "8080"
+				}
+				return fmt.Sprintf("%s://%s:%s", proto, hostname, port)
+			}
+		}
+	}
+
+	// Fall back to header-based detection
+	return s.getPublicURL(c)
+}
+
 // getPublicURL extracts the public-facing URL for callbacks.
 // Priority: explicit BASE_URL config > dynamic detection from headers
 func (s *Server) getPublicURL(c *gin.Context) string {
@@ -101,15 +141,30 @@ type AuthVerifyRequest struct {
 	JWZToken  string `json:"jwz_token" binding:"required"`
 }
 
+// AuthRequestBody represents optional request body for /auth/request endpoint
+type AuthRequestBody struct {
+	// CallbackOrigin is the browser's window.location.origin (e.g., "http://max-mac:5173")
+	// Used to construct callback URLs that work from any hostname (localhost, Tailscale, etc.)
+	CallbackOrigin string `json:"callback_origin"`
+}
+
 // handleAuthRequest handles POST /auth/request - creates authorization request
 // Step 1: Client requests authentication, server creates proof request
 func (s *Server) handleAuthRequest(c *gin.Context) {
+	// Parse optional request body for callback_origin
+	var reqBody AuthRequestBody
+	_ = c.ShouldBindJSON(&reqBody) // Ignore errors - body is optional
+
 	// Generate session ID first (needed for callback URL)
 	sessionID := s.sessionStore.CreateSession(nil) // Create empty session, will update below
 	if sessionID == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "authentication service at capacity, please try again later"})
 		return
 	}
+
+	// Determine the base URL for callback
+	// Priority: callback_origin from request > dynamic detection from headers > config
+	baseURL := s.getCallbackBaseURL(c, reqBody.CallbackOrigin)
 
 	// In development mode with VERIFIER_ID not configured, return a mock session
 	// This allows demo recording and testing without Privado infrastructure
@@ -123,7 +178,6 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		log.Printf("Warning: VERIFIER_ID not configured - returning mock auth session for development")
 
 		// Create a mock auth request so the frontend can render the QR code
-		baseURL := s.getPublicURL(c)
 		callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
 		mockAuthReq := &protocol.AuthorizationRequestMessage{
 			ID:   sessionID,
@@ -147,9 +201,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		return
 	}
 
-	// Build callback URL with session ID using dynamic host detection
-	// This allows the QR code to work from any hostname (localhost, Tailscale, etc.)
-	baseURL := s.getPublicURL(c)
+	// Build callback URL with session ID
 	callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
 
 	var authReq *protocol.AuthorizationRequestMessage
