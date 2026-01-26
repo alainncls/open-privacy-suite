@@ -2,9 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/disclosure"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,13 +23,15 @@ type OwnAddress struct {
 }
 
 // DisclosedAddress represents an address disclosed to the viewer via a grant
+// SECURITY: For non-full disclosures, Address contains the pseudonym or placeholder, NOT the real address
 type DisclosedAddress struct {
-	Address         string     `json:"address"`
+	Address         string     `json:"address"`          // Pseudonym for pseudonymous, "[REDACTED]" for redacted, real for full
+	AddressID       string     `json:"address_id"`       // Opaque identifier for routing (hash of real address)
 	OwnerDID        string     `json:"owner_did"`
 	DisclosureLevel string     `json:"disclosure_level"`
 	GrantID         string     `json:"grant_id"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	ENSName         *string    `json:"ens_name,omitempty"`
+	ENSName         *string    `json:"ens_name,omitempty"` // Only included for full disclosure
 }
 
 // ViewableAddressesResponse is the response for GET /api/v1/explorer/viewable-addresses
@@ -82,6 +89,14 @@ type BatchCheckAddressesResponse struct {
 	Results map[string]AddressVisibility `json:"results"`
 }
 
+// ResolveAddressResponse is returned when resolving an address_id
+type ResolveAddressResponse struct {
+	RealAddress     string `json:"real_address"`
+	DisclosureLevel string `json:"disclosure_level"`
+	GrantID         string `json:"grant_id"`
+	Pseudonym       string `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+}
+
 // registerExplorerRoutes registers the explorer API endpoints
 // These endpoints are designed to be called by the explorer backend (internal, no auth)
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
@@ -93,6 +108,8 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		explorer.GET("/viewable-addresses", s.getViewableAddresses)
 		explorer.GET("/check-address/:address", s.checkAddressVisibility)
 		explorer.POST("/check-addresses", s.batchCheckAddresses)
+		// Resolve address_id to real address (for explorer backend internal use)
+		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
 	}
 }
 
@@ -206,19 +223,44 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 			return nil, err
 		}
 
-		// Determine disclosure level from scope
-		disclosureLevel := "full" // Default to full for now
-		// TODO: Parse scope JSON to determine actual disclosure level
+		// Parse scope JSON to determine disclosure level
+		var scopeData disclosure.Scope
+		disclosureLevel := "full" // Default to full
+		if err := json.Unmarshal(scope, &scopeData); err == nil {
+			if scopeData.DisclosureLevel != "" {
+				disclosureLevel = string(scopeData.DisclosureLevel)
+			}
+		}
 
 		for _, addr := range targetAddresses {
-			result = append(result, DisclosedAddress{
-				Address:         addr.EthAddress,
+			// Generate opaque address ID for routing (hash-based)
+			addressID := generateAddressID(addr.EthAddress, grantID)
+
+			disclosed := DisclosedAddress{
+				AddressID:       addressID,
 				OwnerDID:        targetDID,
 				DisclosureLevel: disclosureLevel,
 				GrantID:         grantID,
 				ExpiresAt:       &expiresAt,
-				ENSName:         addr.ENSName,
-			})
+			}
+
+			// SECURITY: Only include real address for full disclosure
+			switch disclosureLevel {
+			case "full":
+				disclosed.Address = addr.EthAddress
+				disclosed.ENSName = addr.ENSName
+			case "pseudonymous":
+				disclosed.Address = generatePseudonym(addr.EthAddress)
+				// Don't include ENS name - it could reveal identity
+			case "redacted":
+				disclosed.Address = "[REDACTED]"
+				// Don't include ENS name
+			default:
+				// SECURITY: Fail-safe - treat unknown disclosure levels as redacted
+				disclosed.Address = "[REDACTED]"
+			}
+
+			result = append(result, disclosed)
 		}
 	}
 
@@ -289,6 +331,90 @@ func (s *Server) batchCheckAddresses(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, BatchCheckAddressesResponse{Results: results})
+}
+
+// resolveAddressID resolves an opaque address_id back to the real address
+// GET /api/v1/explorer/grant/:grant_id/resolve/:address_id
+// This is an internal API for the explorer backend to fetch data for disclosed addresses.
+// SECURITY: This endpoint is localhost-only and returns the real address for backend use.
+// The explorer backend must apply appropriate redaction before sending to the frontend.
+func (s *Server) resolveAddressID(c *gin.Context) {
+	grantID := c.Param("grant_id")
+	addressID := c.Param("address_id")
+
+	if grantID == "" || addressID == "" {
+		respondBadRequest(c, "grant_id and address_id are required")
+		return
+	}
+
+	// Look up the grant with its request
+	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
+	if err != nil || grantWithRequest == nil {
+		respondNotFound(c, "grant not found")
+		return
+	}
+
+	grant := grantWithRequest.Grant
+
+	// Check grant is still valid
+	if grant.RevokedAt != nil {
+		respondForbidden(c, "grant has been revoked")
+		return
+	}
+	if grant.ExpiresAt.Before(time.Now()) {
+		respondForbidden(c, "grant has expired")
+		return
+	}
+
+	// Get target DID from the request
+	request := grantWithRequest.Request
+	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
+	if err != nil || targetUser == nil {
+		respondInternalError(c, "failed to get target user")
+		return
+	}
+	targetDID := targetUser.ExternalID
+
+	// Get all addresses for the target DID
+	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
+	if err != nil {
+		respondInternalError(c, "failed to get addresses")
+		return
+	}
+
+	// Find the address matching the address_id
+	var realAddress string
+	for _, addr := range addresses {
+		computedID := generateAddressID(addr.EthAddress, grantID)
+		if computedID == addressID {
+			realAddress = addr.EthAddress
+			break
+		}
+	}
+
+	if realAddress == "" {
+		respondNotFound(c, "address not found for this grant")
+		return
+	}
+
+	// Get disclosure level from grant scope
+	disclosureLevel := "full"
+	if grant.Scope.DisclosureLevel != "" {
+		disclosureLevel = string(grant.Scope.DisclosureLevel)
+	}
+
+	response := ResolveAddressResponse{
+		RealAddress:     realAddress,
+		DisclosureLevel: disclosureLevel,
+		GrantID:         grantID,
+	}
+
+	// Include pseudonym for pseudonymous disclosures
+	if disclosureLevel == "pseudonymous" {
+		response.Pseudonym = generatePseudonym(realAddress)
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // calculateAddressVisibility determines the visibility of a target address for a viewer (wallet-based)
@@ -362,15 +488,30 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 		if err == nil && grantWithRequest != nil {
 			grant := grantWithRequest.Grant
 
-			// Determine disclosure level from grant scope
+			// Map disclosure level from grant scope to visibility level
 			level := VisibilityFull
-			// TODO: Parse grant.Scope to determine actual level
+			var pseudonym *string
+			switch grant.Scope.DisclosureLevel {
+			case disclosure.DisclosurePseudonymous:
+				level = VisibilityPseudonymous
+				// Generate a consistent pseudonym based on the address
+				p := generatePseudonym(targetAddress)
+				pseudonym = &p
+			case disclosure.DisclosureRedacted:
+				level = VisibilityRedacted
+			case disclosure.DisclosureFull, "":
+				level = VisibilityFull
+			default:
+				// SECURITY: Fail-safe - treat unknown disclosure levels as redacted
+				level = VisibilityRedacted
+			}
 
 			return AddressVisibility{
 				Address:   targetAddress,
 				Visible:   true,
 				Level:     level,
 				Reason:    ReasonDisclosureGrant,
+				Pseudonym: pseudonym,
 				GrantID:   &grant.ID,
 				ExpiresAt: &grant.ExpiresAt,
 			}
@@ -379,4 +520,40 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 
 	// 5. No access
 	return result
+}
+
+// generateAddressID creates an opaque identifier for an address that can be used for routing.
+// The ID is derived from the address and grant ID to be unique per grant.
+// SECURITY: This allows routing without revealing the real address.
+func generateAddressID(address string, grantID string) string {
+	// Create a hash-based ID that's consistent but doesn't reveal the address
+	// Using first 16 chars of hex-encoded hash for reasonable uniqueness
+	data := strings.ToLower(address) + ":" + grantID
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:8]) // 16 hex chars
+}
+
+// generatePseudonym creates a consistent pseudonym for an address.
+// The pseudonym is derived from the address hash to ensure the same address
+// always produces the same pseudonym within a session.
+func generatePseudonym(address string) string {
+	// Use first 4 bytes of address (after 0x) to create a letter-based pseudonym
+	// This creates pseudonyms like "Address-ABCD" where ABCD is derived from address
+	if len(address) < 6 {
+		return "Address-Unknown"
+	}
+
+	// Extract hex characters and convert to letters (A-P for 0-F)
+	hex := strings.ToUpper(address[2:6])
+	letters := make([]byte, 4)
+	for i, c := range hex {
+		if c >= '0' && c <= '9' {
+			letters[i] = byte('A' + (c - '0'))
+		} else if c >= 'A' && c <= 'F' {
+			letters[i] = byte('K' + (c - 'A'))
+		} else {
+			letters[i] = 'X'
+		}
+	}
+	return "Address-" + string(letters)
 }

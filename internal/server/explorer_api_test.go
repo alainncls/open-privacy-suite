@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1049,4 +1050,793 @@ func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
 	// Target's address should be their own (body DID = targetDID)
 	assert.True(t, resp.Results[testTargetAddress].Visible)
 	assert.Equal(t, ReasonOwnAddress, resp.Results[testTargetAddress].Reason)
+}
+
+// ============================================================================
+// Test: generateAddressID() - Address ID Generation
+// ============================================================================
+
+func TestGenerateAddressID_Consistency(t *testing.T) {
+	// Same inputs should always produce same output
+	address := "0x1234567890abcdef1234567890abcdef12345678"
+	grantID := "grant-abc-123"
+
+	id1 := generateAddressID(address, grantID)
+	id2 := generateAddressID(address, grantID)
+
+	assert.Equal(t, id1, id2, "generateAddressID should produce consistent results")
+}
+
+func TestGenerateAddressID_Uniqueness(t *testing.T) {
+	tests := []struct {
+		name     string
+		address1 string
+		grant1   string
+		address2 string
+		grant2   string
+	}{
+		{
+			name:     "different addresses same grant",
+			address1: "0x1111111111111111111111111111111111111111",
+			grant1:   "grant-123",
+			address2: "0x2222222222222222222222222222222222222222",
+			grant2:   "grant-123",
+		},
+		{
+			name:     "same address different grants",
+			address1: "0x1111111111111111111111111111111111111111",
+			grant1:   "grant-123",
+			address2: "0x1111111111111111111111111111111111111111",
+			grant2:   "grant-456",
+		},
+		{
+			name:     "both different",
+			address1: "0x1111111111111111111111111111111111111111",
+			grant1:   "grant-123",
+			address2: "0x2222222222222222222222222222222222222222",
+			grant2:   "grant-456",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id1 := generateAddressID(tt.address1, tt.grant1)
+			id2 := generateAddressID(tt.address2, tt.grant2)
+			assert.NotEqual(t, id1, id2, "Different inputs should produce different IDs")
+		})
+	}
+}
+
+func TestGenerateAddressID_CaseInsensitive(t *testing.T) {
+	// Address case should not affect the ID (addresses are normalized to lowercase)
+	lowerAddr := "0xabcdef1234567890abcdef1234567890abcdef12"
+	upperAddr := "0xABCDEF1234567890ABCDEF1234567890ABCDEF12"
+	grantID := "grant-123"
+
+	idLower := generateAddressID(lowerAddr, grantID)
+	idUpper := generateAddressID(upperAddr, grantID)
+
+	assert.Equal(t, idLower, idUpper, "Address IDs should be case-insensitive")
+}
+
+func TestGenerateAddressID_NoAddressLeakage(t *testing.T) {
+	// The generated ID should not contain the original address
+	address := "0xdeadbeef12345678deadbeef12345678deadbeef"
+	grantID := "grant-xyz"
+
+	id := generateAddressID(address, grantID)
+
+	// ID should not contain address parts
+	assert.NotContains(t, id, "deadbeef")
+	assert.NotContains(t, id, "12345678")
+	assert.NotContains(t, id, "0x")
+
+	// ID should be hex encoded (16 chars from 8 bytes)
+	assert.Len(t, id, 16, "Address ID should be 16 hex characters")
+}
+
+func TestGenerateAddressID_Format(t *testing.T) {
+	id := generateAddressID("0x1234567890abcdef1234567890abcdef12345678", "grant-123")
+
+	// Should be valid hex
+	for _, c := range id {
+		assert.True(t, (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
+			"ID should only contain valid hex characters")
+	}
+}
+
+// ============================================================================
+// Test: generatePseudonym() - Pseudonym Generation
+// ============================================================================
+
+func TestGeneratePseudonym_Consistency(t *testing.T) {
+	address := "0x1234567890abcdef1234567890abcdef12345678"
+
+	p1 := generatePseudonym(address)
+	p2 := generatePseudonym(address)
+
+	assert.Equal(t, p1, p2, "generatePseudonym should produce consistent results")
+}
+
+func TestGeneratePseudonym_Format(t *testing.T) {
+	tests := []struct {
+		name     string
+		address  string
+		expected string
+	}{
+		{
+			name:     "address starting with 0x1234",
+			address:  "0x1234567890abcdef1234567890abcdef12345678",
+			expected: "Address-BCDE", // 1->B, 2->C, 3->D, 4->E
+		},
+		{
+			name:     "address starting with 0xABCD",
+			address:  "0xABCD567890abcdef1234567890abcdef12345678",
+			expected: "Address-KLMN", // A->K, B->L, C->M, D->N
+		},
+		{
+			name:     "address starting with 0x0000",
+			address:  "0x0000567890abcdef1234567890abcdef12345678",
+			expected: "Address-AAAA", // 0->A, 0->A, 0->A, 0->A
+		},
+		{
+			name:     "address starting with 0xFFFF",
+			address:  "0xFFFF567890abcdef1234567890abcdef12345678",
+			expected: "Address-PPPP", // F->P, F->P, F->P, F->P
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generatePseudonym(tt.address)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGeneratePseudonym_NoAddressLeakage(t *testing.T) {
+	address := "0xdeadbeef12345678deadbeef12345678deadbeef"
+	pseudonym := generatePseudonym(address)
+
+	// Pseudonym should not contain address parts
+	assert.NotContains(t, pseudonym, "dead")
+	assert.NotContains(t, pseudonym, "beef")
+	assert.NotContains(t, pseudonym, "0x")
+
+	// Should have "Address-" prefix
+	assert.True(t, len(pseudonym) > 8)
+	assert.Equal(t, "Address-", pseudonym[:8])
+}
+
+func TestGeneratePseudonym_DifferentAddresses(t *testing.T) {
+	addr1 := "0x1111111111111111111111111111111111111111"
+	addr2 := "0x2222222222222222222222222222222222222222"
+	addr3 := "0xAAAA111111111111111111111111111111111111"
+
+	p1 := generatePseudonym(addr1)
+	p2 := generatePseudonym(addr2)
+	p3 := generatePseudonym(addr3)
+
+	assert.NotEqual(t, p1, p2)
+	assert.NotEqual(t, p1, p3)
+	assert.NotEqual(t, p2, p3)
+}
+
+func TestGeneratePseudonym_ShortAddress(t *testing.T) {
+	// Edge case: address too short
+	shortAddr := "0x12"
+	result := generatePseudonym(shortAddr)
+	assert.Equal(t, "Address-Unknown", result)
+
+	// Very short
+	veryShort := "0x"
+	result2 := generatePseudonym(veryShort)
+	assert.Equal(t, "Address-Unknown", result2)
+}
+
+func TestGeneratePseudonym_CaseInsensitive(t *testing.T) {
+	lower := "0xabcd567890abcdef1234567890abcdef12345678"
+	upper := "0xABCD567890ABCDEF1234567890ABCDEF12345678"
+
+	pLower := generatePseudonym(lower)
+	pUpper := generatePseudonym(upper)
+
+	assert.Equal(t, pLower, pUpper, "Pseudonyms should be case-insensitive")
+}
+
+// ============================================================================
+// Test: getDisclosedAddressesForViewer() - Disclosure Level Redaction
+// ============================================================================
+
+// createDisclosureGrantWithLevel creates a grant with a specific disclosure level
+func createDisclosureGrantWithLevel(t *testing.T, database *db.DB, requesterDID, targetUserID string, level disclosure.DisclosureLevel, expiresAt time.Time) string {
+	ctx := context.Background()
+
+	// Create default org if not exists
+	defaultOrgID := "00000000-0000-0000-0000-000000000001"
+	_, _ = database.Conn().ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
+		defaultOrgID, "default", "Default Organization")
+
+	// Create disclosure request with scope
+	requestID := uuid.New().String()
+	scope := fmt.Sprintf(`{"disclosure_level":"%s"}`, level)
+	_, err := database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_requests
+		(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, $5, 'Test grant', 'approved', NOW())`,
+		requestID, requesterDID, targetUserID, defaultOrgID, scope)
+	require.NoError(t, err)
+
+	// Create grant with disclosure level scope
+	grantID := uuid.New().String()
+	_, err = database.Conn().ExecContext(ctx,
+		`INSERT INTO disclosure_grants
+		(id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, $3, $4, NOW(), $5)`,
+		grantID, requestID, "test-hash-"+grantID, scope, expiresAt)
+	require.NoError(t, err)
+
+	return grantID
+}
+
+func TestGetDisclosedAddressesForViewer_FullDisclosure(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create full disclosure grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should have 1 disclosed address with REAL address visible
+	require.Len(t, resp.DisclosedAddresses, 1)
+	disclosed := resp.DisclosedAddresses[0]
+
+	assert.Equal(t, testTargetAddress, disclosed.Address, "Full disclosure should show real address")
+	assert.Equal(t, "full", disclosed.DisclosureLevel)
+	assert.NotEmpty(t, disclosed.AddressID)
+	assert.Equal(t, testTargetDID, disclosed.OwnerDID)
+}
+
+func TestGetDisclosedAddressesForViewer_PseudonymousDisclosure(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create pseudonymous disclosure grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should have 1 disclosed address with PSEUDONYM (not real address)
+	require.Len(t, resp.DisclosedAddresses, 1)
+	disclosed := resp.DisclosedAddresses[0]
+
+	// SECURITY: Real address should NOT be returned
+	assert.NotEqual(t, testTargetAddress, disclosed.Address, "Pseudonymous should NOT show real address")
+	assert.True(t, strings.HasPrefix(disclosed.Address, "Address-"), "Should show pseudonym")
+	assert.Equal(t, "pseudonymous", disclosed.DisclosureLevel)
+	assert.NotEmpty(t, disclosed.AddressID)
+	assert.Nil(t, disclosed.ENSName, "ENS name should not be included for pseudonymous")
+}
+
+func TestGetDisclosedAddressesForViewer_RedactedDisclosure(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create redacted disclosure grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should have 1 disclosed address with [REDACTED]
+	require.Len(t, resp.DisclosedAddresses, 1)
+	disclosed := resp.DisclosedAddresses[0]
+
+	// SECURITY: Real address should NOT be returned
+	assert.NotEqual(t, testTargetAddress, disclosed.Address, "Redacted should NOT show real address")
+	assert.Equal(t, "[REDACTED]", disclosed.Address, "Should show [REDACTED] placeholder")
+	assert.Equal(t, "redacted", disclosed.DisclosureLevel)
+	assert.NotEmpty(t, disclosed.AddressID)
+	assert.Nil(t, disclosed.ENSName, "ENS name should not be included for redacted")
+}
+
+func TestCheckAddressVisibility_PseudonymousGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user and link wallet
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create pseudonymous disclosure grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp CheckAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.Visible)
+	assert.Equal(t, VisibilityPseudonymous, resp.Level)
+	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
+	assert.NotNil(t, resp.Pseudonym)
+	assert.True(t, strings.HasPrefix(*resp.Pseudonym, "Address-"))
+	assert.NotNil(t, resp.GrantID)
+	assert.Equal(t, grantID, *resp.GrantID)
+}
+
+func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user and link wallet
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create redacted disclosure grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp CheckAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.Visible)
+	assert.Equal(t, VisibilityRedacted, resp.Level)
+	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
+	assert.Nil(t, resp.Pseudonym, "Redacted should not have pseudonym")
+	assert.NotNil(t, resp.GrantID)
+	assert.Equal(t, grantID, *resp.GrantID)
+}
+
+// ============================================================================
+// Test: resolveAddressID() - Address Resolution Endpoint
+// ============================================================================
+
+// setupExplorerRouterWithResolve creates a router with all explorer routes including resolve
+func setupExplorerRouterWithResolve(srv *Server) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	// Explorer routes without localhost middleware for unit tests
+	explorer := router.Group("/api/v1/explorer")
+	explorer.GET("/viewable-addresses", srv.getViewableAddresses)
+	explorer.GET("/check-address/:address", srv.checkAddressVisibility)
+	explorer.POST("/check-addresses", srv.batchCheckAddresses)
+	explorer.GET("/grant/:grant_id/resolve/:address_id", srv.resolveAddressID)
+
+	return router
+}
+
+func TestResolveAddressID_Success(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	// Get address ID from viewable-addresses
+	addressID := generateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ResolveAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, testTargetAddress, resp.RealAddress)
+	assert.Equal(t, "full", resp.DisclosureLevel)
+	assert.Equal(t, grantID, resp.GrantID)
+}
+
+func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create pseudonymous grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
+
+	addressID := generateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ResolveAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, testTargetAddress, resp.RealAddress)
+	assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
+	assert.NotEmpty(t, resp.Pseudonym, "Pseudonymous should include pseudonym")
+	assert.True(t, strings.HasPrefix(resp.Pseudonym, "Address-"))
+}
+
+func TestResolveAddressID_InvalidGrantID(t *testing.T) {
+	srv, _ := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/invalid-grant-id/resolve/some-address-id", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "grant not found")
+}
+
+func TestResolveAddressID_InvalidAddressID(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	// Use wrong address ID
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/invalid-address-id", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "address not found")
+}
+
+func TestResolveAddressID_ExpiredGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create EXPIRED grant
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(-1*time.Hour))
+
+	addressID := generateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "expired")
+}
+
+func TestResolveAddressID_RevokedGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+	ctx := context.Background()
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create grant (valid expiry)
+	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	// Revoke the grant
+	_, err := database.Conn().ExecContext(ctx,
+		"UPDATE disclosure_grants SET revoked_at = NOW(), revoked_reason = 'test revocation' WHERE id = $1",
+		grantID)
+	require.NoError(t, err)
+
+	addressID := generateAddressID(testTargetAddress, grantID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "revoked")
+}
+
+func TestResolveAddressID_MissingParams(t *testing.T) {
+	srv, _ := setupTestServerForExplorer(t)
+	router := setupExplorerRouterWithResolve(srv)
+
+	// Missing address_id
+	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/some-grant-id/resolve/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Should get 404 due to route not matching (empty address_id)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ============================================================================
+// Test: Security - Address Leakage Prevention
+// ============================================================================
+
+func TestSecurity_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address with unique identifier
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	sensitiveAddress := "0xsensitive12345678901234567890123456789012"
+	linkEthAddressToUser(t, database, testTargetDID, sensitiveAddress)
+
+	// Create pseudonymous grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Response body should NOT contain the sensitive address
+	body := w.Body.String()
+	assert.NotContains(t, body, sensitiveAddress, "SECURITY VIOLATION: Real address leaked in pseudonymous mode")
+	assert.NotContains(t, body, "sensitive12345", "SECURITY VIOLATION: Real address parts leaked")
+}
+
+func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link address with unique identifier
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	sensitiveAddress := "0xsecret999999999999999999999999999999999999"
+	linkEthAddressToUser(t, database, testTargetDID, sensitiveAddress)
+
+	// Create redacted grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Response body should NOT contain the sensitive address
+	body := w.Body.String()
+	assert.NotContains(t, body, sensitiveAddress, "SECURITY VIOLATION: Real address leaked in redacted mode")
+	assert.NotContains(t, body, "secret9999", "SECURITY VIOLATION: Real address parts leaked")
+	assert.Contains(t, body, "[REDACTED]", "Should show redacted placeholder")
+}
+
+// ============================================================================
+// Test: Edge Cases
+// ============================================================================
+
+func TestEdgeCase_EmptyDID(t *testing.T) {
+	srv, _ := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Query with empty DID should be rejected
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?did=", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestEdgeCase_EmptyWallet(t *testing.T) {
+	srv, _ := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Query with empty wallet should be rejected
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet=", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestEdgeCase_NullAddressInGrant(t *testing.T) {
+	// This tests the scenario where a user might have no linked addresses
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user WITHOUT linking any addresses
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+
+	// Create grant
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should have 0 disclosed addresses (target has no addresses)
+	assert.Len(t, resp.DisclosedAddresses, 0)
+}
+
+func TestEdgeCase_MultipleAddressesSameGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Create target user and link MULTIPLE addresses
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	addr1 := "0xaddr111111111111111111111111111111111111"
+	addr2 := "0xaddr222222222222222222222222222222222222"
+	addr3 := "0xaddr333333333333333333333333333333333333"
+	linkEthAddressToUser(t, database, testTargetDID, addr1)
+	linkEthAddressToUser(t, database, testTargetDID, addr2)
+	linkEthAddressToUser(t, database, testTargetDID, addr3)
+
+	// Create single grant (should cover all addresses)
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should have 3 disclosed addresses, all pseudonymous
+	assert.Len(t, resp.DisclosedAddresses, 3)
+
+	// All should be pseudonymous and have different pseudonyms
+	pseudonyms := make(map[string]bool)
+	for _, disclosed := range resp.DisclosedAddresses {
+		assert.True(t, strings.HasPrefix(disclosed.Address, "Address-"))
+		assert.Equal(t, "pseudonymous", disclosed.DisclosureLevel)
+		pseudonyms[disclosed.Address] = true
+	}
+
+	// All pseudonyms should be unique (different addresses = different pseudonyms)
+	assert.Len(t, pseudonyms, 3, "Each address should have unique pseudonym")
+}
+
+func TestEdgeCase_ConcurrentAccess(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer and target
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
+
+	// Make concurrent requests
+	done := make(chan bool, 10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
 }
