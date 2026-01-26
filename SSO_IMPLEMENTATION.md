@@ -6,45 +6,52 @@ This document describes the Single Sign-On (SSO) implementation between the priv
 
 ## Architecture
 
+The SSO implementation uses an OAuth 2.0 Authorization Code flow with a QR code polling mechanism for mobile app authentication.
+
 ```
 ┌─────────────────┐     ┌─────────────────────┐     ┌──────────────┐
 │  Block Explorer │     │    Privacy-Proxy    │     │  Privado App │
 │   (OAuth Client)│     │  (Identity Provider)│     │  (ZK Proofs) │
 └────────┬────────┘     └──────────┬──────────┘     └──────┬───────┘
          │                         │                        │
-         │ 1. User clicks          │                        │
-         │    "Sign in with        │                        │
-         │     Privado"            │                        │
-         │                         │                        │
-         │ 2. Redirect to          │                        │
-         │    /oauth/authorize     │                        │
+         │ 1. POST /api/auth/login │                        │
          │ ───────────────────────>│                        │
          │                         │                        │
-         │                         │ 3. Show QR code        │
-         │                         │    (auth request)      │
-         │                         │ ──────────────────────>│
+         │ 2. GET /oauth/authorize │                        │
+         │ ───────────────────────>│                        │
          │                         │                        │
-         │                         │ 4. User scans,         │
+         │ 3. Return QR code data  │                        │
+         │    (auth request)       │                        │
+         │ <───────────────────────│                        │
+         │                         │                        │
+         │ 4. Display QR code      │                        │
+         │    to user              │                        │
+         │                         │                        │
+         │                         │ 5. User scans QR,      │
          │                         │    submits ZK proof    │
          │                         │ <──────────────────────│
          │                         │                        │
-         │ 5. Redirect to          │                        │
-         │    explorer callback    │                        │
+         │ 6. Poll session status  │                        │
+         │    GET /oauth/session   │                        │
+         │ ───────────────────────>│                        │
+         │                         │                        │
+         │ 7. Return redirect URL  │                        │
          │    with ?code=xxx       │                        │
          │ <───────────────────────│                        │
          │                         │                        │
-         │ 6. POST /oauth/token    │                        │
+         │ 8. Follow redirect to   │                        │
+         │    /api/auth/callback   │                        │
+         │                         │                        │
+         │ 9. POST /oauth/token    │                        │
          │    (exchange code)      │                        │
          │ ───────────────────────>│                        │
          │                         │                        │
-         │ 7. Return JWT           │                        │
-         │    (contains DID)       │                        │
+         │ 10. Return JWT          │                        │
+         │     (contains DID)      │                        │
          │ <───────────────────────│                        │
          │                         │                        │
-         │ 8. Use JWT for API      │                        │
-         │    calls (DID-based     │                        │
-         │    disclosure access)   │                        │
-         │ ───────────────────────>│                        │
+         │ 11. Set auth cookie,    │                        │
+         │     redirect to app     │                        │
          │                         │                        │
 ```
 
@@ -85,31 +92,117 @@ Exchanges authorization code for JWT.
 }
 ```
 
+### GET /oauth/session/:id/status
+
+Polls the status of an OAuth session (for QR-code flows).
+
+**Response (pending):**
+```json
+{
+  "completed": false
+}
+```
+
+**Response (completed):**
+```json
+{
+  "completed": true,
+  "redirect_url": "http://explorer/api/auth/callback?code=xxx&state=yyy"
+}
+```
+
 ## Explorer Endpoints (OAuth Client)
 
-### GET /auth/privado/login
+### POST /api/auth/login
 
-Initiates SSO login.
+Initiates SSO login via QR code flow.
+
+**Request Body:**
+```json
+{
+  "return_url": "/address/0x123"  // optional
+}
+```
+
+**Response:**
+```json
+{
+  "oauth_session_id": "abc-123",
+  "auth_session_id": "def-456",
+  "auth_request": { /* Privado auth request for QR code */ },
+  "state": "random-state-token"
+}
+```
 
 **Behavior:**
-1. Generates random `state` parameter
-2. Stores state in session/cookie
-3. Redirects to privacy-proxy `/oauth/authorize`
+1. Calls privacy-proxy `/oauth/authorize` to initiate session
+2. Returns auth request data for QR code display
+3. Frontend polls `/api/auth/session/:id/status` until complete
 
-### GET /auth/privado/callback
+### GET /api/auth/callback
 
-Handles OAuth callback.
+Handles OAuth callback after QR code authentication.
 
 **Parameters:**
-- `code`: Authorization code
-- `state`: Must match stored state
+- `code`: Authorization code from privacy-proxy
+- `state`: CSRF protection token
 
 **Behavior:**
 1. Validates state parameter
 2. Exchanges code for JWT via POST /oauth/token
-3. Extracts DID from JWT
-4. Stores JWT in session/cookie
-5. Redirects to original page
+3. Extracts DID from JWT claims
+4. Sets `auth_token` cookie with JWT
+5. Redirects to original page (from state)
+
+### GET /api/auth/status
+
+Returns current authentication status.
+
+**Response (not authenticated):**
+```json
+{
+  "authenticated": false
+}
+```
+
+**Response (authenticated):**
+```json
+{
+  "authenticated": true,
+  "did": "did:polygonid:polygon:amoy:xxx",
+  "expires_at": 1706300000
+}
+```
+
+### POST /api/auth/logout
+
+Clears authentication cookie.
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### GET /api/auth/session/:id/status
+
+Polls the status of an SSO login session.
+
+**Response (pending):**
+```json
+{
+  "completed": false
+}
+```
+
+**Response (completed):**
+```json
+{
+  "completed": true,
+  "redirect_url": "http://explorer/api/auth/callback?code=xxx&state=yyy"
+}
+```
 
 ## Security Considerations
 
@@ -123,12 +216,21 @@ Handles OAuth callback.
 
 ### Privacy-Proxy
 
-No additional configuration needed - uses existing auth config.
+No additional configuration needed - uses existing auth and JWT configuration.
 
 ### Explorer
 
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PRIVACY_PROXY_URL` | Privacy-proxy base URL | (disabled if empty) |
+| `SSO_CLIENT_ID` | OAuth client ID | `explorer` |
+| `SSO_REDIRECT_URI` | OAuth callback URL | `http://localhost:8080/api/auth/callback` |
+
 ```bash
-PRIVACY_PROXY_URL=http://localhost:8080  # Enables SSO feature
+# Enable SSO with privacy-proxy
+export PRIVACY_PROXY_URL=http://localhost:8080
+export SSO_CLIENT_ID=explorer
+export SSO_REDIRECT_URI=http://localhost:8080/api/auth/callback
 ```
 
 ## Usage Modes

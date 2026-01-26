@@ -50,6 +50,47 @@ Privacy Proxy
 Ethereum Node
 ```
 
+## Explorer Integration
+
+Privacy-proxy can be integrated with block explorers to provide privacy-aware address visibility. The explorer calls internal APIs to check which addresses a user can view based on their identity and disclosure grants.
+
+```
+┌─────────────────┐     ┌─────────────────────┐     ┌──────────────┐
+│  Block Explorer │     │    Privacy-Proxy    │     │  Privado App │
+│   (OAuth Client)│     │  (Identity Provider)│     │  (ZK Proofs) │
+└────────┬────────┘     └──────────┬──────────┘     └──────┬───────┘
+         │                         │                        │
+         │ 1. User clicks          │                        │
+         │    "Sign in with        │                        │
+         │     Privado"            │                        │
+         │                         │                        │
+         │ 2. GET /oauth/authorize │                        │
+         │ ───────────────────────>│                        │
+         │                         │                        │
+         │                         │ 3. Show QR code        │
+         │                         │    (auth request)      │
+         │                         │ ──────────────────────>│
+         │                         │                        │
+         │                         │ 4. User scans,         │
+         │                         │    submits ZK proof    │
+         │                         │ <──────────────────────│
+         │                         │                        │
+         │ 5. Redirect with        │                        │
+         │    ?code=xxx&state=yyy  │                        │
+         │ <───────────────────────│                        │
+         │                         │                        │
+         │ 6. POST /oauth/token    │                        │
+         │    (exchange code)      │                        │
+         │ ───────────────────────>│                        │
+         │                         │                        │
+         │ 7. Return JWT           │                        │
+         │    (contains DID)       │                        │
+         │ <───────────────────────│                        │
+         │                         │                        │
+```
+
+See [SSO_IMPLEMENTATION.md](SSO_IMPLEMENTATION.md) for detailed OAuth/SSO documentation.
+
 ## Authentication Flow
 
 1. **Request Authentication** (`POST /auth/request`):
