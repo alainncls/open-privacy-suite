@@ -20,7 +20,7 @@ import OrganizationList from './components/rbac/OrganizationList';
 import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
-import { DisclosureAdminPage } from './pages/admin/DisclosureAdminPage';
+import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -61,7 +61,7 @@ function Root() {
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
                   </Route>
-                  <Route path="disclosure" element={<DisclosureAdminPage />} />
+                  <Route path="disclosure" element={<AdminDisclosureDashboard />} />
                 </Route>
 
                 {/* Default redirect to login */}

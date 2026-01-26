@@ -163,6 +163,85 @@ func (m *mockStore) ExpirePendingRequests(ctx context.Context) (int64, error) {
 	return m.expirePendingReqCount, nil
 }
 
+func (m *mockStore) DeleteRequest(ctx context.Context, id string) error {
+	req, exists := m.requests[id]
+	if !exists {
+		return ErrRequestNotFound
+	}
+	if req.Status != StatusPending {
+		return ErrRequestNotPending
+	}
+	delete(m.requests, id)
+	return nil
+}
+
+func (m *mockStore) ListRequestsWithFilter(ctx context.Context, filter *DisclosureFilter) (*DisclosureListResult, error) {
+	var results []*RequestWithDetails
+	for _, req := range m.requests {
+		if filter.Status != nil && req.Status != *filter.Status {
+			continue
+		}
+		if filter.TargetUserID != "" && req.TargetUserID != filter.TargetUserID {
+			continue
+		}
+		if filter.OrgID != "" && req.OrgID != filter.OrgID {
+			continue
+		}
+		results = append(results, &RequestWithDetails{Request: req, TargetDID: "did:test:target"})
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	return &DisclosureListResult{
+		Requests: results,
+		Total:    int64(len(results)),
+		Limit:    limit,
+		Offset:   filter.Offset,
+	}, nil
+}
+
+func (m *mockStore) ListGrantsWithFilter(ctx context.Context, filter *DisclosureFilter) (*GrantListResult, error) {
+	var results []*GrantWithRequest
+	for _, grant := range m.grants {
+		req := m.requests[grant.RequestID]
+		if req != nil {
+			results = append(results, &GrantWithRequest{Grant: grant, Request: req})
+		}
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	return &GrantListResult{
+		Grants: results,
+		Total:  int64(len(results)),
+		Limit:  limit,
+		Offset: filter.Offset,
+	}, nil
+}
+
+func (m *mockStore) ListAllRequestsForUser(ctx context.Context, targetUserID string) ([]*RequestWithDetails, error) {
+	var results []*RequestWithDetails
+	for _, req := range m.requests {
+		if req.TargetUserID == targetUserID {
+			results = append(results, &RequestWithDetails{Request: req, TargetDID: "did:test:target"})
+		}
+	}
+	return results, nil
+}
+
+func (m *mockStore) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([]*GrantWithRequest, error) {
+	var results []*GrantWithRequest
+	for _, grant := range m.grants {
+		req := m.requests[grant.RequestID]
+		if req != nil && req.TargetUserID == targetUserID {
+			results = append(results, &GrantWithRequest{Grant: grant, Request: req})
+		}
+	}
+	return results, nil
+}
+
 // Grant operations
 
 func (m *mockStore) CreateGrant(ctx context.Context, grant *Grant) error {

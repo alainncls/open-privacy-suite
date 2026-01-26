@@ -1,0 +1,746 @@
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  Shield,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  RefreshCw,
+  AlertTriangle,
+  Trash2,
+  ShieldOff,
+  Users,
+} from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { DisclosureFilters } from '@/components/disclosure/DisclosureFilters';
+import { disclosureApi } from '@/api/disclosure';
+import type {
+  DisclosureFilter,
+  DisclosureListResult,
+  GrantListResult,
+  DisclosureRequest,
+  DisclosureGrant,
+} from '@/types/disclosure';
+import {
+  DISCLOSURE_LEVEL_LABELS,
+} from '@/types/disclosure';
+
+type TabValue = 'active' | 'pending' | 'inactive';
+
+interface AdminDisclosureDashboardProps {
+  onError?: (error: string) => void;
+}
+
+export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardProps) {
+  const [activeTab, setActiveTab] = useState<TabValue>('pending');
+  const [requestsResult, setRequestsResult] = useState<DisclosureListResult | null>(null);
+  const [grantsResult, setGrantsResult] = useState<GrantListResult | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<DisclosureFilter>({});
+
+  // Action state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [selectedGrantId, setSelectedGrantId] = useState<string | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<DisclosureRequest | null>(null);
+  const [selectedGrant, setSelectedGrant] = useState<DisclosureGrant | null>(null);
+  const [revokeReason, setRevokeReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const [requestsRes, grantsRes] = await Promise.all([
+        disclosureApi.admin.listRequestsWithFilter(filter),
+        disclosureApi.admin.listGrantsWithFilter(filter),
+      ]);
+      setRequestsResult(requestsRes.data);
+      setGrantsResult(grantsRes.data);
+    } catch (err) {
+      console.error('Failed to fetch disclosure data:', err);
+      const errorMsg = 'Failed to load disclosure data. Please try again.';
+      setError(errorMsg);
+      onError?.(errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filter, onError]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Categorize data
+  const { pendingRequests, activeGrants, inactiveGrants, stats } = useMemo(() => {
+    const now = new Date();
+    const requests = requestsResult?.requests || [];
+    const grants = grantsResult?.grants || [];
+
+    // Pending requests
+    const pending = requests.filter((r) => r.status === 'pending');
+
+    // Active grants
+    const active = grants.filter((g) => {
+      const isRevoked = !!(g as any).revoked_at;
+      const isExpired = new Date(g.valid_until || '') < now;
+      return !isRevoked && !isExpired;
+    });
+
+    // Inactive grants (revoked or expired)
+    const inactive = grants.filter((g) => {
+      const isRevoked = !!(g as any).revoked_at;
+      const isExpired = new Date(g.valid_until || '') < now;
+      return isRevoked || isExpired;
+    });
+
+    return {
+      pendingRequests: pending,
+      activeGrants: active,
+      inactiveGrants: inactive,
+      stats: {
+        totalRequests: requestsResult?.total || 0,
+        totalGrants: grantsResult?.total || 0,
+        pendingCount: pending.length,
+        activeCount: active.length,
+        inactiveCount: inactive.length,
+      },
+    };
+  }, [requestsResult, grantsResult]);
+
+  const handleDeleteRequest = async () => {
+    if (!selectedRequestId) return;
+    setActionLoading(true);
+    try {
+      await disclosureApi.admin.deleteRequest(selectedRequestId);
+      setDeleteDialogOpen(false);
+      setSelectedRequestId(null);
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to delete request:', err);
+      onError?.('Failed to delete request');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRevokeGrant = async () => {
+    if (!selectedGrantId) return;
+    setActionLoading(true);
+    try {
+      await disclosureApi.admin.revokeGrant(selectedGrantId, revokeReason || undefined);
+      setRevokeDialogOpen(false);
+      setSelectedGrantId(null);
+      setRevokeReason('');
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to revoke grant:', err);
+      onError?.('Failed to revoke grant');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleString();
+  };
+
+  const truncateId = (id: string) => {
+    if (id.length <= 12) return id;
+    return `${id.slice(0, 8)}...`;
+  };
+
+  const renderTabCount = (count: number, variant: 'warning' | 'success' | 'secondary') => {
+    if (count === 0) return null;
+    return (
+      <Badge variant={variant} className="ml-2 text-xs px-1.5 py-0.5">
+        {count}
+      </Badge>
+    );
+  };
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <AlertTriangle className="w-12 h-12 text-[#CA8A04] mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">Error Loading Data</h3>
+          <p className="text-[#6B7280] mb-4">{error}</p>
+          <Button onClick={fetchData}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Try Again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+            <Shield className="w-5 h-5 text-[#8950FA]" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-[#0F0F0F]">Disclosure Management</h1>
+            <p className="text-sm text-[#6B7280]">
+              Admin view of all disclosure requests and grants
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={fetchData} disabled={isLoading}>
+          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <Users className="w-8 h-8 text-[#8950FA]" />
+              <div>
+                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.totalRequests}</p>
+                <p className="text-xs text-[#6B7280]">Total Requests</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <Clock className="w-8 h-8 text-[#CA8A04]" />
+              <div>
+                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.pendingCount}</p>
+                <p className="text-xs text-[#6B7280]">Pending</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-8 h-8 text-[#166534]" />
+              <div>
+                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.activeCount}</p>
+                <p className="text-xs text-[#6B7280]">Active Grants</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <XCircle className="w-8 h-8 text-[#94A3B8]" />
+              <div>
+                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.inactiveCount}</p>
+                <p className="text-xs text-[#6B7280]">Inactive</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters */}
+      <DisclosureFilters
+        filter={filter}
+        onFilterChange={setFilter}
+        showStatusFilter={false}
+      />
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+        <TabsList className="grid w-full grid-cols-3 max-w-md">
+          <TabsTrigger value="pending" className="flex items-center">
+            <Clock className="w-4 h-4 mr-2" />
+            Pending
+            {renderTabCount(pendingRequests.length, 'warning')}
+          </TabsTrigger>
+          <TabsTrigger value="active" className="flex items-center">
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            Active
+            {renderTabCount(activeGrants.length, 'success')}
+          </TabsTrigger>
+          <TabsTrigger value="inactive" className="flex items-center">
+            <XCircle className="w-4 h-4 mr-2" />
+            Inactive
+            {renderTabCount(inactiveGrants.length, 'secondary')}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Pending Requests Tab */}
+        <TabsContent value="pending">
+          {isLoading ? (
+            <Card className="animate-pulse">
+              <CardContent className="py-8">
+                <div className="h-32 bg-[#E2E8F0] rounded" />
+              </CardContent>
+            </Card>
+          ) : pendingRequests.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Clock className="w-12 h-12 text-[#CA8A04] mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Pending Requests</h3>
+                <p className="text-[#6B7280]">
+                  All disclosure requests have been processed.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[200px]">Target User</TableHead>
+                    <TableHead className="w-[200px]">Requester DID</TableHead>
+                    <TableHead>Level</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingRequests.map((request) => (
+                    <TableRow
+                      key={request.id}
+                      className="cursor-pointer hover:bg-[#F1F5F9]"
+                      onClick={() => {
+                        setSelectedRequest(request);
+                        setSelectedGrant(null);
+                        setDetailDialogOpen(true);
+                      }}
+                    >
+                      <TableCell className="font-mono text-xs max-w-[200px] truncate" title={request.user_id}>
+                        {request.user_id}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs max-w-[200px] truncate" title={request.requester_did}>
+                        {request.requester_did || '-'}
+                      </TableCell>
+                      <TableCell>
+                        {request.disclosure_level && (
+                          <Badge
+                            variant={
+                              request.disclosure_level === 'full'
+                                ? 'destructive'
+                                : request.disclosure_level === 'redacted'
+                                ? 'success'
+                                : 'warning'
+                            }
+                          >
+                            {DISCLOSURE_LEVEL_LABELS[request.disclosure_level]}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-[#6B7280]">
+                        {formatDate(request.created_at)}
+                      </TableCell>
+                      <TableCell className="text-sm text-[#6B7280]">
+                        {formatDate(request.valid_until)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedRequestId(request.id);
+                            setDeleteDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          Remove
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Active Grants Tab */}
+        <TabsContent value="active">
+          {isLoading ? (
+            <Card className="animate-pulse">
+              <CardContent className="py-8">
+                <div className="h-32 bg-[#E2E8F0] rounded" />
+              </CardContent>
+            </Card>
+          ) : activeGrants.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <CheckCircle2 className="w-12 h-12 text-[#166534] mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Active Grants</h3>
+                <p className="text-[#6B7280]">
+                  There are no active disclosure grants.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[200px]">Target User</TableHead>
+                    <TableHead className="w-[200px]">Requester DID</TableHead>
+                    <TableHead>Level</TableHead>
+                    <TableHead>Granted</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activeGrants.map((grant) => (
+                    <TableRow
+                      key={grant.id}
+                      className="cursor-pointer hover:bg-[#F1F5F9]"
+                      onClick={() => {
+                        setSelectedGrant(grant);
+                        setSelectedRequest(null);
+                        setDetailDialogOpen(true);
+                      }}
+                    >
+                      <TableCell className="font-mono text-xs max-w-[200px] truncate" title={grant.user_id}>
+                        {grant.user_id}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs max-w-[200px] truncate" title={grant.requester_did}>
+                        {grant.requester_did || '-'}
+                      </TableCell>
+                      <TableCell>
+                        {grant.disclosure_level && (
+                          <Badge
+                            variant={
+                              grant.disclosure_level === 'full'
+                                ? 'destructive'
+                                : grant.disclosure_level === 'redacted'
+                                ? 'success'
+                                : 'warning'
+                            }
+                          >
+                            {DISCLOSURE_LEVEL_LABELS[grant.disclosure_level]}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-[#6B7280]">
+                        {formatDate(grant.granted_at)}
+                      </TableCell>
+                      <TableCell className="text-sm text-[#6B7280]">
+                        {formatDate(grant.valid_until)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedGrantId(grant.id);
+                            setRevokeDialogOpen(true);
+                          }}
+                        >
+                          <ShieldOff className="w-4 h-4 mr-1" />
+                          Revoke
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Inactive Tab */}
+        <TabsContent value="inactive">
+          {isLoading ? (
+            <Card className="animate-pulse">
+              <CardContent className="py-8">
+                <div className="h-32 bg-[#E2E8F0] rounded" />
+              </CardContent>
+            </Card>
+          ) : inactiveGrants.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <XCircle className="w-12 h-12 text-[#94A3B8] mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Inactive Grants</h3>
+                <p className="text-[#6B7280]">
+                  There are no revoked or expired grants.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[200px]">Target User</TableHead>
+                    <TableHead className="w-[200px]">Requester DID</TableHead>
+                    <TableHead>Granted</TableHead>
+                    <TableHead>Ended</TableHead>
+                    <TableHead>Reason</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inactiveGrants.map((grant) => {
+                    const isRevoked = !!grant.revoked_at;
+                    const status = isRevoked ? 'Revoked' : 'Expired';
+                    const endDate = isRevoked ? grant.revoked_at : grant.valid_until;
+
+                    return (
+                      <TableRow
+                        key={grant.id}
+                        className="opacity-75 cursor-pointer hover:bg-[#F1F5F9]"
+                        onClick={() => {
+                          setSelectedGrant(grant);
+                          setSelectedRequest(null);
+                          setDetailDialogOpen(true);
+                        }}
+                      >
+                        <TableCell>
+                          <Badge variant={isRevoked ? 'destructive' : 'secondary'}>
+                            {status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs max-w-[200px] truncate" title={grant.user_id}>
+                          {grant.user_id}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs max-w-[200px] truncate" title={grant.requester_did}>
+                          {grant.requester_did || '-'}
+                        </TableCell>
+                        <TableCell className="text-sm text-[#6B7280]">
+                          {formatDate(grant.granted_at)}
+                        </TableCell>
+                        <TableCell className="text-sm text-[#6B7280]">
+                          {formatDate(endDate)}
+                        </TableCell>
+                        <TableCell className="text-sm text-[#6B7280] max-w-[200px] truncate">
+                          {(grant as any).revoke_reason || '-'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-[#CA8A04]" />
+              Remove Pending Request
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove this pending disclosure request?
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false);
+                setSelectedRequestId(null);
+              }}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteRequest}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'Removing...' : 'Remove Request'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke Confirmation Dialog */}
+      <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldOff className="w-5 h-5 text-[#991B1B]" />
+              Revoke Grant
+            </DialogTitle>
+            <DialogDescription>
+              This will immediately revoke the disclosure grant. The requester will
+              lose access to the user's data.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <label className="text-sm text-[#6B7280] block mb-2">
+              Reason (optional)
+            </label>
+            <Textarea
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              placeholder="Enter a reason for revocation..."
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRevokeDialogOpen(false);
+                setSelectedGrantId(null);
+                setRevokeReason('');
+              }}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleRevokeGrant}
+              disabled={actionLoading}
+            >
+              {actionLoading ? 'Revoking...' : 'Revoke Grant'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Detail Dialog */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedRequest ? 'Request Details' : 'Grant Details'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedRequest && (
+              <>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Request ID</label>
+                  <p className="font-mono text-sm break-all">{selectedRequest.id}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Target User ID</label>
+                  <p className="font-mono text-sm break-all">{selectedRequest.user_id}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Requester DID</label>
+                  <p className="font-mono text-sm break-all">{selectedRequest.requester_did || '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Disclosure Level</label>
+                  <p>{selectedRequest.disclosure_level ? DISCLOSURE_LEVEL_LABELS[selectedRequest.disclosure_level] : '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Purpose</label>
+                  <p className="text-sm">{selectedRequest.purpose || '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Legal Basis</label>
+                  <p className="text-sm">{selectedRequest.legal_basis || '-'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Created</label>
+                    <p className="text-sm">{formatDate(selectedRequest.created_at)}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Expires</label>
+                    <p className="text-sm">{formatDate(selectedRequest.valid_until)}</p>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Status</label>
+                  <p className="capitalize">{selectedRequest.status}</p>
+                </div>
+              </>
+            )}
+            {selectedGrant && (
+              <>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Grant ID</label>
+                  <p className="font-mono text-sm break-all">{selectedGrant.id}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Request ID</label>
+                  <p className="font-mono text-sm break-all">{selectedGrant.request_id}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Target User ID</label>
+                  <p className="font-mono text-sm break-all">{selectedGrant.user_id}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Requester DID</label>
+                  <p className="font-mono text-sm break-all">{selectedGrant.requester_did || '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Disclosure Level</label>
+                  <p>{selectedGrant.disclosure_level ? DISCLOSURE_LEVEL_LABELS[selectedGrant.disclosure_level] : '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Reason</label>
+                  <p className="text-sm">{selectedGrant.reason || '-'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Granted At</label>
+                    <p className="text-sm">{formatDate(selectedGrant.granted_at)}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Expires At</label>
+                    <p className="text-sm">{formatDate(selectedGrant.valid_until)}</p>
+                  </div>
+                </div>
+                {selectedGrant.revoked_at && (
+                  <div>
+                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Revoked At</label>
+                    <p className="text-sm">{formatDate(selectedGrant.revoked_at)}</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export default AdminDisclosureDashboard;

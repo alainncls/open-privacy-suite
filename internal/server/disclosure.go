@@ -19,6 +19,11 @@ func (s *Server) registerDisclosureRoutes(api *gin.RouterGroup) {
 		disclosureGroup.POST("/requests", s.createDisclosureRequest)
 		disclosureGroup.GET("/requests", s.listDisclosureRequests)
 		disclosureGroup.GET("/requests/:request_id", s.getDisclosureRequest)
+		disclosureGroup.DELETE("/requests/:request_id", s.deleteDisclosureRequest)
+
+		// Admin grant management
+		disclosureGroup.GET("/grants", s.listDisclosureGrants)
+		disclosureGroup.POST("/grants/:grant_id/revoke", s.adminRevokeDisclosureGrant)
 
 		// Block explorer integration - check if a DID has access to a user's data
 		disclosureGroup.GET("/check-access", s.checkDisclosureAccess)
@@ -39,10 +44,12 @@ func (s *Server) registerUserDisclosureRoutes(router *gin.Engine) {
 	meDisclosure.Use(s.disclosureUserMiddleware())
 	{
 		meDisclosure.GET("/requests", s.getMyDisclosureRequests)
+		meDisclosure.GET("/requests/all", s.getAllMyDisclosureRequests)
 		meDisclosure.POST("/requests/:request_id/approve", s.approveDisclosureRequest)
 		meDisclosure.POST("/requests/:request_id/reject", s.rejectDisclosureRequest)
 		meDisclosure.POST("/requests/:request_id/revoke", s.revokeDisclosureRequest)
 		meDisclosure.GET("/grants", s.getMyActiveGrants)
+		meDisclosure.GET("/grants/all", s.getAllMyGrants)
 	}
 }
 
@@ -117,26 +124,190 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 	c.JSON(http.StatusCreated, req)
 }
 
-// listDisclosureRequests lists disclosure requests for an organization
+// listDisclosureRequests lists disclosure requests with filtering support
 func (s *Server) listDisclosureRequests(c *gin.Context) {
-	orgID := c.Query("org_id")
-	if orgID == "" {
-		orgID = "00000000-0000-0000-0000-000000000001" // Default org
+	filter := &disclosure.DisclosureFilter{}
+
+	// Parse org_id
+	if orgID := c.Query("org_id"); orgID != "" {
+		filter.OrgID = orgID
+	} else {
+		filter.OrgID = "00000000-0000-0000-0000-000000000001" // Default org
 	}
 
-	var status *disclosure.RequestStatus
-	if s := c.Query("status"); s != "" {
-		st := disclosure.RequestStatus(s)
-		status = &st
+	// Parse status
+	if statusStr := c.Query("status"); statusStr != "" {
+		st := disclosure.RequestStatus(statusStr)
+		filter.Status = &st
 	}
 
-	requests, err := s.disclosureService.ListAllRequests(c.Request.Context(), orgID, status)
+	// Parse target_user_id
+	if targetUserID := c.Query("target_user_id"); targetUserID != "" {
+		filter.TargetUserID = targetUserID
+	}
+
+	// Parse requester_did
+	if requesterDID := c.Query("requester_did"); requesterDID != "" {
+		filter.RequesterDID = requesterDID
+	}
+
+	// Parse disclosure_level
+	if levelStr := c.Query("disclosure_level"); levelStr != "" {
+		level := disclosure.DisclosureLevel(levelStr)
+		filter.DisclosureLevel = &level
+	}
+
+	// Parse date_from
+	if dateFromStr := c.Query("date_from"); dateFromStr != "" {
+		dateFrom, err := time.Parse(time.RFC3339, dateFromStr)
+		if err == nil {
+			filter.DateFrom = &dateFrom
+		}
+	}
+
+	// Parse date_to
+	if dateToStr := c.Query("date_to"); dateToStr != "" {
+		dateTo, err := time.Parse(time.RFC3339, dateToStr)
+		if err == nil {
+			filter.DateTo = &dateTo
+		}
+	}
+
+	// Parse limit
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+
+	// Parse offset
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
+			filter.Offset = offset
+		}
+	}
+
+	result, err := s.disclosureService.ListRequestsWithFilter(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, requests)
+	c.JSON(http.StatusOK, result)
+}
+
+// listDisclosureGrants lists disclosure grants with filtering support (admin endpoint)
+func (s *Server) listDisclosureGrants(c *gin.Context) {
+	filter := &disclosure.DisclosureFilter{}
+
+	// Parse org_id
+	if orgID := c.Query("org_id"); orgID != "" {
+		filter.OrgID = orgID
+	}
+
+	// Parse status (for grants: approved = active, revoked, expired)
+	if statusStr := c.Query("status"); statusStr != "" {
+		st := disclosure.RequestStatus(statusStr)
+		filter.Status = &st
+	}
+
+	// Parse target_user_id
+	if targetUserID := c.Query("target_user_id"); targetUserID != "" {
+		filter.TargetUserID = targetUserID
+	}
+
+	// Parse requester_did
+	if requesterDID := c.Query("requester_did"); requesterDID != "" {
+		filter.RequesterDID = requesterDID
+	}
+
+	// Parse disclosure_level
+	if levelStr := c.Query("disclosure_level"); levelStr != "" {
+		level := disclosure.DisclosureLevel(levelStr)
+		filter.DisclosureLevel = &level
+	}
+
+	// Parse date_from
+	if dateFromStr := c.Query("date_from"); dateFromStr != "" {
+		dateFrom, err := time.Parse(time.RFC3339, dateFromStr)
+		if err == nil {
+			filter.DateFrom = &dateFrom
+		}
+	}
+
+	// Parse date_to
+	if dateToStr := c.Query("date_to"); dateToStr != "" {
+		dateTo, err := time.Parse(time.RFC3339, dateToStr)
+		if err == nil {
+			filter.DateTo = &dateTo
+		}
+	}
+
+	// Parse limit
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+
+	// Parse offset
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
+			filter.Offset = offset
+		}
+	}
+
+	result, err := s.disclosureService.ListGrantsWithFilter(c.Request.Context(), filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// deleteDisclosureRequest deletes a pending disclosure request (admin endpoint)
+func (s *Server) deleteDisclosureRequest(c *gin.Context) {
+	requestID := c.Param("request_id")
+
+	err := s.disclosureService.DeletePendingRequest(c.Request.Context(), requestID)
+	if err != nil {
+		if err == disclosure.ErrRequestNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+			return
+		}
+		if err == disclosure.ErrRequestNotPending {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "can only delete pending requests"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+// adminRevokeDisclosureGrant revokes a disclosure grant (admin endpoint)
+func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
+	grantID := c.Param("grant_id")
+
+	var input struct {
+		Reason string `json:"reason"`
+	}
+
+	// Allow empty body - reason is optional
+	_ = c.ShouldBindJSON(&input)
+
+	if err := s.disclosureService.RevokeGrant(c.Request.Context(), grantID, input.Reason); err != nil {
+		if err == disclosure.ErrGrantNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "grant not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 }
 
 // getDisclosureRequest gets a disclosure request by ID
@@ -197,6 +368,19 @@ func (s *Server) getMyDisclosureRequests(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	requests, err := s.disclosureService.GetMyPendingRequests(c.Request.Context(), userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, requests)
+}
+
+// getAllMyDisclosureRequests gets all disclosure requests for the authenticated user (not just pending)
+func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	requests, err := s.disclosureService.GetAllMyRequests(c.Request.Context(), userID.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -334,6 +518,19 @@ func (s *Server) getMyActiveGrants(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	grants, err := s.disclosureService.GetMyActiveGrants(c.Request.Context(), userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, grants)
+}
+
+// getAllMyGrants gets all disclosure grants for the authenticated user's data (not just active)
+func (s *Server) getAllMyGrants(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	grants, err := s.disclosureService.GetAllMyGrants(c.Request.Context(), userID.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

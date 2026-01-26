@@ -14,6 +14,7 @@ export interface DisclosureRequest {
   user_id: string;
   requester_name: string;
   requester_org?: string;
+  requester_did?: string;
   purpose: string;
   scope: DisclosureScope[];
   disclosure_level?: DisclosureLevel;
@@ -24,6 +25,9 @@ export interface DisclosureRequest {
   legal_basis?: string;
   created_at: string;
   updated_at: string;
+  decided_at?: string;
+  decision_reason?: string;
+  active_grant_id?: string;
 }
 
 export interface DisclosureGrant {
@@ -32,10 +36,13 @@ export interface DisclosureGrant {
   user_id: string;
   token_hash: string;
   scope: DisclosureScope[];
+  disclosure_level?: DisclosureLevel;
   valid_from: string;
   valid_until: string;
   revoked_at?: string;
   revoke_reason?: string;
+  requester_did?: string;
+  reason?: string;
   created_at: string;
   updated_at: string;
 }
@@ -164,3 +171,30 @@ export const DISCLOSURE_LEVEL_DESCRIPTIONS: Record<DisclosureLevel, string> = {
 
 // All disclosure levels
 export const ALL_DISCLOSURE_LEVELS: DisclosureLevel[] = ['full', 'pseudonymous', 'redacted'];
+
+// Filter for listing disclosures
+export interface DisclosureFilter {
+  status?: DisclosureRequestStatus;
+  target_user_id?: string;
+  requester_did?: string;
+  disclosure_level?: DisclosureLevel;
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// Result types for filtered listing
+export interface DisclosureListResult {
+  requests: DisclosureRequest[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface GrantListResult {
+  grants: DisclosureGrant[];
+  total: number;
+  limit: number;
+  offset: number;
+}

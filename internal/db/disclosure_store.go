@@ -1016,3 +1016,517 @@ func (d *DB) GetUserExternalID(ctx context.Context, userID string) (string, erro
 	}
 	return externalID, nil
 }
+
+// DeleteDisclosureRequest deletes a pending disclosure request.
+func (d *DB) DeleteDisclosureRequest(ctx context.Context, id string) error {
+	query := `DELETE FROM disclosure_requests WHERE id = $1 AND status = 'pending'`
+	result, err := d.conn.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete disclosure request: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("request not found or not pending")
+	}
+	return nil
+}
+
+func (d *DB) DeleteRequest(ctx context.Context, id string) error {
+	return d.DeleteDisclosureRequest(ctx, id)
+}
+
+// ListDisclosureRequestsWithFilter returns disclosure requests matching the filter criteria.
+func (d *DB) ListDisclosureRequestsWithFilter(ctx context.Context, filter *disclosure.DisclosureFilter) (*disclosure.DisclosureListResult, error) {
+	// Build WHERE clause dynamically
+	whereConditions := []string{}
+	args := []any{}
+	argIdx := 1
+
+	if filter.Status != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.status = $%d", argIdx))
+		args = append(args, *filter.Status)
+		argIdx++
+	}
+
+	if filter.TargetUserID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.target_user_id = $%d", argIdx))
+		args = append(args, filter.TargetUserID)
+		argIdx++
+	}
+
+	if filter.RequesterDID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.requester_did ILIKE $%d", argIdx))
+		args = append(args, "%"+filter.RequesterDID+"%")
+		argIdx++
+	}
+
+	if filter.DisclosureLevel != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.scope->>'disclosure_level' = $%d", argIdx))
+		args = append(args, string(*filter.DisclosureLevel))
+		argIdx++
+	}
+
+	if filter.DateFrom != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.requested_at >= $%d", argIdx))
+		args = append(args, *filter.DateFrom)
+		argIdx++
+	}
+
+	if filter.DateTo != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.requested_at <= $%d", argIdx))
+		args = append(args, *filter.DateTo)
+		argIdx++
+	}
+
+	if filter.OrgID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("dr.org_id = $%d", argIdx))
+		args = append(args, filter.OrgID)
+		argIdx++
+	}
+
+	whereClause := ""
+	if len(whereConditions) > 0 {
+		whereClause = "WHERE " + whereConditions[0]
+		for i := 1; i < len(whereConditions); i++ {
+			whereClause += " AND " + whereConditions[i]
+		}
+	}
+
+	// Get total count
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM disclosure_requests dr %s`, whereClause)
+	var total int64
+	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count disclosure requests: %w", err)
+	}
+
+	// Build data query with pagination
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	dataQuery := fmt.Sprintf(`SELECT dr.id, dr.requester_user_id, dr.requester_did, dr.target_user_id, dr.org_id, dr.scope, dr.reason,
+		dr.legal_basis, dr.status, dr.requested_at, dr.expires_at, dr.decided_at, dr.decided_by_user_id, dr.decision_reason,
+		COALESCE(ru.external_id, ''), COALESCE(tu.external_id, ''), COALESCE(du.external_id, ''),
+		(SELECT id FROM disclosure_grants WHERE request_id = dr.id AND revoked_at IS NULL AND expires_at > NOW() LIMIT 1)
+		FROM disclosure_requests dr
+		LEFT JOIN users ru ON dr.requester_user_id = ru.id
+		LEFT JOIN users tu ON dr.target_user_id = tu.id
+		LEFT JOIN users du ON dr.decided_by_user_id = du.id
+		%s
+		ORDER BY dr.requested_at DESC
+		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query disclosure requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []*disclosure.RequestWithDetails
+	for rows.Next() {
+		req := &disclosure.Request{}
+		details := &disclosure.RequestWithDetails{Request: req}
+		var requesterID, requesterDID, decidedByID sql.NullString
+		var expiresAt, decidedAt sql.NullTime
+		var legalBasis, decisionReason sql.NullString
+		var activeGrantID sql.NullString
+		var scope []byte
+
+		if err := rows.Scan(
+			&req.ID, &requesterID, &requesterDID, &req.TargetUserID, &req.OrgID, &scope,
+			&req.Reason, &legalBasis, &req.Status, &req.RequestedAt,
+			&expiresAt, &decidedAt, &decidedByID, &decisionReason,
+			&details.RequesterDID, &details.TargetDID, &details.DecidedByDID, &activeGrantID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan request: %w", err)
+		}
+
+		if requesterID.Valid {
+			req.RequesterUserID = &requesterID.String
+		}
+		if requesterDID.Valid {
+			req.RequesterDID = requesterDID.String
+		}
+		if decidedByID.Valid {
+			req.DecidedByUserID = &decidedByID.String
+		}
+		if expiresAt.Valid {
+			req.ExpiresAt = &expiresAt.Time
+		}
+		if decidedAt.Valid {
+			req.DecidedAt = &decidedAt.Time
+		}
+		if legalBasis.Valid {
+			req.LegalBasis = legalBasis.String
+		}
+		if decisionReason.Valid {
+			req.DecisionReason = decisionReason.String
+		}
+		if activeGrantID.Valid {
+			details.ActiveGrantID = &activeGrantID.String
+		}
+
+		if err := json.Unmarshal(scope, &req.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal scope: %w", err)
+		}
+
+		requests = append(requests, details)
+	}
+
+	return &disclosure.DisclosureListResult{
+		Requests: requests,
+		Total:    total,
+		Limit:    limit,
+		Offset:   offset,
+	}, nil
+}
+
+func (d *DB) ListRequestsWithFilter(ctx context.Context, filter *disclosure.DisclosureFilter) (*disclosure.DisclosureListResult, error) {
+	return d.ListDisclosureRequestsWithFilter(ctx, filter)
+}
+
+// ListDisclosureGrantsWithFilter returns disclosure grants matching the filter criteria.
+func (d *DB) ListDisclosureGrantsWithFilter(ctx context.Context, filter *disclosure.DisclosureFilter) (*disclosure.GrantListResult, error) {
+	// Build WHERE clause dynamically
+	whereConditions := []string{}
+	args := []any{}
+	argIdx := 1
+
+	if filter.TargetUserID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("r.target_user_id = $%d", argIdx))
+		args = append(args, filter.TargetUserID)
+		argIdx++
+	}
+
+	if filter.RequesterDID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("r.requester_did ILIKE $%d", argIdx))
+		args = append(args, "%"+filter.RequesterDID+"%")
+		argIdx++
+	}
+
+	if filter.DisclosureLevel != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("g.scope->>'disclosure_level' = $%d", argIdx))
+		args = append(args, string(*filter.DisclosureLevel))
+		argIdx++
+	}
+
+	if filter.DateFrom != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("g.granted_at >= $%d", argIdx))
+		args = append(args, *filter.DateFrom)
+		argIdx++
+	}
+
+	if filter.DateTo != nil {
+		whereConditions = append(whereConditions, fmt.Sprintf("g.granted_at <= $%d", argIdx))
+		args = append(args, *filter.DateTo)
+		argIdx++
+	}
+
+	if filter.OrgID != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("r.org_id = $%d", argIdx))
+		args = append(args, filter.OrgID)
+		argIdx++
+	}
+
+	// Handle status filter for grants (active, expired, revoked)
+	if filter.Status != nil {
+		switch *filter.Status {
+		case disclosure.StatusApproved:
+			// Active grants: not revoked and not expired
+			whereConditions = append(whereConditions, "g.revoked_at IS NULL AND g.expires_at > NOW()")
+		case disclosure.StatusRevoked:
+			// Revoked grants
+			whereConditions = append(whereConditions, "g.revoked_at IS NOT NULL")
+		case disclosure.StatusExpired:
+			// Expired grants (not revoked but past expiration)
+			whereConditions = append(whereConditions, "g.revoked_at IS NULL AND g.expires_at <= NOW()")
+		}
+	}
+
+	whereClause := ""
+	if len(whereConditions) > 0 {
+		whereClause = "WHERE " + whereConditions[0]
+		for i := 1; i < len(whereConditions); i++ {
+			whereClause += " AND " + whereConditions[i]
+		}
+	}
+
+	// Get total count
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM disclosure_grants g
+		JOIN disclosure_requests r ON g.request_id = r.id %s`, whereClause)
+	var total int64
+	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count disclosure grants: %w", err)
+	}
+
+	// Build data query with pagination
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	dataQuery := fmt.Sprintf(`SELECT g.id, g.request_id, g.grant_token_hash, g.scope, g.granted_at, g.expires_at, g.revoked_at, g.revoked_reason,
+		r.id, r.requester_user_id, r.requester_did, r.target_user_id, r.org_id, r.scope, r.reason, r.legal_basis,
+		r.status, r.requested_at, r.expires_at, r.decided_at, r.decided_by_user_id, r.decision_reason
+		FROM disclosure_grants g
+		JOIN disclosure_requests r ON g.request_id = r.id
+		%s
+		ORDER BY g.granted_at DESC
+		LIMIT $%d OFFSET $%d`, whereClause, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query disclosure grants: %w", err)
+	}
+	defer rows.Close()
+
+	var grants []*disclosure.GrantWithRequest
+	for rows.Next() {
+		grant := &disclosure.Grant{}
+		req := &disclosure.Request{}
+
+		var gRevokedAt sql.NullTime
+		var gRevokedReason sql.NullString
+		var gScope []byte
+
+		var rRequesterID, rRequesterDID, rDecidedByID sql.NullString
+		var rExpiresAt, rDecidedAt sql.NullTime
+		var rLegalBasis, rDecisionReason sql.NullString
+		var rScope []byte
+
+		if err := rows.Scan(
+			&grant.ID, &grant.RequestID, &grant.GrantTokenHash, &gScope,
+			&grant.GrantedAt, &grant.ExpiresAt, &gRevokedAt, &gRevokedReason,
+			&req.ID, &rRequesterID, &rRequesterDID, &req.TargetUserID, &req.OrgID, &rScope,
+			&req.Reason, &rLegalBasis, &req.Status, &req.RequestedAt,
+			&rExpiresAt, &rDecidedAt, &rDecidedByID, &rDecisionReason,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan grant: %w", err)
+		}
+
+		if gRevokedAt.Valid {
+			grant.RevokedAt = &gRevokedAt.Time
+		}
+		if gRevokedReason.Valid {
+			grant.RevokedReason = gRevokedReason.String
+		}
+		if err := json.Unmarshal(gScope, &grant.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal grant scope: %w", err)
+		}
+
+		if rRequesterID.Valid {
+			req.RequesterUserID = &rRequesterID.String
+		}
+		if rRequesterDID.Valid {
+			req.RequesterDID = rRequesterDID.String
+		}
+		if rDecidedByID.Valid {
+			req.DecidedByUserID = &rDecidedByID.String
+		}
+		if rExpiresAt.Valid {
+			req.ExpiresAt = &rExpiresAt.Time
+		}
+		if rDecidedAt.Valid {
+			req.DecidedAt = &rDecidedAt.Time
+		}
+		if rLegalBasis.Valid {
+			req.LegalBasis = rLegalBasis.String
+		}
+		if rDecisionReason.Valid {
+			req.DecisionReason = rDecisionReason.String
+		}
+		if err := json.Unmarshal(rScope, &req.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal request scope: %w", err)
+		}
+
+		grants = append(grants, &disclosure.GrantWithRequest{Grant: grant, Request: req})
+	}
+
+	return &disclosure.GrantListResult{
+		Grants: grants,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}, nil
+}
+
+func (d *DB) ListGrantsWithFilter(ctx context.Context, filter *disclosure.DisclosureFilter) (*disclosure.GrantListResult, error) {
+	return d.ListDisclosureGrantsWithFilter(ctx, filter)
+}
+
+// ListAllDisclosureRequestsForUser returns all disclosure requests for a user (not just pending).
+func (d *DB) ListAllDisclosureRequestsForUser(ctx context.Context, targetUserID string) ([]*disclosure.RequestWithDetails, error) {
+	query := `SELECT dr.id, dr.requester_user_id, dr.requester_did, dr.target_user_id, dr.org_id, dr.scope, dr.reason,
+		dr.legal_basis, dr.status, dr.requested_at, dr.expires_at, dr.decided_at, dr.decided_by_user_id, dr.decision_reason,
+		COALESCE(ru.external_id, ''), COALESCE(tu.external_id, ''),
+		(SELECT id FROM disclosure_grants WHERE request_id = dr.id AND revoked_at IS NULL AND expires_at > NOW() LIMIT 1)
+		FROM disclosure_requests dr
+		LEFT JOIN users ru ON dr.requester_user_id = ru.id
+		LEFT JOIN users tu ON dr.target_user_id = tu.id
+		WHERE dr.target_user_id = $1
+		ORDER BY dr.requested_at DESC`
+
+	rows, err := d.conn.QueryContext(ctx, query, targetUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all requests for user: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*disclosure.RequestWithDetails
+	for rows.Next() {
+		req := &disclosure.Request{}
+		details := &disclosure.RequestWithDetails{Request: req}
+		var requesterID, requesterDID, decidedByID sql.NullString
+		var expiresAt, decidedAt sql.NullTime
+		var legalBasis, decisionReason sql.NullString
+		var activeGrantID sql.NullString
+		var scope []byte
+
+		if err := rows.Scan(
+			&req.ID, &requesterID, &requesterDID, &req.TargetUserID, &req.OrgID, &scope,
+			&req.Reason, &legalBasis, &req.Status, &req.RequestedAt,
+			&expiresAt, &decidedAt, &decidedByID, &decisionReason,
+			&details.RequesterDID, &details.TargetDID, &activeGrantID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan request: %w", err)
+		}
+
+		if requesterID.Valid {
+			req.RequesterUserID = &requesterID.String
+		}
+		if requesterDID.Valid {
+			req.RequesterDID = requesterDID.String
+		}
+		if decidedByID.Valid {
+			req.DecidedByUserID = &decidedByID.String
+		}
+		if expiresAt.Valid {
+			req.ExpiresAt = &expiresAt.Time
+		}
+		if decidedAt.Valid {
+			req.DecidedAt = &decidedAt.Time
+		}
+		if legalBasis.Valid {
+			req.LegalBasis = legalBasis.String
+		}
+		if decisionReason.Valid {
+			req.DecisionReason = decisionReason.String
+		}
+		if activeGrantID.Valid {
+			details.ActiveGrantID = &activeGrantID.String
+		}
+
+		if err := json.Unmarshal(scope, &req.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal scope: %w", err)
+		}
+
+		results = append(results, details)
+	}
+
+	return results, nil
+}
+
+func (d *DB) ListAllRequestsForUser(ctx context.Context, targetUserID string) ([]*disclosure.RequestWithDetails, error) {
+	return d.ListAllDisclosureRequestsForUser(ctx, targetUserID)
+}
+
+// ListAllDisclosureGrantsForTarget returns all grants for a user's data (not just active).
+func (d *DB) ListAllDisclosureGrantsForTarget(ctx context.Context, targetUserID string) ([]*disclosure.GrantWithRequest, error) {
+	query := `SELECT g.id, g.request_id, g.grant_token_hash, g.scope, g.granted_at, g.expires_at, g.revoked_at, g.revoked_reason,
+		r.id, r.requester_user_id, r.requester_did, r.target_user_id, r.org_id, r.scope, r.reason, r.legal_basis,
+		r.status, r.requested_at, r.expires_at, r.decided_at, r.decided_by_user_id, r.decision_reason
+		FROM disclosure_grants g
+		JOIN disclosure_requests r ON g.request_id = r.id
+		WHERE r.target_user_id = $1
+		ORDER BY g.granted_at DESC`
+
+	rows, err := d.conn.QueryContext(ctx, query, targetUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all grants for target: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*disclosure.GrantWithRequest
+	for rows.Next() {
+		grant := &disclosure.Grant{}
+		req := &disclosure.Request{}
+
+		var gRevokedAt sql.NullTime
+		var gRevokedReason sql.NullString
+		var gScope []byte
+
+		var rRequesterID, rRequesterDID, rDecidedByID sql.NullString
+		var rExpiresAt, rDecidedAt sql.NullTime
+		var rLegalBasis, rDecisionReason sql.NullString
+		var rScope []byte
+
+		if err := rows.Scan(
+			&grant.ID, &grant.RequestID, &grant.GrantTokenHash, &gScope,
+			&grant.GrantedAt, &grant.ExpiresAt, &gRevokedAt, &gRevokedReason,
+			&req.ID, &rRequesterID, &rRequesterDID, &req.TargetUserID, &req.OrgID, &rScope,
+			&req.Reason, &rLegalBasis, &req.Status, &req.RequestedAt,
+			&rExpiresAt, &rDecidedAt, &rDecidedByID, &rDecisionReason,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan grant: %w", err)
+		}
+
+		if gRevokedAt.Valid {
+			grant.RevokedAt = &gRevokedAt.Time
+		}
+		if gRevokedReason.Valid {
+			grant.RevokedReason = gRevokedReason.String
+		}
+		if err := json.Unmarshal(gScope, &grant.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal grant scope: %w", err)
+		}
+
+		if rRequesterID.Valid {
+			req.RequesterUserID = &rRequesterID.String
+		}
+		if rRequesterDID.Valid {
+			req.RequesterDID = rRequesterDID.String
+		}
+		if rDecidedByID.Valid {
+			req.DecidedByUserID = &rDecidedByID.String
+		}
+		if rExpiresAt.Valid {
+			req.ExpiresAt = &rExpiresAt.Time
+		}
+		if rDecidedAt.Valid {
+			req.DecidedAt = &rDecidedAt.Time
+		}
+		if rLegalBasis.Valid {
+			req.LegalBasis = rLegalBasis.String
+		}
+		if rDecisionReason.Valid {
+			req.DecisionReason = rDecisionReason.String
+		}
+		if err := json.Unmarshal(rScope, &req.Scope); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal request scope: %w", err)
+		}
+
+		results = append(results, &disclosure.GrantWithRequest{Grant: grant, Request: req})
+	}
+
+	return results, nil
+}
+
+func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([]*disclosure.GrantWithRequest, error) {
+	return d.ListAllDisclosureGrantsForTarget(ctx, targetUserID)
+}

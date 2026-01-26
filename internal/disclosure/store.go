@@ -17,6 +17,13 @@ type Store interface {
 	ListRequestsByOrg(ctx context.Context, orgID string, status *RequestStatus) ([]*Request, error)
 	ListPendingRequestsForUser(ctx context.Context, targetUserID string) ([]*RequestWithDetails, error)
 	ExpirePendingRequests(ctx context.Context) (int64, error) // Expire old pending requests
+	DeleteRequest(ctx context.Context, id string) error       // Delete a pending request (admin only)
+
+	// Filtered listing operations
+	ListRequestsWithFilter(ctx context.Context, filter *DisclosureFilter) (*DisclosureListResult, error)
+	ListGrantsWithFilter(ctx context.Context, filter *DisclosureFilter) (*GrantListResult, error)
+	ListAllRequestsForUser(ctx context.Context, targetUserID string) ([]*RequestWithDetails, error) // All requests (not just pending)
+	ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([]*GrantWithRequest, error)   // All grants (not just active)
 
 	// Grant operations
 	CreateGrant(ctx context.Context, grant *Grant) error

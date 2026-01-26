@@ -428,6 +428,61 @@ func (s *DefaultService) CleanupExpiredReports(ctx context.Context) (int64, erro
 	return s.store.DeleteExpiredReports(ctx)
 }
 
+// ListRequestsWithFilter returns filtered disclosure requests.
+func (s *DefaultService) ListRequestsWithFilter(ctx context.Context, filter *DisclosureFilter) (*DisclosureListResult, error) {
+	if filter == nil {
+		filter = NewDefaultFilter()
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000
+	}
+	return s.store.ListRequestsWithFilter(ctx, filter)
+}
+
+// ListGrantsWithFilter returns filtered disclosure grants.
+func (s *DefaultService) ListGrantsWithFilter(ctx context.Context, filter *DisclosureFilter) (*GrantListResult, error) {
+	if filter == nil {
+		filter = NewDefaultFilter()
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000
+	}
+	return s.store.ListGrantsWithFilter(ctx, filter)
+}
+
+// DeletePendingRequest deletes a pending disclosure request (admin action).
+func (s *DefaultService) DeletePendingRequest(ctx context.Context, requestID string) error {
+	req, err := s.store.GetRequest(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return ErrRequestNotFound
+	}
+
+	if req.Status != StatusPending {
+		return ErrRequestNotPending
+	}
+
+	return s.store.DeleteRequest(ctx, requestID)
+}
+
+// GetAllMyRequests returns all disclosure requests for a user (not just pending).
+func (s *DefaultService) GetAllMyRequests(ctx context.Context, userID string) ([]*RequestWithDetails, error) {
+	return s.store.ListAllRequestsForUser(ctx, userID)
+}
+
+// GetAllMyGrants returns all disclosure grants for a user's data (not just active).
+func (s *DefaultService) GetAllMyGrants(ctx context.Context, userID string) ([]*GrantWithRequest, error) {
+	return s.store.ListAllGrantsForTarget(ctx, userID)
+}
+
 // hashToken creates a SHA256 hash of a token.
 func hashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
