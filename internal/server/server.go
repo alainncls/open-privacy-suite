@@ -50,6 +50,7 @@ type Server struct {
 	privadoVerifier   PrivadoVerifier
 	jwtService        *auth.JWTService
 	sessionStore      SessionManager
+	oauthSessionStore *OAuthSessionStore
 	challengeStore    *ChallengeStore
 	rateLimiter       RateLimiterInterface
 	authRateLimiter   *AuthRateLimiter
@@ -70,6 +71,9 @@ func (s *Server) DB() *db.DB {
 func (s *Server) Stop() {
 	if s.sessionStore != nil {
 		s.sessionStore.Stop()
+	}
+	if s.oauthSessionStore != nil {
+		s.oauthSessionStore.Stop()
 	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
@@ -174,6 +178,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize disclosure service
 	disclosureService := disclosure.NewService(database)
 
+	// Initialize OAuth session store
+	oauthSessionStore := NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
+
 	s := &Server{
 		db:                database,
 		rbacAccessCtrl:    rbacAccessCtrl,
@@ -181,6 +188,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		privadoVerifier:   privadoVerifier,
 		jwtService:        jwtService,
 		sessionStore:      sessionStore,
+		oauthSessionStore: oauthSessionStore,
 		challengeStore:    challengeStore,
 		rateLimiter:       rateLimiter,
 		authRateLimiter:   authRateLimiter,
@@ -276,6 +284,14 @@ func (s *Server) setupRouter() *gin.Engine {
 		router.POST("/api/auth/verify", authRL, deprecation, s.handleAuthVerify)
 	}
 
+	// OAuth 2.0 endpoints - enables privacy-proxy as an Identity Provider
+	// Used by block explorer for Single Sign-On with Privado ID authentication
+	// Rate limited to prevent brute force attacks
+	router.GET("/oauth/authorize", authRL, s.handleOAuthAuthorize)
+	router.POST("/oauth/callback", authRL, s.handleOAuthCallback)
+	router.POST("/oauth/token", authRL, s.handleOAuthToken)
+	router.GET("/oauth/session/:id/status", s.handleOAuthSessionStatus)
+
 	// ETH address linking endpoints - available at multiple paths for flexibility:
 	// - /api/v1/eth/* - versioned API (primary)
 	// - /api/eth/* - legacy unversioned (deprecated)
@@ -312,6 +328,10 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// User disclosure endpoints - protected by JWT but accessible from external IPs
 	s.registerUserDisclosureRoutes(router)
+
+	// Explorer API endpoints - internal APIs for block explorer integration
+	// Protected by localhost-only middleware (called by explorer backend)
+	s.registerExplorerRoutes(router)
 
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path

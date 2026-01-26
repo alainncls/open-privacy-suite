@@ -160,7 +160,7 @@ func createDisclosureGrant(t *testing.T, database *db.DB, requesterDID, targetUs
 // Test: GET /api/v1/explorer/viewable-addresses
 // ============================================================================
 
-func TestExplorerAPI_GetViewableAddresses_MissingWallet(t *testing.T) {
+func TestExplorerAPI_GetViewableAddresses_MissingWalletAndDID(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -169,7 +169,7 @@ func TestExplorerAPI_GetViewableAddresses_MissingWallet(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "wallet parameter is required")
+	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
 }
 
 func TestExplorerAPI_GetViewableAddresses_UnknownWallet(t *testing.T) {
@@ -282,7 +282,7 @@ func TestExplorerAPI_GetViewableAddresses_CaseInsensitive(t *testing.T) {
 // Test: GET /api/v1/explorer/check-address/:address
 // ============================================================================
 
-func TestExplorerAPI_CheckAddressVisibility_MissingWallet(t *testing.T) {
+func TestExplorerAPI_CheckAddressVisibility_MissingWalletAndDID(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -291,7 +291,7 @@ func TestExplorerAPI_CheckAddressVisibility_MissingWallet(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "wallet parameter is required")
+	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
 }
 
 func TestExplorerAPI_CheckAddressVisibility_OwnAddress(t *testing.T) {
@@ -476,7 +476,7 @@ func TestExplorerAPI_CheckAddressVisibility_ExpiredGrant(t *testing.T) {
 // Test: POST /api/v1/explorer/check-addresses
 // ============================================================================
 
-func TestExplorerAPI_BatchCheckAddresses_MissingWallet(t *testing.T) {
+func TestExplorerAPI_BatchCheckAddresses_MissingWalletAndDID(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -491,7 +491,7 @@ func TestExplorerAPI_BatchCheckAddresses_MissingWallet(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "wallet parameter is required")
+	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
 }
 
 func TestExplorerAPI_BatchCheckAddresses_InvalidBody(t *testing.T) {
@@ -830,4 +830,223 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 	json.Unmarshal(w2.Body.Bytes(), &resp2)
 	assert.False(t, resp2.Visible)
 	assert.Equal(t, ReasonNoAccess, resp2.Reason)
+}
+
+// ============================================================================
+// Test: DID-based lookups (bypassing wallet->DID lookup)
+// ============================================================================
+
+func TestExplorerAPI_GetViewableAddresses_WithDID(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create user and link addresses
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerAddress2)
+
+	// Query using DID directly (no wallet)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?did="+testViewerDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Empty(t, resp.ViewerWallet) // No wallet provided
+	assert.Equal(t, testViewerDID, resp.ViewerDID)
+	assert.Len(t, resp.OwnAddresses, 2)
+
+	// Check that both addresses are returned
+	addresses := make(map[string]bool)
+	for _, a := range resp.OwnAddresses {
+		addresses[a.Address] = true
+	}
+	assert.True(t, addresses[testViewerWallet])
+	assert.True(t, addresses[testViewerAddress2])
+}
+
+func TestExplorerAPI_GetViewableAddresses_DIDTakesPrecedence(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create two users
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Query with wallet belonging to viewer but DID of target
+	// DID should take precedence
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet+"&did="+testTargetDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ViewableAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, testViewerWallet, resp.ViewerWallet) // Wallet is passed through
+	assert.Equal(t, testTargetDID, resp.ViewerDID)       // DID takes precedence
+	assert.Len(t, resp.OwnAddresses, 1)
+	assert.Equal(t, testTargetAddress, resp.OwnAddresses[0].Address) // Target's addresses
+}
+
+func TestExplorerAPI_CheckAddressVisibility_WithDID(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create user and link address
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Check visibility of own address using DID directly
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testViewerWallet+"?did="+testViewerDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp CheckAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonOwnAddress, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
+}
+
+func TestExplorerAPI_CheckAddressVisibility_DIDWithGrant(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user (no wallet linked - DID-only scenario)
+	createTestUserForExplorer(t, database, testViewerDID)
+
+	// Create target user and link address
+	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Create disclosure grant
+	grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
+
+	// Check using DID directly (no wallet)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?did="+testViewerDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp CheckAddressResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.NotNil(t, resp.GrantID)
+	assert.Equal(t, grantID, *resp.GrantID)
+}
+
+func TestExplorerAPI_BatchCheckAddresses_WithDIDInQueryString(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Batch check using DID in query string
+	body := BatchCheckAddressesRequest{
+		Addresses: []string{testViewerWallet, testPublicAddress},
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+testViewerDID, bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp BatchCheckAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 2)
+
+	// Own address
+	assert.True(t, resp.Results[testViewerWallet].Visible)
+	assert.Equal(t, ReasonOwnAddress, resp.Results[testViewerWallet].Reason)
+
+	// Public address
+	assert.True(t, resp.Results[testPublicAddress].Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Results[testPublicAddress].Reason)
+}
+
+func TestExplorerAPI_BatchCheckAddresses_WithDIDInBody(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create viewer user
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	// Batch check using DID in request body
+	body := BatchCheckAddressesRequest{
+		Addresses: []string{testViewerWallet, testPublicAddress},
+		DID:       testViewerDID,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp BatchCheckAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 2)
+
+	// Own address
+	assert.True(t, resp.Results[testViewerWallet].Visible)
+	assert.Equal(t, ReasonOwnAddress, resp.Results[testViewerWallet].Reason)
+}
+
+func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	// Create two users
+	createTestUserForExplorer(t, database, testViewerDID)
+	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
+
+	createTestUserForExplorer(t, database, testTargetDID)
+	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
+
+	// Query string has viewerDID, body has targetDID - body should take precedence
+	body := BatchCheckAddressesRequest{
+		Addresses: []string{testTargetAddress},
+		DID:       testTargetDID,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+testViewerDID, bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp BatchCheckAddressesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Target's address should be their own (body DID = targetDID)
+	assert.True(t, resp.Results[testTargetAddress].Visible)
+	assert.Equal(t, ReasonOwnAddress, resp.Results[testTargetAddress].Reason)
 }
