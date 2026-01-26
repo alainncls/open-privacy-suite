@@ -65,6 +65,9 @@ secrets/
 tmp/
 .tmp/
 
+# Local docker compose overrides
+docker-compose.override.yml
+
 # Test results (Playwright)
 test-results/
 playwright-report/
