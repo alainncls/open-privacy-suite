@@ -42,3 +42,17 @@ make e2e         # End-to-end tests
 
 - Go: idiomatic, explicit error handling, table-driven tests
 - Follow `gofmt` for formatting
+
+## Running Services
+
+See README.md for full documentation. Quick reference:
+
+```bash
+# Start privacy-proxy
+docker-compose up -d
+
+# Start explorer (privacy-proxy must be running first)
+docker-compose -f ../explorer/docker-compose.privacy-proxy.yml up -d
+```
+
+**Note:** For network access from other devices, see `DEV.local.md` (gitignored) for machine-specific setup.

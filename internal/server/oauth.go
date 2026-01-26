@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/iden3/iden3comm/v2/protocol"
 )
 
 // OAuth TTL constants
@@ -328,7 +329,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 	baseURL := s.getPublicURL(c)
 	callbackURL := fmt.Sprintf("%s/oauth/callback?session=%s&oauth_session=%s", baseURL, authSessionID, oauthSessionID)
 
-	var authReq interface{}
+	var authReq *protocol.AuthorizationRequestMessage
 	var err error
 
 	// In development mode with VERIFIER_ID not configured, return a mock session
@@ -344,16 +345,16 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		}
 		// Development mode: create mock auth request
 		log.Printf("Warning: VERIFIER_ID not configured - returning mock OAuth auth session for development")
-		authReq = map[string]interface{}{
-			"id":   authSessionID,
-			"typ":  "application/iden3comm-plain-json",
-			"type": "https://iden3-communication.io/authorization/1.0/request",
-			"body": map[string]interface{}{
-				"callbackUrl": callbackURL,
-				"reason":      "Authenticate for OAuth authorization (demo mode)",
-				"scope":       []interface{}{},
+		authReq = &protocol.AuthorizationRequestMessage{
+			ID:   authSessionID,
+			Typ:  "application/iden3comm-plain-json",
+			Type: "https://iden3-communication.io/authorization/1.0/request",
+			Body: protocol.AuthorizationRequestMessageBody{
+				CallbackURL: callbackURL,
+				Reason:      "Authenticate for OAuth authorization (demo mode)",
+				Scope:       []protocol.ZeroKnowledgeProofRequest{},
 			},
-			"from": "did:privado:verifier:demo-mode",
+			From: "did:privado:verifier:demo-mode",
 		}
 	} else {
 		// Use ProofOfHumanity auth request when enabled
@@ -381,6 +382,17 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	// Store the auth request in the session (required for JWZ verification in callback)
+	if err := s.sessionStore.UpdateSession(authSessionID, authReq); err != nil {
+		s.sessionStore.DeleteSession(authSessionID)
+		s.oauthSessionStore.DeleteSession(oauthSessionID)
+		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			Error:            "server_error",
+			ErrorDescription: "failed to store authorization request",
+		})
+		return
 	}
 
 	// Return JSON response with auth request for the client to display QR code
