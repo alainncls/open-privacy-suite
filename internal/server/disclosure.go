@@ -11,17 +11,26 @@ import (
 	"privacy-proxy/internal/disclosure"
 )
 
-// registerDisclosureRoutes registers admin disclosure API endpoints (localhost-only).
+// registerDisclosureRoutes registers admin disclosure API endpoints.
+//
+// SECURITY: These endpoints are protected by localhostOnlyMiddleware (applied in server.go).
+// This means only requests from localhost, Docker networks, or Tailscale are allowed.
+// The admin UI runs on localhost and is the intended consumer of these APIs.
+//
+// Authorization model: These are super-admin endpoints that can access all organizations.
+// This is intentional for a central admin interface managing multiple orgs.
 func (s *Server) registerDisclosureRoutes(api *gin.RouterGroup) {
 	disclosureGroup := api.Group("/disclosure")
 	{
 		// Admin endpoints (for creating requests on behalf of regulators)
+		// SECURITY: Protected by localhostOnlyMiddleware - admin-only access
 		disclosureGroup.POST("/requests", s.createDisclosureRequest)
 		disclosureGroup.GET("/requests", s.listDisclosureRequests)
 		disclosureGroup.GET("/requests/:request_id", s.getDisclosureRequest)
 		disclosureGroup.DELETE("/requests/:request_id", s.deleteDisclosureRequest)
 
 		// Admin grant management
+		// SECURITY: Protected by localhostOnlyMiddleware - admin-only access
 		disclosureGroup.GET("/grants", s.listDisclosureGrants)
 		disclosureGroup.POST("/grants/:grant_id/revoke", s.adminRevokeDisclosureGrant)
 

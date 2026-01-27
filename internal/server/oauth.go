@@ -426,6 +426,13 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
+	// SECURITY: Verify the OAuth session is linked to the provided auth session
+	// This prevents an attacker from using a valid OAuth session with a different auth session
+	if oauthSession.AuthSessionID != authSessionID {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session mismatch"})
+		return
+	}
+
 	// Get auth session
 	authSession := s.sessionStore.GetSession(authSessionID)
 	if authSession == nil {

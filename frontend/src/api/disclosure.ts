@@ -16,7 +16,10 @@ import type {
   GrantListResult,
 } from '../types/disclosure';
 
-// Base API client for unauthenticated requests (admin endpoints)
+// Base API client for admin endpoints
+// SECURITY: These endpoints are protected by localhost-only middleware on the backend.
+// No token authentication is needed because network-level access control (localhost only)
+// ensures only the local admin UI can reach these endpoints.
 const api = axios.create({
   baseURL: '/api',
   headers: {
@@ -49,6 +52,10 @@ const createTokenClient = (disclosureToken: string) => {
 export const disclosureApi = {
   // ============================================
   // Admin endpoints (localhost-only)
+  // SECURITY: Authorization is enforced at the network level by the backend.
+  // The backend only accepts requests from localhost (localhostOnlyMiddleware).
+  // No token-based authentication is needed for these endpoints because
+  // only the local admin UI can reach them.
   // ============================================
   admin: {
     // Create a new disclosure request

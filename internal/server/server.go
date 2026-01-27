@@ -344,6 +344,9 @@ func (s *Server) setupRouter() *gin.Engine {
 
 		// RBAC endpoints
 		s.registerRBACRoutes(apiV1)
+
+		// Disclosure admin endpoints
+		s.registerDisclosureRoutes(apiV1)
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
