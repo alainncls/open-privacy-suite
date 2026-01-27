@@ -169,11 +169,6 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
     return new Date(dateString).toLocaleString();
   };
 
-  const truncateId = (id: string) => {
-    if (id.length <= 12) return id;
-    return `${id.slice(0, 8)}...`;
-  };
-
   const renderTabCount = (count: number, variant: 'warning' | 'success' | 'secondary') => {
     if (count === 0) return null;
     return (
@@ -450,7 +445,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-[#6B7280]">
-                        {formatDate(grant.granted_at)}
+                        {formatDate(grant.created_at)}
                       </TableCell>
                       <TableCell className="text-sm text-[#6B7280]">
                         {formatDate(grant.valid_until)}
@@ -536,7 +531,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                           {grant.requester_did || '-'}
                         </TableCell>
                         <TableCell className="text-sm text-[#6B7280]">
-                          {formatDate(grant.granted_at)}
+                          {formatDate(grant.created_at)}
                         </TableCell>
                         <TableCell className="text-sm text-[#6B7280]">
                           {formatDate(endDate)}
@@ -716,7 +711,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs text-[#6B7280] uppercase tracking-wide">Granted At</label>
-                    <p className="text-sm">{formatDate(selectedGrant.granted_at)}</p>
+                    <p className="text-sm">{formatDate(selectedGrant.created_at)}</p>
                   </div>
                   <div>
                     <label className="text-xs text-[#6B7280] uppercase tracking-wide">Expires At</label>

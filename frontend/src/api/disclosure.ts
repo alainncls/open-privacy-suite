@@ -12,8 +12,6 @@ import type {
   RevokeDisclosureInput,
   DisclosureReportType,
   DisclosureFilter,
-  DisclosureListResult,
-  GrantListResult,
 } from '../types/disclosure';
 
 // Base API client for admin endpoints
@@ -246,13 +244,16 @@ export const disclosureApi = {
         id: item.grant.id,
         request_id: item.grant.request_id,
         user_id: item.request.target_user_id,
+        token_hash: '', // Not exposed to frontend
         requester_did: item.request.requester_did,
         reason: item.request.reason,
         scope: (item.grant.scope?.methods || []) as DisclosureGrant['scope'],
         disclosure_level: (item.grant.scope?.disclosure_level || 'pseudonymous') as DisclosureGrant['disclosure_level'],
-        granted_at: item.grant.granted_at,
+        valid_from: item.grant.granted_at,
         valid_until: item.grant.expires_at,
         revoked_at: item.grant.revoked_at,
+        created_at: item.grant.granted_at,
+        updated_at: item.grant.granted_at,
       }));
 
       return {
