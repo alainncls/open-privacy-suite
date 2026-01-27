@@ -93,7 +93,7 @@ export function SuccessPage() {
       <div className="w-full max-w-lg animate-fade-in-up">
         {/* Success Header */}
         <div className="text-center mb-8" data-testid="success-header">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#22C55E] to-[#8950FA] flex items-center justify-center shadow-lg shadow-primary animate-scale-in">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#8950FA] to-[#A478FC] flex items-center justify-center shadow-lg shadow-primary animate-scale-in">
             <Shield className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-[#0F0F0F]" data-testid="success-title">You're All Set!</h1>
@@ -217,20 +217,37 @@ export function SuccessPage() {
         <Card variant="default" className="mb-4">
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#F5F3FF] flex items-center justify-center">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-full bg-[#F5F3FF] flex items-center justify-center flex-shrink-0">
                   <Shield className="w-5 h-5 text-[#8950FA]" />
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-[#0F0F0F] text-sm font-medium">Privado ID</p>
-                  <p className="text-[#94A3B8] text-xs font-mono break-all">
+                  <p className="text-[#94A3B8] text-xs font-mono truncate" title={userDID || 'Connected'}>
                     {userDID || 'Connected'}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-[#166534] text-xs">
-                <div className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
-                Verified
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {userDID && (
+                  <Button
+                    onClick={() => copyToClipboard(userDID, 'did')}
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title="Copy DID"
+                  >
+                    {copied === 'did' ? (
+                      <Check className="w-4 h-4 text-[#166534]" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-[#94A3B8]" />
+                    )}
+                  </Button>
+                )}
+                <div className="flex items-center gap-2 text-[#166534] text-xs">
+                  <div className="w-2 h-2 rounded-full bg-[#22C55E] animate-pulse" />
+                  Verified
+                </div>
               </div>
             </div>
 

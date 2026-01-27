@@ -9,6 +9,7 @@ import {
   Trash2,
   ShieldOff,
   Users,
+  Plus,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
@@ -32,6 +33,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { DisclosureFilters } from '@/components/disclosure/DisclosureFilters';
+import { CreateDisclosureRequestForm } from '@/components/disclosure/CreateDisclosureRequestForm';
 import { disclosureApi } from '@/api/disclosure';
 import type {
   DisclosureFilter,
@@ -39,6 +41,7 @@ import type {
   GrantListResult,
   DisclosureRequest,
   DisclosureGrant,
+  CreateDisclosureRequestInput,
 } from '@/types/disclosure';
 import {
   DISCLOSURE_LEVEL_LABELS,
@@ -68,6 +71,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
   const [selectedGrant, setSelectedGrant] = useState<DisclosureGrant | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Create request state
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -164,6 +171,20 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
     }
   };
 
+  const handleCreateRequest = async (input: CreateDisclosureRequestInput) => {
+    setIsCreating(true);
+    try {
+      await disclosureApi.admin.createRequest(input);
+      setCreateDialogOpen(false);
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to create disclosure request:', err);
+      onError?.('Failed to create disclosure request');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleString();
@@ -209,10 +230,16 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchData} disabled={isLoading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="default" size="sm" onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Create Request
+          </Button>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={isLoading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -732,6 +759,23 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
               Close
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Request Dialog */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create Disclosure Request</DialogTitle>
+            <DialogDescription>
+              Create a new disclosure request for a user's data
+            </DialogDescription>
+          </DialogHeader>
+          <CreateDisclosureRequestForm
+            onSubmit={handleCreateRequest}
+            onCancel={() => setCreateDialogOpen(false)}
+            isLoading={isCreating}
+          />
         </DialogContent>
       </Dialog>
     </div>
