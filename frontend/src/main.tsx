@@ -11,6 +11,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { LinkWalletPage } from './pages/LinkWalletPage';
 import { SuccessPage } from './pages/SuccessPage';
+import { DisclosurePage } from './pages/DisclosurePage';
 import AdminApp from './App';
 import { Dashboard } from './components/dashboard/Dashboard';
 import AccessLogs from './components/AccessLogs';
@@ -19,6 +20,7 @@ import OrganizationList from './components/rbac/OrganizationList';
 import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
+import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -44,6 +46,7 @@ function Root() {
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/link-wallet" element={<LinkWalletPage />} />
                 <Route path="/success" element={<SuccessPage />} />
+                <Route path="/disclosure" element={<DisclosurePage />} />
 
                 {/* Admin dashboard with nested routes */}
                 <Route path="/admin" element={<AdminApp />}>
@@ -58,6 +61,7 @@ function Root() {
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
                   </Route>
+                  <Route path="disclosure" element={<AdminDisclosureDashboard />} />
                 </Route>
 
                 {/* Default redirect to login */}

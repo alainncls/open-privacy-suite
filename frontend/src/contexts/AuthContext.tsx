@@ -53,33 +53,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Load auth state from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const auth: StoredAuth = JSON.parse(stored);
-        const now = Date.now();
+    const loadAuth = async () => {
+      console.log('[AuthContext] Loading auth from localStorage...');
+      const stored = localStorage.getItem(STORAGE_KEY);
+      console.log('[AuthContext] Stored auth:', !!stored);
+      if (stored) {
+        try {
+          const auth: StoredAuth = JSON.parse(stored);
+          const now = Date.now();
+          console.log('[AuthContext] Token expires in:', (auth.expiresAt - now) / 1000, 'seconds');
 
-        // Check if token is still valid (with 1 minute buffer)
-        if (auth.expiresAt > now + 60000) {
-          const claims = parseJWT(auth.accessToken);
-          setState({
-            isAuthenticated: true,
-            accessToken: auth.accessToken,
-            refreshToken: auth.refreshToken,
-            userDID: claims?.sub || null,
-            expiresAt: auth.expiresAt,
-          });
-        } else if (auth.refreshToken) {
-          // Token expired but we have refresh token - try to refresh
-          refreshWithToken(auth.refreshToken);
-        } else {
+          // Check if token is still valid (with 1 minute buffer)
+          if (auth.expiresAt > now + 60000) {
+            const claims = parseJWT(auth.accessToken);
+            setState({
+              isAuthenticated: true,
+              accessToken: auth.accessToken,
+              refreshToken: auth.refreshToken,
+              userDID: claims?.sub || null,
+              expiresAt: auth.expiresAt,
+            });
+          } else if (auth.refreshToken) {
+            // Token expired but we have refresh token - try to refresh
+            await refreshWithToken(auth.refreshToken);
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch {
           localStorage.removeItem(STORAGE_KEY);
         }
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
       }
-    }
-    setIsLoading(false);
+      console.log('[AuthContext] Auth load complete, setting isLoading=false');
+      setIsLoading(false);
+    };
+
+    loadAuth();
   }, []);
 
   const refreshWithToken = async (refreshToken: string): Promise<boolean> => {
@@ -128,8 +136,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const login = useCallback((accessToken: string, refreshToken: string, expiresIn: number) => {
+    console.log('[AuthContext] login() called, expiresIn:', expiresIn);
     const expiresAt = Date.now() + expiresIn * 1000;
     const claims = parseJWT(accessToken);
+    console.log('[AuthContext] Parsed claims:', claims);
 
     const auth: StoredAuth = {
       accessToken,
@@ -137,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       expiresAt,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+    console.log('[AuthContext] Saved to localStorage');
 
     setState({
       isAuthenticated: true,
@@ -145,6 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userDID: claims?.sub || null,
       expiresAt,
     });
+    console.log('[AuthContext] State updated, isAuthenticated=true');
   }, []);
 
   const logout = useCallback(async () => {

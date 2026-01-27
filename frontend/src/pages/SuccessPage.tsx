@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Copy, Check, Wallet, Key, RefreshCw } from 'lucide-react';
+import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -297,22 +297,35 @@ export function SuccessPage() {
         </Card>
 
         {/* Actions */}
-        <div className="mt-6 flex items-center justify-between">
-          <Button
-            onClick={() => navigate('/link-wallet')}
-            variant="outline"
-            size="sm"
-          >
-            <Wallet className="w-4 h-4 mr-2" />
-            Manage Wallets
-          </Button>
-
-          <button
-            onClick={logout}
-            className="text-[#94A3B8] text-sm hover:text-[#6B7280]"
-          >
-            Sign out
-          </button>
+        <div className="mt-6 flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => navigate('/link-wallet')}
+              variant="outline"
+              size="sm"
+              className="flex-1"
+            >
+              <Wallet className="w-4 h-4 mr-2" />
+              Manage Wallets
+            </Button>
+            <Button
+              onClick={() => navigate('/disclosure')}
+              variant="outline"
+              size="sm"
+              className="flex-1"
+            >
+              <FileKey className="w-4 h-4 mr-2" />
+              Data Disclosure
+            </Button>
+          </div>
+          <div className="text-center">
+            <button
+              onClick={logout}
+              className="text-[#94A3B8] text-sm hover:text-[#6B7280]"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -48,6 +48,7 @@ services:
       - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
       - BASE_URL=${BASE_URL:-http://localhost:8080}
       - MOCK_SIGNATURES=true  # Allow mock signatures for demo recordings (never enable in production)
+      - ALLOW_MOCK_LOGIN=true  # Allow mock JWZ tokens for dev/testing (never enable in production)
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
     depends_on:
       postgres:
@@ -75,6 +76,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
+      - VITE_ALLOW_MOCK_LOGIN=true
     depends_on:
       proxy-backend:
         condition: service_started

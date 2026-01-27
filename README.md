@@ -50,6 +50,47 @@ Privacy Proxy
 Ethereum Node
 ```
 
+## Explorer Integration
+
+Privacy-proxy can be integrated with block explorers to provide privacy-aware address visibility. The explorer calls internal APIs to check which addresses a user can view based on their identity and disclosure grants.
+
+```
+┌─────────────────┐     ┌─────────────────────┐     ┌──────────────┐
+│  Block Explorer │     │    Privacy-Proxy    │     │  Privado App │
+│   (OAuth Client)│     │  (Identity Provider)│     │  (ZK Proofs) │
+└────────┬────────┘     └──────────┬──────────┘     └──────┬───────┘
+         │                         │                        │
+         │ 1. User clicks          │                        │
+         │    "Sign in with        │                        │
+         │     Privado"            │                        │
+         │                         │                        │
+         │ 2. GET /oauth/authorize │                        │
+         │ ───────────────────────>│                        │
+         │                         │                        │
+         │                         │ 3. Show QR code        │
+         │                         │    (auth request)      │
+         │                         │ ──────────────────────>│
+         │                         │                        │
+         │                         │ 4. User scans,         │
+         │                         │    submits ZK proof    │
+         │                         │ <──────────────────────│
+         │                         │                        │
+         │ 5. Redirect with        │                        │
+         │    ?code=xxx&state=yyy  │                        │
+         │ <───────────────────────│                        │
+         │                         │                        │
+         │ 6. POST /oauth/token    │                        │
+         │    (exchange code)      │                        │
+         │ ───────────────────────>│                        │
+         │                         │                        │
+         │ 7. Return JWT           │                        │
+         │    (contains DID)       │                        │
+         │ <───────────────────────│                        │
+         │                         │                        │
+```
+
+See [SSO_IMPLEMENTATION.md](SSO_IMPLEMENTATION.md) for detailed OAuth/SSO documentation.
+
 ## Authentication Flow
 
 1. **Request Authentication** (`POST /auth/request`):
@@ -146,6 +187,53 @@ Access the services:
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8080
 - Management API: http://localhost:8080/api (localhost-only)
+
+### Network Access (LAN)
+
+To access services from other devices on your local network, set `BASE_URL` to your machine's IP:
+
+```bash
+# Get your local IP
+ipconfig getifaddr en0  # macOS
+hostname -I | awk '{print $1}'  # Linux
+
+# Start with network-accessible URL (include http:// prefix!)
+BASE_URL="http://YOUR_IP:8080" docker-compose up -d
+```
+
+### Running with Block Explorer
+
+The explorer integrates with privacy-proxy for authentication and privacy-aware address visibility.
+
+```bash
+# 1. Start privacy-proxy first
+BASE_URL="http://YOUR_IP:8080" docker-compose up -d
+
+# 2. Start explorer (from explorer directory)
+SSO_REDIRECT_URI="http://YOUR_IP:3000/api/auth/callback" \
+VITE_RPC_URL="http://YOUR_IP:8545" \
+docker-compose -f docker-compose.privacy-proxy.yml up -d
+```
+
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BASE_URL` | `http://localhost:8080` | Public URL of privacy-proxy API (**must include http://**) |
+| `SSO_REDIRECT_URI` | `http://localhost:3000/api/auth/callback` | OAuth callback URL for explorer |
+| `VITE_RPC_URL` | `http://localhost:8545` | Ethereum RPC URL for explorer frontend |
+
+**Port Reference:**
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Privacy Proxy API | 8080 | Main API endpoint |
+| Privacy Proxy Frontend | 5173 | Management UI |
+| PostgreSQL | 5432 | Privacy-proxy database |
+| Anvil | 8545 | Local Ethereum node |
+| Explorer Frontend | 3000 | Block explorer UI |
+| Explorer Backend | 8081 | Explorer API |
+| Explorer PostgreSQL | 5433 | Explorer database (different port to avoid conflict)
 
 ## Configuration
 
@@ -333,6 +421,44 @@ curl http://localhost:8080/api/users/{user_id}/effective-permissions
 ```
 
 See [RBAC Documentation](docs/RBAC.md) for detailed use cases and API reference.
+
+## Selective Disclosure
+
+The system includes a selective disclosure feature for compliance and audit use cases. Users can grant time-limited access to their data with configurable privacy levels.
+
+### Disclosure Levels
+
+| Level | Description |
+|-------|-------------|
+| **Full** | Real addresses visible - for regulatory/legal requirements |
+| **Pseudonymous** | Consistent pseudonyms (e.g., `Address-KDCM`) - for audits |
+| **Redacted** | All addresses hidden as `[REDACTED]` - minimal disclosure |
+
+### Quick Example
+
+```bash
+# Auditor creates a disclosure request
+curl -X POST http://localhost:8080/api/v1/disclosure/requests \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_user_id": "user-123",
+    "scope": {
+      "disclosure_level": "pseudonymous",
+      "date_range": {"start": "2024-01-01", "end": "2024-12-31"}
+    },
+    "reason": "Annual financial audit"
+  }'
+
+# User approves the request
+curl -X POST http://localhost:8080/api/v1/disclosure/requests/{id}/approve \
+  -d '{"grant_duration_days": 30}'
+
+# Auditor views pseudonymized transactions
+curl http://localhost:8080/api/v1/explorer/grant/{grant_id}/{address_id}/transactions
+# Returns: {"from": "Address-KDCM", "to": "External-7E56", ...}
+```
+
+See [Disclosure Documentation](docs/DISCLOSURE.md) for the complete guide.
 
 ## Security Considerations
 

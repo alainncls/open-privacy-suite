@@ -27,7 +27,7 @@ func setupTestDB(t *testing.T) *DB {
 		t.Fatalf("failed to create test DB: %v", err)
 	}
 
-	// Reset database for fresh test (clears data, preserves schema)
+	// Reset database for fresh test (this drops all tables except schema_version and runs migrations)
 	if err := ResetTestDatabase(database); err != nil {
 		t.Fatalf("failed to reset test database: %v", err)
 	}
