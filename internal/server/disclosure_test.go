@@ -284,10 +284,10 @@ func TestListDisclosureRequests(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var resp []*disclosure.RequestWithDetails
+		var resp disclosure.DisclosureListResult
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.Len(t, resp, 3)
+		assert.Len(t, resp.Requests, 3)
 	})
 
 	t.Run("filter by status", func(t *testing.T) {
@@ -299,10 +299,10 @@ func TestListDisclosureRequests(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var resp []*disclosure.RequestWithDetails
+		var resp disclosure.DisclosureListResult
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.Len(t, resp, 2) // 2 pending
+		assert.Len(t, resp.Requests, 2) // 2 pending
 	})
 }
 

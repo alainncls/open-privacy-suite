@@ -1661,7 +1661,7 @@ func TestSecurity_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
 
 	// Create target user and link address with unique identifier
 	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
-	sensitiveAddress := "0xsensitive12345678901234567890123456789012"
+	sensitiveAddress := "0xSensitive1234567890123456789012345678"
 	linkEthAddressToUser(t, database, testTargetDID, sensitiveAddress)
 
 	// Create pseudonymous grant
@@ -1676,7 +1676,7 @@ func TestSecurity_PseudonymousDoesNotLeakRealAddress(t *testing.T) {
 	// Response body should NOT contain the sensitive address
 	body := w.Body.String()
 	assert.NotContains(t, body, sensitiveAddress, "SECURITY VIOLATION: Real address leaked in pseudonymous mode")
-	assert.NotContains(t, body, "sensitive12345", "SECURITY VIOLATION: Real address parts leaked")
+	assert.NotContains(t, body, "Sensitive1234", "SECURITY VIOLATION: Real address parts leaked")
 }
 
 func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
@@ -1689,7 +1689,7 @@ func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
 
 	// Create target user and link address with unique identifier
 	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
-	sensitiveAddress := "0xsecret999999999999999999999999999999999999"
+	sensitiveAddress := "0xSecret99999999999999999999999999999999"
 	linkEthAddressToUser(t, database, testTargetDID, sensitiveAddress)
 
 	// Create redacted grant
@@ -1704,7 +1704,7 @@ func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
 	// Response body should NOT contain the sensitive address
 	body := w.Body.String()
 	assert.NotContains(t, body, sensitiveAddress, "SECURITY VIOLATION: Real address leaked in redacted mode")
-	assert.NotContains(t, body, "secret9999", "SECURITY VIOLATION: Real address parts leaked")
+	assert.NotContains(t, body, "Secret9999", "SECURITY VIOLATION: Real address parts leaked")
 	assert.Contains(t, body, "[REDACTED]", "Should show redacted placeholder")
 }
 
@@ -1774,10 +1774,12 @@ func TestEdgeCase_MultipleAddressesSameGrant(t *testing.T) {
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 
 	// Create target user and link MULTIPLE addresses
+	// Note: Use different prefixes so pseudonyms are unique (first 4 hex chars determine pseudonym)
+	// Avoid addresses that conflict with testViewerWallet (0x1111...) or testTargetAddress (0x2222...)
 	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
-	addr1 := "0xaddr111111111111111111111111111111111111"
-	addr2 := "0xaddr222222222222222222222222222222222222"
-	addr3 := "0xaddr333333333333333333333333333333333333"
+	addr1 := "0xaaaa111111111111111111111111111111111111"
+	addr2 := "0xbbbb222222222222222222222222222222222222"
+	addr3 := "0xcccc333333333333333333333333333333333333"
 	linkEthAddressToUser(t, database, testTargetDID, addr1)
 	linkEthAddressToUser(t, database, testTargetDID, addr2)
 	linkEthAddressToUser(t, database, testTargetDID, addr3)
