@@ -470,9 +470,12 @@ var ReadOpsMap = map[string]bool{
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
 // Returns the claim needed to execute this operation.
-// For eth_sendTransaction, checks params to distinguish deployment vs regular transaction.
+// For eth_sendTransaction and eth_estimateGas, checks params to distinguish
+// deployment vs regular transaction/call.
 func ClassifyOperation(method string, params []any) Claim {
-	// Check for contract deployment FIRST (before general write check)
+	// Check for contract deployment FIRST (before general write/read check)
+	// This includes both eth_sendTransaction deployments AND eth_estimateGas
+	// for deployment gas estimation - both require deploy claim
 	if IsContractDeployment(method, params) {
 		return ClaimDeploy
 	}
@@ -494,13 +497,14 @@ func ClassifyOperation(method string, params []any) Claim {
 
 // IsContractDeployment checks if the method+params represent a contract deployment.
 // Contract deployments are eth_sendTransaction calls with no 'to' address.
+// Also detects eth_estimateGas for deployment (estimating gas for contract creation).
 // NOTE: eth_sendRawTransaction cannot be validated without RLP decoding, so it's
 // treated as a regular write operation. To prevent deployments via raw tx, either
 // don't allow eth_sendRawTransaction method, or don't grant the write claim.
 func IsContractDeployment(method string, params []any) bool {
-	// Only eth_sendTransaction can be validated for deployment
+	// Only eth_sendTransaction and eth_estimateGas can be validated for deployment
 	// eth_sendRawTransaction would require RLP decoding which is complex
-	if method != "eth_sendTransaction" {
+	if method != "eth_sendTransaction" && method != "eth_estimateGas" {
 		return false
 	}
 

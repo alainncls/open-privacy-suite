@@ -24,9 +24,11 @@ func TestClassifyOperation(t *testing.T) {
 			expectedClaim: ClaimRead,
 		},
 		{
-			name:          "Read operation - eth_estimateGas",
-			method:        "eth_estimateGas",
-			params:        nil,
+			name:   "Read operation - eth_estimateGas with to address",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
+			},
 			expectedClaim: ClaimRead,
 		},
 		{
@@ -115,6 +117,31 @@ func TestClassifyOperation(t *testing.T) {
 				map[string]any{"to": "0x0000000000000000000000000000000000000000", "value": "0x100"},
 			},
 			expectedClaim: ClaimWrite,
+		},
+		// eth_estimateGas deployment cases - should require deploy claim
+		{
+			name:   "Deploy - eth_estimateGas with no 'to' field (deployment estimation)",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"data": "0x6080604052", "from": "0xabc"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "Deploy - eth_estimateGas with 'to' = null (deployment estimation)",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": nil, "data": "0x6080604052"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "NOT Deploy - eth_estimateGas with valid 'to' (regular call estimation)",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
+			},
+			expectedClaim: ClaimRead,
 		},
 	}
 
@@ -217,6 +244,39 @@ func TestIsContractDeployment(t *testing.T) {
 			method: "eth_sendTransaction",
 			params: []any{
 				map[string]any{"to": "0x1"},
+			},
+			expected: false,
+		},
+		// eth_estimateGas deployment cases
+		{
+			name:   "eth_estimateGas with no 'to' field - deployment",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"data": "0x6080604052", "from": "0xabc"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_estimateGas with 'to' = nil - deployment",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": nil, "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_estimateGas with 'to' = '' - deployment",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": "", "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_estimateGas with valid 'to' - NOT deployment",
+			method: "eth_estimateGas",
+			params: []any{
+				map[string]any{"to": "0x1234567890123456789012345678901234567890"},
 			},
 			expected: false,
 		},
