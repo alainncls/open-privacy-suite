@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type Config struct {
 	MockSignatures             bool          // If true, accept any signature without verification (dev/demo only, NEVER in production)
 	AllowMockLogin             bool          // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
 	DemoAutoAuthDelay          time.Duration // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
+	TrustedFactoryHashes       []string      // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
 }
 
 func Load() *Config {
@@ -85,6 +87,18 @@ func Load() *Config {
 		demoDelay = 0 // Force disable in production
 	}
 
+	// TrustedFactoryHashes: Additional CREATE3 factory bytecode hashes to whitelist
+	// Comma-separated list of keccak256 hashes (with or without 0x prefix)
+	var trustedFactoryHashes []string
+	if hashesStr := getEnv("TRUSTED_FACTORY_HASHES", ""); hashesStr != "" {
+		for _, hash := range strings.Split(hashesStr, ",") {
+			hash = strings.TrimSpace(hash)
+			if hash != "" {
+				trustedFactoryHashes = append(trustedFactoryHashes, hash)
+			}
+		}
+	}
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -104,6 +118,7 @@ func Load() *Config {
 		MockSignatures:             mockSigs,
 		AllowMockLogin:             allowMockLogin,
 		DemoAutoAuthDelay:          demoDelay,
+		TrustedFactoryHashes:       trustedFactoryHashes,
 	}
 }
 

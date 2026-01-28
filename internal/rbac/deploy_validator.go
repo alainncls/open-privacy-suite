@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/evm/bytecode"
+	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/evm/precompile"
 )
 
@@ -32,6 +33,10 @@ type ValidationResult struct {
 	IsProxy   bool                // Whether this is a proxy contract
 	ProxyType string              // Type of proxy if applicable (e.g., "ERC1967", "Transparent", "UUPS")
 	ProxyInfo *bytecode.ProxyInfo // Full proxy detection info
+
+	// Factory detection fields
+	IsTrustedFactory bool   // Whether this is a whitelisted factory contract
+	FactoryName      string // Name of the factory if whitelisted
 }
 
 // ValidateDeployment checks if a contract deployment is allowed.
@@ -78,7 +83,18 @@ func (v *DeploymentValidator) ValidateDeployment(
 	}
 
 	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
+	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
 	if analysis.HasCreate || analysis.HasCreate2 {
+		// Check if this is a trusted factory contract
+		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
+		if trustedFactory != nil {
+			// This is a whitelisted factory - allow it
+			result.IsTrustedFactory = true
+			result.FactoryName = trustedFactory.Name
+			result.Allowed = true
+			return result, nil
+		}
+
 		result.Allowed = false
 		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
 		return result, nil

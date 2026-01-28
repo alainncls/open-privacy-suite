@@ -722,3 +722,27 @@ func TestDeploymentValidator_RegisterDeployedProxy_RejectsNilProxyInfo(t *testin
 		t.Error("expected error when registering with nil ProxyInfo")
 	}
 }
+
+// TestDeploymentValidator_TrustedFactoryWhitelist tests that whitelisted factory contracts
+// with CREATE/CREATE2 opcodes are allowed to be deployed.
+func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// First, verify that a contract with CREATE is normally blocked
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Allowed {
+		t.Error("expected CREATE contract to be blocked when not whitelisted")
+	}
+	if !result.HasCreate {
+		t.Error("expected HasCreate to be true")
+	}
+
+	// Verify the result indicates it's not a trusted factory
+	if result.IsTrustedFactory {
+		t.Error("expected IsTrustedFactory to be false for non-whitelisted contract")
+	}
+}

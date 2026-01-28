@@ -453,6 +453,235 @@ The new implementation address is extracted and validated for org ownership befo
 
 For upgradeable proxies that will deploy future implementations at deterministic addresses, you can pre-register CREATE3 addresses before the code is known.
 
+#### Complete Contract Lifecycle Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    CONTRACT REGISTRATION LIFECYCLE                               │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    PHASE 1: PRE-REGISTRATION                             │    │
+│  │                    (Before deployment)                                   │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│       Admin provides:                                                            │
+│       • CREATE3 Factory address                                                  │
+│       • Salt prefix (e.g., "myapp-v1")                                          │
+│       • Count (number of addresses to pre-register)                             │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Server calculates deterministic         │                               │
+│       │ addresses using CREATE3 formula:        │                               │
+│       │                                         │                               │
+│       │ For each i in 0..count:                 │                               │
+│       │   salt = keccak256(salt_prefix + i)     │                               │
+│       │   proxy = CREATE2(factory, salt, PROXY) │                               │
+│       │   addr = CREATE(proxy, nonce=1)         │                               │
+│       └─────────────────────────────────────────┘                               │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Addresses stored in                     │                               │
+│       │ preregistered_addresses table           │                               │
+│       │ Status: PENDING                         │                               │
+│       └─────────────────────────────────────────┘                               │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    PHASE 2: DEPLOYMENT                                   │    │
+│  │                    (External - via CREATE3 factory)                      │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│       Developer deploys contract via CREATE3 factory                            │
+│       using same factory + salt → lands at pre-registered address               │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Contract deployed at                    │                               │
+│       │ 0x1234... (pre-registered address)      │                               │
+│       └─────────────────────────────────────────┘                               │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    PHASE 3: CONTRACT REGISTRATION                        │    │
+│  │                    (Link to RBAC system)                                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│       Admin registers contract via UI or API                                    │
+│       UI shows dropdown of pre-registered addresses                             │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Contract created in contracts table     │                               │
+│       │ Pre-registered address marked as USED   │                               │
+│       └─────────────────────────────────────────┘                               │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Admin assigns grants (permissions)      │                               │
+│       │ • Group → Contract with Claims          │                               │
+│       │   (read, write, admin, upgrade)         │                               │
+│       └─────────────────────────────────────────┘                               │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    PHASE 4: ACCESS CONTROL                               │    │
+│  │                    (Runtime enforcement)                                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│       User sends RPC request targeting contract                                 │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ RBAC checks:                            │                               │
+│       │ 1. User's effective permissions         │                               │
+│       │ 2. Contract ownership by user's org     │                               │
+│       │ 3. User has required claims             │                               │
+│       │ 4. Function selector allowed            │                               │
+│       └─────────────────────────────────────────┘                               │
+│                          │                                                       │
+│                    ┌─────┴─────┐                                                │
+│                    ▼           ▼                                                │
+│               [ALLOWED]    [DENIED]                                             │
+│                    │           │                                                │
+│                    ▼           ▼                                                │
+│              Forward to    Return 403                                           │
+│              upstream      Forbidden                                            │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Ownership Validation
+
+When checking if an address is "org-owned", the system checks BOTH tables:
+
+```
+IsAddressOwnedByOrg(orgID, address):
+
+    ┌──────────────────────────────────────┐
+    │ Check contracts table                │
+    │ SELECT EXISTS FROM contracts         │
+    │ WHERE address = ? AND org_id = ?     │
+    └──────────────────────────────────────┘
+                    │
+              ┌─────┴─────┐
+              ▼           ▼
+           [FOUND]    [NOT FOUND]
+              │           │
+              ▼           ▼
+         Return TRUE   ┌──────────────────────────────────────┐
+                       │ Check preregistered_addresses table  │
+                       │ SELECT EXISTS FROM                   │
+                       │ preregistered_addresses              │
+                       │ WHERE address = ? AND org_id = ?     │
+                       └──────────────────────────────────────┘
+                                        │
+                                  ┌─────┴─────┐
+                                  ▼           ▼
+                               [FOUND]    [NOT FOUND]
+                                  │           │
+                                  ▼           ▼
+                             Return TRUE  Return FALSE
+```
+
+This enables:
+- Proxy upgrades to pre-registered addresses BEFORE deployment
+- Deployment validation to accept pre-registered targets
+- Gradual migration from pre-registered → fully registered
+
+#### Admin UI Workflow
+
+The RBAC Admin UI provides a streamlined interface for managing pre-registered addresses and contracts.
+
+**Step 1: Pre-register Addresses**
+
+Navigate to **Contracts** tab → Click **"Pre-register Addresses"** button
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Pre-register CREATE3 Addresses                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Factory Address*                                                │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ 0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf                  ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ↳ In dev mode: auto-deployed if not present                    │
+│                                                                  │
+│  Salt Prefix*                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ myapp-v2-impl                                                ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ↳ Unique identifier for this batch of addresses                │
+│                                                                  │
+│  Count*          Note (optional)                                 │
+│  ┌────────┐      ┌─────────────────────────────────────────────┐│
+│  │ 10     │      │ Implementation contracts for v2 upgrade     ││
+│  └────────┘      └─────────────────────────────────────────────┘│
+│                                                                  │
+│  [Show address preview]  ← Click to see calculated addresses    │
+│                                                                  │
+│                              [Cancel]  [Pre-register 10 Addresses]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Step 2: Register Contract (with pre-registered address selection)**
+
+Navigate to **Contracts** tab → Click **"Register Contract"** button
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Register Contract                                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Contract Address*                                               │
+│  ┌──────────────────────────────────────────────────────────┬──┐│
+│  │ 0x...                                                    │▼ ││
+│  └──────────────────────────────────────────────────────────┴──┘│
+│  ↳ 5 pre-registered addresses available (click ▼ to select)    │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────────┐
+│  │ Pre-registered Addresses (5 available)                       │
+│  ├──────────────────────────────────────────────────────────────┤
+│  │ 0x1234...5678  │ Implementation contracts for v2 upgrade     │
+│  │ 0x2345...6789  │ Implementation contracts for v2 upgrade     │
+│  │ 0x3456...789a  │ Implementation contracts for v2 upgrade     │
+│  │ ...                                                          │
+│  └──────────────────────────────────────────────────────────────┘
+│                                                                  │
+│  Name (optional)                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ TokenV2Implementation                                        ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ↳ Auto-filled from pre-registered address note if selected     │
+│                                                                  │
+│  💡 Tip: After registering, add grants to specify which groups  │
+│     can access it and with what claims.                         │
+│                                                                  │
+│                                        [Cancel]  [Register Contract]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Step 3: Assign Grants**
+
+After registering a contract, click on it to add grants:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Contract: TokenV2Implementation                                 │
+│  Address: 0x1234...5678                                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Grants                                        [+ Add Grant]     │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ Group          │ Claims                    │ Actions         ││
+│  ├─────────────────────────────────────────────────────────────┤│
+│  │ Engineering    │ read, write, upgrade      │ [Edit] [Delete] ││
+│  │ Operators      │ read                      │ [Edit] [Delete] ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 **How CREATE3 works:**
 
 | Method | Address Formula | Code-Independent? |
@@ -474,6 +703,60 @@ Result: final_addr = f(factory, salt) only - NO dependency on contract code!
 ```
 
 This allows **pre-registration of future implementation addresses** without knowing the code.
+
+#### Development Mode: Auto-Deploy CREATE3 Factory
+
+In development mode (when connected to Anvil or similar local node), the UI can automatically deploy a CREATE3 factory if one isn't already deployed.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Development Mode                                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ⚠️ No CREATE3 factory contract is deployed on the local chain. │
+│  Click the button below to deploy one automatically using       │
+│  Anvil's default account.                                       │
+│                                                                  │
+│                    [🚀 Deploy CREATE3 Factory]                   │
+│                                                                  │
+│  ─────────────────── or ───────────────────                     │
+│                                                                  │
+│  Use Existing Factory Address                                    │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ 0x...                                                        ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Dev endpoints (localhost only, non-production):**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/v1/dev/create3-factory | Check if factory is deployed |
+| POST | /api/v1/dev/create3-factory | Deploy factory using Anvil account 0 |
+| POST | /api/v1/dev/orgs/:org_id/create3/auto-register | Auto-register after CREATE3 deployment |
+
+The auto-register endpoint is useful for automated testing:
+```bash
+# After deploying via CREATE3 factory, auto-register if pre-registered
+curl -X POST http://localhost:8080/api/v1/dev/orgs/{org_id}/create3/auto-register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "name": "MyContract"
+  }'
+```
+
+Response:
+```json
+{
+  "address": "0x1234...",
+  "registered": true,
+  "message": "Contract registered successfully"
+}
+```
 
 **Pre-register addresses:**
 ```bash

@@ -125,6 +125,19 @@ export const rbacApi = {
       api.post<AccessCheckResult>('/access/check', request),
     getCacheStats: () => api.get<CacheStats>('/cache/stats'),
   },
+
+  // Dev endpoints (only available in development mode)
+  dev: {
+    getCreate3Factory: () =>
+      api.get<{ address: string; deployed: boolean; message?: string }>('/dev/create3-factory'),
+    deployCreate3Factory: () =>
+      api.post<{ address: string; deployed: boolean }>('/dev/create3-factory'),
+    autoRegisterCreate3: (orgId: string, input: { factory: string; salt: string; name?: string }) =>
+      api.post<{ address: string; registered: boolean; message?: string }>(
+        `/dev/orgs/${orgId}/create3/auto-register`,
+        input
+      ),
+  },
 };
 
 export default rbacApi;

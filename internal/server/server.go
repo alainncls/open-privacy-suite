@@ -13,6 +13,7 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
+	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"strings"
@@ -142,6 +143,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize RBAC access controller
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
+
+	// Load additional trusted factory hashes from config
+	if len(cfg.TrustedFactoryHashes) > 0 {
+		for _, hash := range cfg.TrustedFactoryHashes {
+			create3.AddTrustedFactory(create3.TrustedFactory{
+				Name:         "Custom factory (from TRUSTED_FACTORY_HASHES env)",
+				BytecodeHash: hash,
+				Source:       "environment variable",
+			})
+		}
+		fmt.Printf("Loaded %d additional trusted factory hashes from config\n", len(cfg.TrustedFactoryHashes))
+	}
 
 	// Initialize session store
 	sessionStore := auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
@@ -347,6 +360,12 @@ func (s *Server) setupRouter() *gin.Engine {
 
 		// Disclosure admin endpoints
 		s.registerDisclosureRoutes(apiV1)
+
+		// Dev-only endpoints (CREATE3 factory deployment)
+		apiV1.GET("/dev/create3-factory", s.getCreate3Factory)
+		apiV1.POST("/dev/create3-factory", s.deployCreate3Factory)
+		apiV1.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+		apiV1.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
@@ -364,6 +383,12 @@ func (s *Server) setupRouter() *gin.Engine {
 
 		// Disclosure admin endpoints
 		s.registerDisclosureRoutes(api)
+
+		// Dev-only endpoints (CREATE3 factory deployment)
+		api.GET("/dev/create3-factory", s.getCreate3Factory)
+		api.POST("/dev/create3-factory", s.deployCreate3Factory)
+		api.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+		api.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
 	}
 
 	return router
