@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -234,7 +235,23 @@ func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contrac
 func (m *MockStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) {
 	return nil, 0, nil
 }
-func (m *MockStore) DeleteContract(ctx context.Context, id string) error                 { return nil }
+func (m *MockStore) DeleteContract(ctx context.Context, id string) error { return nil }
+func (m *MockStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
+	for _, c := range m.contracts {
+		if strings.ToLower(c.Address) == strings.ToLower(address) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *MockStore) IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error) {
+	for _, c := range m.contracts {
+		if strings.ToLower(c.Address) == strings.ToLower(address) && c.OrgID == orgID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil
@@ -254,6 +271,40 @@ func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, reso
 }
 func (m *MockStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) {
 	return nil, nil
+}
+
+// Preregistered address stubs
+func (m *MockStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error {
+	return nil
+}
+func (m *MockStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) {
+	return nil, nil
+}
+func (m *MockStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) {
+	return nil, nil
+}
+func (m *MockStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
+	return nil
+}
+func (m *MockStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	return false, nil
+}
+func (m *MockStore) MarkAddressUsed(ctx context.Context, address string) error {
+	return nil
+}
+
+// Managed proxy stubs
+func (m *MockStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
+	return nil
+}
+func (m *MockStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
+	return nil, nil
+}
+func (m *MockStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error {
+	return nil
+}
+func (m *MockStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
+	return false, nil
 }
 
 // Tests

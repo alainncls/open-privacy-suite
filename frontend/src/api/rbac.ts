@@ -23,6 +23,9 @@ import type {
   CreateContractGrantInput,
   UpdateContractGrantInput,
   MembershipWithDetails,
+  PreregisteredAddress,
+  PreregisterInput,
+  PreregisterResponse,
 } from '../types/rbac';
 
 const api = axios.create({
@@ -104,6 +107,16 @@ export const rbacApi = {
       api.put<ContractGrant>(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`, input),
     deleteGrant: (orgId: string, address: string, groupId: string) =>
       api.delete(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`),
+  },
+
+  // Preregistered Addresses (CREATE3)
+  preregisteredAddresses: {
+    list: (orgId: string) =>
+      api.get<PreregisteredAddress[]>(`/orgs/${orgId}/addresses/preregistered`),
+    create: (orgId: string, input: PreregisterInput) =>
+      api.post<PreregisterResponse>(`/orgs/${orgId}/addresses/preregister`, input),
+    delete: (orgId: string, address: string) =>
+      api.delete(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}`),
   },
 
   // Utilities

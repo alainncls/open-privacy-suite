@@ -2,10 +2,13 @@ package rbac
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/evm/bytecode"
 
 	"github.com/google/uuid"
 )
@@ -141,6 +144,11 @@ var GlobalBlockedMethods = map[string]bool{
 	"les_serverInfo":         true,
 	"les_setClientParams":    true,
 	"les_setDefaultParams":   true,
+
+	// WebSocket subscriptions - not supported, use polling instead
+	// eth_subscribe could bypass eth_getLogs filtering for real-time events
+	"eth_subscribe":   true,
+	"eth_unsubscribe": true,
 }
 
 // blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
@@ -251,17 +259,29 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 // AccessController handles access control decisions for RBAC.
 type AccessController struct {
-	store    Store
-	resolver *Resolver
-	cache    *Cache
+	store            Store
+	resolver         *Resolver
+	cache            *Cache
+	deployValidator  *DeploymentValidator
+	upgradeValidator *UpgradeValidator
+	pendingTracker   *PendingDeploymentTracker
+}
+
+// Store returns the underlying RBAC store for the access controller.
+// This is used for cross-org isolation checks that require direct database access.
+func (c *AccessController) Store() Store {
+	return c.store
 }
 
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	return &AccessController{
-		store:    store,
-		resolver: NewResolver(store, cacheTTL),
-		cache:    NewCache(CacheConfig{TTL: cacheTTL}),
+		store:            store,
+		resolver:         NewResolver(store, cacheTTL),
+		cache:            NewCache(CacheConfig{TTL: cacheTTL}),
+		deployValidator:  NewDeploymentValidator(store),
+		upgradeValidator: NewUpgradeValidator(store),
+		pendingTracker:   NewPendingDeploymentTracker(1 * time.Hour),
 	}
 }
 
@@ -277,6 +297,14 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 	// Check for Multicall bypass attempts
 	if isMulticall, reason := DetectMulticall(req.Method, req.Params); isMulticall {
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  reason,
+		}, nil
+	}
+
+	// Check for historical state queries (privacy protection)
+	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  reason,
@@ -357,6 +385,26 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
+	// Handle eth_getLogs specially - needs multi-address validation
+	// eth_getLogs can have multiple addresses in the filter, unlike other methods
+	// that target a single contract. We validate ALL addresses in the filter.
+	if req.Method == "eth_getLogs" {
+		if err := c.validateGetLogsAccessWithCrossOrgCheck(ctx, perms, req.Params); err != nil {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  err.Error(),
+			}, nil
+		}
+		// eth_getLogs passed validation - return allowed with rate limits
+		allClaims := collectAllClaims(perms)
+		return &AccessCheckResult{
+			Allowed:        true,
+			RateLimitRPS:   perms.RateLimitRPS,
+			RateLimitDaily: perms.RateLimitDaily,
+			Claims:         allClaims,
+		}, nil
+	}
+
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.Method, req.Params)
 
@@ -364,7 +412,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
 
-		// Get contract access for this address
+		// Check if user has EXPLICIT access to this contract in their permissions
+		hasExplicitAccess := perms.IsContractRegistered(addr)
+
+		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
 		// If no access to this contract (not registered and no default claims), deny
@@ -373,6 +424,27 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				Allowed: false,
 				Reason:  fmt.Sprintf("no access to contract %s", req.TargetAddress),
 			}, nil
+		}
+
+		// CROSS-ORG ISOLATION CHECK (P0 Security Fix)
+		// If user doesn't have explicit access but got access via default_claims,
+		// we must verify the contract isn't registered to ANY other organization.
+		// This prevents users from using default_claims to access contracts belonging to other orgs.
+		if !hasExplicitAccess && ReadOpsMap[req.Method] {
+			// User is relying on default_claims - check if contract is registered to any org
+			isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check contract registration: %w", err)
+			}
+
+			if isRegisteredToAnyOrg {
+				// Contract belongs to another organization - deny access
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("contract %s is registered to another organization", req.TargetAddress),
+				}, nil
+			}
+			// Contract is truly public (not registered to any org) - allow with default_claims
 		}
 
 		// Check if user has the required claim on this contract
@@ -392,6 +464,24 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 		}
+
+		// Validate proxy upgrades for eth_sendTransaction (not deployments)
+		// This must happen AFTER verifying write access
+		if req.Method == "eth_sendTransaction" {
+			calldata := extractCalldata(req.Method, req.Params)
+			if len(calldata) > 0 {
+				upgradeResult, err := c.upgradeValidator.ValidateUpgrade(ctx, org.ID, addr, calldata)
+				if err != nil {
+					return nil, fmt.Errorf("failed to validate upgrade: %w", err)
+				}
+				if !upgradeResult.Allowed {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("proxy upgrade denied: %s", upgradeResult.Reason),
+					}, nil
+				}
+			}
+		}
 	} else if requiredClaim != "" {
 		// No target address but operation requires a claim (e.g., contract deployment)
 		// Check if user has the required claim via default claims
@@ -402,6 +492,43 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  fmt.Sprintf("missing required %s claim for this operation", requiredClaim),
+			}, nil
+		}
+
+		// For contract deployments, validate the bytecode
+		if requiredClaim == ClaimDeploy && IsContractDeployment(req.Method, req.Params) {
+			bytecodeHex := extractDeploymentBytecode(req.Method, req.Params)
+			if bytecodeHex == "" {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "contract deployment missing bytecode",
+				}, nil
+			}
+
+			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex)
+			if err != nil {
+				return nil, fmt.Errorf("failed to validate deployment bytecode: %w", err)
+			}
+
+			if !validationResult.Allowed {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("deployment validation failed: %s", validationResult.Reason),
+				}, nil
+			}
+
+			// Include deployment info in the result for proxy tracking
+			allClaims := collectAllClaims(perms)
+			return &AccessCheckResult{
+				Allowed:        true,
+				RateLimitRPS:   perms.RateLimitRPS,
+				RateLimitDaily: perms.RateLimitDaily,
+				Claims:         allClaims,
+				DeploymentInfo: &DeploymentInfo{
+					OrgID:     org.ID,
+					IsProxy:   validationResult.IsProxy,
+					ProxyType: validationResult.ProxyType,
+				},
 			}, nil
 		}
 	}
@@ -472,6 +599,7 @@ var ReadOpsMap = map[string]bool{
 	"eth_getBalance":          true,
 	"eth_getStorageAt":        true,
 	"eth_getTransactionCount": true,
+	"eth_getLogs":             true,
 }
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
@@ -556,6 +684,75 @@ func IsContractDeployment(method string, params []any) bool {
 	return false
 }
 
+// extractDeploymentBytecode extracts the bytecode from contract deployment params.
+// For eth_sendTransaction and eth_estimateGas, the bytecode is in the "data" or "input" field.
+// Returns empty string if bytecode cannot be extracted.
+func extractDeploymentBytecode(method string, params []any) string {
+	if method != "eth_sendTransaction" && method != "eth_estimateGas" {
+		return ""
+	}
+
+	if len(params) == 0 {
+		return ""
+	}
+
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	// Try "data" field first (standard), then "input" field (some clients use this)
+	if data, ok := txObj["data"].(string); ok && data != "" && data != "0x" {
+		return data
+	}
+	if input, ok := txObj["input"].(string); ok && input != "" && input != "0x" {
+		return input
+	}
+
+	return ""
+}
+
+// extractCalldata extracts the calldata from transaction params as raw bytes.
+// For eth_sendTransaction, the calldata is in the "data" or "input" field.
+// Returns nil if calldata cannot be extracted or is empty.
+func extractCalldata(method string, params []any) []byte {
+	if method != "eth_sendTransaction" {
+		return nil
+	}
+
+	if len(params) == 0 {
+		return nil
+	}
+
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	// Try "data" field first (standard), then "input" field (some clients use this)
+	var hexData string
+	if data, ok := txObj["data"].(string); ok && data != "" && data != "0x" {
+		hexData = data
+	} else if input, ok := txObj["input"].(string); ok && input != "" && input != "0x" {
+		hexData = input
+	}
+
+	if hexData == "" {
+		return nil
+	}
+
+	// Remove 0x prefix if present
+	hexData = strings.TrimPrefix(hexData, "0x")
+
+	// Decode hex to bytes
+	calldata, err := hex.DecodeString(hexData)
+	if err != nil {
+		return nil
+	}
+
+	return calldata
+}
+
 // containsClaim checks if a claim is in a slice.
 func containsClaim(claims []Claim, claim Claim) bool {
 	for _, c := range claims {
@@ -594,6 +791,86 @@ func GetTargetAddress(method string, params []any) string {
 	return ""
 }
 
+// extractBlockParam extracts the block parameter from JSON-RPC params.
+// For eth_call: params are [txObject, blockParam] - block is 2nd param
+// For eth_getStorageAt: params are [address, slot, blockParam] - block is 3rd param
+// Returns the block parameter as string, or "latest" if not specified.
+func extractBlockParam(method string, params []any) string {
+	if len(params) == 0 {
+		return "latest"
+	}
+
+	var blockParamIndex int
+	switch method {
+	case "eth_call":
+		blockParamIndex = 1
+	case "eth_getStorageAt":
+		blockParamIndex = 2
+	default:
+		return "latest"
+	}
+
+	if len(params) <= blockParamIndex {
+		return "latest"
+	}
+
+	blockParam := params[blockParamIndex]
+	if blockParam == nil {
+		return "latest"
+	}
+
+	blockStr, ok := blockParam.(string)
+	if !ok {
+		// Non-string block param (e.g., number or block object) - treat as historical for safety
+		return "historical"
+	}
+
+	if blockStr == "" {
+		return "latest"
+	}
+
+	return blockStr
+}
+
+// isHistoricalBlock checks if a block parameter represents a historical state query.
+// Returns true for block numbers (hex like "0x1234") and block hashes.
+// Returns false for "latest", "pending", "safe", "finalized", "earliest", or empty string.
+func isHistoricalBlock(blockParam string) bool {
+	// Empty defaults to "latest" (not historical)
+	if blockParam == "" {
+		return false
+	}
+
+	// Named block tags are NOT historical
+	switch strings.ToLower(blockParam) {
+	case "latest", "pending", "safe", "finalized", "earliest":
+		return false
+	}
+
+	// Anything else is considered historical:
+	// - Hex block numbers like "0x1234"
+	// - Block hashes (66 character hex strings)
+	// - Block objects (if someone passes one)
+	return true
+}
+
+// IsHistoricalStateQuery checks if a request is attempting to query historical blockchain state.
+// Returns (isHistorical, reason) where reason explains why it was flagged as historical.
+// This is a privacy protection measure to prevent queries at specific past blocks.
+func IsHistoricalStateQuery(method string, params []any) (bool, string) {
+	// Only check methods that accept block parameters for state queries
+	if method != "eth_call" && method != "eth_getStorageAt" {
+		return false, ""
+	}
+
+	blockParam := extractBlockParam(method, params)
+	if isHistoricalBlock(blockParam) {
+		return true, "historical state queries not permitted"
+	}
+
+	return false, ""
+}
+
 // GetFunctionSelector extracts the function selector (first 4 bytes) from calldata.
 // Returns empty string if no valid selector found.
 // Expects selector format "0xXXXXXXXX" (10 characters including 0x prefix).
@@ -620,6 +897,145 @@ func GetFunctionSelector(method string, params []any) string {
 	}
 
 	return ""
+}
+
+// ValidateGetLogsAccess validates eth_getLogs access based on address filter.
+// SECURITY: This function enforces that:
+// 1. eth_getLogs MUST have an address filter (prevent broad queries)
+// 2. User must have 'read' claim on ALL addresses in the filter
+// This prevents users from querying logs from contracts they shouldn't see,
+// enforcing cross-org isolation.
+func ValidateGetLogsAccess(perms *EffectivePermissions, params []any) error {
+	if len(params) == 0 {
+		return fmt.Errorf("eth_getLogs: missing filter parameter")
+	}
+
+	filterObj, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("eth_getLogs: invalid filter parameter type")
+	}
+
+	// Extract addresses from filter
+	addresses := extractGetLogsAddresses(filterObj)
+
+	// SECURITY: Require address filter to prevent broad queries
+	// Without this check, users could query ALL logs on the chain
+	if len(addresses) == 0 {
+		return fmt.Errorf("eth_getLogs: address filter required for security")
+	}
+
+	// Check each address against RBAC permissions
+	for _, addr := range addresses {
+		access := perms.GetContractAccess(addr)
+		if access == nil {
+			return fmt.Errorf("eth_getLogs: no access to contract %s", addr)
+		}
+		if !containsClaim(access.Claims, ClaimRead) {
+			return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+		}
+	}
+
+	return nil
+}
+
+// extractGetLogsAddresses extracts contract addresses from eth_getLogs filter.
+// The address field can be:
+// - A single address string: "0x..."
+// - An array of address strings: ["0x...", "0x..."]
+// - null/missing (returns empty slice)
+func extractGetLogsAddresses(filter map[string]any) []string {
+	var addresses []string
+
+	addrField := filter["address"]
+	if addrField == nil {
+		return nil
+	}
+
+	// Can be a single address string
+	if addr, ok := addrField.(string); ok {
+		if addr != "" {
+			addresses = append(addresses, strings.ToLower(addr))
+		}
+		return addresses
+	}
+
+	// Or an array of addresses
+	if addrArray, ok := addrField.([]any); ok {
+		for _, a := range addrArray {
+			if addr, ok := a.(string); ok && addr != "" {
+				addresses = append(addresses, strings.ToLower(addr))
+			}
+		}
+	}
+
+	return addresses
+}
+
+// GetGetLogsAddresses is an exported version for use by external callers.
+// Returns the list of addresses from eth_getLogs filter params.
+func GetGetLogsAddresses(params []any) []string {
+	if len(params) == 0 {
+		return nil
+	}
+
+	filterObj, ok := params[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	return extractGetLogsAddresses(filterObj)
+}
+
+// validateGetLogsAccessWithCrossOrgCheck validates eth_getLogs access with cross-org isolation.
+// This extends ValidateGetLogsAccess to also check that contracts accessed via default_claims
+// are not registered to other organizations (P0 security fix).
+func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Context, perms *EffectivePermissions, params []any) error {
+	if len(params) == 0 {
+		return fmt.Errorf("eth_getLogs: missing filter parameter")
+	}
+
+	filterObj, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("eth_getLogs: invalid filter parameter type")
+	}
+
+	// Extract addresses from filter
+	addresses := extractGetLogsAddresses(filterObj)
+
+	// SECURITY: Require address filter to prevent broad queries
+	// Without this check, users could query ALL logs on the chain
+	if len(addresses) == 0 {
+		return fmt.Errorf("eth_getLogs: address filter required for security")
+	}
+
+	// Check each address against RBAC permissions with cross-org isolation
+	for _, addr := range addresses {
+		// Check if user has EXPLICIT access to this contract
+		hasExplicitAccess := perms.IsContractRegistered(addr)
+
+		access := perms.GetContractAccess(addr)
+		if access == nil {
+			return fmt.Errorf("eth_getLogs: no access to contract %s", addr)
+		}
+		if !containsClaim(access.Claims, ClaimRead) {
+			return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+		}
+
+		// CROSS-ORG ISOLATION CHECK (P0 Security Fix)
+		// If user doesn't have explicit access but got access via default_claims,
+		// verify the contract isn't registered to any other organization.
+		if !hasExplicitAccess {
+			isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+			if err != nil {
+				return fmt.Errorf("eth_getLogs: failed to check contract registration: %w", err)
+			}
+			if isRegisteredToAnyOrg {
+				return fmt.Errorf("eth_getLogs: contract %s is registered to another organization", addr)
+			}
+		}
+	}
+
+	return nil
 }
 
 // EnsureUserExists creates a user if they don't exist, or returns the existing user.
@@ -735,4 +1151,95 @@ func (c *AccessController) CacheStats() CacheStats {
 // Stop stops the access controller's background goroutines.
 func (c *AccessController) Stop() {
 	c.cache.Stop()
+}
+
+// TrackPendingDeployment tracks a pending proxy deployment for later registration.
+// This should be called by the RPC layer after successfully forwarding a deployment
+// transaction that was validated as a proxy.
+//
+// Parameters:
+//   - txHash: The transaction hash returned by eth_sendTransaction
+//   - orgID: The organization ID that owns the deployment
+//   - proxyType: The detected proxy type (e.g., "ERC1967", "Transparent", "UUPS")
+//   - proxyInfo: The full proxy detection info from validation
+func (c *AccessController) TrackPendingDeployment(
+	txHash string,
+	orgID string,
+	proxyType string,
+	proxyInfo *bytecode.ProxyInfo,
+) {
+	if txHash == "" || orgID == "" {
+		return
+	}
+
+	deployment := &PendingDeployment{
+		TxHash:      txHash,
+		OrgID:       orgID,
+		IsProxy:     proxyInfo != nil && proxyInfo.IsProxy,
+		ProxyType:   proxyType,
+		ProxyInfo:   proxyInfo,
+		SubmittedAt: time.Now(),
+	}
+
+	c.pendingTracker.Track(txHash, deployment)
+}
+
+// NotifyDeploymentMined processes a mined deployment transaction.
+// This should be called by the RPC layer after receiving the transaction receipt.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - txHash: The transaction hash of the mined deployment
+//   - contractAddress: The address of the deployed contract from the receipt
+//
+// Returns nil if the deployment was not tracked (not a proxy) or was successfully registered.
+// Returns an error if proxy registration fails.
+func (c *AccessController) NotifyDeploymentMined(
+	ctx context.Context,
+	txHash string,
+	contractAddress string,
+) error {
+	// Get the pending deployment (removes it from tracker)
+	deployment := c.pendingTracker.Get(txHash)
+	if deployment == nil {
+		// Not a tracked deployment - this is fine
+		return nil
+	}
+
+	// Only register if it's a proxy
+	if !deployment.IsProxy || deployment.ProxyInfo == nil {
+		return nil
+	}
+
+	// Register the deployed proxy
+	return c.deployValidator.RegisterDeployedProxy(
+		ctx,
+		deployment.OrgID,
+		contractAddress,
+		deployment.ProxyInfo,
+		"", // Initial implementation not known from deployment bytecode
+	)
+}
+
+// GetPendingDeployment retrieves a pending deployment without removing it.
+// This is useful for checking if a transaction is being tracked.
+func (c *AccessController) GetPendingDeployment(txHash string) *PendingDeployment {
+	return c.pendingTracker.Peek(txHash)
+}
+
+// PendingDeploymentCount returns the number of pending deployments being tracked.
+func (c *AccessController) PendingDeploymentCount() int {
+	return c.pendingTracker.Size()
+}
+
+// CleanupPendingDeployments removes expired pending deployments.
+// Returns the number of entries removed.
+func (c *AccessController) CleanupPendingDeployments() int {
+	return c.pendingTracker.Cleanup()
+}
+
+// DeploymentValidator returns the deployment validator for direct use.
+// This is useful when the caller needs to access validation results for proxy tracking.
+func (c *AccessController) DeploymentValidator() *DeploymentValidator {
+	return c.deployValidator
 }

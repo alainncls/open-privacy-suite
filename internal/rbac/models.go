@@ -175,11 +175,20 @@ type AccessCheckRequest struct {
 
 // AccessCheckResult represents the result of an access check.
 type AccessCheckResult struct {
-	Allowed        bool    `json:"allowed"`
-	Reason         string  `json:"reason,omitempty"`
-	RateLimitRPS   *int    `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int    `json:"rate_limit_daily,omitempty"`
-	Claims         []Claim `json:"claims,omitempty"`
+	Allowed        bool            `json:"allowed"`
+	Reason         string          `json:"reason,omitempty"`
+	RateLimitRPS   *int            `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily *int            `json:"rate_limit_daily,omitempty"`
+	Claims         []Claim         `json:"claims,omitempty"`
+	DeploymentInfo *DeploymentInfo `json:"deployment_info,omitempty"` // Set for allowed deployments
+}
+
+// DeploymentInfo contains information about an allowed deployment.
+// This is used by the RPC layer to track pending deployments for proxy registration.
+type DeploymentInfo struct {
+	OrgID     string `json:"org_id"`
+	IsProxy   bool   `json:"is_proxy"`
+	ProxyType string `json:"proxy_type,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.
@@ -293,4 +302,31 @@ func (e *EffectivePermissions) HasDefaultClaim(claim Claim) bool {
 // HasClaim checks if a ContractAccess includes a specific claim.
 func (ca ContractAccess) HasClaim(claim Claim) bool {
 	return slices.Contains(ca.Claims, claim)
+}
+
+// PreregisteredAddress represents a pre-registered CREATE3 deployment address.
+// These addresses can be whitelisted before the actual contract is deployed,
+// enabling upgradeable proxy patterns where implementation addresses need pre-approval.
+type PreregisteredAddress struct {
+	ID        string     `json:"id"`
+	OrgID     string     `json:"org_id"`
+	Address   string     `json:"address"` // The pre-computed CREATE3 address (lowercase 0x-prefixed)
+	Factory   string     `json:"factory"` // The CREATE3 factory contract address
+	Salt      []byte     `json:"salt"`    // The 32-byte salt used for address derivation
+	Note      string     `json:"note,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UsedAt    *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
+}
+
+// ManagedProxy represents a proxy contract that is tracked for upgrade validation.
+// When a transaction targets a managed proxy with an upgrade selector, the upgrade
+// validator ensures the new implementation is owned by the same organization.
+type ManagedProxy struct {
+	ID           string    `json:"id"`
+	OrgID        string    `json:"org_id"`
+	ProxyAddress string    `json:"proxy_address"` // The proxy contract address (lowercase 0x-prefixed)
+	ProxyType    string    `json:"proxy_type"`    // Type of proxy (e.g., "transparent", "uups", "beacon")
+	CurrentImpl  string    `json:"current_impl"`  // Current implementation address
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

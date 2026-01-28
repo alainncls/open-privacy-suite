@@ -233,3 +233,28 @@ export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
   upgrade: 'Can upgrade proxy contracts',
   deploy: 'Can deploy new contracts (contract creation transactions)',
 };
+
+// Preregistered Address - for CREATE3 address pre-registration
+export interface PreregisteredAddress {
+  id: string;
+  org_id: string;
+  address: string;
+  factory: string;
+  salt: string; // Hex-encoded
+  note?: string;
+  created_at: string;
+  used_at?: string | null;
+}
+
+// Input for preregistering addresses
+export interface PreregisterInput {
+  factory: string;
+  salt_prefix: string;
+  count: number;
+  note?: string;
+}
+
+// Response from preregister endpoint
+export interface PreregisterResponse {
+  addresses: PreregisteredAddress[];
+}

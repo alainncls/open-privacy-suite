@@ -20,6 +20,7 @@ import OrganizationList from './components/rbac/OrganizationList';
 import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
+import PreregisteredAddressList from './components/rbac/PreregisteredAddressList';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
 import './index.css';
 
@@ -60,6 +61,7 @@ function Root() {
                     <Route path="users" element={<UserList />} />
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
+                    <Route path="preregistered" element={<PreregisteredAddressList />} />
                   </Route>
                   <Route path="disclosure" element={<AdminDisclosureDashboard />} />
                 </Route>

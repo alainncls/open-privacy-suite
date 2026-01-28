@@ -887,6 +887,91 @@ func TestAuditLog(t *testing.T) {
 	})
 }
 
+// IsContractRegisteredToAnyOrg Tests
+
+func TestIsContractRegisteredToAnyOrg(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	// Create two organizations
+	org1 := &rbac.Organization{ID: uuid.New().String(), Slug: "org1", Name: "Org 1", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org1)
+
+	org2 := &rbac.Organization{ID: uuid.New().String(), Slug: "org2", Name: "Org 2", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org2)
+
+	// Create a contract in org1
+	registeredContract := &rbac.Contract{
+		ID:       uuid.New().String(),
+		OrgID:    org1.ID,
+		Address:  "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		Metadata: map[string]interface{}{},
+	}
+	database.CreateContract(ctx, registeredContract)
+
+	t.Run("Contract registered to org1 - should return true", func(t *testing.T) {
+		exists, err := database.IsContractRegisteredToAnyOrg(ctx, "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+		if err != nil {
+			t.Fatalf("IsContractRegisteredToAnyOrg() error = %v", err)
+		}
+		if !exists {
+			t.Error("Expected true for registered contract")
+		}
+	})
+
+	t.Run("Contract registered - case insensitive check (lowercase)", func(t *testing.T) {
+		exists, err := database.IsContractRegisteredToAnyOrg(ctx, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		if err != nil {
+			t.Fatalf("IsContractRegisteredToAnyOrg() error = %v", err)
+		}
+		if !exists {
+			t.Error("Expected true for registered contract (lowercase query)")
+		}
+	})
+
+	t.Run("Contract registered - case insensitive check (mixed case)", func(t *testing.T) {
+		exists, err := database.IsContractRegisteredToAnyOrg(ctx, "0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa")
+		if err != nil {
+			t.Fatalf("IsContractRegisteredToAnyOrg() error = %v", err)
+		}
+		if !exists {
+			t.Error("Expected true for registered contract (mixed case query)")
+		}
+	})
+
+	t.Run("Unregistered contract - should return false", func(t *testing.T) {
+		exists, err := database.IsContractRegisteredToAnyOrg(ctx, "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+		if err != nil {
+			t.Fatalf("IsContractRegisteredToAnyOrg() error = %v", err)
+		}
+		if exists {
+			t.Error("Expected false for unregistered contract")
+		}
+	})
+
+	t.Run("Contract in different org - should still return true", func(t *testing.T) {
+		// Create a contract in org2
+		org2Contract := &rbac.Contract{
+			ID:       uuid.New().String(),
+			OrgID:    org2.ID,
+			Address:  "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+			Metadata: map[string]interface{}{},
+		}
+		database.CreateContract(ctx, org2Contract)
+
+		// Check from perspective of any org
+		exists, err := database.IsContractRegisteredToAnyOrg(ctx, "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+		if err != nil {
+			t.Fatalf("IsContractRegisteredToAnyOrg() error = %v", err)
+		}
+		if !exists {
+			t.Error("Expected true for contract registered to org2")
+		}
+	})
+}
+
 // Helper functions
 
 func intPtr(i int) *int {
