@@ -118,7 +118,24 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, links)
+	// Transform to match expected frontend format
+	type AddressResponse struct {
+		Address      string  `json:"address"`
+		VerifiedAt   string  `json:"verified_at"`
+		ENSName      *string `json:"ens_name,omitempty"`
+		ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
+	}
+	addresses := make([]AddressResponse, 0, len(links))
+	for _, link := range links {
+		addresses = append(addresses, AddressResponse{
+			Address:       link.EthAddress,
+			VerifiedAt:    link.VerifiedAt,
+			ENSName:       link.ENSName,
+			ENSResolvedAt: link.ENSResolvedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"addresses": addresses})
 }
 
 func (s *Server) deleteRBACUser(c *gin.Context) {

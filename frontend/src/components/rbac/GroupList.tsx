@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import {
   FolderTree,
   FolderOpen,
@@ -37,6 +38,8 @@ export default function GroupList() {
   const [editing, setEditing] = useState<Group | null>(null);
   const [editingAccess, setEditingAccess] = useState<Group | null>(null);
   const [parentForNew, setParentForNew] = useState<Group | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
+  const [showDeleteError, setShowDeleteError] = useState(false);
 
   useEffect(() => {
     if (orgId) {
@@ -84,16 +87,17 @@ export default function GroupList() {
     }
   };
 
-  const handleDelete = async (group: Group) => {
-    if (!confirm(`Delete group "${group.name}"? This will also delete all child groups.`))
-      return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
 
     try {
-      await rbacApi.groups.delete(orgId, group.id);
+      await rbacApi.groups.delete(orgId, deleteTarget.id);
+      setDeleteTarget(null);
       await loadGroups();
     } catch (error) {
       console.error('Failed to delete group:', error);
-      alert('Failed to delete group. It may have members or child groups.');
+      setDeleteTarget(null);
+      setShowDeleteError(true);
     }
   };
 
@@ -197,7 +201,7 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => handleDelete(group)}
+              onClick={() => setDeleteTarget(group)}
               className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
               title="Delete group"
             >
@@ -322,6 +326,28 @@ export default function GroupList() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+        title="Delete Group"
+        description={`Are you sure you want to delete "${deleteTarget?.name}"? This will also delete all child groups.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        variant="destructive"
+      />
+
+      {/* Delete Error Alert */}
+      <AlertDialog
+        open={showDeleteError}
+        onOpenChange={setShowDeleteError}
+        title="Delete Failed"
+        description="Failed to delete group. It may have members or child groups that need to be removed first."
+        buttonLabel="OK"
+        variant="error"
+      />
     </div>
   );
 }

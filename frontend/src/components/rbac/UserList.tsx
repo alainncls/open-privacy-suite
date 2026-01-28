@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import {
   Users,
   User as UserIcon,
@@ -36,6 +37,7 @@ export default function UserList() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [showUpdateError, setShowUpdateError] = useState(false);
 
   useEffect(() => {
     loadUsers();
@@ -72,7 +74,7 @@ export default function UserList() {
       await loadUsers();
     } catch (error) {
       console.error('Failed to update user:', error);
-      alert('Failed to update user.');
+      setShowUpdateError(true);
     }
   };
 
@@ -246,6 +248,16 @@ export default function UserList() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Update Error Alert */}
+      <AlertDialog
+        open={showUpdateError}
+        onOpenChange={setShowUpdateError}
+        title="Update Failed"
+        description="Failed to update user."
+        buttonLabel="OK"
+        variant="error"
+      />
     </div>
   );
 }

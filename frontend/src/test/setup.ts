@@ -68,3 +68,24 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: vi.fn(),
   })),
 });
+
+// Mock pointer capture APIs for Radix UI Select components
+// JSDOM doesn't support these APIs which are used by Radix UI
+Element.prototype.hasPointerCapture = vi.fn().mockReturnValue(false);
+Element.prototype.setPointerCapture = vi.fn();
+Element.prototype.releasePointerCapture = vi.fn();
+
+// Mock ResizeObserver (not available in JSDOM)
+class ResizeObserverMock {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+
+Object.defineProperty(window, 'ResizeObserver', {
+  writable: true,
+  value: ResizeObserverMock,
+});
+
+// Mock scrollIntoView (not available in JSDOM)
+Element.prototype.scrollIntoView = vi.fn();

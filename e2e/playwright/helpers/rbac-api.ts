@@ -54,6 +54,13 @@ export interface User {
   updated_at: string;
 }
 
+export interface LinkedAddress {
+  address: string;
+  verified_at: string;
+  ens_name?: string;
+  ens_resolved_at?: string;
+}
+
 export interface UserMembership {
   id: string;
   user_id: string;
@@ -392,6 +399,22 @@ export class RBACApiClient {
   async findUserByExternalId(externalId: string): Promise<User | null> {
     const users = await this.listUsers(1000);
     return users.find((u) => u.external_id === externalId) ?? null;
+  }
+
+  // === Linked Addresses ===
+
+  async getUserLinkedAddresses(userId: string): Promise<LinkedAddress[]> {
+    const response = await this.request.get(`${ADMIN_URL}/api/users/${userId}/linked-addresses`);
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to get user linked addresses: ${response.status()} - ${body}`);
+    }
+    const data = (await response.json()) as { addresses: LinkedAddress[] };
+    // Verify the response has the expected structure
+    if (!data.addresses || !Array.isArray(data.addresses)) {
+      throw new Error(`Invalid linked addresses response format: expected {addresses: [...]}, got ${JSON.stringify(data)}`);
+    }
+    return data.addresses;
   }
 
   // === Memberships ===
