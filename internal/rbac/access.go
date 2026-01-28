@@ -386,6 +386,18 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 		}
+	} else if requiredClaim != "" {
+		// No target address but operation requires a claim (e.g., contract deployment)
+		// Check if user has the required claim via default claims
+		// This handles:
+		// - Contract deployment (requires 'deploy' claim)
+		// - eth_sendRawTransaction (requires 'write' claim, but we can't validate target)
+		if !containsClaim(perms.DefaultClaims, requiredClaim) {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("missing required %s claim for this operation", requiredClaim),
+			}, nil
+		}
 	}
 
 	// Check additional required claims from the request
@@ -458,7 +470,13 @@ var ReadOpsMap = map[string]bool{
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
 // Returns the claim needed to execute this operation.
+// For eth_sendTransaction, checks params to distinguish deployment vs regular transaction.
 func ClassifyOperation(method string, params []any) Claim {
+	// Check for contract deployment FIRST (before general write check)
+	if IsContractDeployment(method, params) {
+		return ClaimDeploy
+	}
+
 	// Write operations require 'write' claim
 	if WriteOpsMap[method] {
 		return ClaimWrite
@@ -472,6 +490,60 @@ func ClassifyOperation(method string, params []any) Claim {
 	// Other methods don't require contract-level claims
 	// (e.g., eth_blockNumber, eth_chainId - these are not contract-specific)
 	return ""
+}
+
+// IsContractDeployment checks if the method+params represent a contract deployment.
+// Contract deployments are eth_sendTransaction calls with no 'to' address.
+// NOTE: eth_sendRawTransaction cannot be validated without RLP decoding, so it's
+// treated as a regular write operation. To prevent deployments via raw tx, either
+// don't allow eth_sendRawTransaction method, or don't grant the write claim.
+func IsContractDeployment(method string, params []any) bool {
+	// Only eth_sendTransaction can be validated for deployment
+	// eth_sendRawTransaction would require RLP decoding which is complex
+	if method != "eth_sendTransaction" {
+		return false
+	}
+
+	if len(params) == 0 {
+		// No params means malformed request, but treat as deployment to be safe
+		// (deny by default principle)
+		return true
+	}
+
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		// Malformed params, treat as deployment to be safe
+		return true
+	}
+
+	// Check if 'to' field exists and is non-empty
+	to, exists := txObj["to"]
+	if !exists {
+		// No 'to' field = contract deployment
+		return true
+	}
+
+	// Handle various forms of empty 'to':
+	// - nil/null
+	// - empty string ""
+	// - "0x" (some clients send this for deployment)
+	if to == nil {
+		return true
+	}
+
+	toStr, ok := to.(string)
+	if !ok {
+		// 'to' is not a string (e.g., number or object), treat as deployment to be safe
+		return true
+	}
+
+	// Empty string or just "0x" means deployment
+	if toStr == "" || toStr == "0x" {
+		return true
+	}
+
+	// Has a valid 'to' address, not a deployment
+	return false
 }
 
 // containsClaim checks if a claim is in a slice.

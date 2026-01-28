@@ -36,10 +36,10 @@ func TestClassifyOperation(t *testing.T) {
 			expectedClaim: ClaimWrite,
 		},
 		{
-			name:   "Write operation - eth_sendTransaction",
+			name:   "Write operation - eth_sendTransaction with to address",
 			method: "eth_sendTransaction",
 			params: []any{
-				map[string]any{"to": "0x1234", "value": "0x100"},
+				map[string]any{"to": "0x1234567890123456789012345678901234567890", "value": "0x100"},
 			},
 			expectedClaim: ClaimWrite,
 		},
@@ -55,6 +55,67 @@ func TestClassifyOperation(t *testing.T) {
 			params:        nil,
 			expectedClaim: "",
 		},
+		// Contract deployment cases - should require deploy claim
+		{
+			name:          "Deploy - eth_sendTransaction with no params",
+			method:        "eth_sendTransaction",
+			params:        nil,
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:          "Deploy - eth_sendTransaction with empty params",
+			method:        "eth_sendTransaction",
+			params:        []any{},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "Deploy - eth_sendTransaction with no 'to' field",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"data": "0x6080604052", "value": "0x0"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "Deploy - eth_sendTransaction with 'to' = null",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": nil, "data": "0x6080604052"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "Deploy - eth_sendTransaction with 'to' = empty string",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "", "data": "0x6080604052"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "Deploy - eth_sendTransaction with 'to' = '0x'",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x", "data": "0x6080604052"},
+			},
+			expectedClaim: ClaimDeploy,
+		},
+		{
+			name:   "NOT Deploy - eth_sendTransaction with valid 'to' address",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
+			},
+			expectedClaim: ClaimWrite,
+		},
+		{
+			name:   "NOT Deploy - eth_sendTransaction to zero address (burn)",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x0000000000000000000000000000000000000000", "value": "0x100"},
+			},
+			expectedClaim: ClaimWrite,
+		},
 	}
 
 	for _, tt := range tests {
@@ -63,6 +124,129 @@ func TestClassifyOperation(t *testing.T) {
 
 			if claim != tt.expectedClaim {
 				t.Errorf("Expected claim %v, got %v", tt.expectedClaim, claim)
+			}
+		})
+	}
+}
+
+func TestIsContractDeployment(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		params   []any
+		expected bool
+	}{
+		// Deployment cases
+		{
+			name:     "eth_sendTransaction with no params - deployment",
+			method:   "eth_sendTransaction",
+			params:   nil,
+			expected: true,
+		},
+		{
+			name:     "eth_sendTransaction with empty params - deployment",
+			method:   "eth_sendTransaction",
+			params:   []any{},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with no 'to' field - deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"data": "0x6080604052", "from": "0xabc"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with 'to' = nil - deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": nil, "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with 'to' = empty string - deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "", "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with 'to' = '0x' - deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x", "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with malformed params (not map) - deployment (safe default)",
+			method: "eth_sendTransaction",
+			params: []any{"not a map"},
+			expected: true,
+		},
+		{
+			name:   "eth_sendTransaction with 'to' as number - deployment (safe default)",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": 12345, "data": "0x6080604052"},
+			},
+			expected: true,
+		},
+		// NOT deployment cases
+		{
+			name:   "eth_sendTransaction with valid 'to' - NOT deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x1234567890123456789012345678901234567890"},
+			},
+			expected: false,
+		},
+		{
+			name:   "eth_sendTransaction to zero address - NOT deployment (it's a burn)",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x0000000000000000000000000000000000000000"},
+			},
+			expected: false,
+		},
+		{
+			name:   "eth_sendTransaction with short but valid 'to' - NOT deployment",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{"to": "0x1"},
+			},
+			expected: false,
+		},
+		// Other methods - never deployment
+		{
+			name:     "eth_sendRawTransaction - NOT deployment (can't validate)",
+			method:   "eth_sendRawTransaction",
+			params:   []any{"0xf86c..."},
+			expected: false,
+		},
+		{
+			name:     "eth_call - NOT deployment",
+			method:   "eth_call",
+			params:   nil,
+			expected: false,
+		},
+		{
+			name:     "eth_blockNumber - NOT deployment",
+			method:   "eth_blockNumber",
+			params:   nil,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsContractDeployment(tt.method, tt.params)
+			if result != tt.expected {
+				t.Errorf("IsContractDeployment(%q, %v) = %v, expected %v",
+					tt.method, tt.params, result, tt.expected)
 			}
 		})
 	}
