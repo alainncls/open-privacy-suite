@@ -601,7 +601,51 @@ func TestDetectMulticall(t *testing.T) {
 			expectMulticall: false,
 		},
 		{
-			name:            "eth_sendTransaction is not checked",
+			name:   "eth_sendTransaction to Multicall3 with aggregate - BLOCKED",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":   "0xca11bde05977b3631167028862be2a173976ca11",
+					"data": "0x252dba42000000000000000000000000",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "eth_sendTransaction to Multicall3 with aggregate3 - BLOCKED",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":   "0xca11bde05977b3631167028862be2a173976ca11",
+					"data": "0x82ad56cb",
+				},
+			},
+			expectMulticall: true,
+		},
+		{
+			name:   "eth_sendTransaction to regular contract - allowed",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":   "0x1234567890123456789012345678901234567890",
+					"data": "0x252dba42", // Same selector but different target
+				},
+			},
+			expectMulticall: false,
+		},
+		{
+			name:   "eth_sendTransaction to Multicall3 with non-multicall function - allowed",
+			method: "eth_sendTransaction",
+			params: []any{
+				map[string]any{
+					"to":   "0xca11bde05977b3631167028862be2a173976ca11",
+					"data": "0xa9059cbb", // transfer selector, not multicall
+				},
+			},
+			expectMulticall: false,
+		},
+		{
+			name:            "eth_sendTransaction with empty params - not checked",
 			method:          "eth_sendTransaction",
 			params:          []any{},
 			expectMulticall: false,

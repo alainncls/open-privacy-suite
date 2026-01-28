@@ -206,8 +206,14 @@ func IsMulticallData(data string) bool {
 
 // DetectMulticall checks if a request is a Multicall that could bypass contract ACLs.
 // Returns (isMulticall, reason) where reason explains why Multicall was detected.
+// Blocks eth_call, eth_estimateGas, AND eth_sendTransaction to Multicall contracts
+// because inner calls cannot be validated against per-contract ACLs.
 func DetectMulticall(method string, params []any) (bool, string) {
-	if method != "eth_call" && method != "eth_estimateGas" {
+	// Check all methods that can interact with Multicall contracts
+	// - eth_call: read batching (information disclosure risk)
+	// - eth_estimateGas: gas estimation for batched operations
+	// - eth_sendTransaction: write batching (state manipulation risk - most severe)
+	if method != "eth_call" && method != "eth_estimateGas" && method != "eth_sendTransaction" {
 		return false, ""
 	}
 
