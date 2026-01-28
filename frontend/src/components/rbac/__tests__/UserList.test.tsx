@@ -1,0 +1,433 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/mocks/server';
+import { renderWithRBACContext } from './test-utils';
+import UserList from '../UserList';
+import {
+  mockUsers,
+  mockUserFull,
+  mockUserNoKyc,
+  mockUserBanned,
+  createMockUser,
+} from '@/test/mocks/rbac-fixtures';
+import { mockUser, mockUser2 } from '@/test/mocks/handlers';
+
+// Mock useNavigate
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useParams: () => ({}),
+  };
+});
+
+describe('UserList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNavigate.mockClear();
+  });
+
+  describe('Rendering', () => {
+    it('shows loading spinner initially', async () => {
+      // Set up a delayed response to see the loading state
+      server.use(
+        http.get('/api/v1/users', async () => {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          return HttpResponse.json([mockUser]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      // Should show loading spinner (Loader2 component)
+      const spinner = document.querySelector('.animate-spin');
+      expect(spinner).toBeInTheDocument();
+    });
+
+    it('shows "Users" heading', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUser]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Users')).toBeInTheDocument();
+      });
+    });
+
+    it('shows empty state when no users', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No users found')).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText('Users are created automatically when they authenticate')
+      ).toBeInTheDocument();
+    });
+
+    it('displays table with headers (External ID, KYC, Status, Created, Note, Actions)', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUser]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'External ID' })).toBeInTheDocument();
+      });
+
+      expect(screen.getByRole('columnheader', { name: 'KYC' })).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Note' })).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument();
+    });
+  });
+
+  describe('Data Display', () => {
+    it('shows user external_id (DID) in row', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // DID should be displayed (possibly truncated) with title attribute
+        const didElement = screen.getByTitle(mockUserFull.external_id);
+        expect(didElement).toBeInTheDocument();
+      });
+    });
+
+    it('truncates long DIDs appropriately', async () => {
+      const longDid = 'did:polygonid:polygon:main:extremelylongidentifier1234567890abcdef';
+      const userWithLongDid = createMockUser({
+        id: 'user-long',
+        external_id: longDid,
+      });
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([userWithLongDid]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // The component truncates DIDs longer than 20 chars to: first 10 + ... + last 8
+        // The full DID should be available in the title attribute
+        const didElement = screen.getByTitle(longDid);
+        expect(didElement).toBeInTheDocument();
+        expect(didElement.textContent).toContain('...');
+      });
+    });
+
+    it('shows correct number of rows', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json(mockUsers);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // mockUsers has 3 users
+        const rows = screen.getAllByRole('row');
+        // +1 for header row
+        expect(rows).toHaveLength(mockUsers.length + 1);
+      });
+    });
+  });
+
+  describe('Status Badges', () => {
+    it('KYC true shows "Verified" with checkmark', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+    });
+
+    it('KYC false shows "No" indicator', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserNoKyc]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No')).toBeInTheDocument();
+      });
+    });
+
+    it('Banned user shows red "Banned" badge', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserBanned]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Banned')).toBeInTheDocument();
+      });
+    });
+
+    it('Non-banned users show "Active" badge', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Active')).toBeInTheDocument();
+      });
+    });
+
+    it('shows both KYC and ban status correctly for multiple users', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull, mockUserNoKyc, mockUserBanned]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // mockUserFull: KYC=true, banned=false
+        // mockUserNoKyc: KYC=false, banned=false
+        // mockUserBanned: KYC=true, banned=true
+        expect(screen.getAllByText('Verified')).toHaveLength(2);
+        expect(screen.getByText('No')).toBeInTheDocument();
+        expect(screen.getAllByText('Active')).toHaveLength(2);
+        expect(screen.getByText('Banned')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Actions', () => {
+    it('clicking user row navigates to detail view', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      // Find the row by looking for its content and getting the parent row
+      const rows = screen.getAllByRole('row');
+      // First row is header, second is data row
+      const dataRow = rows[1];
+      await user.click(dataRow);
+
+      expect(mockNavigate).toHaveBeenCalledWith(`/admin/rbac/users/${mockUserFull.id}`);
+    });
+
+    it('clicking ban button toggles user ban status', async () => {
+      const user = userEvent.setup();
+
+      let currentBanned = false;
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([
+            { ...mockUserFull, banned: currentBanned },
+          ]);
+        }),
+        http.put('/api/v1/users/:userId', async ({ request }) => {
+          const body = (await request.json()) as { banned: boolean };
+          currentBanned = body.banned;
+          return HttpResponse.json({ ...mockUserFull, banned: currentBanned });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Ban')).toBeInTheDocument();
+      });
+
+      // Click ban button
+      await user.click(screen.getByText('Ban'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Unban')).toBeInTheDocument();
+      });
+    });
+
+    it('clicking view button navigates to user detail', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([mockUserFull]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Verified')).toBeInTheDocument();
+      });
+
+      // Find and click the eye (view) button
+      const viewButton = screen.getByTitle('View user details');
+      await user.click(viewButton);
+
+      expect(mockNavigate).toHaveBeenCalledWith(`/admin/rbac/users/${mockUserFull.id}`);
+    });
+
+    it('formats created date correctly', async () => {
+      const userWithDate = createMockUser({
+        id: 'user-date',
+        created_at: '2024-03-15T10:30:00Z',
+      });
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([userWithDate]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // The component formats dates like "Mar 15, 2024"
+        expect(screen.getByText('Mar 15, 2024')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('shows empty list when API returns error', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json(
+            { error: 'Internal server error' },
+            { status: 500 }
+          );
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No users found')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('User Note Display', () => {
+    it('shows user note when present', async () => {
+      const userWithNote = createMockUser({
+        id: 'user-note',
+        note: 'VIP customer',
+      });
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([userWithNote]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('VIP customer')).toBeInTheDocument();
+      });
+    });
+
+    it('shows dash when note is empty', async () => {
+      const userWithoutNote = createMockUser({
+        id: 'user-no-note',
+        note: '',
+      });
+
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([userWithoutNote]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // Component shows '-' when note is empty/null
+        expect(screen.getByText('-')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Ban/Unban Button States', () => {
+    it('shows "Ban" button for active users', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([{ ...mockUserFull, banned: false }]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        const banButton = screen.getByTitle('Ban this user');
+        expect(banButton).toBeInTheDocument();
+        expect(screen.getByText('Ban')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "Unban" button for banned users', async () => {
+      server.use(
+        http.get('/api/v1/users', () => {
+          return HttpResponse.json([{ ...mockUserBanned, banned: true }]);
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        const unbanButton = screen.getByTitle('Unban this user');
+        expect(unbanButton).toBeInTheDocument();
+        expect(screen.getByText('Unban')).toBeInTheDocument();
+      });
+    });
+  });
+});

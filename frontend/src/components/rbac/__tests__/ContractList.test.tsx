@@ -1,0 +1,380 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/mocks/server';
+import { renderWithRBACContext } from './test-utils';
+import {
+  mockContracts,
+  mockContractNoName,
+  createMockContract,
+} from '@/test/mocks/rbac-fixtures';
+import { mockContract, mockOrganization } from '@/test/mocks/handlers';
+
+// Mock the useOrgContext hook from RBACManager
+// Must be before importing ContractList
+vi.mock('../RBACManager', () => ({
+  useOrgContext: () => ({
+    selectedOrg: {
+      id: 'org-1',
+      slug: 'test-org',
+      name: 'Test Organization',
+      settings: {},
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+    },
+    setSelectedOrg: vi.fn(),
+    organizations: [{
+      id: 'org-1',
+      slug: 'test-org',
+      name: 'Test Organization',
+      settings: {},
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+    }],
+    refreshOrgs: vi.fn(),
+  }),
+}));
+
+// Import after mock is set up
+import ContractList from '../ContractList';
+
+describe('ContractList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('Rendering', () => {
+    it('shows loading spinner initially', () => {
+      // Make the request hang to see loading state
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', async () => {
+          await new Promise(() => {}); // Never resolves
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      // Should show loading spinner (Loader2 icon with animate-spin)
+      const spinner = document.querySelector('.animate-spin');
+      expect(spinner).toBeInTheDocument();
+    });
+
+    it('shows "Contracts" heading', async () => {
+      renderWithRBACContext(<ContractList />);
+
+      expect(screen.getByText('Contracts')).toBeInTheDocument();
+    });
+
+    it('shows empty state when no contracts', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No contracts registered')).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText('Register your first contract')
+      ).toBeInTheDocument();
+    });
+
+    it('displays table with headers (Address, Name, Created)', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json(mockContracts);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Address')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Name')).toBeInTheDocument();
+      expect(screen.getByText('Created')).toBeInTheDocument();
+      expect(screen.getByText('Actions')).toBeInTheDocument();
+    });
+  });
+
+  describe('Data Display', () => {
+    it('shows contract address (possibly truncated)', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        // Address is truncated: 0x123456...567890
+        expect(screen.getByText(/0x123456.*567890/)).toBeInTheDocument();
+      });
+    });
+
+    it('shows contract name if present', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "-" when name is null or undefined', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContractNoName]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        // The component shows '-' for null/undefined names
+        const nameCell = screen.getByText('-');
+        expect(nameCell).toBeInTheDocument();
+      });
+    });
+
+    it('formats created date correctly', async () => {
+      const contract = createMockContract({
+        id: 'contract-date-test',
+        address: '0xABCDEF1234567890ABCDEF1234567890ABCDEF12',
+        name: 'Date Test Contract',
+        created_at: '2024-03-15T10:30:00Z',
+      });
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([contract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        // The date is formatted as "Mar 15, 2024"
+        expect(screen.getByText('Mar 15, 2024')).toBeInTheDocument();
+      });
+    });
+
+    it('shows correct number of rows', async () => {
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json(mockContracts);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Token Contract')).toBeInTheDocument();
+      });
+
+      // mockContracts has 3 contracts
+      expect(screen.getByText('NFT Collection')).toBeInTheDocument();
+      expect(screen.getByText('Governance')).toBeInTheDocument();
+    });
+  });
+
+  describe('Actions', () => {
+    it('Create button opens ContractForm dialog', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Add Contract')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Contract'));
+
+      await waitFor(() => {
+        // Look for the dialog heading specifically
+        expect(screen.getByRole('heading', { name: 'Register Contract' })).toBeInTheDocument();
+      });
+
+      // Form should be visible with empty fields
+      expect(screen.getByText('Contract Address')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('0x...')).toBeInTheDocument();
+    });
+
+    it('Edit button opens form with contract data', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+
+      // Find and click the edit button (pencil icon)
+      const editButton = screen.getByTitle('Edit contract');
+      await user.click(editButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit Contract')).toBeInTheDocument();
+      });
+
+      // Form should be pre-filled with contract data
+      const addressInput = screen.getByDisplayValue(mockContract.address);
+      expect(addressInput).toBeInTheDocument();
+      expect(addressInput).toBeDisabled(); // Address should be read-only in edit mode
+
+      const nameInput = screen.getByDisplayValue('Test Contract');
+      expect(nameInput).toBeInTheDocument();
+    });
+
+    it('Delete shows confirmation dialog', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+
+      // Find and click the delete button (trash icon)
+      const deleteButton = screen.getByTitle('Delete contract');
+      await user.click(deleteButton);
+
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Delete Contract')).toBeInTheDocument();
+      });
+      expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
+    });
+
+    it('Delete success removes from list', async () => {
+      const user = userEvent.setup();
+
+      let deleted = false;
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          if (deleted) {
+            return HttpResponse.json([]);
+          }
+          return HttpResponse.json([mockContract]);
+        }),
+        http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
+          deleted = true;
+          return HttpResponse.json({ message: 'Deleted' });
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+
+      const deleteButton = screen.getByTitle('Delete contract');
+      await user.click(deleteButton);
+
+      // Wait for confirmation dialog and click Delete
+      await waitFor(() => {
+        expect(screen.getByText('Delete Contract')).toBeInTheDocument();
+      });
+      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
+      await user.click(deleteConfirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('No contracts registered')).toBeInTheDocument();
+      });
+    });
+
+    it('Delete failure shows error dialog', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([mockContract]);
+        }),
+        http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
+          return HttpResponse.json(
+            { error: 'Cannot delete contract' },
+            { status: 500 }
+          );
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+
+      const deleteButton = screen.getByTitle('Delete contract');
+      await user.click(deleteButton);
+
+      // Wait for confirmation dialog and click Delete
+      await waitFor(() => {
+        expect(screen.getByText('Delete Contract')).toBeInTheDocument();
+      });
+      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
+      await user.click(deleteConfirmButton);
+
+      // Error dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Delete Failed')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Failed to delete contract.')).toBeInTheDocument();
+    });
+
+    it('Empty state button opens ContractForm dialog', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/orgs/:orgId/contracts', () => {
+          return HttpResponse.json([]);
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Register your first contract')
+        ).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Register your first contract'));
+
+      await waitFor(() => {
+        // Look for the dialog heading specifically
+        expect(screen.getByRole('heading', { name: 'Register Contract' })).toBeInTheDocument();
+      });
+    });
+  });
+});
