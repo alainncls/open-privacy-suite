@@ -169,24 +169,87 @@ func TestGenerateAddressPool_Limits(t *testing.T) {
 }
 
 func TestGenerateAddressPoolFromHex(t *testing.T) {
-	addresses, err := GenerateAddressPoolFromHex(
-		"0x4e59b44847b379578588920cA78FbF26c0B4956C",
-		"0xdeadbeef",
-		5,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name       string
+		factory    string
+		saltPrefix string
+		count      int
+		wantErr    bool
+	}{
+		{
+			name:       "hex salt prefix with 0x",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "0xdeadbeef",
+			count:      5,
+		},
+		{
+			name:       "text salt prefix",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "myapp-v1",
+			count:      5,
+		},
+		{
+			name:       "text salt prefix with odd length",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "myapp",
+			count:      5,
+		},
+		{
+			name:       "text with 0x prefix that is not valid hex",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "0xmyapp-v1",
+			count:      5,
+		},
+		{
+			name:       "empty salt prefix",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "",
+			count:      5,
+		},
+		{
+			name:       "just 0x prefix",
+			factory:    "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+			saltPrefix: "0x",
+			count:      5,
+		},
+		{
+			name:       "invalid factory",
+			factory:    "not-an-address",
+			saltPrefix: "test",
+			count:      5,
+			wantErr:    true,
+		},
 	}
 
-	if len(addresses) != 5 {
-		t.Errorf("expected 5 addresses, got %d", len(addresses))
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addresses, err := GenerateAddressPoolFromHex(tt.factory, tt.saltPrefix, tt.count)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	// Verify all addresses are valid
-	for i, ga := range addresses {
-		if ga.Address == (common.Address{}) {
-			t.Errorf("zero address at index %d", i)
-		}
+			if len(addresses) != tt.count {
+				t.Errorf("expected %d addresses, got %d", tt.count, len(addresses))
+			}
+
+			// Verify all addresses are valid and unique
+			seen := make(map[common.Address]bool)
+			for i, ga := range addresses {
+				if ga.Address == (common.Address{}) {
+					t.Errorf("zero address at index %d", i)
+				}
+				if seen[ga.Address] {
+					t.Errorf("duplicate address at index %d", i)
+				}
+				seen[ga.Address] = true
+			}
+		})
 	}
 }
 

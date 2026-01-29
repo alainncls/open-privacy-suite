@@ -1,6 +1,7 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 const PROXY_URL = process.env.PROXY_URL || 'http://localhost:8080';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 export default defineConfig({
   testDir: './tests',
@@ -14,10 +15,6 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: PROXY_URL,
-    extraHTTPHeaders: {
-      'Content-Type': 'application/json',
-    },
     trace: 'on-first-retry',
   },
   globalSetup: './global-setup.ts',
@@ -25,4 +22,31 @@ export default defineConfig({
   expect: {
     timeout: 5000,
   },
+  projects: [
+    // API tests (existing)
+    {
+      name: 'api',
+      testMatch: /^(?!.*\/ui\/).*\.spec\.ts$/,
+      use: {
+        baseURL: PROXY_URL,
+        extraHTTPHeaders: {
+          'Content-Type': 'application/json',
+        },
+      },
+    },
+    // UI tests (new)
+    {
+      name: 'ui',
+      testDir: './tests/ui',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: FRONTEND_URL,
+        viewport: { width: 1280, height: 720 },
+        actionTimeout: 10000,
+        navigationTimeout: 15000,
+        screenshot: 'only-on-failure',
+        video: 'retain-on-failure',
+      },
+    },
+  ],
 });
