@@ -96,7 +96,7 @@ E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml
 
 # Run Playwright E2E tests with Docker Compose (isolated environment)
 e2e: ensure-hooks
-	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend
+	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend proxy-frontend
 	$(E2E_COMPOSE) run --rm playwright npm test; \
 	status=$$?; \
 	$(E2E_COMPOSE) down -v; \
@@ -104,7 +104,7 @@ e2e: ensure-hooks
 
 # Run Playwright E2E tests and keep services running (for debugging)
 e2e-debug:
-	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend
+	$(E2E_COMPOSE) up -d --build postgres anvil proxy-backend proxy-frontend
 	$(E2E_COMPOSE) run --rm playwright npm run test:debug
 	@echo "Services still running. Run 'make e2e-down' to stop them."
 
