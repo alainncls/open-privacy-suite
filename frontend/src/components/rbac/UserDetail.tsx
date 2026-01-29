@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import {
   Check,
   X,
@@ -41,13 +42,43 @@ interface LinkedAddress {
 }
 
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
-  const { organizations, selectedOrg } = useOrgContext();
+  const { organizations } = useOrgContext();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
-  const [effectivePerms, setEffectivePerms] = useState<EffectivePermissions | null>(null);
+  const [effectivePermsByOrg, setEffectivePermsByOrg] = useState<Record<string, EffectivePermissions>>({});
+  const [loadingPerms, setLoadingPerms] = useState(false);
   const [linkedAddresses, setLinkedAddresses] = useState<LinkedAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [showMembershipForm, setShowMembershipForm] = useState(false);
+  const [deleteMembershipTarget, setDeleteMembershipTarget] = useState<string | null>(null);
+  const [showMembershipDeleteError, setShowMembershipDeleteError] = useState(false);
+
+  // Group memberships by organization
+  const membershipsByOrg = useMemo(() => {
+    const grouped: Record<string, MembershipWithDetails[]> = {};
+    for (const m of memberships) {
+      const orgId = m.group?.org_id || 'unknown';
+      if (!grouped[orgId]) {
+        grouped[orgId] = [];
+      }
+      grouped[orgId].push(m);
+    }
+    return grouped;
+  }, [memberships]);
+
+  // Get unique org IDs from memberships
+  const userOrgIds = useMemo(() => {
+    return Object.keys(membershipsByOrg).filter(id => id !== 'unknown');
+  }, [membershipsByOrg]);
+
+  // Map org ID to org object for display
+  const orgById = useMemo(() => {
+    const map: Record<string, { name: string; slug: string }> = {};
+    for (const org of organizations) {
+      map[org.id] = { name: org.name, slug: org.slug };
+    }
+    return map;
+  }, [organizations]);
 
   // Build cache of ENS names from API response
   const cachedEnsNames = useMemo(() => {
@@ -77,10 +108,14 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   useEffect(() => {
     loadMemberships();
     loadLinkedAddresses();
-    if (selectedOrg) {
-      loadEffectivePermissions();
+  }, [user.id]);
+
+  // Load effective permissions for all orgs user is a member of
+  useEffect(() => {
+    if (userOrgIds.length > 0) {
+      loadAllEffectivePermissions();
     }
-  }, [user.id, selectedOrg]);
+  }, [userOrgIds.join(',')]);
 
   useEffect(() => {
     setHasChanges(kyc !== user.kyc || banned !== user.banned || note !== (user.note || ''));
@@ -112,29 +147,49 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
     }
   };
 
-  const loadEffectivePermissions = async () => {
-    if (!selectedOrg) return;
+  const loadAllEffectivePermissions = async () => {
+    if (userOrgIds.length === 0) return;
+
+    setLoadingPerms(true);
+    const permsMap: Record<string, EffectivePermissions> = {};
+
     try {
-      const response = await rbacApi.users.getEffectivePermissions(
-        user.id,
-        selectedOrg.slug
+      // Load permissions for each org in parallel
+      const results = await Promise.allSettled(
+        userOrgIds.map(async (orgId) => {
+          const org = orgById[orgId];
+          if (!org) return null;
+          const response = await rbacApi.users.getEffectivePermissions(user.id, org.slug);
+          return { orgId, perms: response.data };
+        })
       );
-      setEffectivePerms(response.data);
-    } catch {
-      setEffectivePerms(null);
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          permsMap[result.value.orgId] = result.value.perms;
+        }
+      }
+
+      setEffectivePermsByOrg(permsMap);
+    } catch (err) {
+      console.error('Failed to load effective permissions:', err);
+    } finally {
+      setLoadingPerms(false);
     }
   };
 
-  const handleDeleteMembership = async (membershipId: string) => {
-    if (!confirm('Remove this membership?')) return;
+  const handleDeleteMembershipConfirm = async () => {
+    if (!deleteMembershipTarget) return;
     try {
-      await rbacApi.users.deleteMembership(user.id, membershipId);
+      await rbacApi.users.deleteMembership(user.id, deleteMembershipTarget);
+      setDeleteMembershipTarget(null);
       await loadMemberships();
-      await loadEffectivePermissions();
+      // Permissions will reload via useEffect when userOrgIds changes
       onUpdate();
     } catch (error) {
       console.error('Failed to delete membership:', error);
-      alert('Failed to remove membership.');
+      setDeleteMembershipTarget(null);
+      setShowMembershipDeleteError(true);
     }
   };
 
@@ -159,7 +214,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const handleMembershipSave = async () => {
     setShowMembershipForm(false);
     await loadMemberships();
-    await loadEffectivePermissions();
+    // Permissions will reload via useEffect when userOrgIds changes
     onUpdate();
   };
 
@@ -335,48 +390,64 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
             No group memberships
           </div>
         ) : (
-          <div className="space-y-2">
-            {memberships.map((m, idx) => (
-              <div
-                key={m.membership?.id || idx}
-                className="flex items-center justify-between p-3 rounded-lg bg-[#F1F5F9]"
-              >
-                <div className="flex items-center gap-3">
-                  <FolderTree className="w-4 h-4 text-[#8950FA]" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{m.group?.name || 'Unknown Group'}</span>
-                      <Badge variant="outline" className="text-xs font-mono">
-                        {m.group?.path || 'N/A'}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      {m.membership?.source && (
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${
-                            m.membership.source === 'zk_attested'
-                              ? 'text-purple-700 border-purple-300 bg-purple-50'
-                              : 'text-[#6B7280]'
-                          }`}
-                        >
-                          {m.membership.source}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
+          <div className="space-y-4">
+            {Object.entries(membershipsByOrg).map(([orgId, orgMemberships]) => (
+              <div key={orgId} className="space-y-2">
+                {/* Organization header */}
+                <div className="text-xs font-medium text-[#6B7280] uppercase tracking-wide px-1">
+                  {orgById[orgId]?.name || 'Unknown Organization'}
                 </div>
-                {m.membership?.id && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDeleteMembership(m.membership.id)}
-                    className="text-[#991B1B] hover:text-red-300 hover:bg-red-500/10"
-                    title="Remove membership"
+                {/* Memberships in this org */}
+                {orgMemberships.map((m, idx) => (
+                  <div
+                    key={m.membership?.id || idx}
+                    className="flex items-center justify-between p-3 rounded-lg bg-[#F1F5F9]"
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                )}
+                    <div className="flex items-center gap-3">
+                      <FolderTree className="w-4 h-4 text-[#8950FA]" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{m.group?.name || 'Unknown Group'}</span>
+                          {/* Only show path if it differs from name (indicates hierarchy) */}
+                          {m.group?.path && m.group.path !== m.group.name && m.group.path !== m.group.slug && (
+                            <Badge variant="outline" className="text-xs font-mono">
+                              {m.group.path}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {m.membership?.source && (
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                m.membership.source === 'zk_attested'
+                                  ? 'text-purple-700 border-purple-300 bg-purple-50'
+                                  : 'text-[#6B7280]'
+                              }`}
+                            >
+                              {m.membership.source === 'admin'
+                                ? 'Added by admin'
+                                : m.membership.source === 'zk_attested'
+                                ? 'ZK Attested'
+                                : m.membership.source}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {m.membership?.id && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteMembershipTarget(m.membership.id)}
+                        className="text-[#991B1B] hover:text-red-300 hover:bg-red-500/10"
+                        aria-label="Remove membership"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -384,73 +455,100 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       </div>
 
       {/* Effective Permissions */}
-      {selectedOrg && (
+      {userOrgIds.length > 0 && (
         <div className="space-y-3">
-          <h4 className="text-sm font-medium text-[#374151]">
-            Effective Permissions ({selectedOrg.name})
-          </h4>
+          <h4 className="text-sm font-medium text-[#374151]">Effective Permissions</h4>
 
-          {effectivePerms ? (
-            <div className="p-4 rounded-lg bg-[#F1F5F9] space-y-4">
-              <div>
-                <label className="text-xs text-[#6B7280] mb-1 block">Default Claims</label>
-                {effectivePerms.default_claims && effectivePerms.default_claims.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {effectivePerms.default_claims.map(claim => (
-                      <Badge
-                        key={claim}
-                        variant="outline"
-                        className={`text-xs ${getClaimColor(claim)}`}
-                      >
-                        {CLAIM_LABELS[claim] || claim}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[#94A3B8] text-sm">None</span>
-                )}
-              </div>
-
-              <div>
-                <label className="text-xs text-[#6B7280] mb-1 block">
-                  Allowed Methods ({effectivePerms.allowed_methods?.length || 0})
-                </label>
-                {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {effectivePerms.allowed_methods.slice(0, 10).map((method: string) => (
-                      <Badge key={method} variant="outline" className="text-xs font-mono">
-                        {method}
-                      </Badge>
-                    ))}
-                    {effectivePerms.allowed_methods.length > 10 && (
-                      <Badge variant="secondary" className="text-xs">
-                        +{effectivePerms.allowed_methods.length - 10} more
-                      </Badge>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-[#94A3B8] text-sm">None</span>
-                )}
-              </div>
-
-              <div className="flex gap-4">
-                <div>
-                  <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (RPS)</label>
-                  <span className="text-sm">
-                    {effectivePerms.rate_limit_rps ?? 'Unlimited'}
-                  </span>
-                </div>
-                <div>
-                  <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (Daily)</label>
-                  <span className="text-sm">
-                    {effectivePerms.rate_limit_daily ?? 'Unlimited'}
-                  </span>
-                </div>
-              </div>
+          {loadingPerms ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="w-5 h-5 text-[#94A3B8] animate-spin" />
             </div>
           ) : (
-            <div className="text-center py-6 text-[#94A3B8] text-sm">
-              No permissions in this organization
+            <div className="space-y-4">
+              {userOrgIds.map((orgId) => {
+                const effectivePerms = effectivePermsByOrg[orgId];
+                const org = orgById[orgId];
+
+                return (
+                  <div key={orgId} className="space-y-2">
+                    {/* Organization header */}
+                    <div className="text-xs font-medium text-[#6B7280] uppercase tracking-wide px-1">
+                      {org?.name || 'Unknown Organization'}
+                    </div>
+
+                    {effectivePerms ? (
+                      <div className="p-4 rounded-lg bg-[#F1F5F9] space-y-4">
+                        <div>
+                          <label className="text-xs text-[#6B7280] mb-1 block">
+                            Access Level
+                            <span className="ml-1 text-[#94A3B8]" title="Permissions for contracts not explicitly configured">
+                              (for unregistered contracts)
+                            </span>
+                          </label>
+                          {effectivePerms.default_claims && effectivePerms.default_claims.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {effectivePerms.default_claims.map(claim => (
+                                <Badge
+                                  key={claim}
+                                  variant="outline"
+                                  className={`text-xs ${getClaimColor(claim)}`}
+                                >
+                                  {CLAIM_LABELS[claim] || claim}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[#94A3B8] text-sm">None</span>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-xs text-[#6B7280] mb-1 block">
+                            Allowed Methods {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0
+                              ? `(${effectivePerms.allowed_methods.length})`
+                              : ''}
+                          </label>
+                          {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {effectivePerms.allowed_methods.slice(0, 10).map((method: string) => (
+                                <Badge key={method} variant="outline" className="text-xs font-mono">
+                                  {method}
+                                </Badge>
+                              ))}
+                              {effectivePerms.allowed_methods.length > 10 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  +{effectivePerms.allowed_methods.length - 10} more
+                                </Badge>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-green-600 text-sm">All methods (unrestricted)</span>
+                          )}
+                        </div>
+
+                        <div className="flex gap-4">
+                          <div>
+                            <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (RPS)</label>
+                            <span className="text-sm">
+                              {effectivePerms.rate_limit_rps ?? 'Unlimited'}
+                            </span>
+                          </div>
+                          <div>
+                            <label className="text-xs text-[#6B7280] mb-1 block">Rate Limit (Daily)</label>
+                            <span className="text-sm">
+                              {effectivePerms.rate_limit_daily ?? 'Unlimited'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-lg bg-[#F1F5F9] text-[#94A3B8] text-sm">
+                        No permissions configured
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -465,11 +563,34 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
           <MembershipForm
             userId={user.id}
             organizations={organizations}
+            existingMemberships={memberships}
             onClose={() => setShowMembershipForm(false)}
             onSave={handleMembershipSave}
           />
         </DialogContent>
       </Dialog>
+
+      {/* Delete Membership Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!deleteMembershipTarget}
+        onOpenChange={open => !open && setDeleteMembershipTarget(null)}
+        title="Remove Membership"
+        description="Are you sure you want to remove this group membership?"
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteMembershipConfirm}
+        variant="destructive"
+      />
+
+      {/* Delete Membership Error Alert */}
+      <AlertDialog
+        open={showMembershipDeleteError}
+        onOpenChange={setShowMembershipDeleteError}
+        title="Remove Failed"
+        description="Failed to remove membership."
+        buttonLabel="OK"
+        variant="error"
+      />
     </div>
   );
 }

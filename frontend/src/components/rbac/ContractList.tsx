@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import { FileCode2, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
 
 export default function ContractList() {
@@ -32,6 +33,8 @@ export default function ContractList() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Contract | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
+  const [showDeleteError, setShowDeleteError] = useState(false);
 
   useEffect(() => {
     if (orgId) {
@@ -53,21 +56,18 @@ export default function ContractList() {
     }
   };
 
-  const handleDelete = async (contract: Contract) => {
-    const addr = getContractAddress(contract);
-    if (
-      !confirm(
-        `Delete contract "${contract.name || addr}"? This cannot be undone.`
-      )
-    )
-      return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const addr = getContractAddress(deleteTarget);
 
     try {
       await rbacApi.contracts.delete(orgId, addr);
+      setDeleteTarget(null);
       await loadContracts();
     } catch (error) {
       console.error('Failed to delete contract:', error);
-      alert('Failed to delete contract.');
+      setDeleteTarget(null);
+      setShowDeleteError(true);
     }
   };
 
@@ -174,7 +174,7 @@ export default function ContractList() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDelete(contract)}
+                      onClick={() => setDeleteTarget(contract)}
                       className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
                       title="Delete contract"
                     >
@@ -219,6 +219,28 @@ export default function ContractList() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+        title="Delete Contract"
+        description={`Are you sure you want to delete "${deleteTarget ? (deleteTarget.name || getContractAddress(deleteTarget)) : ''}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        variant="destructive"
+      />
+
+      {/* Delete Error Alert */}
+      <AlertDialog
+        open={showDeleteError}
+        onOpenChange={setShowDeleteError}
+        title="Delete Failed"
+        description="Failed to delete contract."
+        buttonLabel="OK"
+        variant="error"
+      />
     </div>
   );
 }

@@ -23,6 +23,9 @@ import type {
   CreateContractGrantInput,
   UpdateContractGrantInput,
   MembershipWithDetails,
+  PreregisteredAddress,
+  PreregisterInput,
+  PreregisterResponse,
 } from '../types/rbac';
 
 const api = axios.create({
@@ -106,11 +109,34 @@ export const rbacApi = {
       api.delete(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`),
   },
 
+  // Preregistered Addresses (CREATE3)
+  preregisteredAddresses: {
+    list: (orgId: string) =>
+      api.get<PreregisteredAddress[]>(`/orgs/${orgId}/addresses/preregistered`),
+    create: (orgId: string, input: PreregisterInput) =>
+      api.post<PreregisterResponse>(`/orgs/${orgId}/addresses/preregister`, input),
+    delete: (orgId: string, address: string) =>
+      api.delete(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}`),
+  },
+
   // Utilities
   utils: {
     checkAccess: (request: AccessCheckRequest) =>
       api.post<AccessCheckResult>('/access/check', request),
     getCacheStats: () => api.get<CacheStats>('/cache/stats'),
+  },
+
+  // Dev endpoints (only available in development mode)
+  dev: {
+    getCreate3Factory: () =>
+      api.get<{ address: string; deployed: boolean; message?: string }>('/dev/create3-factory'),
+    deployCreate3Factory: () =>
+      api.post<{ address: string; deployed: boolean }>('/dev/create3-factory'),
+    autoRegisterCreate3: (orgId: string, input: { factory: string; salt: string; name?: string }) =>
+      api.post<{ address: string; registered: boolean; message?: string }>(
+        `/dev/orgs/${orgId}/create3/auto-register`,
+        input
+      ),
   },
 };
 

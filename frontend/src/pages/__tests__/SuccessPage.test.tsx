@@ -214,12 +214,10 @@ describe('SuccessPage', () => {
       });
     });
 
-    it('should alert when MetaMask is not installed', async () => {
+    it('should show alert dialog when MetaMask is not installed', async () => {
       // Ensure window.ethereum is undefined
       const originalEthereum = window.ethereum;
       delete (window as { ethereum?: unknown }).ethereum;
-
-      const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
 
       const user = userEvent.setup();
       renderSuccessPage();
@@ -230,13 +228,16 @@ describe('SuccessPage', () => {
 
       await user.click(screen.getByText('Add Network to MetaMask'));
 
-      expect(alertMock).toHaveBeenCalledWith('MetaMask is not installed');
+      // Alert dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('MetaMask Not Found')).toBeInTheDocument();
+      });
+      expect(screen.getByText(/MetaMask is not installed/)).toBeInTheDocument();
 
       // Restore
       if (originalEthereum) {
         (window as { ethereum?: unknown }).ethereum = originalEthereum;
       }
-      alertMock.mockRestore();
     });
 
     it('should call wallet_addEthereumChain when MetaMask is available', async () => {

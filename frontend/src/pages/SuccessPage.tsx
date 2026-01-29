@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { ethLinkApiMethods, EthAddressResponse } from '@/api/auth';
 import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
@@ -13,6 +14,7 @@ export function SuccessPage() {
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
+  const [showMetaMaskError, setShowMetaMaskError] = useState(false);
 
   const rpcEndpoint = getRpcEndpoint();
 
@@ -70,7 +72,7 @@ export function SuccessPage() {
   // Add network to MetaMask
   const handleAddToMetaMask = async () => {
     if (!window.ethereum) {
-      alert('MetaMask is not installed');
+      setShowMetaMaskError(true);
       return;
     }
 
@@ -344,6 +346,16 @@ export function SuccessPage() {
             </button>
           </div>
         </div>
+
+        {/* MetaMask Not Installed Alert */}
+        <AlertDialog
+          open={showMetaMaskError}
+          onOpenChange={setShowMetaMaskError}
+          title="MetaMask Not Found"
+          description="MetaMask is not installed. Please install MetaMask to add this network."
+          buttonLabel="OK"
+          variant="warning"
+        />
       </div>
     </div>
   );

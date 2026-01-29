@@ -727,3 +727,158 @@ test.describe('RBAC Edge Cases - Boundary Values', () => {
     }
   });
 });
+
+test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
+  // Multicall contracts allow batching multiple calls into one transaction.
+  // This could bypass per-contract ACLs, so all Multicall operations are blocked.
+  let ctx: RBACTestContext;
+
+  // Known Multicall3 address (same on most EVM chains)
+  const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
+
+  // Multicall function selectors
+  const AGGREGATE_SELECTOR = '0x252dba42';  // aggregate((address,bytes)[])
+  const AGGREGATE3_SELECTOR = '0x82ad56cb'; // aggregate3((address,bool,bytes)[])
+  const TRY_AGGREGATE_SELECTOR = '0xbce38bd7'; // tryAggregate(bool,(address,bytes)[])
+
+  test.beforeEach(async ({ request }) => {
+    ctx = new RBACTestContext(request);
+  });
+
+  test.afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  test('RPC: eth_call to Multicall3 with aggregate is blocked', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup1');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write'],
+    });
+
+    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // eth_call to Multicall3 with aggregate selector
+    const result = await makeRPCRequest(request, token, 'eth_call', [
+      {
+        to: MULTICALL3_ADDRESS,
+        data: AGGREGATE_SELECTOR + '0000000000000000000000000000000000000000',
+      },
+      'latest',
+    ]);
+
+    expect(result.status).toBe(403);
+    const body = result.body as { error?: string };
+    expect(body.error?.toLowerCase()).toContain('multicall');
+  });
+
+  test('RPC: eth_sendTransaction to Multicall3 is blocked', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup2');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write'],
+    });
+
+    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // eth_sendTransaction to Multicall3 with aggregate3 selector
+    const result = await makeRPCRequest(request, token, 'eth_sendTransaction', [
+      {
+        from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+        to: MULTICALL3_ADDRESS,
+        data: AGGREGATE3_SELECTOR + '0000000000000000000000000000000000000000',
+      },
+    ]);
+
+    expect(result.status).toBe(403);
+    const body = result.body as { error?: string };
+    expect(body.error?.toLowerCase()).toContain('multicall');
+  });
+
+  test('RPC: eth_estimateGas to Multicall3 is blocked', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup3');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_estimateGas'],
+      default_claims: ['read'],
+    });
+
+    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // eth_estimateGas to Multicall3 with tryAggregate selector
+    const result = await makeRPCRequest(request, token, 'eth_estimateGas', [
+      {
+        from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+        to: MULTICALL3_ADDRESS,
+        data: TRY_AGGREGATE_SELECTOR + '0000000000000000000000000000000000000000',
+      },
+    ]);
+
+    expect(result.status).toBe(403);
+    const body = result.body as { error?: string };
+    expect(body.error?.toLowerCase()).toContain('multicall');
+  });
+
+  test('RPC: call to Multicall3 with non-multicall function is allowed', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup4');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read'],
+    });
+
+    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // eth_call to Multicall3 but NOT a multicall function (e.g., getBlockNumber)
+    const result = await makeRPCRequest(request, token, 'eth_call', [
+      {
+        to: MULTICALL3_ADDRESS,
+        data: '0x42cbb15c', // getBlockNumber() selector
+      },
+      'latest',
+    ]);
+
+    // Should NOT be blocked (not a multicall function)
+    expect(result.status).not.toBe(403);
+  });
+
+  test('RPC: call to regular contract with multicall selector is allowed', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'multicallgroup5');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call'],
+      default_claims: ['read'],
+    });
+
+    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // eth_call to a REGULAR contract with aggregate selector (coincidental match)
+    const result = await makeRPCRequest(request, token, 'eth_call', [
+      {
+        to: '0x0000000000000000000000000000000000000001', // Not Multicall
+        data: AGGREGATE_SELECTOR + '0000000000000000000000000000000000000000',
+      },
+      'latest',
+    ]);
+
+    // Should NOT be blocked (not targeting Multicall contract)
+    expect(result.status).not.toBe(403);
+  });
+});

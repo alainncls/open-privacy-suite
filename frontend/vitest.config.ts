@@ -8,6 +8,7 @@ export default defineConfig({
     'import.meta.env.VITE_ALLOW_MOCK_LOGIN': JSON.stringify('true'),
   },
   test: {
+    root: __dirname,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     globals: true,

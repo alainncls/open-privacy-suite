@@ -116,21 +116,198 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     // Deployment transaction: eth_sendTransaction with data but no 'to'
     const deployTx = {
-      from: '0x0000000000000000000000000000000000000001',
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // Anvil default account
       data: SAMPLE_BYTECODE,
       gas: '0x100000',
       gasPrice: '0x3b9aca00',
       // No 'to' field = contract deployment
     };
 
-    // API check should fail
-    const checkResult = await ctx.rbac.checkAccess({
-      user_external_id: did,
-      org_slug: 'default',
-      method: 'eth_sendTransaction',
-      required_claims: ['deploy'],
+    // RPC request should be blocked (403) because user lacks deploy claim
+    const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(rpcResult.status).toBe(403);
+    expect(rpcResult.body).toHaveProperty('error');
+    const errorMsg = typeof rpcResult.body === 'object' && rpcResult.body !== null
+      ? (rpcResult.body as { error?: string }).error || ''
+      : '';
+    expect(errorMsg.toLowerCase()).toContain('deploy');
+  });
+
+  test('RPC: deploy transaction allowed with deploy claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpccandeploygroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write', 'deploy'], // Has deploy
     });
-    expect(checkResult.allowed).toBe(false);
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Deployment transaction: eth_sendTransaction with data but no 'to'
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // Anvil default account
+      data: SAMPLE_BYTECODE,
+      // No 'to' field = contract deployment
+    };
+
+    // RPC request should succeed (200) because user has deploy claim
+    const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    // Should be 200 (success) or at least not 403 (access denied)
+    expect(rpcResult.status).not.toBe(403);
+  });
+
+  test('RPC: deploy with to=null blocked without deploy claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpctonullgroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write'], // No deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Some clients send to: null for deployments
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: null, // Explicit null = deployment
+      data: SAMPLE_BYTECODE,
+    };
+
+    const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(rpcResult.status).toBe(403);
+  });
+
+  test('RPC: deploy with to="" blocked without deploy claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcemptytogroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write'], // No deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Some clients send to: "" for deployments
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: '', // Empty string = deployment
+      data: SAMPLE_BYTECODE,
+    };
+
+    const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(rpcResult.status).toBe(403);
+  });
+
+  test('RPC: regular transaction to contract allowed with write claim', async ({ request }) => {
+    // This test ensures we didn't break normal transactions
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcwritegroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      default_claims: ['read', 'write'], // Has write but NOT deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Regular transaction to an address (not deployment)
+    const regularTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: '0x0000000000000000000000000000000000000001', // Has 'to' = not deployment
+      value: '0x0',
+      data: '0x',
+    };
+
+    // Should be allowed because user has write claim
+    const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [regularTx]);
+    // Should not be 403 (access denied)
+    expect(rpcResult.status).not.toBe(403);
+  });
+
+  test('RPC: eth_estimateGas for deployment blocked without deploy claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcestimatenodeploygroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
+      default_claims: ['read', 'write'], // No deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Estimate gas for deployment (no 'to' field)
+    const estimateTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      data: SAMPLE_BYTECODE,
+      // No 'to' = deployment estimation
+    };
+
+    // Should be blocked because estimating deployment gas requires deploy claim
+    const rpcResult = await makeRPCRequest(request, token, 'eth_estimateGas', [estimateTx]);
+    expect(rpcResult.status).toBe(403);
+  });
+
+  test('RPC: eth_estimateGas for deployment allowed with deploy claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcestimatedeploygroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
+      default_claims: ['read', 'write', 'deploy'], // Has deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Estimate gas for deployment (no 'to' field)
+    const estimateTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      data: SAMPLE_BYTECODE,
+      // No 'to' = deployment estimation
+    };
+
+    // Should be allowed because user has deploy claim
+    const rpcResult = await makeRPCRequest(request, token, 'eth_estimateGas', [estimateTx]);
+    expect(rpcResult.status).not.toBe(403);
+  });
+
+  test('RPC: eth_estimateGas for regular call allowed with read claim', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcestimatereadgroup');
+
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_estimateGas'],
+      default_claims: ['read'], // Only read - no write or deploy
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Estimate gas for regular call (has 'to' address)
+    const estimateTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: '0x0000000000000000000000000000000000000001',
+      data: '0xa9059cbb',
+    };
+
+    // Should be allowed because user has read claim and it's not a deployment
+    const rpcResult = await makeRPCRequest(request, token, 'eth_estimateGas', [estimateTx]);
+    expect(rpcResult.status).not.toBe(403);
   });
 
   test('two groups combine to grant deploy permission', async ({ request }) => {

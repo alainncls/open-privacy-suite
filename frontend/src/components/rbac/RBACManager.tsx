@@ -21,11 +21,12 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
+  Hash,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'preregistered';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -59,6 +60,7 @@ export default function RBACManager() {
     const path = location.pathname;
     if (path.includes('/groups')) return 'groups';
     if (path.includes('/users')) return 'users';
+    if (path.includes('/preregistered')) return 'preregistered';
     if (path.includes('/contracts')) return 'contracts';
     return 'organizations';
   };
@@ -130,7 +132,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgRequiredTabs: RBACTab[] = ['groups', 'contracts'];
+    const orgRequiredTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
     const needsOrg = orgRequiredTabs.includes(tab);
 
     let path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -142,7 +144,7 @@ export default function RBACManager() {
   };
 
   // Tabs that require org selection
-  const orgRequiredTabs: RBACTab[] = ['groups', 'contracts'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
 
   return (
@@ -289,6 +291,10 @@ export default function RBACManager() {
               <TabsTrigger value="contracts" className="gap-2" data-testid="tab-contracts">
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
+              </TabsTrigger>
+              <TabsTrigger value="preregistered" className="gap-2" data-testid="tab-preregistered">
+                <Hash className="w-4 h-4" />
+                <span>Pre-registered</span>
               </TabsTrigger>
             </TabsList>
           </Tabs>

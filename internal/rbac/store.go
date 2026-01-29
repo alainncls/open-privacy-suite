@@ -40,6 +40,13 @@ type Store interface {
 	ListContracts(ctx context.Context, orgID string) ([]*Contract, error)
 	ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) // Returns contracts, total count
 	DeleteContract(ctx context.Context, id string) error
+	// IsContractRegisteredToAnyOrg checks if a contract address is registered in ANY organization.
+	// This is used for cross-org isolation: if a contract is registered to any org but the user
+	// doesn't have explicit access to it, they should be denied access (not fall back to default_claims).
+	IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error)
+	// IsAddressOwnedByOrg checks if a contract address belongs to the given organization.
+	// This is used for deployment validation to ensure contracts only call addresses owned by the org.
+	IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error)
 
 	// Contract Grant operations
 	CreateContractGrant(ctx context.Context, grant *ContractGrant) error
@@ -83,6 +90,20 @@ type Store interface {
 	CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error
 	ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error)
 	ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error)
+
+	// Preregistered Address operations (for CREATE3 deployments)
+	CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error
+	ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error)
+	GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error)
+	DeletePreregisteredAddress(ctx context.Context, orgID, address string) error
+	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
+	MarkAddressUsed(ctx context.Context, address string) error
+
+	// Managed Proxy operations (for upgrade validation)
+	CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error
+	GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error)
+	UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error
+	IsManagedProxy(ctx context.Context, address string) (bool, error)
 }
 
 // AuditAction constants for audit logging.
@@ -96,11 +117,12 @@ const (
 
 // ResourceType constants for audit logging.
 const (
-	ResourceTypeOrganization = "organization"
-	ResourceTypeGroup        = "group"
-	ResourceTypeUser         = "user"
-	ResourceTypeMembership   = "membership"
-	ResourceTypeContract     = "contract"
-	ResourceTypeGrant        = "grant"
-	ResourceTypeAccess       = "access"
+	ResourceTypeOrganization          = "organization"
+	ResourceTypeGroup                 = "group"
+	ResourceTypeUser                  = "user"
+	ResourceTypeMembership            = "membership"
+	ResourceTypeContract              = "contract"
+	ResourceTypeGrant                 = "grant"
+	ResourceTypeAccess                = "access"
+	ResourceTypePreregisteredAddress  = "preregistered_address"
 )

@@ -153,6 +153,38 @@ func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	return err
 }
 
+// IsContractRegisteredToAnyOrg checks if a contract address is registered in ANY organization.
+// This is used for cross-org isolation to prevent users from accessing contracts belonging
+// to other organizations via default_claims fallback.
+func (d *DB) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM contracts WHERE LOWER(address) = LOWER($1))`
+	var exists bool
+	err := d.conn.QueryRowContext(ctx, query, address).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check contract registration: %w", err)
+	}
+	return exists, nil
+}
+
+// IsAddressOwnedByOrg checks if a contract address belongs to the given organization.
+// This includes both registered contracts AND preregistered CREATE3 addresses.
+// This is used to verify that call targets in deployed contracts are org-owned.
+func (d *DB) IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error) {
+	query := `
+		SELECT EXISTS(
+			SELECT 1 FROM contracts WHERE LOWER(address) = LOWER($1) AND org_id = $2
+			UNION
+			SELECT 1 FROM preregistered_addresses WHERE LOWER(address) = LOWER($1) AND org_id = $2
+		)
+	`
+	var exists bool
+	err := d.conn.QueryRowContext(ctx, query, address, orgID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check contract ownership: %w", err)
+	}
+	return exists, nil
+}
+
 func scanContract(row *sql.Row) (*rbac.Contract, error) {
 	contract := &rbac.Contract{}
 	var name sql.NullString

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Organization, Group } from '@/types/rbac';
+import type { Organization, Group, MembershipWithDetails } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -11,9 +11,13 @@ import {
 } from '@/components/ui/select';
 import { AlertCircle, Save, X, Loader2, Building2, FolderTree } from 'lucide-react';
 
+// Stable default value to prevent infinite render loops
+const EMPTY_MEMBERSHIPS: MembershipWithDetails[] = [];
+
 interface MembershipFormProps {
   userId: string;
   organizations: Organization[];
+  existingMemberships?: MembershipWithDetails[];
   onClose: () => void;
   onSave: () => void;
 }
@@ -21,24 +25,43 @@ interface MembershipFormProps {
 export default function MembershipForm({
   userId,
   organizations,
+  existingMemberships = EMPTY_MEMBERSHIPS,
   onClose,
   onSave,
 }: MembershipFormProps) {
   const [selectedOrgId, setSelectedOrgId] = useState<string>('');
-  const [groups, setGroups] = useState<Group[]>([]);
+  const [allGroups, setAllGroups] = useState<Group[]>([]);
+  const [availableGroups, setAvailableGroups] = useState<Group[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Memoize the set of existing group IDs to prevent recreation on every render
+  const existingGroupIds = useMemo(
+    () => new Set(existingMemberships.map(m => m.membership.group_id)),
+    [existingMemberships]
+  );
+
   useEffect(() => {
     if (selectedOrgId) {
       loadGroups();
     } else {
-      setGroups([]);
+      setAllGroups([]);
+      setAvailableGroups([]);
       setSelectedGroupId('');
     }
   }, [selectedOrgId]);
+
+  // Filter out groups user is already in whenever allGroups or existingGroupIds change
+  useEffect(() => {
+    const filtered = allGroups.filter(g => !existingGroupIds.has(g.id));
+    setAvailableGroups(filtered);
+    // Reset selection if current selection is no longer available
+    if (selectedGroupId && !filtered.some(g => g.id === selectedGroupId)) {
+      setSelectedGroupId('');
+    }
+  }, [allGroups, existingGroupIds]);
 
   const loadGroups = async () => {
     if (!selectedOrgId) return;
@@ -47,10 +70,10 @@ export default function MembershipForm({
 
     try {
       const groupsRes = await rbacApi.groups.list(selectedOrgId);
-      setGroups(groupsRes.data || []);
+      setAllGroups(groupsRes.data || []);
     } catch (error) {
       console.error('Failed to load groups:', error);
-      setGroups([]);
+      setAllGroups([]);
     } finally {
       setLoadingGroups(false);
     }
@@ -124,8 +147,10 @@ export default function MembershipForm({
           </div>
         ) : !selectedOrgId ? (
           <p className="text-[#94A3B8] text-sm py-2">Select an organization first</p>
-        ) : groups.length === 0 ? (
+        ) : allGroups.length === 0 ? (
           <p className="text-[#94A3B8] text-sm py-2">No groups in this organization</p>
+        ) : availableGroups.length === 0 ? (
+          <p className="text-[#94A3B8] text-sm py-2">User is already a member of all groups in this organization</p>
         ) : (
           <Select
             value={selectedGroupId}
@@ -136,7 +161,7 @@ export default function MembershipForm({
               <SelectValue placeholder="Select group" />
             </SelectTrigger>
             <SelectContent>
-              {groups.map(group => (
+              {availableGroups.map(group => (
                 <SelectItem key={group.id} value={group.id}>
                   <div className="flex items-center gap-2">
                     <FolderTree className="w-4 h-4 text-[#94A3B8]" />

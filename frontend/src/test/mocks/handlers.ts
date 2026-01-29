@@ -8,10 +8,14 @@ import type {
   Group,
   User,
   Contract,
+  ContractGrant,
   GroupAccess,
   EffectivePermissions,
   UserMembership,
   MembershipWithDetails,
+  Claim,
+  PreregisteredAddress,
+  PreregisterInput,
 } from '@/types/rbac';
 
 // Mock data fixtures
@@ -114,12 +118,121 @@ export const mockEffectivePermissions: EffectivePermissions = {
   user_id: 'user-1',
   org_id: 'org-1',
   allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
-  contract_access: {},
-  default_claims: ['read', 'write'],
+  contract_access: {
+    '0x1234567890123456789012345678901234567890': {
+      claims: ['read', 'write'] as Claim[],
+      functions: null,
+    },
+  },
+  default_claims: ['read', 'write'] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   computed_at: '2024-01-01T00:00:00Z',
   expires_at: '2024-01-02T00:00:00Z',
+};
+
+// Linked ETH addresses for user
+export const mockLinkedAddresses = [
+  { address: '0x1234567890123456789012345678901234567890', verified_at: '2024-01-01T00:00:00Z' },
+  { address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', verified_at: '2024-01-15T00:00:00Z' },
+];
+
+// Contract grants linking groups to contracts
+export const mockContractGrant: ContractGrant = {
+  id: 'grant-1',
+  contract_id: 'contract-1',
+  group_id: 'group-1',
+  claims: ['read', 'write'] as Claim[],
+  functions: null,
+  created_at: '2024-01-01T00:00:00Z',
+  updated_at: '2024-01-01T00:00:00Z',
+};
+
+// Additional user for multi-user testing
+export const mockUser2: User = {
+  id: 'user-2',
+  external_id: 'did:polygonid:polygon:main:user456',
+  kyc: false,
+  banned: false,
+  note: 'Secondary test user',
+  metadata: {},
+  created_at: '2024-01-10T00:00:00Z',
+  updated_at: '2024-01-10T00:00:00Z',
+};
+
+// Additional organization for multi-org testing
+export const mockOrganization2: Organization = {
+  id: 'org-2',
+  slug: 'other-org',
+  name: 'Other Organization',
+  settings: {},
+  created_at: '2024-01-15T00:00:00Z',
+  updated_at: '2024-01-15T00:00:00Z',
+};
+
+// Additional group for nested hierarchy testing
+export const mockChildGroup: Group = {
+  id: 'group-2',
+  org_id: 'org-1',
+  parent_id: 'group-1',
+  slug: 'engineering',
+  name: 'Engineering',
+  description: 'Engineering team',
+  depth: 1,
+  path: 'root.engineering',
+  created_at: '2024-01-02T00:00:00Z',
+  updated_at: '2024-01-02T00:00:00Z',
+};
+
+// Second membership for multi-membership testing
+export const mockMembership2: UserMembership = {
+  id: 'membership-2',
+  user_id: 'user-1',
+  group_id: 'group-2',
+  source: 'zk_attested',
+  zk_credential_ref: 'cred:polygonid:credential:12345',
+  expires_at: '2025-01-01T00:00:00Z',
+  created_at: '2024-01-10T00:00:00Z',
+  updated_at: '2024-01-10T00:00:00Z',
+};
+
+export const mockMembershipWithDetails2: MembershipWithDetails = {
+  membership: mockMembership2,
+  group: mockChildGroup,
+};
+
+// Preregistered addresses for CREATE3 testing
+export const mockPreregisteredAddress: PreregisteredAddress = {
+  id: 'preregistered-1',
+  org_id: 'org-1',
+  address: '0xabcdef1234567890abcdef1234567890abcdef12',
+  factory: '0x1234567890123456789012345678901234567890',
+  salt: '0x6d79617070000000000000000000000000000000000000000000000000000000',
+  note: 'Test preregistered address',
+  created_at: '2024-01-01T00:00:00Z',
+  used_at: null,
+};
+
+export const mockPreregisteredAddressUsed: PreregisteredAddress = {
+  id: 'preregistered-2',
+  org_id: 'org-1',
+  address: '0xdeadbeef1234567890deadbeef1234567890dead',
+  factory: '0x1234567890123456789012345678901234567890',
+  salt: '0x6d79617070000000000000000000000000000000000000000000000000000001',
+  note: 'Used preregistered address',
+  created_at: '2024-01-01T00:00:00Z',
+  used_at: '2024-01-15T00:00:00Z',
+};
+
+export const mockPreregisteredAddresses: PreregisteredAddress[] = [
+  mockPreregisteredAddress,
+  mockPreregisteredAddressUsed,
+];
+
+// CREATE3 factory for dev mode testing
+export const mockCreate3Factory = {
+  address: '0xfactory1234567890factory1234567890factory',
+  deployed: true,
 };
 
 // Session state for polling simulation
@@ -337,6 +450,11 @@ export const handlers = [
     return HttpResponse.json(mockEffectivePermissions);
   }),
 
+  // Linked addresses endpoint
+  http.get('/api/v1/users/:userId/linked-addresses', () => {
+    return HttpResponse.json({ addresses: mockLinkedAddresses });
+  }),
+
   // Contract endpoints
   http.get('/api/v1/orgs/:orgId/contracts', () => {
     return HttpResponse.json([mockContract]);
@@ -375,6 +493,44 @@ export const handlers = [
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
+  // Contract grant endpoints
+  http.get('/api/v1/orgs/:orgId/contracts/:address/grants', () => {
+    return HttpResponse.json([mockContractGrant]);
+  }),
+
+  http.post('/api/v1/orgs/:orgId/contracts/:address/grants', async ({ request, params }) => {
+    const body = await request.json() as {
+      group_id: string;
+      claims: Claim[];
+      functions?: string[] | null;
+    };
+    return HttpResponse.json({
+      ...mockContractGrant,
+      id: 'grant-new',
+      contract_id: params.address as string,
+      group_id: body.group_id,
+      claims: body.claims,
+      functions: body.functions ?? null,
+    });
+  }),
+
+  http.put('/api/v1/orgs/:orgId/contracts/:address/grants/:groupId', async ({ request, params }) => {
+    const body = await request.json() as {
+      claims?: Claim[];
+      functions?: string[] | null;
+    };
+    return HttpResponse.json({
+      ...mockContractGrant,
+      group_id: params.groupId as string,
+      ...(body.claims && { claims: body.claims }),
+      ...(body.functions !== undefined && { functions: body.functions }),
+    });
+  }),
+
+  http.delete('/api/v1/orgs/:orgId/contracts/:address/grants/:groupId', () => {
+    return HttpResponse.json({ message: 'Deleted' });
+  }),
+
   // Utility endpoints
   http.post('/api/v1/access/check', async () => {
     return HttpResponse.json({
@@ -390,6 +546,46 @@ export const handlers = [
       hits: 100,
       misses: 10,
       size: 50,
+    });
+  }),
+
+  // Preregistered addresses endpoints
+  http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+    return HttpResponse.json(mockPreregisteredAddresses);
+  }),
+
+  http.post('/api/v1/orgs/:orgId/addresses/preregister', async ({ request, params }) => {
+    const body = await request.json() as PreregisterInput;
+    // Generate mock addresses based on input
+    const addresses: PreregisteredAddress[] = [];
+    for (let i = 0; i < body.count; i++) {
+      addresses.push({
+        id: `preregistered-new-${i}`,
+        org_id: params.orgId as string,
+        address: `0x${(i + 1).toString(16).padStart(40, 'a')}`,
+        factory: body.factory,
+        salt: `${body.salt_prefix}${i.toString(16).padStart(8, '0')}`,
+        note: body.note || undefined,
+        created_at: new Date().toISOString(),
+        used_at: null,
+      });
+    }
+    return HttpResponse.json({ addresses });
+  }),
+
+  http.delete('/api/v1/orgs/:orgId/addresses/preregistered/:address', () => {
+    return HttpResponse.json({ message: 'Deleted' });
+  }),
+
+  // Dev endpoints for CREATE3 factory
+  http.get('/api/v1/dev/create3-factory', () => {
+    return HttpResponse.json(mockCreate3Factory);
+  }),
+
+  http.post('/api/v1/dev/create3-factory', () => {
+    return HttpResponse.json({
+      address: '0xfactory1234567890factory1234567890factory',
+      deployed: true,
     });
   }),
 ];

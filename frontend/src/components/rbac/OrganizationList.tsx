@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import { rbacApi } from '@/api/rbac';
 import {
   Building2,
@@ -32,6 +33,8 @@ export default function OrganizationList() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Organization | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Organization | null>(null);
+  const [showDeleteError, setShowDeleteError] = useState(false);
 
   useEffect(() => {
     loadOrganizations();
@@ -52,14 +55,16 @@ export default function OrganizationList() {
     await loadOrganizations();
   };
 
-  const handleDelete = async (org: Organization) => {
-    if (!confirm(`Delete organization "${org.name}"? This action cannot be undone.`)) return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
     try {
-      await rbacApi.orgs.delete(org.id);
+      await rbacApi.orgs.delete(deleteTarget.id);
+      setDeleteTarget(null);
       await loadOrganizations();
     } catch (error) {
       console.error('Failed to delete organization:', error);
-      alert('Failed to delete organization. It may have groups or contracts that need to be deleted first.');
+      setDeleteTarget(null);
+      setShowDeleteError(true);
     }
   };
 
@@ -155,7 +160,7 @@ export default function OrganizationList() {
                       size="sm"
                       onClick={e => {
                         e.stopPropagation();
-                        handleDelete(org);
+                        setDeleteTarget(org);
                       }}
                       className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
                       title="Delete organization"
@@ -199,6 +204,28 @@ export default function OrganizationList() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+        title="Delete Organization"
+        description={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        variant="destructive"
+      />
+
+      {/* Delete Error Alert */}
+      <AlertDialog
+        open={showDeleteError}
+        onOpenChange={setShowDeleteError}
+        title="Delete Failed"
+        description="Failed to delete organization. It may have groups or contracts that need to be deleted first."
+        buttonLabel="OK"
+        variant="error"
+      />
     </div>
   );
 }
