@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization, Group, MembershipWithDetails } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ import {
 } from '@/components/ui/select';
 import { AlertCircle, Save, X, Loader2, Building2, FolderTree } from 'lucide-react';
 
+// Stable default value to prevent infinite render loops
+const EMPTY_MEMBERSHIPS: MembershipWithDetails[] = [];
+
 interface MembershipFormProps {
   userId: string;
   organizations: Organization[];
@@ -22,7 +25,7 @@ interface MembershipFormProps {
 export default function MembershipForm({
   userId,
   organizations,
-  existingMemberships = [],
+  existingMemberships = EMPTY_MEMBERSHIPS,
   onClose,
   onSave,
 }: MembershipFormProps) {
@@ -34,8 +37,11 @@ export default function MembershipForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Get set of group IDs user is already a member of
-  const existingGroupIds = new Set(existingMemberships.map(m => m.membership.group_id));
+  // Memoize the set of existing group IDs to prevent recreation on every render
+  const existingGroupIds = useMemo(
+    () => new Set(existingMemberships.map(m => m.membership.group_id)),
+    [existingMemberships]
+  );
 
   useEffect(() => {
     if (selectedOrgId) {
@@ -47,7 +53,7 @@ export default function MembershipForm({
     }
   }, [selectedOrgId]);
 
-  // Filter out groups user is already in whenever allGroups or existingMemberships change
+  // Filter out groups user is already in whenever allGroups or existingGroupIds change
   useEffect(() => {
     const filtered = allGroups.filter(g => !existingGroupIds.has(g.id));
     setAvailableGroups(filtered);
@@ -55,7 +61,7 @@ export default function MembershipForm({
     if (selectedGroupId && !filtered.some(g => g.id === selectedGroupId)) {
       setSelectedGroupId('');
     }
-  }, [allGroups, existingMemberships]);
+  }, [allGroups, existingGroupIds]);
 
   const loadGroups = async () => {
     if (!selectedOrgId) return;

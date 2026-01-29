@@ -51,8 +51,7 @@ function renderMembershipForm(
   return render(<MembershipForm {...defaultProps} {...props} />);
 }
 
-// TODO: This test file hangs during import - needs investigation
-describe.skip('MembershipForm', () => {
+describe('MembershipForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
