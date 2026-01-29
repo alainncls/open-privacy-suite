@@ -118,23 +118,33 @@ func GenerateAddressPool(factory common.Address, saltPrefix []byte, count int) (
 	return addresses, nil
 }
 
-// GenerateAddressPoolFromHex is a convenience wrapper that accepts hex strings.
-func GenerateAddressPoolFromHex(factory string, saltPrefixHex string, count int) ([]GeneratedAddress, error) {
+// GenerateAddressPoolFromHex is a convenience wrapper that accepts hex or text strings.
+// If the input starts with 0x and is valid hex, it's decoded as hex.
+// Otherwise, it's treated as raw text bytes.
+func GenerateAddressPoolFromHex(factory string, saltPrefixInput string, count int) ([]GeneratedAddress, error) {
 	if !common.IsHexAddress(factory) {
 		return nil, fmt.Errorf("invalid factory address: %s", factory)
 	}
 
 	factoryAddr := common.HexToAddress(factory)
 
-	// Remove 0x prefix if present
-	saltPrefixHex = strings.TrimPrefix(saltPrefixHex, "0x")
-
 	var saltPrefix []byte
-	if saltPrefixHex != "" {
-		var err error
-		saltPrefix, err = hex.DecodeString(saltPrefixHex)
-		if err != nil {
-			return nil, fmt.Errorf("invalid salt prefix hex: %w", err)
+	if saltPrefixInput != "" {
+		// Check if it looks like hex (starts with 0x)
+		if strings.HasPrefix(saltPrefixInput, "0x") {
+			hexStr := strings.TrimPrefix(saltPrefixInput, "0x")
+			if hexStr != "" {
+				decoded, err := hex.DecodeString(hexStr)
+				if err != nil {
+					// Not valid hex after 0x prefix - treat the whole thing as text
+					saltPrefix = []byte(saltPrefixInput)
+				} else {
+					saltPrefix = decoded
+				}
+			}
+		} else {
+			// No 0x prefix - treat as raw text
+			saltPrefix = []byte(saltPrefixInput)
 		}
 	}
 
