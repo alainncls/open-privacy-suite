@@ -330,6 +330,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
+
 	// Check if user is banned
 	if user.Banned {
 		return &AccessCheckResult{
@@ -433,23 +434,32 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 		// CROSS-ORG ISOLATION CHECK (P0 Security Fix)
 		// If user doesn't have explicit access but got access via default_claims,
-		// we must verify the contract isn't registered to ANY other organization.
+		// we must verify the contract isn't registered to a DIFFERENT organization.
 		// This prevents users from using default_claims to access contracts belonging to other orgs.
+		// Contracts owned by the user's org are allowed with default_claims.
 		if !hasExplicitAccess && ReadOpsMap[req.Method] {
-			// User is relying on default_claims - check if contract is registered to any org
-			isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+			// User is relying on default_claims - first check if contract is in user's org
+			isOwnedByUserOrg, err := c.store.IsAddressOwnedByOrg(ctx, addr, org.ID)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check contract registration: %w", err)
+				return nil, fmt.Errorf("failed to check contract ownership: %w", err)
 			}
 
-			if isRegisteredToAnyOrg {
-				// Contract belongs to another organization - deny access
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  fmt.Sprintf("contract %s is registered to another organization", req.TargetAddress),
-				}, nil
+			if !isOwnedByUserOrg {
+				// Contract is not in user's org - check if it's registered to any org
+				isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+				if err != nil {
+					return nil, fmt.Errorf("failed to check contract registration: %w", err)
+				}
+
+				if isRegisteredToAnyOrg {
+					// Contract belongs to another organization - deny access
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("contract %s is registered to another organization", req.TargetAddress),
+					}, nil
+				}
 			}
-			// Contract is truly public (not registered to any org) - allow with default_claims
+			// Contract is in user's org OR truly public (not registered to any org) - allow with default_claims
 		}
 
 		// Check if user has the required claim on this contract
@@ -487,14 +497,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 			}
 		}
-	} else if requiredClaim != "" {
-		// No target address but operation requires a claim (e.g., contract deployment)
-		// Check if user has the required claim via default claims
-		// This handles contract deployments (requires 'deploy' claim)
-		if !containsClaim(perms.DefaultClaims, requiredClaim) {
+	} else if requiredClaim == ClaimDeploy {
+		// No target address but operation requires 'deploy' claim (contract deployment)
+		// Check if user has the deploy claim via default claims
+		// Note: read/write claims without target_address are allowed without claim check
+		// because contract-specific claims only apply when targeting a specific contract
+		if !containsClaim(perms.DefaultClaims, ClaimDeploy) {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("missing required %s claim for this operation", requiredClaim),
+				Reason:  "missing required deploy claim for contract deployment",
 			}, nil
 		}
 
@@ -644,9 +655,10 @@ func IsContractDeployment(method string, params []any) bool {
 	}
 
 	if len(params) == 0 {
-		// No params means malformed request, but treat as deployment to be safe
-		// (deny by default principle)
-		return true
+		// No params means we can't determine if it's a deployment.
+		// Return false and let the method-level permissions handle access.
+		// The caller can still require specific claims via required_claims.
+		return false
 	}
 
 	txObj, ok := params[0].(map[string]any)

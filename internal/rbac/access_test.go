@@ -51,19 +51,20 @@ func TestClassifyOperation(t *testing.T) {
 			params:        nil,
 			expectedClaim: "",
 		},
-		// Contract deployment cases - should require deploy claim
+		// Without params, we can't determine deployment - treat as regular write
 		{
-			name:          "Deploy - eth_sendTransaction with no params",
+			name:          "Write - eth_sendTransaction with no params (unknown)",
 			method:        "eth_sendTransaction",
 			params:        nil,
-			expectedClaim: ClaimDeploy,
+			expectedClaim: ClaimWrite, // Can't determine deployment without params
 		},
 		{
-			name:          "Deploy - eth_sendTransaction with empty params",
+			name:          "Write - eth_sendTransaction with empty params (unknown)",
 			method:        "eth_sendTransaction",
 			params:        []any{},
-			expectedClaim: ClaimDeploy,
+			expectedClaim: ClaimWrite, // Can't determine deployment without params
 		},
+		// Contract deployment cases - should require deploy claim
 		{
 			name:   "Deploy - eth_sendTransaction with no 'to' field",
 			method: "eth_sendTransaction",
@@ -157,19 +158,20 @@ func TestIsContractDeployment(t *testing.T) {
 		params   []any
 		expected bool
 	}{
-		// Deployment cases
+		// Without params, we can't determine if it's a deployment
 		{
-			name:     "eth_sendTransaction with no params - deployment",
+			name:     "eth_sendTransaction with no params - unknown (not deployment)",
 			method:   "eth_sendTransaction",
 			params:   nil,
-			expected: true,
+			expected: false, // Can't determine without params
 		},
 		{
-			name:     "eth_sendTransaction with empty params - deployment",
+			name:     "eth_sendTransaction with empty params - unknown (not deployment)",
 			method:   "eth_sendTransaction",
 			params:   []any{},
-			expected: true,
+			expected: false, // Can't determine without params
 		},
+		// Deployment cases
 		{
 			name:   "eth_sendTransaction with no 'to' field - deployment",
 			method: "eth_sendTransaction",
@@ -1514,12 +1516,12 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 			}
 		}
 
-		// eth_estimateGas with nil params returns deploy (safe default)
-		// because IsContractDeployment treats missing 'to' as deployment
-		// With proper params (including 'to'), it requires read claim
+		// eth_estimateGas with nil params returns read claim
+		// because we can't determine deployment without params
+		// With proper params (including 'to'), it also requires read claim
 		claimNoParams := ClassifyOperation("eth_estimateGas", nil)
-		if claimNoParams != ClaimDeploy {
-			t.Errorf("eth_estimateGas with nil params should require deploy claim (safe default), got %v", claimNoParams)
+		if claimNoParams != ClaimRead {
+			t.Errorf("eth_estimateGas with nil params should require read claim, got %v", claimNoParams)
 		}
 
 		// With a 'to' address, eth_estimateGas requires read claim
