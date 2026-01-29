@@ -32,12 +32,6 @@ func TestClassifyOperation(t *testing.T) {
 			expectedClaim: ClaimRead,
 		},
 		{
-			name:          "Write operation - eth_sendRawTransaction",
-			method:        "eth_sendRawTransaction",
-			params:        nil,
-			expectedClaim: ClaimWrite,
-		},
-		{
 			name:   "Write operation - eth_sendTransaction with to address",
 			method: "eth_sendTransaction",
 			params: []any{
@@ -481,7 +475,9 @@ func TestIsMethodBlocked(t *testing.T) {
 
 		// Should NOT be blocked - normal write operations
 		{"eth_sendTransaction", "eth_sendTransaction", false},
-		{"eth_sendRawTransaction", "eth_sendRawTransaction", false},
+
+		// Should be blocked - raw transaction (bypasses RBAC validation)
+		{"eth_sendRawTransaction", "eth_sendRawTransaction", true},
 
 		// Should NOT be blocked - other namespaces
 		{"net_version", "net_version", false},
@@ -1156,11 +1152,20 @@ func TestCrossOrgIsolationReadOps(t *testing.T) {
 	}
 
 	// Verify write ops are NOT in ReadOpsMap
-	writeOps := []string{"eth_sendTransaction", "eth_sendRawTransaction"}
+	// Note: eth_sendRawTransaction is globally blocked, not in WriteOpsMap
+	writeOps := []string{"eth_sendTransaction"}
 	for _, method := range writeOps {
 		if ReadOpsMap[method] {
 			t.Errorf("Expected %s to NOT be in ReadOpsMap", method)
 		}
+	}
+
+	// Verify eth_sendRawTransaction is globally blocked (not in any ops map)
+	if ReadOpsMap["eth_sendRawTransaction"] {
+		t.Error("eth_sendRawTransaction should NOT be in ReadOpsMap (it's globally blocked)")
+	}
+	if WriteOpsMap["eth_sendRawTransaction"] {
+		t.Error("eth_sendRawTransaction should NOT be in WriteOpsMap (it's globally blocked)")
 	}
 }
 

@@ -126,6 +126,11 @@ var GlobalBlockedMethods = map[string]bool{
 	"eth_sign":            true,
 	"eth_signTransaction": true,
 
+	// Raw transaction - bypasses all RBAC validation (no RLP decoding)
+	// Attackers could deploy contracts to any address, bypass bytecode validation,
+	// and circumvent cross-org isolation. Use eth_sendTransaction instead.
+	"eth_sendRawTransaction": true,
+
 	// Clique namespace - consensus manipulation
 	"clique_discard":           true,
 	"clique_getSigners":        true,
@@ -485,9 +490,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	} else if requiredClaim != "" {
 		// No target address but operation requires a claim (e.g., contract deployment)
 		// Check if user has the required claim via default claims
-		// This handles:
-		// - Contract deployment (requires 'deploy' claim)
-		// - eth_sendRawTransaction (requires 'write' claim, but we can't validate target)
+		// This handles contract deployments (requires 'deploy' claim)
 		if !containsClaim(perms.DefaultClaims, requiredClaim) {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -586,9 +589,9 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 }
 
 // WriteOpsMap contains write operations that require 'write' claim.
+// Note: eth_sendRawTransaction is globally blocked (cannot validate without RLP decoding).
 var WriteOpsMap = map[string]bool{
-	"eth_sendTransaction":    true,
-	"eth_sendRawTransaction": true,
+	"eth_sendTransaction": true,
 }
 
 // ReadOpsMap contains read operations that require 'read' claim.
@@ -632,12 +635,10 @@ func ClassifyOperation(method string, params []any) Claim {
 // IsContractDeployment checks if the method+params represent a contract deployment.
 // Contract deployments are eth_sendTransaction calls with no 'to' address.
 // Also detects eth_estimateGas for deployment (estimating gas for contract creation).
-// NOTE: eth_sendRawTransaction cannot be validated without RLP decoding, so it's
-// treated as a regular write operation. To prevent deployments via raw tx, either
-// don't allow eth_sendRawTransaction method, or don't grant the write claim.
+// NOTE: eth_sendRawTransaction is globally blocked because it cannot be validated
+// without RLP decoding, which would bypass all RBAC security controls.
 func IsContractDeployment(method string, params []any) bool {
 	// Only eth_sendTransaction and eth_estimateGas can be validated for deployment
-	// eth_sendRawTransaction would require RLP decoding which is complex
 	if method != "eth_sendTransaction" && method != "eth_estimateGas" {
 		return false
 	}
