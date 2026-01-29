@@ -20,6 +20,17 @@ import (
 func (s *Server) preregisterAddresses(c *gin.Context) {
 	orgID := c.Param("org_id")
 
+	// Verify the organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
 	var input struct {
 		Factory    string `json:"factory" binding:"required"`
 		SaltPrefix string `json:"salt_prefix" binding:"required"`
@@ -89,6 +100,17 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 func (s *Server) listPreregisteredAddresses(c *gin.Context) {
 	orgID := c.Param("org_id")
 
+	// Verify the organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
 	addresses, err := s.db.ListPreregisteredAddresses(c.Request.Context(), orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -122,6 +144,17 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
+	// Verify the organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
 	// URL-decode the address (in case it was encoded)
 	address = strings.TrimSpace(address)
 
@@ -131,7 +164,7 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 		return
 	}
 
-	err := s.db.DeletePreregisteredAddress(c.Request.Context(), orgID, address)
+	err = s.db.DeletePreregisteredAddress(c.Request.Context(), orgID, address)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "preregistered address not found"})

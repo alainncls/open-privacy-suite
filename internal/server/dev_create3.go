@@ -314,6 +314,17 @@ func (s *Server) autoRegisterCreate3(c *gin.Context) {
 		return
 	}
 
+	// Verify the organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
 	var req AutoRegisterCreate3Request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
