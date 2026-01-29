@@ -69,6 +69,27 @@ services:
       retries: 3
       start_period: 15s
 
+  # Frontend dev server for UI testing
+  proxy-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    # No port mapping - only playwright container needs access
+    environment:
+      - VITE_API_TARGET=http://proxy-backend:8080
+      - VITE_ALLOW_MOCK_LOGIN=true
+    depends_on:
+      proxy-backend:
+        condition: service_healthy
+    networks:
+      - e2e-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:5173 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # Playwright test runner
   playwright:
     build:
@@ -82,9 +103,12 @@ services:
     environment:
       - PROXY_URL=http://proxy-backend:8080
       - ADMIN_URL=http://proxy-backend:8080
+      - FRONTEND_URL=http://proxy-frontend:5173
       - CI=${CI:-false}
     depends_on:
       proxy-backend:
+        condition: service_healthy
+      proxy-frontend:
         condition: service_healthy
     networks:
       - e2e-network

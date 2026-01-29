@@ -1,0 +1,86 @@
+/**
+ * Centralized data-testid selectors for UI tests.
+ * Use these selectors consistently across all UI tests.
+ */
+
+export const selectors = {
+  // Login page
+  login: {
+    page: '[data-testid="login-page"]',
+    header: '[data-testid="login-header"]',
+    authCard: '[data-testid="auth-card"]',
+    authTitle: '[data-testid="auth-title"]',
+    qrSection: '[data-testid="qr-section"]',
+    qrCode: '[data-testid="qr-code"]',
+    authLoading: '[data-testid="auth-loading"]',
+    authSuccess: '[data-testid="auth-success"]',
+    authError: '[data-testid="auth-error"]',
+    tryAgainBtn: '[data-testid="try-again-btn"]',
+    // Dev tools (mock login)
+    devTools: '[data-testid="dev-tools"]',
+    mockLoginBtn: '[data-testid="mock-login-btn"]',
+  },
+
+  // Admin app layout
+  admin: {
+    app: '[data-testid="admin-app"]',
+    header: '[data-testid="admin-header"]',
+    logo: '[data-testid="admin-logo"]',
+    nav: '[data-testid="admin-nav"]',
+  },
+
+  // Navigation tabs
+  nav: {
+    dashboard: '[data-testid="nav-dashboard"]',
+    logs: '[data-testid="nav-logs"]',
+    rbac: '[data-testid="nav-rbac"]',
+  },
+
+  // RBAC Manager
+  rbac: {
+    manager: '[data-testid="rbac-manager"]',
+    title: '[data-testid="rbac-title"]',
+    tabs: '[data-testid="rbac-tabs"]',
+    orgSelector: '[data-testid="org-selector"]',
+    // Tab triggers
+    tabOrganizations: '[data-testid="tab-organizations"]',
+    tabGroups: '[data-testid="tab-groups"]',
+    tabUsers: '[data-testid="tab-users"]',
+    tabContracts: '[data-testid="tab-contracts"]',
+    tabPreregistered: '[data-testid="tab-preregistered"]',
+  },
+
+  // Common UI elements
+  common: {
+    loadingSpinner: '.animate-spin',
+    dialog: '[role="dialog"]',
+    dialogTitle: '[role="dialog"] h2',
+    alertDialog: '[role="alertdialog"]',
+  },
+} as const;
+
+/**
+ * Helper to get a testid selector string
+ */
+export function testId(id: string): string {
+  return `[data-testid="${id}"]`;
+}
+
+/**
+ * Helper to build role-based selectors
+ */
+export const roles = {
+  button: (name: string) => ({ role: 'button' as const, name }),
+  link: (name: string) => ({ role: 'link' as const, name }),
+  tab: (name: string) => ({ role: 'tab' as const, name }),
+  heading: (name: string, level?: number) => ({
+    role: 'heading' as const,
+    name,
+    ...(level && { level }),
+  }),
+  textbox: (name?: string) => ({ role: 'textbox' as const, ...(name && { name }) }),
+  row: () => ({ role: 'row' as const }),
+  cell: () => ({ role: 'cell' as const }),
+  table: () => ({ role: 'table' as const }),
+  dialog: (name?: string) => ({ role: 'dialog' as const, ...(name && { name }) }),
+} as const;
