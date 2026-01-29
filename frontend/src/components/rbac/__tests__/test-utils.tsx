@@ -1,6 +1,7 @@
 import React, { ReactElement, useState } from 'react';
 import { render, RenderOptions, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { expect } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
 import type { Organization } from '@/types/rbac';
@@ -200,11 +201,7 @@ export function renderWithRBACLayout(
   const routes = options.routes || [
     {
       path: '*',
-      element: (
-        <LayoutWrapper>
-          {ui}
-        </LayoutWrapper>
-      ),
+      element: <LayoutWrapper />,
     },
   ];
 

@@ -159,7 +159,7 @@ describe('ContractForm', () => {
 
     it('closes dialog on success', async () => {
       const user = userEvent.setup();
-      const { onClose, onSave } = renderContractForm({});
+      const { onSave } = renderContractForm({});
 
       server.use(
         http.post('/api/v1/orgs/:orgId/contracts', () => {
@@ -213,7 +213,7 @@ describe('ContractForm', () => {
     it('address field is read-only (cannot change contract address)', () => {
       renderContractForm({ contract: mockContract });
 
-      const addressInput = screen.getByDisplayValue(mockContract.address);
+      const addressInput = screen.getByDisplayValue(mockContract.address!);
       expect(addressInput).toBeDisabled();
     });
 

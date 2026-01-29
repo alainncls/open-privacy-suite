@@ -42,7 +42,7 @@ interface LinkedAddress {
 }
 
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
-  const { organizations, selectedOrg } = useOrgContext();
+  const { organizations } = useOrgContext();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
   const [effectivePermsByOrg, setEffectivePermsByOrg] = useState<Record<string, EffectivePermissions>>({});
   const [loadingPerms, setLoadingPerms] = useState(false);
