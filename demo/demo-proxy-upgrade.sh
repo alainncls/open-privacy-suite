@@ -93,11 +93,12 @@ print_header "CREATE3 Proxy Upgrade Demo"
 
 print_step "Checking Configuration"
 
-# Required environment variables
+# Environment variables with defaults
+# Default private key is Anvil's first account (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
 : "${ADMIN_API_URL:=http://localhost:8080/api}"
 : "${RPC_URL:=http://localhost:8545}"
 : "${ORG_ID:?ORG_ID environment variable is required}"
-: "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY environment variable is required}"
+: "${DEPLOYER_PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 
 # Optional: CREATE3 factory address (will be fetched from org config if not set)
 CREATE3_FACTORY="${CREATE3_FACTORY:-}"

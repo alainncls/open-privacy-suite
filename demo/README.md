@@ -17,12 +17,15 @@ This demo showcases the complete flow of deploying and upgrading contracts using
 ```bash
 # Required
 export ORG_ID="your-org-id"
-export DEPLOYER_PRIVATE_KEY="0x..."
 
 # Optional (defaults shown)
 export ADMIN_API_URL="http://localhost:8080/api"
 export RPC_URL="http://localhost:8545"
 export CREATE3_FACTORY="<fetched from org config if not set>"
+
+# Deployer key - defaults to Anvil's first account
+export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
 
 ## Running the Demo
