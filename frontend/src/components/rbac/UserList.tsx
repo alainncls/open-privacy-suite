@@ -51,7 +51,7 @@ export default function UserList() {
 
   // Filter state
   const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('_all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
 
@@ -80,7 +80,7 @@ export default function UserList() {
     try {
       setLoading(true);
       const params: { org_id?: string; search?: string } = {};
-      if (selectedOrgId) {
+      if (selectedOrgId && selectedOrgId !== '_all') {
         params.org_id = selectedOrgId;
       }
       if (debouncedSearch) {
@@ -168,7 +168,7 @@ export default function UserList() {
               <SelectValue placeholder="All Organizations" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Organizations</SelectItem>
+              <SelectItem value="_all">All Organizations</SelectItem>
               {organizations.map(org => (
                 <SelectItem key={org.id} value={org.id}>
                   {org.name}
@@ -189,12 +189,12 @@ export default function UserList() {
           />
         </div>
 
-        {(selectedOrgId || searchQuery) && (
+        {(selectedOrgId !== '_all' || searchQuery) && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
-              setSelectedOrgId('');
+              setSelectedOrgId('_all');
               setSearchQuery('');
             }}
             className="text-[#6B7280]"
