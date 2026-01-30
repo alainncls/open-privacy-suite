@@ -15,8 +15,11 @@ This demo showcases the complete flow of deploying and upgrading contracts using
 ## Environment Variables
 
 ```bash
-# Required
-export ORG_ID="your-org-id"
+# Required - use ORG_SLUG (recommended, this is what you see in the UI)
+export ORG_SLUG="your-org-slug"
+
+# Or use ORG_ID directly if you know it
+# export ORG_ID="uuid-of-your-org"
 
 # Optional (defaults shown)
 export ADMIN_API_URL="http://localhost:8080/api"
@@ -27,6 +30,8 @@ export CREATE3_FACTORY="<fetched from org config if not set>"
 export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 # Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
+
+**Note:** The script will automatically look up the organization ID from the slug via the API.
 
 ## Running the Demo
 

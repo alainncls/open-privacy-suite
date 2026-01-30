@@ -97,14 +97,49 @@ print_step "Checking Configuration"
 # Default private key is Anvil's first account (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
 : "${ADMIN_API_URL:=http://localhost:8080/api}"
 : "${RPC_URL:=http://localhost:8545}"
-: "${ORG_ID:?ORG_ID environment variable is required}"
 : "${DEPLOYER_PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+
+# Organization: can specify either ORG_SLUG (preferred) or ORG_ID
+# ORG_SLUG is what you see in the UI, ORG_ID is the internal UUID
+if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
+    echo -e "${RED}Error: Either ORG_SLUG or ORG_ID environment variable is required${NC}"
+    echo ""
+    echo "Usage:"
+    echo "  export ORG_SLUG=\"your-org-slug\"  # Recommended - this is what you see in the UI"
+    echo "  ./demo-proxy-upgrade.sh"
+    echo ""
+    echo "Or:"
+    echo "  export ORG_ID=\"uuid-of-org\""
+    echo "  ./demo-proxy-upgrade.sh"
+    exit 1
+fi
 
 # Optional: CREATE3 factory address (will be fetched from org config if not set)
 CREATE3_FACTORY="${CREATE3_FACTORY:-}"
 
 print_value "Admin API URL" "$ADMIN_API_URL"
 print_value "RPC URL" "$RPC_URL"
+
+# If ORG_SLUG is provided, fetch ORG_ID from the API
+if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
+    print_substep "Looking up organization by slug: $ORG_SLUG"
+
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
+    ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
+
+    if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
+        print_error "Organization with slug '$ORG_SLUG' not found"
+        echo ""
+        echo -e "  ${WHITE}Available organizations:${NC}"
+        echo "$ORGS_RESPONSE" | jq -r '.[] | "  │ \(.slug) (id: \(.id))"' 2>/dev/null || echo "  │ (none found or API error)"
+        exit 1
+    fi
+
+    ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .name")
+    print_success "Found organization: $ORG_NAME"
+fi
+
+print_value "Organization Slug" "${ORG_SLUG:-<not set>}"
 print_value "Organization ID" "$ORG_ID"
 print_value "Deployer Key" "${DEPLOYER_PRIVATE_KEY:0:10}..."
 
