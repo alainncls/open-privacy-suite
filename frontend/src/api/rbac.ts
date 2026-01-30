@@ -26,6 +26,8 @@ import type {
   PreregisteredAddress,
   PreregisterInput,
   PreregisterResponse,
+  ContractSyncCheckResponse,
+  ContractSyncDeleteResponse,
 } from '../types/rbac';
 
 const api = axios.create({
@@ -107,6 +109,11 @@ export const rbacApi = {
       api.put<ContractGrant>(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`, input),
     deleteGrant: (orgId: string, address: string, groupId: string) =>
       api.delete(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`),
+    // Sync with chain
+    syncCheck: (orgId: string) =>
+      api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),
+    syncDelete: (orgId: string, contractIds: string[]) =>
+      api.post<ContractSyncDeleteResponse>(`/orgs/${orgId}/contracts/sync-delete`, { contract_ids: contractIds }),
   },
 
   // Preregistered Addresses (CREATE3)

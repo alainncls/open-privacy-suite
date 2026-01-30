@@ -258,3 +258,30 @@ export interface PreregisterInput {
 export interface PreregisterResponse {
   addresses: PreregisteredAddress[];
 }
+
+// Contract sync status - for checking contracts against chain
+export interface ContractSyncStatus {
+  id: string;
+  address: string;
+  name: string;
+  status: 'exists' | 'missing' | 'error';
+  error?: string;
+}
+
+// Response from sync-check endpoint
+export interface ContractSyncCheckResponse {
+  total: number;
+  existing: ContractSyncStatus[];
+  missing: ContractSyncStatus[];
+  errors: ContractSyncStatus[];
+}
+
+// Response from sync-delete endpoint
+export interface ContractSyncDeleteResponse {
+  deleted_count: number;
+  deleted_addresses: string[];
+  skipped: Array<{
+    id: string;
+    reason: string;
+  }>;
+}

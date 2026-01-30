@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -138,6 +141,206 @@ func (s *Server) deleteContract(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "contract deleted"})
+}
+
+// ContractSyncStatus represents the on-chain status of a contract
+type ContractSyncStatus struct {
+	ID      string `json:"id"`
+	Address string `json:"address"`
+	Name    string `json:"name"`
+	Status  string `json:"status"` // "exists", "missing", "error"
+	Error   string `json:"error,omitempty"`
+}
+
+// checkContractsOnChain checks all contracts against the chain and returns their status.
+// POST /orgs/:org_id/contracts/sync-check
+func (s *Server) checkContractsOnChain(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(contracts) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"total":    0,
+			"existing": []ContractSyncStatus{},
+			"missing":  []ContractSyncStatus{},
+			"errors":   []ContractSyncStatus{},
+		})
+		return
+	}
+
+	var existing, missing, errors []ContractSyncStatus
+
+	for _, contract := range contracts {
+		status := ContractSyncStatus{
+			ID:      contract.ID,
+			Address: contract.Address,
+			Name:    contract.Name,
+		}
+
+		// Make eth_getCode RPC call
+		code, err := s.getContractCode(contract.Address)
+		if err != nil {
+			// RPC error - could be chain unavailable
+			status.Status = "error"
+			status.Error = err.Error()
+			errors = append(errors, status)
+			continue
+		}
+
+		// Check if contract exists on chain
+		// eth_getCode returns "0x" for addresses with no code
+		if code == "0x" || code == "" {
+			status.Status = "missing"
+			missing = append(missing, status)
+		} else {
+			status.Status = "exists"
+			existing = append(existing, status)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":    len(contracts),
+		"existing": existing,
+		"missing":  missing,
+		"errors":   errors,
+	})
+}
+
+// deleteStaleContracts deletes contracts that are confirmed to be missing on-chain.
+// POST /orgs/:org_id/contracts/sync-delete
+func (s *Server) deleteStaleContracts(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		ContractIDs []string `json:"contract_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(input.ContractIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no contract IDs provided"})
+		return
+	}
+
+	// Verify all contracts belong to this org and re-check they're still missing
+	var deleted []string
+	var skipped []struct {
+		ID     string `json:"id"`
+		Reason string `json:"reason"`
+	}
+
+	for _, contractID := range input.ContractIDs {
+		contract, err := s.db.GetContract(c.Request.Context(), contractID)
+		if err != nil {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "database error: " + err.Error()})
+			continue
+		}
+		if contract == nil {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "contract not found"})
+			continue
+		}
+		if contract.OrgID != orgID {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "contract belongs to different organization"})
+			continue
+		}
+
+		// Re-verify the contract is still missing on-chain (safety check)
+		code, err := s.getContractCode(contract.Address)
+		if err != nil {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "chain unavailable: " + err.Error()})
+			continue
+		}
+		if code != "0x" && code != "" {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "contract now exists on chain"})
+			continue
+		}
+
+		// Delete the contract
+		if err := s.db.DeleteContract(c.Request.Context(), contractID); err != nil {
+			skipped = append(skipped, struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}{contractID, "delete failed: " + err.Error()})
+			continue
+		}
+
+		deleted = append(deleted, contract.Address)
+	}
+
+	// Invalidate cache for the org if any contracts were deleted
+	if len(deleted) > 0 {
+		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"deleted_count":     len(deleted),
+		"deleted_addresses": deleted,
+		"skipped":           skipped,
+	})
+}
+
+// getContractCode makes an eth_getCode RPC call to check if a contract exists on-chain.
+// Returns the code hex string, or an error if the RPC call fails.
+func (s *Server) getContractCode(address string) (string, error) {
+	rpcReq := proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getCode",
+		Params:  []interface{}{address, "latest"},
+		ID:      1,
+	}
+
+	reqBody, err := json.Marshal(rpcReq)
+	if err != nil {
+		return "", err
+	}
+
+	respBody, statusCode, err := s.proxy.Forward(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	if statusCode != http.StatusOK {
+		return "", fmt.Errorf("RPC request failed with status %d", statusCode)
+	}
+
+	var rpcResp proxy.JSONRPCResponse
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		return "", err
+	}
+
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+
+	// Result should be a hex string
+	code, ok := rpcResp.Result.(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected response type from eth_getCode")
+	}
+
+	return code, nil
 }
 
 // Contract Grant handlers
