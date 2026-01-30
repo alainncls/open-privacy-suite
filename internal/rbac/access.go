@@ -264,12 +264,13 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 // AccessController handles access control decisions for RBAC.
 type AccessController struct {
-	store            Store
-	resolver         *Resolver
-	cache            *Cache
-	deployValidator  *DeploymentValidator
-	upgradeValidator *UpgradeValidator
-	pendingTracker   *PendingDeploymentTracker
+	store                Store
+	resolver             *Resolver
+	cache                *Cache
+	deployValidator      *DeploymentValidator
+	upgradeValidator     *UpgradeValidator
+	factoryCallValidator *FactoryCallValidator
+	pendingTracker       *PendingDeploymentTracker
 }
 
 // Store returns the underlying RBAC store for the access controller.
@@ -280,13 +281,15 @@ func (c *AccessController) Store() Store {
 
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
+	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
-		store:            store,
-		resolver:         NewResolver(store, cacheTTL),
-		cache:            NewCache(CacheConfig{TTL: cacheTTL}),
-		deployValidator:  NewDeploymentValidator(store),
-		upgradeValidator: NewUpgradeValidator(store),
-		pendingTracker:   NewPendingDeploymentTracker(1 * time.Hour),
+		store:                store,
+		resolver:             NewResolver(store, cacheTTL),
+		cache:                NewCache(CacheConfig{TTL: cacheTTL}),
+		deployValidator:      deployValidator,
+		upgradeValidator:     NewUpgradeValidator(store),
+		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),
+		pendingTracker:       NewPendingDeploymentTracker(1 * time.Hour),
 	}
 }
 
@@ -494,6 +497,22 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						Allowed: false,
 						Reason:  fmt.Sprintf("proxy upgrade denied: %s", upgradeResult.Reason),
 					}, nil
+				}
+
+				// Validate CREATE3 factory deploy() calls
+				// This ensures deployments via factory go to preregistered addresses only
+				factoryAddress := GetOrgFactoryAddress(org)
+				if factoryAddress != "" {
+					factoryResult, err := c.factoryCallValidator.ValidateFactoryCall(ctx, org.ID, factoryAddress, addr, calldata)
+					if err != nil {
+						return nil, fmt.Errorf("failed to validate factory call: %w", err)
+					}
+					if factoryResult.IsFactoryCall && factoryResult.IsDeployCall && !factoryResult.Allowed {
+						return &AccessCheckResult{
+							Allowed: false,
+							Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
+						}, nil
+					}
 				}
 			}
 		}
