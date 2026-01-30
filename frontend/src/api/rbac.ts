@@ -66,8 +66,8 @@ export const rbacApi = {
 
   // Users
   users: {
-    list: (limit?: number, offset?: number) =>
-      api.get<User[]>('/users', { params: { limit, offset } }),
+    list: (params?: { limit?: number; offset?: number; org_id?: string; search?: string }) =>
+      api.get<User[]>('/users', { params }),
     get: (userId: string) => api.get<User>(`/users/${userId}`),
     update: (userId: string, input: UpdateUserInput) =>
       api.put<User>(`/users/${userId}`, input),

@@ -1,10 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
-import type { User } from '@/types/rbac';
+import type { User, Organization } from '@/types/rbac';
 import UserDetail from './UserDetail';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -29,6 +37,8 @@ import {
   X,
   Loader2,
   Eye,
+  Search,
+  Building2,
 } from 'lucide-react';
 
 export default function UserList() {
@@ -39,9 +49,57 @@ export default function UserList() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
 
+  // Filter state
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+
+  // Load organizations on mount
+  useEffect(() => {
+    const loadOrganizations = async () => {
+      try {
+        const response = await rbacApi.orgs.list();
+        setOrganizations(response.data || []);
+      } catch (error) {
+        console.error('Failed to load organizations:', error);
+      }
+    };
+    loadOrganizations();
+  }, []);
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const loadUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+      const params: { org_id?: string; search?: string } = {};
+      if (selectedOrgId) {
+        params.org_id = selectedOrgId;
+      }
+      if (debouncedSearch) {
+        params.search = debouncedSearch;
+      }
+      const response = await rbacApi.users.list(params);
+      setUsers(response.data || []);
+    } catch (error) {
+      console.error('Failed to load users:', error);
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedOrgId, debouncedSearch]);
+
+  // Load users when filters change
   useEffect(() => {
     loadUsers();
-  }, []);
+  }, [loadUsers]);
 
   // Open modal if userId is in URL
   useEffect(() => {
@@ -54,19 +112,6 @@ export default function UserList() {
       setSelectedUser(null);
     }
   }, [userId, users]);
-
-  const loadUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await rbacApi.users.list();
-      setUsers(response.data || []);
-    } catch (error) {
-      console.error('Failed to load users:', error);
-      setUsers([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleToggleBan = async (user: User) => {
     try {
@@ -109,6 +154,54 @@ export default function UserList() {
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-[#6B7280]" />
+          <Select
+            value={selectedOrgId}
+            onValueChange={setSelectedOrgId}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="All Organizations" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">All Organizations</SelectItem>
+              {organizations.map(org => (
+                <SelectItem key={org.id} value={org.id}>
+                  {org.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Input
+            type="text"
+            placeholder="Search by DID or wallet address..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
+        {(selectedOrgId || searchQuery) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSelectedOrgId('');
+              setSearchQuery('');
+            }}
+            className="text-[#6B7280]"
+          >
+            Clear filters
+          </Button>
+        )}
       </div>
 
       {loading ? (

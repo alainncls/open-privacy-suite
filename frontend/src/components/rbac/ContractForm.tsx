@@ -49,8 +49,8 @@ export default function ContractForm({
           rbacApi.preregisteredAddresses.list(orgId),
           rbacApi.contracts.list(orgId),
         ]);
-        setPreregisteredAddresses(preregResponse.data);
-        setRegisteredContracts(contractsResponse.data);
+        setPreregisteredAddresses(preregResponse.data || []);
+        setRegisteredContracts(contractsResponse.data || []);
       } catch (err) {
         console.error('Failed to load pre-registered addresses:', err);
       } finally {

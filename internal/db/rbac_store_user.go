@@ -141,6 +141,98 @@ func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, er
 	return users, nil
 }
 
+// UserFilter contains filter options for listing users
+type UserFilter struct {
+	OrgID  string // Filter by organization (users with memberships in this org)
+	Search string // Search by DID (external_id) or linked ETH address
+}
+
+// ListUsersFiltered returns users matching the given filters
+func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, offset int) ([]*rbac.User, error) {
+	var args []any
+	argNum := 1
+
+	// Build the query dynamically based on filters
+	query := `SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.created_at, u.updated_at
+	          FROM users u`
+
+	// Join with memberships/groups if filtering by org
+	if filter.OrgID != "" {
+		query += `
+		    JOIN user_memberships m ON u.id = m.user_id
+		    JOIN groups g ON m.group_id = g.id`
+	}
+
+	// Join with eth_address_links if searching (to search by linked address)
+	if filter.Search != "" {
+		query += `
+		    LEFT JOIN eth_address_links e ON u.external_id = e.did`
+	}
+
+	// Build WHERE clause
+	var conditions []string
+
+	if filter.OrgID != "" {
+		conditions = append(conditions, fmt.Sprintf("g.org_id = $%d", argNum))
+		args = append(args, filter.OrgID)
+		argNum++
+	}
+
+	if filter.Search != "" {
+		// Search by external_id (DID) or linked ETH address using ILIKE for case-insensitive matching
+		searchPattern := "%" + filter.Search + "%"
+		conditions = append(conditions, fmt.Sprintf("(u.external_id ILIKE $%d OR e.eth_address ILIKE $%d)", argNum, argNum+1))
+		args = append(args, searchPattern, searchPattern)
+		argNum += 2
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			query += " AND " + conditions[i]
+		}
+	}
+
+	query += fmt.Sprintf(" ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", argNum, argNum+1)
+	args = append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*rbac.User
+	for rows.Next() {
+		user := &rbac.User{}
+		var note sql.NullString
+		var metadata []byte
+
+		if err := rows.Scan(
+			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+			&user.CreatedAt, &user.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+
+		if note.Valid {
+			user.Note = note.String
+		}
+
+		if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		users = append(users, user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating users: %w", err)
+	}
+
+	return users, nil
+}
+
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
 	return err
