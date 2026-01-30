@@ -144,7 +144,7 @@ export default function RBACManager() {
   };
 
   // Tabs that require org selection
-  const orgRequiredTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
 
   return (

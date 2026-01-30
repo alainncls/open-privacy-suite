@@ -1,18 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
-import type { User, Organization } from '@/types/rbac';
+import type { User } from '@/types/rbac';
 import UserDetail from './UserDetail';
+import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -38,35 +32,20 @@ import {
   Loader2,
   Eye,
   Search,
-  Building2,
 } from 'lucide-react';
 
 export default function UserList() {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const { selectedOrg } = useOrgContext();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
 
-  // Filter state
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState<string>('_all');
+  // Search state
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
-
-  // Load organizations on mount
-  useEffect(() => {
-    const loadOrganizations = async () => {
-      try {
-        const response = await rbacApi.orgs.list();
-        setOrganizations(response.data || []);
-      } catch (error) {
-        console.error('Failed to load organizations:', error);
-      }
-    };
-    loadOrganizations();
-  }, []);
 
   // Debounce search input
   useEffect(() => {
@@ -77,12 +56,13 @@ export default function UserList() {
   }, [searchQuery]);
 
   const loadUsers = useCallback(async () => {
+    if (!selectedOrg) return;
+
     try {
       setLoading(true);
-      const params: { org_id?: string; search?: string } = {};
-      if (selectedOrgId && selectedOrgId !== '_all') {
-        params.org_id = selectedOrgId;
-      }
+      const params: { org_id?: string; search?: string } = {
+        org_id: selectedOrg.id,
+      };
       if (debouncedSearch) {
         params.search = debouncedSearch;
       }
@@ -94,9 +74,9 @@ export default function UserList() {
     } finally {
       setLoading(false);
     }
-  }, [selectedOrgId, debouncedSearch]);
+  }, [selectedOrg, debouncedSearch]);
 
-  // Load users when filters change
+  // Load users when org or search changes
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
@@ -156,28 +136,8 @@ export default function UserList() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Search */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Building2 className="w-4 h-4 text-[#6B7280]" />
-          <Select
-            value={selectedOrgId}
-            onValueChange={setSelectedOrgId}
-          >
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="All Organizations" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">All Organizations</SelectItem>
-              {organizations.map(org => (
-                <SelectItem key={org.id} value={org.id}>
-                  {org.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <Input
@@ -189,22 +149,29 @@ export default function UserList() {
           />
         </div>
 
-        {(selectedOrgId !== '_all' || searchQuery) && (
+        {searchQuery && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setSelectedOrgId('_all');
-              setSearchQuery('');
-            }}
+            onClick={() => setSearchQuery('')}
             className="text-[#6B7280]"
           >
-            Clear filters
+            Clear search
           </Button>
         )}
       </div>
 
-      {loading ? (
+      {!selectedOrg ? (
+        <div className="text-center py-12">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+            <Users className="w-8 h-8 text-[#94A3B8]" />
+          </div>
+          <p className="text-[#6B7280] mb-2">Select an organization</p>
+          <p className="text-[#94A3B8] text-sm">
+            Choose an organization from the scope selector above
+          </p>
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
         </div>
