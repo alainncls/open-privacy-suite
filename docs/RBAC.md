@@ -272,6 +272,13 @@ Note: Permissions are determined by the user's role claims, not by contract-spec
 | PUT | /api/orgs/:org_id/contracts/:address | Update contract |
 | DELETE | /api/orgs/:org_id/contracts/:address | Delete contract |
 
+### Organization Config
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/orgs/:org_id/config/create3 | Get org's CREATE3 factory address |
+| PUT | /api/orgs/:org_id/config/create3 | Set org's CREATE3 factory address |
+
 ### Pre-registered Addresses
 
 | Method | Endpoint | Description |
@@ -452,6 +459,58 @@ The new implementation address is extracted and validated for org ownership befo
 ### Pre-registered Addresses (CREATE3)
 
 For upgradeable proxies that will deploy future implementations at deterministic addresses, you can pre-register CREATE3 addresses before the code is known.
+
+#### Per-Organization Factory Configuration
+
+**CRITICAL SECURITY**: Each organization has its own CREATE3 factory contract. This ensures complete isolation between organizations - Org A cannot deploy contracts that could interact with Org B's addresses.
+
+**Factory Address Storage:**
+- Stored in `organization.settings["factory_address"]`
+- Set automatically on first pre-registration, or manually via API
+- All subsequent pre-registrations must use the same factory
+
+**API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/v1/orgs/:org_id/config/create3 | Get org's factory address |
+| PUT | /api/v1/orgs/:org_id/config/create3 | Set org's factory address |
+
+**Get factory configuration:**
+```bash
+curl http://localhost:8080/api/v1/orgs/{org_id}/config/create3
+```
+
+Response:
+```json
+{
+  "factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+  "configured": true
+}
+```
+
+**Set factory configuration:**
+```bash
+curl -X PUT http://localhost:8080/api/v1/orgs/{org_id}/config/create3 \
+  -H "Content-Type: application/json" \
+  -d '{"factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf"}'
+```
+
+**Factory Validation on Pre-registration:**
+
+When pre-registering addresses, the factory is validated:
+1. If org has a factory configured → input factory MUST match
+2. If org has no factory → input factory is saved as org's factory
+3. Mismatched factory → request rejected with 400 error
+
+This prevents accidental or malicious use of a different factory that could break isolation.
+
+**Production vs Development:**
+
+| Environment | Factory Deployment | Configuration |
+|-------------|-------------------|---------------|
+| Development | Auto-deployed via UI (Anvil account 0) | Auto-configured on first use |
+| Production | Deployed directly to node (outside proxy) | Set via API before first pre-registration |
 
 #### Complete Contract Lifecycle Flow
 

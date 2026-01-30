@@ -46,30 +46,33 @@ export default function PreregisterForm({
   const [deployingFactory, setDeployingFactory] = useState(false);
   const [factoryDeployed, setFactoryDeployed] = useState(false);
 
-  // Check for factory in dev mode
+  // Check for factory from org config only (per-org isolation - no global factory)
   useEffect(() => {
-    if (!isDevelopment) {
+    if (!orgId) {
       setCheckingFactory(false);
       return;
     }
 
     const checkFactory = async () => {
       try {
-        const response = await rbacApi.dev.getCreate3Factory();
-        if (response.data.address) {
-          setFactory(response.data.address);
+        // Load factory from org config only - each org must have its own factory configured
+        const orgConfigResponse = await rbacApi.orgConfig.getCreate3Factory(orgId);
+        if (orgConfigResponse.data?.factory && orgConfigResponse.data?.configured) {
+          setFactory(orgConfigResponse.data.factory);
           setFactoryDeployed(true);
         }
+        // If org doesn't have a factory configured, leave factory empty
+        // User must deploy/configure one for this org
       } catch {
-        // Factory not deployed or endpoint not available
-        console.log('CREATE3 factory not deployed yet');
-      } finally {
-        setCheckingFactory(false);
+        // Org config not available - factory not configured for this org
+        console.log('No factory configured for this organization');
       }
+
+      setCheckingFactory(false);
     };
 
     checkFactory();
-  }, []);
+  }, [orgId]);
 
   // Generate preview when inputs change
   useEffect(() => {
@@ -86,7 +89,17 @@ export default function PreregisterForm({
 
     try {
       const response = await rbacApi.dev.deployCreate3Factory();
-      setFactory(response.data.address);
+      const deployedAddress = response.data.address;
+      setFactory(deployedAddress);
+
+      // Save the deployed factory to org config for per-org isolation
+      try {
+        await rbacApi.orgConfig.setCreate3Factory(orgId, deployedAddress);
+      } catch (configErr) {
+        console.warn('Failed to save factory to org config:', configErr);
+        // Continue anyway - the preregister endpoint will save it
+      }
+
       setFactoryDeployed(true);
     } catch (err: unknown) {
       console.error('Failed to deploy CREATE3 factory:', err);

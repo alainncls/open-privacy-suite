@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
-import { FileCode2, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check } from 'lucide-react';
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
@@ -35,6 +35,7 @@ export default function ContractList() {
   const [editing, setEditing] = useState<Contract | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (orgId) {
@@ -75,6 +76,16 @@ export default function ContractList() {
     setShowForm(false);
     setEditing(null);
     await loadContracts();
+  };
+
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   };
 
   const truncateAddress = (address: string | undefined) => {
@@ -151,6 +162,17 @@ export default function ContractList() {
                     >
                       {truncateAddress(getContractAddress(contract))}
                     </span>
+                    <button
+                      onClick={() => copyToClipboard(getContractAddress(contract), contract.id)}
+                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      title="Copy address"
+                    >
+                      {copiedId === contract.id ? (
+                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
                   </div>
                 </TableCell>
                 <TableCell>

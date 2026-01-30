@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
-import { Hash, Plus, Trash2, Loader2, Check, Clock } from 'lucide-react';
+import { Hash, Plus, Trash2, Loader2, Check, Clock, Copy, Factory } from 'lucide-react';
 
 export default function PreregisteredAddressList() {
   const { selectedOrg } = useOrgContext();
@@ -30,12 +30,55 @@ export default function PreregisteredAddressList() {
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PreregisteredAddress | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [factoryAddress, setFactoryAddress] = useState<string | null>(null);
+  const [factoryCopied, setFactoryCopied] = useState(false);
 
   useEffect(() => {
     if (orgId) {
       loadAddresses();
     }
   }, [orgId]);
+
+  // Load factory address from org config only (per-org isolation)
+  useEffect(() => {
+    if (!orgId) return;
+
+    const loadFactory = async () => {
+      try {
+        const response = await rbacApi.orgConfig.getCreate3Factory(orgId);
+        if (response.data?.factory && response.data?.configured) {
+          setFactoryAddress(response.data.factory);
+        } else {
+          setFactoryAddress(null);
+        }
+      } catch {
+        setFactoryAddress(null);
+      }
+    };
+    loadFactory();
+  }, [orgId]);
+
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  const copyFactory = async () => {
+    if (!factoryAddress) return;
+    try {
+      await navigator.clipboard.writeText(factoryAddress);
+      setFactoryCopied(true);
+      setTimeout(() => setFactoryCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   const loadAddresses = async () => {
     if (!orgId) return;
@@ -105,6 +148,36 @@ export default function PreregisteredAddressList() {
         </Button>
       </div>
 
+      {/* Factory Address Display */}
+      {factoryAddress && (
+        <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-[#0EA5E9] flex items-center justify-center">
+              <Factory className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-xs font-medium text-[#0369A1]">CREATE3 Factory</p>
+              <p className="font-mono text-sm text-[#0C4A6E]" title={factoryAddress}>
+                {factoryAddress}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={copyFactory}
+            className="h-8 w-8 p-0 text-[#0369A1] hover:text-[#0C4A6E] hover:bg-[#E0F2FE]"
+            title="Copy factory address"
+          >
+            {factoryCopied ? (
+              <Check className="w-4 h-4 text-[#22C55E]" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
@@ -156,23 +229,60 @@ export default function PreregisteredAddressList() {
                     >
                       {truncateAddress(addr.address)}
                     </span>
+                    <button
+                      onClick={() => copyToClipboard(addr.address, `addr-${addr.id}`)}
+                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      title="Copy address"
+                    >
+                      {copiedId === `addr-${addr.id}` ? (
+                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
                   </div>
                 </TableCell>
                 <TableCell>
-                  <span
-                    className="font-mono text-sm text-[#6B7280]"
-                    title={addr.factory}
-                  >
-                    {truncateAddress(addr.factory)}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span
+                      className="font-mono text-sm text-[#6B7280]"
+                      title={addr.factory}
+                    >
+                      {truncateAddress(addr.factory)}
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(addr.factory, `factory-${addr.id}`)}
+                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      title="Copy factory address"
+                    >
+                      {copiedId === `factory-${addr.id}` ? (
+                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </TableCell>
                 <TableCell>
-                  <span
-                    className="font-mono text-xs text-[#94A3B8]"
-                    title={addr.salt}
-                  >
-                    {truncateSalt(addr.salt)}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span
+                      className="font-mono text-xs text-[#94A3B8]"
+                      title={addr.salt}
+                    >
+                      {truncateSalt(addr.salt)}
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(addr.salt, `salt-${addr.id}`)}
+                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      title="Copy salt"
+                    >
+                      {copiedId === `salt-${addr.id}` ? (
+                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </TableCell>
                 <TableCell>
                   <span className="text-sm text-[#6B7280]">

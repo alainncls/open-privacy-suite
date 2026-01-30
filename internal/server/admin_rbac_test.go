@@ -59,6 +59,7 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	conn.ExecContext(ctx, "DELETE FROM effective_permissions_cache")
 	conn.ExecContext(ctx, "DELETE FROM contract_grants")
 	conn.ExecContext(ctx, "DELETE FROM contracts")
+	conn.ExecContext(ctx, "DELETE FROM preregistered_addresses")
 	conn.ExecContext(ctx, "DELETE FROM user_memberships")
 	conn.ExecContext(ctx, "DELETE FROM group_access")
 	conn.ExecContext(ctx, "DELETE FROM groups")

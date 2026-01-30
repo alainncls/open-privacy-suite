@@ -126,6 +126,14 @@ export const rbacApi = {
     getCacheStats: () => api.get<CacheStats>('/cache/stats'),
   },
 
+  // Org config endpoints
+  orgConfig: {
+    getCreate3Factory: (orgId: string) =>
+      api.get<{ factory: string; configured: boolean; message?: string }>(`/orgs/${orgId}/config/create3`),
+    setCreate3Factory: (orgId: string, factory: string) =>
+      api.put<{ factory: string; configured: boolean }>(`/orgs/${orgId}/config/create3`, { factory }),
+  },
+
   // Dev endpoints (only available in development mode)
   dev: {
     getCreate3Factory: () =>
