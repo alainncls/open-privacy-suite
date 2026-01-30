@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -27,7 +28,24 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 		}
 	}
 
-	users, err := s.db.ListUsers(c.Request.Context(), limit, offset)
+	// Parse filter params
+	orgID := c.Query("org_id")
+	search := c.Query("search")
+
+	var users []*rbac.User
+	var err error
+
+	// Use filtered query if any filters are provided
+	if orgID != "" || search != "" {
+		filter := db.UserFilter{
+			OrgID:  orgID,
+			Search: search,
+		}
+		users, err = s.db.ListUsersFiltered(c.Request.Context(), filter, limit, offset)
+	} else {
+		users, err = s.db.ListUsers(c.Request.Context(), limit, offset)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

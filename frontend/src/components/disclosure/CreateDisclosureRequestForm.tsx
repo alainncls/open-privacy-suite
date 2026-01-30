@@ -54,7 +54,7 @@ export function CreateDisclosureRequestForm({
     const fetchUsers = async () => {
       try {
         setUsersLoading(true);
-        const response = await rbacApi.users.list(100);
+        const response = await rbacApi.users.list({ limit: 100 });
         setUsers(response.data || []);
         setUsersError(null);
       } catch (err) {

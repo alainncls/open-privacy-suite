@@ -146,7 +146,7 @@ describe('RBAC API', () => {
   describe('Users', () => {
     describe('list', () => {
       it('should list users with pagination', async () => {
-        const response = await rbacApi.users.list(10, 0);
+        const response = await rbacApi.users.list({ limit: 10, offset: 0 });
         expect(response.data).toHaveLength(1);
         expect(response.data[0].external_id).toBe(mockUser.external_id);
       });
