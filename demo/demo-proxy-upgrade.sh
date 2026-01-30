@@ -168,67 +168,116 @@ fi
 print_success "CREATE3 Factory: $CREATE3_FACTORY"
 
 # =============================================================================
-# Step 2: List existing preregistered addresses
+# Step 2: Check for existing preregistered addresses
 # =============================================================================
 
-print_step "Step 2: Fetching Preregistered Addresses"
+print_step "Step 2: Checking Preregistered Addresses"
 
-print_substep "Calling GET /orgs/$ORG_ID/addresses/preregistered..."
+print_substep "Fetching preregistered addresses from API..."
+print_info "GET /orgs/$ORG_ID/addresses/preregistered"
 
 PREREGISTERED_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregistered")
-PREREGISTERED_COUNT=$(echo "$PREREGISTERED_RESPONSE" | jq 'length')
+PREREGISTERED_COUNT=$(echo "$PREREGISTERED_RESPONSE" | jq 'length' 2>/dev/null || echo "0")
 
-print_success "Found $PREREGISTERED_COUNT preregistered addresses"
+print_success "Found $PREREGISTERED_COUNT preregistered address(es)"
 
-if [ "$PREREGISTERED_COUNT" -gt 0 ]; then
+# We need at least 3 addresses: proxy, impl v1, impl v2
+ADDRESSES_NEEDED=3
+
+if [ "$PREREGISTERED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
     echo ""
-    echo -e "  ${WHITE}Available addresses:${NC}"
-    echo "$PREREGISTERED_RESPONSE" | jq -r '.[] | "  │ \(.address) (salt: \(.salt[:16])...)"' 2>/dev/null || echo "$PREREGISTERED_RESPONSE"
-fi
-
-# =============================================================================
-# Step 3: Preregister new addresses for this demo
-# =============================================================================
-
-print_step "Step 3: Preregistering Addresses for Demo"
-
-SALT_PREFIX="demo-$(date +%s)"
-print_substep "Using salt prefix: $SALT_PREFIX"
-
-print_substep "Preregistering 3 addresses (proxy + 2 implementations)..."
-
-PREREGISTER_RESPONSE=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"factory\": \"$CREATE3_FACTORY\",
-        \"salt_prefix\": \"$SALT_PREFIX\",
-        \"count\": 3,
-        \"note\": \"Demo proxy upgrade addresses\"
-    }")
-
-if echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
-    print_success "Addresses preregistered successfully!"
-
-    # Extract addresses
-    PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
-    IMPL_V1_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
-    IMPL_V2_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
-
-    PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
-    IMPL_V1_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
-    IMPL_V2_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
-
+    echo -e "  ${GREEN}Using existing preregistered addresses${NC}"
+    echo -e "  ${WHITE}(In production, an org admin would have preregistered these)${NC}"
     echo ""
-    echo -e "  ${WHITE}Preregistered addresses:${NC}"
+
+    # Use the first 3 available addresses
+    PROXY_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[0].address')
+    IMPL_V1_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[1].address')
+    IMPL_V2_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[2].address')
+
+    PROXY_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[0].salt')
+    IMPL_V1_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[1].salt')
+    IMPL_V2_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[2].salt')
+
+    echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
     echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
     echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
     echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
     echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+
+    if [ "$PREREGISTERED_COUNT" -gt "$ADDRESSES_NEEDED" ]; then
+        REMAINING=$((PREREGISTERED_COUNT - ADDRESSES_NEEDED))
+        print_info "$REMAINING additional address(es) available for future deployments"
+    fi
+
 else
-    print_error "Failed to preregister addresses"
-    echo "$PREREGISTER_RESPONSE" | jq '.'
-    exit 1
+    # Not enough preregistered addresses
+    echo ""
+    echo -e "  ${YELLOW}⚠ Not enough preregistered addresses available${NC}"
+    echo -e "  ${WHITE}  Need: $ADDRESSES_NEEDED, Found: $PREREGISTERED_COUNT${NC}"
+    echo ""
+
+    if [ "$PREREGISTERED_COUNT" -gt 0 ]; then
+        echo -e "  ${WHITE}Available addresses:${NC}"
+        echo "$PREREGISTERED_RESPONSE" | jq -r '.[] | "  │ \(.address)"' 2>/dev/null
+        echo ""
+    fi
+
+    # Check if ALLOW_PREREGISTER is set (admin mode)
+    if [ "${ALLOW_PREREGISTER:-false}" = "true" ]; then
+        print_step "Step 2b: Preregistering Addresses (Admin Mode)"
+        echo -e "  ${YELLOW}⚠ ALLOW_PREREGISTER=true - running in admin mode${NC}"
+        echo -e "  ${WHITE}  In production, only org admins should preregister addresses${NC}"
+        echo ""
+
+        SALT_PREFIX="demo-$(date +%s)"
+        print_substep "Using salt prefix: $SALT_PREFIX"
+        print_substep "Preregistering $ADDRESSES_NEEDED addresses..."
+
+        PREREGISTER_RESPONSE=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"factory\": \"$CREATE3_FACTORY\",
+                \"salt_prefix\": \"$SALT_PREFIX\",
+                \"count\": $ADDRESSES_NEEDED,
+                \"note\": \"Demo proxy upgrade addresses\"
+            }")
+
+        if echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+            print_success "Addresses preregistered successfully!"
+
+            PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
+            IMPL_V1_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
+            IMPL_V2_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
+
+            PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
+            IMPL_V1_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
+            IMPL_V2_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
+
+            echo ""
+            echo -e "  ${WHITE}Newly preregistered addresses:${NC}"
+            echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+            echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
+            echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
+            echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
+            echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+        else
+            print_error "Failed to preregister addresses"
+            echo "$PREREGISTER_RESPONSE" | jq '.' 2>/dev/null || echo "$PREREGISTER_RESPONSE"
+            exit 1
+        fi
+    else
+        echo -e "  ${RED}Cannot proceed without preregistered addresses.${NC}"
+        echo ""
+        echo -e "  ${WHITE}Options:${NC}"
+        echo -e "  ${CYAN}1.${NC} Ask your org admin to preregister addresses via the UI"
+        echo -e "  ${CYAN}2.${NC} Run with ALLOW_PREREGISTER=true to preregister (admin only):"
+        echo ""
+        echo -e "     ${GREEN}ALLOW_PREREGISTER=true ./demo-proxy-upgrade.sh${NC}"
+        echo ""
+        exit 1
+    fi
 fi
 
 # =============================================================================

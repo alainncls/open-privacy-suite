@@ -33,6 +33,30 @@ export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efca
 
 **Note:** The script will automatically look up the organization ID from the slug via the API.
 
+## Security Model
+
+The demo respects the separation of concerns between **org admins** and **deployers**:
+
+### Org Admin Role
+- Preregisters addresses (planning phase)
+- Determines WHERE contracts can be deployed
+- Controls the address pool
+
+### Deployer Role
+- Deploys to already-preregistered addresses only
+- Cannot deploy to arbitrary addresses
+- Picks from the pre-approved address pool
+
+### Demo Behavior
+
+1. **If preregistered addresses exist** → Uses them (realistic deployer flow)
+2. **If not enough addresses** → Stops and asks admin to preregister
+
+To run in admin mode (for initial setup or demos):
+```bash
+ALLOW_PREREGISTER=true ORG_SLUG="my-org" ./demo-proxy-upgrade.sh
+```
+
 ## Running the Demo
 
 ```bash
@@ -45,13 +69,12 @@ export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efca
 - Validates environment variables
 - Fetches CREATE3 factory from org config (if not provided)
 
-### 2. List Preregistered Addresses
-- Shows existing preregistered addresses for the organization
+### 2. Check Preregistered Addresses
+- Fetches existing preregistered addresses for the organization
 - API: `GET /api/orgs/:org_id/addresses/preregistered`
-
-### 3. Preregister New Addresses
-- Registers 3 addresses for: proxy, implementation V1, implementation V2
-- API: `POST /api/orgs/:org_id/addresses/preregister`
+- **If 3+ addresses exist**: Uses them for deployment (deployer flow)
+- **If not enough**: Stops and asks admin to preregister, OR
+- **With ALLOW_PREREGISTER=true**: Preregisters new addresses (admin flow)
 
 ### 4. Build Contracts
 - Compiles BoxV1 and BoxV2 Solidity contracts
