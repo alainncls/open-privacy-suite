@@ -531,6 +531,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 
+			// Factory contract deployment requires admin claim (security: prevent accidental factory proliferation)
+			if validationResult.IsTrustedFactory {
+				allClaims := collectAllClaims(perms)
+				if !containsClaim(allClaims, ClaimAdmin) {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  "CREATE3 factory deployment requires admin claim",
+					}, nil
+				}
+			}
+
 			// Include deployment info in the result for proxy tracking
 			allClaims := collectAllClaims(perms)
 			return &AccessCheckResult{
