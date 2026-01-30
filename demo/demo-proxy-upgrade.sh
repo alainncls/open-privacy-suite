@@ -281,22 +281,34 @@ else
 fi
 
 # =============================================================================
-# Step 4: Build contracts
+# Step 3: Build contracts
 # =============================================================================
 
-print_step "Step 4: Building Contracts"
+print_step "Step 3: Building Contracts"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTRACTS_DIR="$SCRIPT_DIR/contracts"
+CONTRACTS_SRC_DIR="$SCRIPT_DIR/contracts"
 
-cd "$CONTRACTS_DIR"
+# Create a temp directory for building (keeps repo clean)
+BUILD_DIR=$(mktemp -d)
+print_substep "Using temp build directory: $BUILD_DIR"
 
-# Install dependencies if needed
-if [ ! -d "lib/openzeppelin-contracts-upgradeable" ]; then
-    print_substep "Installing OpenZeppelin contracts..."
-    forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-commit 2>/dev/null || true
-    forge install OpenZeppelin/openzeppelin-contracts --no-commit 2>/dev/null || true
-fi
+# Copy contracts to temp dir
+cp -r "$CONTRACTS_SRC_DIR"/* "$BUILD_DIR/"
+cd "$BUILD_DIR"
+
+# Cleanup on exit
+cleanup() {
+    if [ -n "$BUILD_DIR" ] && [ -d "$BUILD_DIR" ]; then
+        rm -rf "$BUILD_DIR"
+    fi
+}
+trap cleanup EXIT
+
+# Install dependencies
+print_substep "Installing OpenZeppelin contracts..."
+forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-commit --quiet 2>/dev/null || true
+forge install OpenZeppelin/openzeppelin-contracts --no-commit --quiet 2>/dev/null || true
 
 print_substep "Compiling contracts..."
 forge build --quiet
@@ -314,7 +326,7 @@ print_value "BoxV2 bytecode size" "$(echo -n "$BOXV2_BYTECODE" | wc -c | tr -d '
 # Step 5: Deploy Implementation V1
 # =============================================================================
 
-print_step "Step 5: Deploying Implementation V1"
+print_step "Step 4: Deploying Implementation V1"
 
 print_substep "Deploying BoxV1 to preregistered address via CREATE3..."
 print_info "Target address: $IMPL_V1_ADDR"
@@ -346,7 +358,7 @@ print_value "Contract code size" "$CODE_SIZE bytes"
 # Step 6: Deploy ERC1967 Proxy
 # =============================================================================
 
-print_step "Step 6: Deploying ERC1967 Proxy"
+print_step "Step 5: Deploying ERC1967 Proxy"
 
 print_substep "Building proxy deployment bytecode..."
 
@@ -407,7 +419,7 @@ print_value "Proxy Address" "$PROXY_ADDR"
 # Step 7: Interact with V1
 # =============================================================================
 
-print_step "Step 7: Interacting with Contract (V1)"
+print_step "Step 6: Interacting with Contract (V1)"
 
 print_substep "Calling version()..."
 VERSION_V1=$(cast call "$PROXY_ADDR" "version()(string)" --rpc-url "$RPC_URL" 2>/dev/null || echo "error")
@@ -428,7 +440,7 @@ print_contract_call "$PROXY_ADDR" "retrieve()" "$STORED_VALUE"
 # Step 8: Deploy Implementation V2
 # =============================================================================
 
-print_step "Step 8: Deploying Implementation V2"
+print_step "Step 7: Deploying Implementation V2"
 
 print_substep "Deploying BoxV2 to preregistered address via CREATE3..."
 print_info "Target address: $IMPL_V2_ADDR"
@@ -453,7 +465,7 @@ print_value "Address" "$IMPL_V2_ADDR"
 # Step 9: Upgrade Proxy to V2
 # =============================================================================
 
-print_step "Step 9: Upgrading Proxy to V2"
+print_step "Step 8: Upgrading Proxy to V2"
 
 print_substep "Calling upgradeToAndCall()..."
 print_info "Old implementation: $IMPL_V1_ADDR"
@@ -477,7 +489,7 @@ print_value "Transaction" "$TX_HASH_UPGRADE"
 # Step 10: Interact with V2
 # =============================================================================
 
-print_step "Step 10: Interacting with Contract (V2)"
+print_step "Step 9: Interacting with Contract (V2)"
 
 print_substep "Calling version()..."
 VERSION_V2=$(cast call "$PROXY_ADDR" "version()(string)" --rpc-url "$RPC_URL" 2>/dev/null || echo "error")
