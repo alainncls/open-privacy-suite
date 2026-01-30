@@ -167,6 +167,25 @@ fi
 
 print_success "CREATE3 Factory: $CREATE3_FACTORY"
 
+# Verify factory has code deployed
+print_substep "Verifying factory contract is deployed..."
+FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+if [ "$FACTORY_CODE_SIZE" = "0" ]; then
+    print_error "No contract found at factory address: $CREATE3_FACTORY"
+    echo ""
+    echo -e "  ${WHITE}The CREATE3 factory contract needs to be deployed first.${NC}"
+    echo -e "  ${WHITE}This typically happens when:${NC}"
+    echo -e "  ${CYAN}1.${NC} The chain was reset (Anvil restarted without persistence)"
+    echo -e "  ${CYAN}2.${NC} The factory was never deployed to this network"
+    echo ""
+    echo -e "  ${WHITE}To deploy a CREATE3 factory, you can use:${NC}"
+    echo -e "  ${GREEN}forge create --rpc-url $RPC_URL --private-key \$DEPLOYER_PRIVATE_KEY \\"
+    echo -e "    path/to/CREATE3Factory.sol:CREATE3Factory${NC}"
+    echo ""
+    exit 1
+fi
+print_success "Factory contract verified (code size: $FACTORY_CODE_SIZE bytes)"
+
 # =============================================================================
 # Step 2: Check for existing preregistered addresses
 # =============================================================================
@@ -186,19 +205,62 @@ ADDRESSES_NEEDED=3
 
 if [ "$PREREGISTERED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
     echo ""
-    echo -e "  ${GREEN}Using existing preregistered addresses${NC}"
+    echo -e "  ${GREEN}Looking for unused preregistered addresses${NC}"
     echo -e "  ${WHITE}(In production, an org admin would have preregistered these)${NC}"
     echo ""
 
-    # Use the first 3 available addresses
-    PROXY_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[0].address')
-    IMPL_V1_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[1].address')
-    IMPL_V2_ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[2].address')
+    # Find unused addresses that match the current factory (those without code deployed)
+    UNUSED_ADDRESSES=""
+    UNUSED_SALTS=""
+    UNUSED_COUNT=0
 
-    PROXY_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[0].salt')
-    IMPL_V1_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[1].salt')
-    IMPL_V2_SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r '.[2].salt')
+    # Normalize factory address to lowercase for comparison
+    FACTORY_LOWER=$(echo "$CREATE3_FACTORY" | tr '[:upper:]' '[:lower:]')
 
+    print_substep "Checking which addresses are still available for factory $CREATE3_FACTORY..."
+    for i in $(seq 0 $((PREREGISTERED_COUNT - 1))); do
+        ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].address")
+        SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].salt")
+        ADDR_FACTORY=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].factory" | tr '[:upper:]' '[:lower:]')
+
+        # Skip addresses that don't match the current factory
+        if [ "$ADDR_FACTORY" != "$FACTORY_LOWER" ]; then
+            continue
+        fi
+
+        CODE_SIZE=$(cast codesize "$ADDR" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+
+        if [ "$CODE_SIZE" = "0" ]; then
+            UNUSED_ADDRESSES="$UNUSED_ADDRESSES $ADDR"
+            UNUSED_SALTS="$UNUSED_SALTS $SALT"
+            UNUSED_COUNT=$((UNUSED_COUNT + 1))
+            if [ "$UNUSED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
+                break
+            fi
+        fi
+    done
+
+    if [ "$UNUSED_COUNT" -lt "$ADDRESSES_NEEDED" ]; then
+        print_error "Not enough unused addresses available"
+        print_info "Found $UNUSED_COUNT unused address(es), need $ADDRESSES_NEEDED"
+        print_info "Please preregister more addresses or use ALLOW_PREREGISTER=true"
+        exit 1
+    fi
+
+    # Convert space-separated lists to arrays and extract addresses
+    UNUSED_ADDRESSES_ARR=($UNUSED_ADDRESSES)
+    UNUSED_SALTS_ARR=($UNUSED_SALTS)
+
+    PROXY_ADDR="${UNUSED_ADDRESSES_ARR[0]}"
+    IMPL_V1_ADDR="${UNUSED_ADDRESSES_ARR[1]}"
+    IMPL_V2_ADDR="${UNUSED_ADDRESSES_ARR[2]}"
+
+    PROXY_SALT="${UNUSED_SALTS_ARR[0]}"
+    IMPL_V1_SALT="${UNUSED_SALTS_ARR[1]}"
+    IMPL_V2_SALT="${UNUSED_SALTS_ARR[2]}"
+
+    print_success "Found $UNUSED_COUNT unused address(es)"
+    echo ""
     echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
     echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
@@ -206,9 +268,9 @@ if [ "$PREREGISTERED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
     echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
     echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 
-    if [ "$PREREGISTERED_COUNT" -gt "$ADDRESSES_NEEDED" ]; then
-        REMAINING=$((PREREGISTERED_COUNT - ADDRESSES_NEEDED))
-        print_info "$REMAINING additional address(es) available for future deployments"
+    if [ "$UNUSED_COUNT" -gt "$ADDRESSES_NEEDED" ]; then
+        REMAINING=$((UNUSED_COUNT - ADDRESSES_NEEDED))
+        print_info "$REMAINING additional unused address(es) available for future deployments"
     fi
 
 else
@@ -305,10 +367,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Install dependencies
+# Initialize git repo (required for forge install)
+print_substep "Initializing git repository for forge..."
+git init --quiet
+git config user.email "demo@example.com"
+git config user.name "Demo"
+git add -A
+git commit -m "Initial" --quiet
+
+# Install dependencies using git clone directly (forge install has interactive prompts)
 print_substep "Installing OpenZeppelin contracts..."
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-commit --quiet 2>/dev/null || true
-forge install OpenZeppelin/openzeppelin-contracts --no-commit --quiet 2>/dev/null || true
+mkdir -p lib
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || {
+    print_error "Failed to clone openzeppelin-contracts-upgradeable"
+    exit 1
+}
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null || {
+    print_error "Failed to clone openzeppelin-contracts"
+    exit 1
+}
+print_success "OpenZeppelin contracts installed"
 
 print_substep "Compiling contracts..."
 forge build --quiet
@@ -336,13 +414,17 @@ print_info "Salt: ${IMPL_V1_SALT:0:20}..."
 # The factory.deploy(bytes32 salt, bytes creationCode) function
 DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V1_SALT" "$BOXV1_BYTECODE")
 
-TX_HASH_V1=$(cast send "$CREATE3_FACTORY" "$DEPLOY_CALLDATA" \
+DEPLOY_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_CALLDATA" \
     --private-key "$DEPLOYER_PRIVATE_KEY" \
     --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+    --json 2>&1)
+
+TX_HASH_V1=$(echo "$DEPLOY_RESULT" | jq -r '.transactionHash' 2>/dev/null)
 
 if [ -z "$TX_HASH_V1" ] || [ "$TX_HASH_V1" = "null" ]; then
     print_error "Failed to deploy BoxV1"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$DEPLOY_RESULT" | head -10
     exit 1
 fi
 
@@ -377,7 +459,7 @@ print_info "Implementation: $IMPL_V1_ADDR"
 
 # Get the ERC1967Proxy bytecode and encode constructor args
 # We'll need to compile a proxy contract
-cat > "$CONTRACTS_DIR/src/DeployProxy.sol" << 'EOF'
+cat > "$BUILD_DIR/src/DeployProxy.sol" << 'EOF'
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
