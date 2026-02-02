@@ -8,23 +8,46 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { getJWTToken } from '../../helpers/auth.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
-const MOCK_TOKEN_DEPLOYER = 'mock.did:security:deployer';
-const MOCK_TOKEN_NON_DEPLOYER = 'mock.did:security:non-deployer';
+
+// User DIDs for this test suite (unique per run)
+const timestamp = Date.now();
+const DEPLOYER_DID = `did:security:deployer-${timestamp}`;
+const NON_DEPLOYER_DID = `did:security:non-deployer-${timestamp}`;
+
+// JWT tokens will be set in setupUsers
+let deployerToken: string;
+let nonDeployerToken: string;
 
 async function setupUsers(request: any) {
-  // Setup deployer user with deploy claim
-  await request.put(`${API_URL}/api/v1/users/${encodeURIComponent('did:security:deployer')}`, {
+  // Step 1: Authenticate both users first - this creates them via EnsureUserExists
+  deployerToken = await getJWTToken(request, DEPLOYER_DID);
+  nonDeployerToken = await getJWTToken(request, NON_DEPLOYER_DID);
+
+  // Step 2: Find users by external ID to get their internal IDs
+  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const users = await usersResp.json();
+  const deployerUser = users.find((u: any) => u.external_id === DEPLOYER_DID);
+  const nonDeployerUser = users.find((u: any) => u.external_id === NON_DEPLOYER_DID);
+
+  if (!deployerUser) {
+    throw new Error(`Deployer user not created after auth: ${DEPLOYER_DID}`);
+  }
+  if (!nonDeployerUser) {
+    throw new Error(`Non-deployer user not created after auth: ${NON_DEPLOYER_DID}`);
+  }
+
+  // Step 3: Update KYC status using internal IDs
+  await request.put(`${API_URL}/api/v1/users/${deployerUser.id}`, {
+    data: { kyc: true }
+  });
+  await request.put(`${API_URL}/api/v1/users/${nonDeployerUser.id}`, {
     data: { kyc: true }
   });
 
-  // Setup non-deployer user without deploy claim
-  await request.put(`${API_URL}/api/v1/users/${encodeURIComponent('did:security:non-deployer')}`, {
-    data: { kyc: true }
-  });
-
-  // Get default org and create appropriate groups
+  // Step 4: Get default org and create appropriate groups
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
   const orgs = await orgsResp.json();
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
@@ -34,9 +57,7 @@ async function setupUsers(request: any) {
     const deployGroupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-deployers',
-        name: 'Security Deployers',
-        allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
-        default_claims: ['read', 'write', 'deploy']
+        name: 'Security Deployers'
       }
     });
 
@@ -51,13 +72,21 @@ async function setupUsers(request: any) {
       if (existing) deployGroupId = existing.id;
     }
 
+    // Set group access permissions (deploy claim)
+    if (deployGroupId) {
+      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${deployGroupId}/access`, {
+        data: {
+          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
+          default_claims: ['read', 'write', 'deploy']
+        }
+      });
+    }
+
     // Create group without deploy claim
     const noDeployGroupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-no-deploy',
-        name: 'Security No Deploy',
-        allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
-        default_claims: ['read', 'write']  // No deploy!
+        name: 'Security No Deploy'
       }
     });
 
@@ -72,21 +101,35 @@ async function setupUsers(request: any) {
       if (existing) noDeployGroupId = existing.id;
     }
 
-    // Add users to groups
+    // Set group access permissions (no deploy claim)
+    if (noDeployGroupId) {
+      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${noDeployGroupId}/access`, {
+        data: {
+          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
+          default_claims: ['read', 'write']  // No deploy!
+        }
+      });
+    }
+
+    // Add users to groups using internal IDs
     if (deployGroupId) {
       await request.post(
-        `${API_URL}/api/v1/orgs/${defaultOrg.id}/users/${encodeURIComponent('did:security:deployer')}/memberships`,
-        { data: { group_id: deployGroupId } }
+        `${API_URL}/api/v1/users/${deployerUser.id}/memberships`,
+        { data: { org_id: defaultOrg.id, group_id: deployGroupId } }
       );
     }
 
     if (noDeployGroupId) {
       await request.post(
-        `${API_URL}/api/v1/orgs/${defaultOrg.id}/users/${encodeURIComponent('did:security:non-deployer')}/memberships`,
-        { data: { group_id: noDeployGroupId } }
+        `${API_URL}/api/v1/users/${nonDeployerUser.id}/memberships`,
+        { data: { org_id: defaultOrg.id, group_id: noDeployGroupId } }
       );
     }
   }
+
+  // Step 5: Get new JWT tokens with updated KYC status
+  deployerToken = await getJWTToken(request, DEPLOYER_DID);
+  nonDeployerToken = await getJWTToken(request, NON_DEPLOYER_DID);
 }
 
 async function rpcCall(request: any, token: string, method: string, params: any[] = []) {
@@ -121,7 +164,7 @@ test.describe('Deploy Claim Enforcement', () => {
   });
 
   test('DEPLOY-001: User with deploy claim can deploy', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       {
         from: '0x' + '1'.repeat(40),
         data: SIMPLE_BYTECODE  // No 'to' = deployment
@@ -133,7 +176,7 @@ test.describe('Deploy Claim Enforcement', () => {
   });
 
   test('DEPLOY-002: User without deploy claim CANNOT deploy', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       {
         from: '0x' + '2'.repeat(40),
         data: SIMPLE_BYTECODE  // No 'to' = deployment
@@ -147,7 +190,7 @@ test.describe('Deploy Claim Enforcement', () => {
 
   test('DEPLOY-003: eth_estimateGas for deployment also requires deploy claim', async ({ request }) => {
     // Non-deployer trying to estimate gas for deployment
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_estimateGas', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_estimateGas', [
       {
         from: '0x' + '2'.repeat(40),
         data: SIMPLE_BYTECODE  // No 'to' = deployment estimation
@@ -160,7 +203,7 @@ test.describe('Deploy Claim Enforcement', () => {
   });
 
   test('DEPLOY-004: User with deploy claim can estimate deployment gas', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_estimateGas', [
+    const result = await rpcCall(request, deployerToken, 'eth_estimateGas', [
       {
         from: '0x' + '1'.repeat(40),
         data: SIMPLE_BYTECODE
@@ -178,7 +221,7 @@ test.describe('Deployment Detection', () => {
   });
 
   test('DEPLOY-005: Missing "to" field = deployment', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: '0x60806040' }
     ]);
 
@@ -187,7 +230,7 @@ test.describe('Deployment Detection', () => {
   });
 
   test('DEPLOY-006: "to": null = deployment', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), to: null, data: '0x60806040' }
     ]);
 
@@ -196,7 +239,7 @@ test.describe('Deployment Detection', () => {
   });
 
   test('DEPLOY-007: "to": "" = deployment', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), to: '', data: '0x60806040' }
     ]);
 
@@ -204,7 +247,7 @@ test.describe('Deployment Detection', () => {
   });
 
   test('DEPLOY-008: "to": "0x" = deployment', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), to: '0x', data: '0x60806040' }
     ]);
 
@@ -212,7 +255,7 @@ test.describe('Deployment Detection', () => {
   });
 
   test('DEPLOY-009: Valid "to" address = NOT deployment', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_NON_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, nonDeployerToken, 'eth_sendTransaction', [
       {
         from: '0x' + '1'.repeat(40),
         to: '0x' + '2'.repeat(40),  // Has 'to' address
@@ -238,7 +281,7 @@ test.describe('Bytecode Validation - CREATE/CREATE2 Detection', () => {
     // Note: This requires the bytecode parser to actually detect CREATE
     // The test verifies the validation is happening
 
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: CREATE_BYTECODE }
     ]);
 
@@ -248,7 +291,7 @@ test.describe('Bytecode Validation - CREATE/CREATE2 Detection', () => {
   });
 
   test('DEPLOY-011: Bytecode with CREATE2 opcode is blocked', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: CREATE2_BYTECODE }
     ]);
 
@@ -263,7 +306,7 @@ test.describe('Bytecode Validation - Dynamic DELEGATECALL', () => {
   });
 
   test('DEPLOY-012: Bytecode with dynamic DELEGATECALL is blocked (unless proxy)', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: DELEGATECALL_DYNAMIC }
     ]);
 
@@ -279,7 +322,7 @@ test.describe('eth_sendRawTransaction Blocking', () => {
 
   test('DEPLOY-013: eth_sendRawTransaction is globally blocked', async ({ request }) => {
     // This is critical - raw transactions bypass ALL validation
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendRawTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendRawTransaction', [
       '0xf86c808504a817c80082520894' + '1'.repeat(40) + '880de0b6b3a764000080'
     ]);
 
@@ -295,7 +338,7 @@ test.describe('Empty Bytecode Handling', () => {
   });
 
   test('DEPLOY-014: Deployment with empty data is rejected', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: '' }
     ]);
 
@@ -304,7 +347,7 @@ test.describe('Empty Bytecode Handling', () => {
   });
 
   test('DEPLOY-015: Deployment with "0x" data is rejected', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40), data: '0x' }
     ]);
 
@@ -312,7 +355,7 @@ test.describe('Empty Bytecode Handling', () => {
   });
 
   test('DEPLOY-016: Deployment with missing data field is handled', async ({ request }) => {
-    const result = await rpcCall(request, MOCK_TOKEN_DEPLOYER, 'eth_sendTransaction', [
+    const result = await rpcCall(request, deployerToken, 'eth_sendTransaction', [
       { from: '0x' + '1'.repeat(40) }  // No 'to' and no 'data'
     ]);
 

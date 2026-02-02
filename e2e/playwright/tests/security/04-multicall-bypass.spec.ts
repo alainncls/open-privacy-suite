@@ -11,9 +11,15 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { getJWTToken } from '../../helpers/auth.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
-const MOCK_TOKEN = 'mock.did:security:multicall-test';
+
+// User DID for this test suite
+const USER_DID = `did:security:multicall-test-${Date.now()}`;
+
+// JWT token will be set in beforeAll
+let jwtToken: string;
 
 // Known Multicall addresses
 const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11';
@@ -31,30 +37,46 @@ const SELECTORS = {
 };
 
 async function setupUser(request: any) {
-  await request.put(`${API_URL}/api/v1/users/${encodeURIComponent('did:security:multicall-test')}`, {
+  // Step 1: Authenticate first - this creates the user via EnsureUserExists
+  jwtToken = await getJWTToken(request, USER_DID);
+
+  // Step 2: Find the user by external ID to get their internal ID
+  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const users = await usersResp.json();
+  const user = users.find((u: any) => u.external_id === USER_DID);
+  if (!user) {
+    throw new Error(`User not created after auth: ${USER_DID}`);
+  }
+
+  // Step 3: Update KYC status using internal ID
+  await request.put(`${API_URL}/api/v1/users/${user.id}`, {
     data: { kyc: true }
   });
 
+  // Step 4: Add user to default org's default group using internal ID
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
   const orgs = await orgsResp.json();
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
   if (defaultOrg) {
     const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
     const groups = await groupsResp.json();
-    const defaultGroup = groups.find((g: any) => g.slug === 'default-users');
+    const defaultGroup = groups.find((g: any) => g.slug === 'default');
     if (defaultGroup) {
       await request.post(
-        `${API_URL}/api/v1/orgs/${defaultOrg.id}/users/${encodeURIComponent('did:security:multicall-test')}/memberships`,
-        { data: { group_id: defaultGroup.id } }
+        `${API_URL}/api/v1/users/${user.id}/memberships`,
+        { data: { org_id: defaultOrg.id, group_id: defaultGroup.id } }
       );
     }
   }
+
+  // Step 5: Get new JWT token with updated KYC status
+  jwtToken = await getJWTToken(request, USER_DID);
 }
 
 async function rpcCall(request: any, method: string, params: any[] = []) {
   const resp = await request.post(`${API_URL}/`, {
     headers: {
-      'Authorization': `Bearer ${MOCK_TOKEN}`,
+      'Authorization': `Bearer ${jwtToken}`,
       'Content-Type': 'application/json'
     },
     data: {

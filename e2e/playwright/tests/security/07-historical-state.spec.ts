@@ -7,35 +7,78 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { getJWTToken } from '../../helpers/auth.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
-const MOCK_TOKEN = 'mock.did:security:historical-state-test';
+
+// User DID for this test suite
+const USER_DID = `did:security:historical-state-test-${Date.now()}`;
+
+// JWT token will be set in setupUser
+let jwtToken: string;
 
 async function setupUser(request: any) {
-  await request.put(`${API_URL}/api/v1/users/${encodeURIComponent('did:security:historical-state-test')}`, {
+  // Step 1: Authenticate first - this creates the user via EnsureUserExists
+  jwtToken = await getJWTToken(request, USER_DID);
+
+  // Step 2: Find the user by external ID to get their internal ID
+  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const users = await usersResp.json();
+  const user = users.find((u: any) => u.external_id === USER_DID);
+  if (!user) {
+    throw new Error(`User not created after auth: ${USER_DID}`);
+  }
+
+  // Step 3: Update KYC status using internal ID
+  await request.put(`${API_URL}/api/v1/users/${user.id}`, {
     data: { kyc: true }
   });
 
+  // Step 4: Get default org and create/find a group with proper permissions
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
   const orgs = await orgsResp.json();
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
+
   if (defaultOrg) {
-    const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-    const groups = await groupsResp.json();
-    const defaultGroup = groups.find((g: any) => g.slug === 'default-users');
-    if (defaultGroup) {
+    // Create a group with eth_call and read permissions
+    const groupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
+      data: {
+        slug: 'security-historical-state',
+        name: 'Security Historical State Test',
+        allowed_methods: ['eth_call', 'eth_getStorageAt', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount'],
+        default_claims: ['read']
+      }
+    });
+
+    let groupId: string | null = null;
+    if (groupResp.ok()) {
+      const group = await groupResp.json();
+      groupId = group.id;
+    } else {
+      // Group might already exist, find it
+      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groups = await groupsResp.json();
+      const existing = groups.find((g: any) => g.slug === 'security-historical-state');
+      if (existing) groupId = existing.id;
+    }
+
+    // Add user to the group - note: membership endpoint is on users, not orgs
+    if (groupId) {
       await request.post(
-        `${API_URL}/api/v1/orgs/${defaultOrg.id}/users/${encodeURIComponent('did:security:historical-state-test')}/memberships`,
-        { data: { group_id: defaultGroup.id } }
+        `${API_URL}/api/v1/users/${user.id}/memberships`,
+        { data: { org_id: defaultOrg.id, group_id: groupId } }
       );
     }
   }
+
+  // Step 5: Get new JWT token with updated KYC status
+  jwtToken = await getJWTToken(request, USER_DID);
 }
 
 async function rpcCall(request: any, method: string, params: any[] = []) {
   const resp = await request.post(`${API_URL}/`, {
     headers: {
-      'Authorization': `Bearer ${MOCK_TOKEN}`,
+      'Authorization': `Bearer ${jwtToken}`,
       'Content-Type': 'application/json'
     },
     data: {
@@ -51,7 +94,8 @@ async function rpcCall(request: any, method: string, params: any[] = []) {
   };
 }
 
-const TEST_ADDRESS = '0x' + '1'.repeat(40);
+// Use a unique address unlikely to be registered by other tests
+const TEST_ADDRESS = '0x7777777777777777777777777777777777777777';
 const HISTORICAL_BLOCK = '0x100';
 const BLOCK_HASH = '0x' + 'a'.repeat(64);
 
