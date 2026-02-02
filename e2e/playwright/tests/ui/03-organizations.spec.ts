@@ -308,7 +308,7 @@ test.describe('Organization CRUD', () => {
     // The AlertDialog component should be present in the page
     // We can't easily trigger it without an org that has dependencies
     // Just verify the page loaded correctly
-    await expect(page.getByText('Organizations')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Organizations', exact: true })).toBeVisible();
   });
 
   test('organization form shows validation hints', async ({ page }) => {

@@ -5,6 +5,8 @@ import { mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
 // Generate unique identifiers for test isolation
 const generateOrgName = () => `Factory Test Org ${Date.now()}`;
 const generateOrgSlug = () => `factory-test-${Date.now()}`;
+// Salt prefix must be unique per test run to avoid "address already registered" errors
+const generateSaltPrefix = (base: string) => `0x${base}${Date.now().toString(16).slice(-8)}`;
 
 test.describe('Pre-registered Addresses and Factory Config', () => {
   test.beforeEach(async ({ page }) => {
@@ -265,7 +267,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
-        salt_prefix: '0xtest',
+        salt_prefix: generateSaltPrefix('test'),
         count: 2,
         note: 'Test addresses',
       },
@@ -312,7 +314,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
-        salt_prefix: '0xcopy',
+        salt_prefix: generateSaltPrefix('copy'),
         count: 1,
       },
     });
@@ -352,7 +354,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
-        salt_prefix: '0xstatus',
+        salt_prefix: generateSaltPrefix('status'),
         count: 1,
       },
     });
@@ -388,7 +390,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
-        salt_prefix: '0xdelete',
+        salt_prefix: generateSaltPrefix('delete'),
         count: 1,
       },
     });
@@ -424,7 +426,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
-        salt_prefix: '0xdeleteconfirm',
+        salt_prefix: generateSaltPrefix('delconfirm'),
         count: 1,
       },
     });
