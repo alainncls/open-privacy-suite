@@ -10,9 +10,9 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
-// slugRegex validates that slugs contain only lowercase letters, numbers, hyphens, and underscores.
+// slugRegex validates that slugs contain only letters (case-insensitive), numbers, hyphens, and underscores.
 // Slugs must start with a letter or number, not a hyphen or underscore.
-var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var slugRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 // validateSlug checks if a slug is valid for use in URLs and database storage.
 // Returns an error message if invalid, empty string if valid.
@@ -24,7 +24,7 @@ func validateSlug(slug string) string {
 		return "slug must be 100 characters or less"
 	}
 	if !slugRegex.MatchString(slug) {
-		return "slug must contain only lowercase letters, numbers, hyphens, and underscores, and start with a letter or number"
+		return "slug must contain only letters, numbers, hyphens, and underscores, and start with a letter or number"
 	}
 	return ""
 }
