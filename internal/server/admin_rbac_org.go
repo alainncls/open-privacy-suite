@@ -1,11 +1,33 @@
 package server
 
 import (
+	"regexp"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"privacy-proxy/internal/rbac"
 )
+
+// slugRegex validates that slugs contain only lowercase letters, numbers, hyphens, and underscores.
+// Slugs must start with a letter or number, not a hyphen or underscore.
+var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// validateSlug checks if a slug is valid for use in URLs and database storage.
+// Returns an error message if invalid, empty string if valid.
+func validateSlug(slug string) string {
+	if slug == "" {
+		return "slug is required"
+	}
+	if len(slug) > 100 {
+		return "slug must be 100 characters or less"
+	}
+	if !slugRegex.MatchString(slug) {
+		return "slug must contain only lowercase letters, numbers, hyphens, and underscores, and start with a letter or number"
+	}
+	return ""
+}
 
 // Organization handlers
 
@@ -29,6 +51,12 @@ func (s *Server) createOrganization(c *gin.Context) {
 		return
 	}
 
+	// Validate slug format before database insertion
+	if errMsg := validateSlug(input.Slug); errMsg != "" {
+		respondBadRequest(c, errMsg)
+		return
+	}
+
 	org := &rbac.Organization{
 		ID:       uuid.New().String(),
 		Slug:     input.Slug,
@@ -40,6 +68,11 @@ func (s *Server) createOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.CreateOrganization(c.Request.Context(), org); err != nil {
+		// Check for unique constraint violation (duplicate slug)
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			respondConflict(c, "organization with this slug already exists")
+			return
+		}
 		respondInternalError(c, err.Error())
 		return
 	}
@@ -85,6 +118,11 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	}
 
 	if input.Slug != nil {
+		// Validate slug format before update
+		if errMsg := validateSlug(*input.Slug); errMsg != "" {
+			respondBadRequest(c, errMsg)
+			return
+		}
 		org.Slug = *input.Slug
 	}
 	if input.Name != nil {
@@ -95,6 +133,11 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
+		// Check for unique constraint violation (duplicate slug)
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			respondConflict(c, "organization with this slug already exists")
+			return
+		}
 		respondInternalError(c, err.Error())
 		return
 	}

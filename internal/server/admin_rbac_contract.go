@@ -57,6 +57,11 @@ func (s *Server) createContract(c *gin.Context) {
 	}
 
 	if err := s.db.CreateContract(c.Request.Context(), contract); err != nil {
+		// Check for unique constraint violation (duplicate address in org)
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "contract with this address already exists in this organization"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
