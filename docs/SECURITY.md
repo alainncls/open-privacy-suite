@@ -7,16 +7,21 @@
 Dangerous JSON-RPC methods are blocked regardless of user permissions:
 
 ```
-debug_*           - Tracing/debugging (info disclosure, DoS)
-admin_*           - Node administration
-personal_*        - Account management (key exposure)
-miner_*           - Mining control
-txpool_*          - Mempool inspection (MEV risk)
-clique_*          - Consensus manipulation
-les_*             - Light client protocol
-eth_sign          - Arbitrary message signing
-eth_signTransaction - Transaction signing
+debug_*              - Tracing/debugging (info disclosure, DoS)
+admin_*              - Node administration
+personal_*           - Account management (key exposure)
+miner_*              - Mining control
+txpool_*             - Mempool inspection (MEV risk)
+clique_*             - Consensus manipulation
+les_*                - Light client protocol
+eth_sign             - Arbitrary message signing
+eth_signTransaction  - Transaction signing
+eth_sendRawTransaction - Pre-signed transactions (bypasses ALL validation)
+eth_subscribe        - WebSocket subscriptions (bypasses filtering)
+eth_unsubscribe      - WebSocket subscriptions
 ```
+
+**Note on eth_sendRawTransaction:** This method is **always blocked** because raw transactions are pre-signed and cannot be inspected for RBAC validation. The proxy cannot determine the sender, target contract, or method being called without RLP decoding the signed transaction, which would bypass all security controls.
 
 **Location:** `internal/rbac/access.go`
 
@@ -31,9 +36,56 @@ JSON-RPC batch requests (`[{...},{...}]`) are rejected. This prevents:
 
 ### Multicall Detection
 
-Calls to Multicall3 contract (`0xcA11bde05977b3631167028862bE2a173976CA11`) are blocked. Multicall allows batching arbitrary contract calls, bypassing method-level restrictions.
+Calls to known Multicall contracts are blocked:
+- Multicall3: `0xcA11bde05977b3631167028862bE2a173976CA11`
+- Multicall2: `0x5ba1e12693dc8f9c48aad8770482f4739beed696`
+- Multicall1: `0xeefba1e63905ef1d7acba5a8513c70307c1ce441`
+
+Multicall allows batching arbitrary contract calls, bypassing method-level restrictions.
 
 **Location:** `internal/rbac/access.go`
+
+### Contract Deployment Protection
+
+Contract deployments require the `deploy` claim:
+
+| Method | Deployment Detection | Validation |
+|--------|---------------------|------------|
+| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim |
+| `eth_estimateGas` | Missing/empty/null `to` field | Requires `deploy` claim |
+
+**Bytecode validation** is performed on deployments:
+- No CREATE/CREATE2 opcodes (prevents nested deployments)
+- No dynamic DELEGATECALL targets
+- All static CALL targets must be org-owned or precompiles
+
+**CREATE3 factory deployments** additionally require the `admin` claim.
+
+### Cross-Organization Isolation
+
+The RBAC system enforces strict isolation between organizations:
+
+**Organization Context Resolution:**
+When a user accesses a contract:
+1. System looks up which organization owns the target contract
+2. Verifies user has membership in that organization
+3. Uses that organization's permission context for access checks
+
+**Isolation Rules:**
+- Users can only access contracts owned by organizations they belong to
+- `default_claims` only apply to **public contracts** (not registered to any org)
+- Contract registered to Org A cannot be accessed by Org B users via default_claims
+
+**Multi-Organization Users:**
+Users can be members of multiple organizations. The system:
+1. Determines org context from target contract ownership
+2. Loads permissions from the correct organization
+3. Rejects requests where target contract belongs to an org the user isn't a member of
+
+**eth_getLogs Cross-Org Protection:**
+- All addresses in filter are validated
+- Mixed-org address filters are rejected
+- Requests without address filter are rejected
 
 ### Request Size Limit
 
@@ -142,4 +194,11 @@ Configured via Gin middleware. Adjust in `internal/server/server.go` for product
 |------|------------|------------|
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
-| Multicall | Only standard address blocked | Monitor for alternate deployments |
+| Multicall | Only 3 hardcoded addresses blocked | Custom multicall contracts could bypass; consider blocking aggregate() selector |
+| Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
+| Localhost IP ranges | 172.x prefix check is overly broad | See SECURITY_FINDINGS.md for fix |
+| Historical state | Only eth_call/eth_getStorageAt blocked | Other methods (eth_getBalance) accept historical blocks |
+
+## Security Audit
+
+See `SECURITY_FINDINGS.md` for detailed vulnerability analysis and remediation recommendations.
