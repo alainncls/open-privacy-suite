@@ -371,18 +371,42 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 
 	// Determine which org to use for permissions
-	org := orgCtx.Org()
-	if org == nil {
-		// No target-based org context (public contract or no target), use user's default org
-		org, err = c.getUserDefaultOrganization(ctx, user.ID)
+	// Priority: 1) explicit OrgSlug from request, 2) target-based org context, 3) user's default org
+	var org *Organization
+	if req.OrgSlug != "" && req.OrgSlug != "default" {
+		// Explicit org requested - look it up and verify membership
+		org, err = c.store.GetOrganizationBySlug(ctx, req.OrgSlug)
 		if err != nil {
-			return nil, fmt.Errorf("failed to determine user organization: %w", err)
+			return nil, fmt.Errorf("failed to get organization by slug: %w", err)
 		}
 		if org == nil {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  "user has no organization membership",
+				Reason:  fmt.Sprintf("organization not found: %s", req.OrgSlug),
 			}, nil
+		}
+		// Verify user is a member of this org
+		if !orgCtx.UserOrgIDs()[org.ID] {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("user is not a member of organization: %s", req.OrgSlug),
+			}, nil
+		}
+	} else {
+		// No explicit org - use target-based context or default
+		org = orgCtx.Org()
+		if org == nil {
+			// No target-based org context (public contract or no target), use user's default org
+			org, err = c.getUserDefaultOrganization(ctx, user.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to determine user organization: %w", err)
+			}
+			if org == nil {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "user has no organization membership",
+				}, nil
+			}
 		}
 	}
 
