@@ -36,7 +36,7 @@ interface OrgContextType {
   refreshOrgs: () => Promise<void>;
 }
 
-const OrgContext = createContext<OrgContextType | null>(null);
+export const OrgContext = createContext<OrgContextType | null>(null);
 
 export function useOrgContext() {
   const context = useContext(OrgContext);

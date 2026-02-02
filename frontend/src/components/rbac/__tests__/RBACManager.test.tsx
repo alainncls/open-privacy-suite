@@ -243,7 +243,7 @@ describe('RBACManager Integration Tests', () => {
       });
     });
 
-    it('shows "Global" scope indicator on Users tab', async () => {
+    it('shows organization selector on Users tab', async () => {
       const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
 
       await waitFor(() => {
@@ -253,7 +253,9 @@ describe('RBACManager Integration Tests', () => {
       await user.click(screen.getByTestId('tab-users'));
 
       await waitFor(() => {
-        expect(screen.getByText('Global (all organizations)')).toBeInTheDocument();
+        // Users tab requires org selection (not global)
+        expect(screen.queryByText('Global (all organizations)')).not.toBeInTheDocument();
+        expect(screen.getByTestId('org-selector')).toBeInTheDocument();
       });
     });
 

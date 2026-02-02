@@ -21,10 +21,16 @@ import {
 import type { Organization } from '@/types/rbac';
 
 // Mock useOrgContext from RBACManager
+// Note: vi.mock is hoisted, so create context inside the factory
 const mockUseOrgContext = vi.fn();
-vi.mock('../RBACManager', () => ({
-  useOrgContext: () => mockUseOrgContext(),
-}));
+vi.mock('../RBACManager', async () => {
+  const { createContext } = await import('react');
+  const MockOrgContext = createContext(null);
+  return {
+    OrgContext: MockOrgContext,
+    useOrgContext: () => mockUseOrgContext(),
+  };
+});
 
 // Mock useEnsNames to avoid network calls to ENS
 vi.mock('@/hooks/useEnsNames', () => ({

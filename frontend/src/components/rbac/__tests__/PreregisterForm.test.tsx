@@ -28,6 +28,12 @@ function renderPreregisterForm(props: {
 // Default handler that returns a deployed factory to skip the "deploy factory" UI in dev mode
 function useDeployedFactoryHandler() {
   server.use(
+    http.get('/api/v1/orgs/:orgId/config/create3', () => {
+      return HttpResponse.json({
+        factory: '0x1234567890123456789012345678901234567890',
+        configured: true,
+      });
+    }),
     http.get('/api/v1/dev/create3-factory', () => {
       return HttpResponse.json({
         address: '0x1234567890123456789012345678901234567890',
@@ -559,8 +565,11 @@ describe('PreregisterForm', () => {
 
   describe('Dev Mode Factory Deployment', () => {
     it('shows deploy factory UI when no factory is deployed', async () => {
-      // Override the default handler to return no factory
+      // Override the default handler to return no factory for both org config and dev endpoints
       server.use(
+        http.get('/api/v1/orgs/:orgId/config/create3', () => {
+          return HttpResponse.json({ error: 'Not configured' }, { status: 404 });
+        }),
         http.get('/api/v1/dev/create3-factory', () => {
           return HttpResponse.json({ error: 'Not deployed' }, { status: 404 });
         })
@@ -578,7 +587,7 @@ describe('PreregisterForm', () => {
     it('shows loading state when checking factory', async () => {
       // Make the factory check hang to see loading state
       server.use(
-        http.get('/api/v1/dev/create3-factory', async () => {
+        http.get('/api/v1/orgs/:orgId/config/create3', async () => {
           await new Promise(() => {}); // Never resolves
         })
       );
@@ -595,6 +604,9 @@ describe('PreregisterForm', () => {
 
       // Start with no factory
       server.use(
+        http.get('/api/v1/orgs/:orgId/config/create3', () => {
+          return HttpResponse.json({ error: 'Not configured' }, { status: 404 });
+        }),
         http.get('/api/v1/dev/create3-factory', () => {
           return HttpResponse.json({ error: 'Not deployed' }, { status: 404 });
         }),
@@ -602,6 +614,12 @@ describe('PreregisterForm', () => {
           return HttpResponse.json({
             address: '0xdeployedFactoryAddress1234567890123456',
             deployed: true,
+          });
+        }),
+        http.put('/api/v1/orgs/:orgId/config/create3', () => {
+          return HttpResponse.json({
+            factory: '0xdeployedFactoryAddress1234567890123456',
+            configured: true,
           });
         })
       );
@@ -625,6 +643,9 @@ describe('PreregisterForm', () => {
 
       // Start with no factory
       server.use(
+        http.get('/api/v1/orgs/:orgId/config/create3', () => {
+          return HttpResponse.json({ error: 'Not configured' }, { status: 404 });
+        }),
         http.get('/api/v1/dev/create3-factory', () => {
           return HttpResponse.json({ error: 'Not deployed' }, { status: 404 });
         }),
@@ -654,6 +675,9 @@ describe('PreregisterForm', () => {
 
       // Start with no factory
       server.use(
+        http.get('/api/v1/orgs/:orgId/config/create3', () => {
+          return HttpResponse.json({ error: 'Not configured' }, { status: 404 });
+        }),
         http.get('/api/v1/dev/create3-factory', () => {
           return HttpResponse.json({ error: 'Not deployed' }, { status: 404 });
         })

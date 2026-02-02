@@ -12,28 +12,14 @@ import {
 import type { PreregisteredAddress } from '@/types/rbac';
 
 // Mock the useOrgContext hook from RBACManager
-vi.mock('../RBACManager', () => ({
-  useOrgContext: () => ({
-    selectedOrg: {
-      id: 'org-1',
-      slug: 'test-org',
-      name: 'Test Organization',
-      settings: {},
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    },
-    setSelectedOrg: vi.fn(),
-    organizations: [{
-      id: 'org-1',
-      slug: 'test-org',
-      name: 'Test Organization',
-      settings: {},
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    }],
-    refreshOrgs: vi.fn(),
-  }),
-}));
+// Use the shared TestOrgContext from test-utils so MockOrgProvider works
+vi.mock('../RBACManager', async () => {
+  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  return {
+    OrgContext: TestOrgContext,
+    useOrgContext,
+  };
+});
 
 // Import after mock is set up
 import PreregisteredAddressList from '../PreregisteredAddressList';
@@ -127,7 +113,7 @@ describe('PreregisteredAddressList', () => {
       });
     });
 
-    it('shows factory address (truncated)', async () => {
+    it('shows factory address in CREATE3 info box', async () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
@@ -137,8 +123,10 @@ describe('PreregisteredAddressList', () => {
       renderWithRBACContext(<PreregisteredAddressList />);
 
       await waitFor(() => {
-        // Factory address is also truncated
-        expect(screen.getByText(/0x123456.*567890/)).toBeInTheDocument();
+        // Factory address is shown in the CREATE3 info box and table
+        // Use getAllByTitle since it appears in multiple places
+        const factoryElements = screen.getAllByTitle('0x1234567890123456789012345678901234567890');
+        expect(factoryElements.length).toBeGreaterThanOrEqual(1);
       });
     });
 
