@@ -437,7 +437,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// we must verify the contract isn't registered to a DIFFERENT organization.
 		// This prevents users from using default_claims to access contracts belonging to other orgs.
 		// Contracts owned by the user's org are allowed with default_claims.
-		if !hasExplicitAccess && ReadOpsMap[req.Method] {
+		// NOTE: This check applies to ALL operations (read and write) - a user should never
+		// be able to use default_claims to interact with contracts registered to another org.
+		if !hasExplicitAccess {
 			// User is relying on default_claims - first check if contract is in user's org
 			isOwnedByUserOrg, err := c.store.IsAddressOwnedByOrg(ctx, addr, org.ID)
 			if err != nil {
