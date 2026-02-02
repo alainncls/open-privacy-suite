@@ -173,29 +173,80 @@ func IsMethodBlocked(method string) bool {
 
 **Location**: `internal/rbac/access.go:187-263`
 **Severity**: HIGH
+**CVSS Score**: 7.5 (Network/Low/None/Unchanged/High/None/None)
 **Confirmed**: YES (code review)
 
 **Description**:
-Only 3 Multicall addresses are blocked:
+The Multicall detection requires BOTH conditions to be true:
+1. Target address is one of 3 hardcoded Multicall addresses
+2. Call data uses a known Multicall function selector
 
 ```go
-var knownMulticallAddresses = map[string]bool{
-    "0xca11bde05977b3631167028862be2a173976ca11": true, // Multicall3
-    "0x5ba1e12693dc8f9c48aad8770482f4739beed696": true, // Multicall2
-    "0xeefba1e63905ef1d7acba5a8513c70307c1ce441": true, // Multicall1
+// Current logic (simplified):
+if !IsMulticallTarget(to) {    // Only checks 3 addresses
+    return false, ""           // NOT BLOCKED if address unknown
+}
+if IsMulticallData(data) {     // Only reached if address matched
+    return true, "blocked"
 }
 ```
 
+**Blocked addresses**:
+- `0xca11bde05977b3631167028862be2a173976ca11` (Multicall3)
+- `0x5ba1e12693dc8f9c48aad8770482f4739beed696` (Multicall2)
+- `0xeefba1e63905ef1d7acba5a8513c70307c1ce441` (Multicall1)
+
+**Known selectors** (only checked if address matches):
+- `0x252dba42` - aggregate()
+- `0x82ad56cb` - aggregate3()
+- `0x174dea71` - aggregate3Value()
+- `0xc3077fa9` - blockAndAggregate()
+- `0xbce38bd7` - tryAggregate()
+- `0x399542e9` - tryBlockAndAggregate()
+
+**Attack Vectors**:
+
+| Attack | Blocked? | Why |
+|--------|----------|-----|
+| Call Multicall3 with aggregate() | ✅ Yes | Address + selector match |
+| Call custom Multicall with aggregate() | ❌ No | Address not in list |
+| Call any contract with aggregate() selector | ❌ No | Address check fails first |
+| Deploy new Multicall, use it | ❌ No | New address not known |
+
 **Impact**:
 An attacker could:
-1. Deploy a custom Multicall contract
+1. Deploy a custom Multicall contract (trivial - source is public)
 2. Use it to batch unauthorized calls bypassing per-call RBAC checks
 3. Execute read operations on contracts outside their organization
+4. Potentially batch write operations to multiple contracts
 
-**Remediation**:
-1. Detect Multicall behavior at bytecode level (aggregate function signature)
-2. Or parse calldata for nested calls and validate each
-3. Consider blocking all contracts with aggregate() function selector (0x252dba42)
+**Proof of Concept**:
+```solidity
+// Attacker deploys identical Multicall3 contract
+// New address: 0x1234...
+// Calls aggregate() with batched unauthorized calls
+// RBAC check passes because 0x1234 is not in blocklist
+```
+
+**Remediation Options**:
+
+1. **Selector-only blocking** (recommended - simple fix):
+```go
+// Block ANY call using Multicall selectors, regardless of target
+if IsMulticallData(data) {
+    return true, "multicall selector detected"
+}
+```
+*Risk*: May block legitimate contracts with similar signatures (unlikely)
+
+2. **Parse and validate inner calls** (thorough but complex):
+   - Decode aggregate() calldata to extract inner (target, data) pairs
+   - Run RBAC check on each inner call
+   - Only allow if ALL inner calls pass
+
+3. **Bytecode analysis on deployment** (defense in depth):
+   - Detect Multicall patterns in deployed bytecode
+   - Block deployment of Multicall-like contracts
 
 ---
 
