@@ -71,6 +71,19 @@ func (s *mockAccessControllerStore) GetUserMemberships(ctx context.Context, user
 	return s.memberships[userID], nil
 }
 
+func (s *mockAccessControllerStore) ListUserMembershipsWithDetails(ctx context.Context, userID string) ([]*MembershipWithDetails, error) {
+	memberships := s.memberships[userID]
+	result := make([]*MembershipWithDetails, 0, len(memberships))
+	for _, m := range memberships {
+		group := s.groups[m.GroupID]
+		result = append(result, &MembershipWithDetails{
+			Membership: m,
+			Group:      group,
+		})
+	}
+	return result, nil
+}
+
 func (s *mockAccessControllerStore) GetGroup(ctx context.Context, id string) (*Group, error) {
 	return s.groups[id], nil
 }

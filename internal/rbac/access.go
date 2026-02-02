@@ -350,22 +350,19 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Determine organization
-	// Default to "default" org for single-tenant deployments or when org not specified.
-	// The default org is seeded in migrations and provides baseline permissions.
-	orgSlug := req.OrgSlug
-	if orgSlug == "" {
-		orgSlug = "default"
-	}
-
-	org, err := c.store.GetOrganizationBySlug(ctx, orgSlug)
+	// Determine organization from user's memberships
+	// The user's org is determined by their group memberships, not by caller input.
+	// For single-org users, use their org. For multi-org users, we resolve permissions
+	// for their primary (first) org, but factory validation checks all their orgs.
+	org, err := c.getUserOrganization(ctx, user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get organization: %w", err)
+		return nil, fmt.Errorf("failed to determine user organization: %w", err)
 	}
 	if org == nil {
+		// User has no memberships - they need to be added to a group first
 		return &AccessCheckResult{
 			Allowed: false,
-			Reason:  fmt.Sprintf("organization not found: %s", orgSlug),
+			Reason:  "user has no organization membership",
 		}, nil
 	}
 
@@ -500,19 +497,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 
 				// Validate CREATE3 factory deploy() calls
-				// This ensures deployments via factory go to preregistered addresses only
-				factoryAddress := GetOrgFactoryAddress(org)
-				if factoryAddress != "" {
-					factoryResult, err := c.factoryCallValidator.ValidateFactoryCall(ctx, org.ID, factoryAddress, addr, calldata)
-					if err != nil {
-						return nil, fmt.Errorf("failed to validate factory call: %w", err)
-					}
-					if factoryResult.IsFactoryCall && factoryResult.IsDeployCall && !factoryResult.Allowed {
-						return &AccessCheckResult{
-							Allowed: false,
-							Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
-						}, nil
-					}
+				// Check ALL orgs the user is a member of, not just their primary org.
+				// This ensures that if a user sends a tx to an org's factory, we validate
+				// using that org's settings (preregistered addresses, bytecode rules).
+				factoryValidationResult, err := c.validateFactoryCallForUserOrgs(ctx, user.ID, addr, calldata)
+				if err != nil {
+					return nil, fmt.Errorf("failed to validate factory call: %w", err)
+				}
+				if factoryValidationResult != nil && !factoryValidationResult.Allowed {
+					return factoryValidationResult, nil
 				}
 			}
 		}
@@ -804,6 +797,104 @@ func containsClaim(claims []Claim, claim Claim) bool {
 		}
 	}
 	return false
+}
+
+// validateFactoryCallForUserOrgs checks if the target address is a factory for any org
+// the user is a member of, and validates the factory call using that org's settings.
+// Returns nil if the target is not a factory for any of the user's orgs.
+// Returns an AccessCheckResult with Allowed=false if the factory call is invalid.
+func (c *AccessController) validateFactoryCallForUserOrgs(ctx context.Context, userID string, targetAddr string, calldata []byte) (*AccessCheckResult, error) {
+	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user memberships: %w", err)
+	}
+
+	// Collect unique org IDs
+	orgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			orgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	// Check each org the user is a member of
+	for orgID := range orgIDs {
+		org, err := c.store.GetOrganization(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get organization: %w", err)
+		}
+		if org == nil {
+			continue
+		}
+
+		factoryAddress := GetOrgFactoryAddress(org)
+		if factoryAddress == "" {
+			continue
+		}
+
+		// Check if target matches this org's factory
+		factoryResult, err := c.factoryCallValidator.ValidateFactoryCall(ctx, org.ID, factoryAddress, targetAddr, calldata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate factory call for org %s: %w", org.Slug, err)
+		}
+
+		// If this is a factory call to this org's factory, return the validation result
+		if factoryResult.IsFactoryCall && factoryResult.IsDeployCall {
+			if !factoryResult.Allowed {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
+				}, nil
+			}
+			// Factory call is allowed - return nil to continue with normal processing
+			return nil, nil
+		}
+	}
+
+	// Target is not a factory for any of the user's orgs - not a factory call
+	return nil, nil
+}
+
+// getUserOrganization determines the organization for a user based on their memberships.
+// If the user is in exactly one org, returns that org.
+// If the user is in multiple orgs, returns the first one (for permissions resolution).
+// Factory validation will check all user orgs separately.
+func (c *AccessController) getUserOrganization(ctx context.Context, userID string) (*Organization, error) {
+	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user memberships: %w", err)
+	}
+
+	if len(memberships) == 0 {
+		return nil, nil // No memberships
+	}
+
+	// Collect unique org IDs from memberships
+	orgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			orgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	if len(orgIDs) == 0 {
+		return nil, nil
+	}
+
+	// Get the first org (for single-org users this is their only org)
+	// For multi-org users, permissions are resolved for one org but factory
+	// validation checks all orgs the user belongs to
+	for _, m := range memberships {
+		if m.Group != nil {
+			org, err := c.store.GetOrganization(ctx, m.Group.OrgID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get organization: %w", err)
+			}
+			return org, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // GetTargetAddress extracts the target address from JSON-RPC params.

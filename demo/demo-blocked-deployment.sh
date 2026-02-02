@@ -1,22 +1,22 @@
 #!/bin/bash
 
 # =============================================================================
-# Privacy Proxy - Security Boundary Demo
+# Privacy Proxy - Bytecode Validation Security Demo
 # =============================================================================
-# This script demonstrates the security boundaries of the privacy proxy.
+# This script demonstrates the bytecode validation security of the privacy proxy.
 #
 # The MaliciousBox contract:
-# 1. Gets deployed to a preregistered address (allowed)
-# 2. Contains code that makes internal CALL to 0xDeaDbeeF...
+# 1. Contains a hardcoded CALL to 0xDeaDbeeF (not owned by the org)
+# 2. Attempts deployment via CREATE3 factory
+#
+# Expected behavior:
+# - The privacy proxy BLOCKS the deployment because the bytecode contains
+#   a CALL to an address that is not owned by or preregistered for the org.
 #
 # This demonstrates:
-# - Deployment TO preregistered addresses: ALLOWED
-# - Internal CALL opcodes during execution: NOT BLOCKED (EVM limitation)
-# - RPC transactions to non-allowed addresses: BLOCKED
-#
-# The privacy proxy operates at the RPC layer, not at the EVM opcode level.
-# This means it can control what transactions users submit, but cannot
-# intercept internal contract-to-contract calls during execution.
+# - Bytecode analysis detects external call targets
+# - Deployments with calls to unauthorized addresses are BLOCKED
+# - The proxy validates bytecode BEFORE allowing factory deployments
 # =============================================================================
 
 set -e
@@ -83,17 +83,35 @@ print_warning() {
 }
 
 # =============================================================================
+# Helper function for RPC calls through the proxy
+# =============================================================================
+rpc_call() {
+    local method="$1"
+    local params="$2"
+
+    curl -s -X POST "$PROXY_RPC_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":1}"
+}
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
-print_header "Security Boundary Demo"
+print_header "Bytecode Validation Security Demo"
 
 print_step "Checking Configuration"
 
 # Environment variables with defaults
+# IMPORTANT: PROXY_RPC_URL is the privacy proxy, ANVIL_RPC_URL is direct to node
 : "${ADMIN_API_URL:=http://localhost:8080/api}"
-: "${RPC_URL:=http://localhost:8545}"
+: "${PROXY_RPC_URL:=http://localhost:8080}"
+: "${ANVIL_RPC_URL:=http://localhost:8545}"
 : "${DEPLOYER_PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+
+# For checking contract code, we can use Anvil directly (read-only)
+RPC_URL="$ANVIL_RPC_URL"
 
 if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
     echo -e "${RED}Error: Either ORG_SLUG or ORG_ID environment variable is required${NC}"
@@ -101,12 +119,13 @@ if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
 fi
 
 print_value "Admin API URL" "$ADMIN_API_URL"
-print_value "RPC URL" "$RPC_URL"
+print_value "Proxy RPC URL" "$PROXY_RPC_URL"
+print_value "Anvil RPC URL" "$ANVIL_RPC_URL"
 
 # Lookup org by slug if needed
 if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
     print_substep "Looking up organization by slug: $ORG_SLUG"
-    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs")
     ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
 
     if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
@@ -122,6 +141,137 @@ DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_PRIVATE_KEY" 2>/dev/null)
 print_value "Deployer Address" "$DEPLOYER_ADDRESS"
 
 # =============================================================================
+# Step 0: Authenticate and set up RBAC user with deploy permissions
+# =============================================================================
+
+print_step "Step 0: Authentication & RBAC Setup"
+
+# Create a unique user DID for this demo
+USER_EXTERNAL_ID="did:demo:deployer-$(date +%s)"
+print_substep "User DID: $USER_EXTERNAL_ID"
+
+# Step 0a: Start auth session to get session ID
+print_substep "Starting auth session..."
+AUTH_REQUEST_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/request" \
+    -H "Content-Type: application/json" \
+    -d '{"reason": "Demo deployment test"}')
+
+SESSION_ID=$(echo "$AUTH_REQUEST_RESP" | jq -r '.session_id // .sessionId // empty')
+if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
+    print_error "Failed to create auth session: $AUTH_REQUEST_RESP"
+    exit 1
+fi
+print_success "Auth session created: ${SESSION_ID:0:20}..."
+
+# Step 0b: Complete auth with mock token (requires AllowMockLogin=true)
+# Mock token format: mock.{userDID}
+print_substep "Authenticating with mock token..."
+MOCK_TOKEN="mock.${USER_EXTERNAL_ID}"
+AUTH_CALLBACK_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/callback?session=$SESSION_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"token\": \"$MOCK_TOKEN\"}")
+
+AUTH_TOKEN=$(echo "$AUTH_CALLBACK_RESP" | jq -r '.access_token // .accessToken // empty')
+if [ -z "$AUTH_TOKEN" ] || [ "$AUTH_TOKEN" = "null" ]; then
+    print_error "Failed to authenticate: $AUTH_CALLBACK_RESP"
+    print_info "Make sure the proxy is running with ALLOW_MOCK_LOGIN=true (dev mode)"
+    exit 1
+fi
+print_success "Got JWT access token"
+print_value "Token (first 50 chars)" "${AUTH_TOKEN:0:50}..."
+
+# Step 0c: Get the user's internal ID (created during auth)
+print_substep "Getting user info..."
+# The user was created during auth via EnsureUserExists
+# We need to find the user by external ID to get the internal UUID
+USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users?search=${USER_EXTERNAL_ID}")
+USER_ID=$(echo "$USERS_RESP" | jq -r '.[0].id // empty')
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    # Try without the search param - list all and filter
+    USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
+    USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+fi
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    print_error "Could not find user ID after authentication"
+    print_info "User response: $USERS_RESP"
+    exit 1
+fi
+print_success "User ID: $USER_ID"
+
+# Step 0d: Set KYC status FIRST (required before any RPC calls)
+print_substep "Setting KYC status (required for RPC access)..."
+KYC_RESP=$(curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
+    -H "Content-Type: application/json" \
+    -d '{"kyc": true}')
+KYC_ERROR=$(echo "$KYC_RESP" | jq -r '.error // empty')
+if [ -n "$KYC_ERROR" ] && [ "$KYC_ERROR" != "null" ]; then
+    print_error "Failed to set KYC: $KYC_ERROR"
+    exit 1
+fi
+print_success "KYC status set to true"
+
+# Step 0e: Verify auth works by calling eth_chainId
+print_substep "Verifying authentication..."
+AUTH_TEST=$(rpc_call "eth_chainId" "[]")
+# Handle both .result and .error (which can be string or object)
+CHAIN_ID=$(echo "$AUTH_TEST" | jq -r '.result // empty')
+AUTH_ERROR=$(echo "$AUTH_TEST" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+if [ -z "$CHAIN_ID" ] || [ -n "$AUTH_ERROR" ]; then
+    print_error "Authentication verification failed: $AUTH_TEST"
+    exit 1
+fi
+print_success "Authentication verified (chainId: $CHAIN_ID)"
+
+# Step 0f: Set up deployers group with deploy claim (after KYC is set)
+print_substep "Setting up group with deploy permissions..."
+GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "deployers" or .slug == "demo-deployers") | .id' | head -1)
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    # Create a deployers group
+    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "slug": "demo-deployers",
+            "name": "Demo Deployers",
+            "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "net_version"],
+            "default_claims": ["read", "write", "deploy"]
+        }')
+    DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
+
+    if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+        # Group might already exist, try to find it
+        GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+        DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id')
+    fi
+fi
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    print_error "Failed to create or find deployers group"
+    exit 1
+fi
+print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
+
+# Step 0g: Add user to the deployers group
+print_substep "Adding user to deployers group..."
+MEMBERSHIP_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+    -H "Content-Type: application/json" \
+    -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}")
+
+MEMBERSHIP_ID=$(echo "$MEMBERSHIP_RESP" | jq -r '.id // empty')
+MEMBERSHIP_ERROR=$(echo "$MEMBERSHIP_RESP" | jq -r '.error // empty')
+
+if [ -n "$MEMBERSHIP_ID" ] && [ "$MEMBERSHIP_ID" != "null" ]; then
+    print_success "User added to deployers group"
+elif echo "$MEMBERSHIP_ERROR" | grep -qi "already\|exists\|duplicate"; then
+    print_success "User already in deployers group"
+else
+    print_warning "Membership response: $MEMBERSHIP_RESP"
+fi
+
+# =============================================================================
 # Step 1: Get CREATE3 factory
 # =============================================================================
 
@@ -129,7 +279,7 @@ print_step "Step 1: Checking CREATE3 Factory"
 
 if [ -z "$CREATE3_FACTORY" ]; then
     print_substep "Fetching factory address from org config..."
-    FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
+    FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/config/create3")
     CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
 
     if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
@@ -140,8 +290,8 @@ fi
 
 print_success "CREATE3 Factory: $CREATE3_FACTORY"
 
-# Verify factory has code
-FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+# Verify factory has code (using Anvil directly for read-only check)
+FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
 if [ "$FACTORY_CODE_SIZE" = "0" ]; then
     print_error "No contract found at factory address"
     exit 1
@@ -155,7 +305,7 @@ print_success "Factory contract verified"
 print_step "Step 2: Getting Preregistered Address"
 
 print_substep "Fetching preregistered addresses..."
-PREREGISTERED_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregistered")
+PREREGISTERED_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/addresses/preregistered")
 FACTORY_LOWER=$(echo "$CREATE3_FACTORY" | tr '[:upper:]' '[:lower:]')
 
 # Find an unused address for the current factory
@@ -173,7 +323,8 @@ for i in $(seq 0 $((PREREGISTERED_COUNT - 1))); do
         continue
     fi
 
-    CODE_SIZE=$(cast codesize "$ADDR" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+    # Check code size using Anvil directly (read-only)
+    CODE_SIZE=$(cast codesize "$ADDR" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
     if [ "$CODE_SIZE" = "0" ]; then
         MALICIOUS_ADDR="$ADDR"
         MALICIOUS_SALT="$SALT"
@@ -258,31 +409,55 @@ echo -e "  ${CYAN}│${NC} ${RED}External address is NOT preregistered!${NC}"
 echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 echo ""
 
-print_warning "The privacy proxy should detect this and block the deployment"
+print_warning "The privacy proxy should detect the external call and BLOCK the deployment"
 
 # =============================================================================
-# Step 5: Attempt deployment (should fail)
+# Step 5: Attempt deployment through proxy (should be BLOCKED)
 # =============================================================================
 
-print_step "Step 5: Attempting Deployment (Expected to FAIL)"
+print_step "Step 5: Attempting Deployment Through Proxy (Expected to be BLOCKED)"
 
 print_substep "Deploying MaliciousBox via CREATE3..."
 print_info "Target address: $MALICIOUS_ADDR"
 print_info "External call target: 0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
+print_info "This address is NOT owned by or preregistered for the org!"
 
 DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$MALICIOUS_SALT" "$MALICIOUS_BYTECODE")
 
 echo ""
-print_substep "Sending deployment transaction..."
+print_substep "Sending deployment transaction through privacy proxy..."
 
-DEPLOY_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_CALLDATA" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --json 2>&1)
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
 
-TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.transactionHash' 2>/dev/null)
+# Build the transaction parameters
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$CREATE3_FACTORY",
+    "data": "$DEPLOY_CALLDATA",
+    "gas": "0x200000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
 
-if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+# Send transaction through the proxy (this should be BLOCKED by bytecode validation)
+DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+
+echo ""
+print_substep "Proxy response:"
+echo "$DEPLOY_RESULT" | jq . 2>/dev/null || echo "$DEPLOY_RESULT"
+echo ""
+
+# Check if the deployment was blocked
+# Handle both .error as string and .error.message as object
+ERROR_MSG=$(echo "$DEPLOY_RESULT" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty')
+
+if [ -n "$ERROR_MSG" ]; then
+    # Deployment was blocked!
     echo ""
     echo -e "  ${GREEN}┌─────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "  ${GREEN}│${NC}                    ${BOLD}${GREEN}DEPLOYMENT BLOCKED!${NC}                         ${GREEN}│${NC}"
@@ -290,82 +465,42 @@ if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
     echo ""
     print_success "The privacy proxy correctly blocked the deployment!"
     echo ""
-    echo -e "  ${WHITE}Error from proxy:${NC}"
-    echo "$DEPLOY_RESULT" | head -5 | sed 's/^/  │ /'
+    echo -e "  ${WHITE}Reason:${NC}"
+    echo -e "  │ $ERROR_MSG"
     echo ""
-else
-    # Transaction was sent - check if contract was actually deployed
-    CODE_SIZE=$(cast codesize "$MALICIOUS_ADDR" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+
+    if echo "$ERROR_MSG" | grep -qi "deadbeef\|not allowed\|bytecode\|call target"; then
+        print_success "Error message correctly identifies the unauthorized external call"
+    fi
+
+elif [ -n "$TX_HASH" ] && [ "$TX_HASH" != "null" ]; then
+    # Transaction was sent - this is unexpected!
+    echo ""
+    echo -e "  ${RED}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "  ${RED}│${NC}         ${BOLD}${RED}UNEXPECTED: DEPLOYMENT WAS NOT BLOCKED!${NC}               ${RED}│${NC}"
+    echo -e "  ${RED}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    print_error "The proxy should have blocked this deployment!"
+    print_value "Transaction" "$TX_HASH"
+
+    # Check if contract was actually deployed
+    sleep 2  # Wait for block
+    CODE_SIZE=$(cast codesize "$MALICIOUS_ADDR" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
 
     if [ "$CODE_SIZE" = "0" ]; then
-        echo ""
-        echo -e "  ${YELLOW}┌─────────────────────────────────────────────────────────────────┐${NC}"
-        echo -e "  ${YELLOW}│${NC}              ${BOLD}${YELLOW}DEPLOYMENT FAILED (tx reverted)${NC}                  ${YELLOW}│${NC}"
-        echo -e "  ${YELLOW}└─────────────────────────────────────────────────────────────────┘${NC}"
-        echo ""
-        print_warning "Transaction was sent but deployment failed"
-        print_value "Transaction" "$TX_HASH"
-        print_value "Contract code size" "0 bytes (not deployed)"
+        print_warning "Transaction was sent but deployment failed (code size = 0)"
     else
-        echo ""
-        echo -e "  ${YELLOW}┌─────────────────────────────────────────────────────────────────┐${NC}"
-        echo -e "  ${YELLOW}│${NC}           ${BOLD}${YELLOW}DEPLOYMENT SUCCEEDED (as expected)${NC}                  ${YELLOW}│${NC}"
-        echo -e "  ${YELLOW}└─────────────────────────────────────────────────────────────────┘${NC}"
-        echo ""
-        print_info "The contract was deployed to the preregistered address"
-        print_info "The external call happens at RUNTIME, not deployment"
-        print_value "Transaction" "$TX_HASH"
-        print_value "Contract address" "$MALICIOUS_ADDR"
-        print_value "Code size" "$CODE_SIZE bytes"
-
-        # Check if the constructor's external call succeeded
-        print_step "Step 6: Checking Constructor External Call Result"
-
-        print_substep "Checking if the external call in constructor succeeded..."
-        EXTERNAL_CALL_MADE=$(cast call "$MALICIOUS_ADDR" "externalCallMade()(bool)" --rpc-url "$RPC_URL" 2>/dev/null)
-
-        if [ "$EXTERNAL_CALL_MADE" = "false" ]; then
-            echo ""
-            echo -e "  ${GREEN}┌─────────────────────────────────────────────────────────────────┐${NC}"
-            echo -e "  ${GREEN}│${NC}         ${BOLD}${GREEN}CONSTRUCTOR EXTERNAL CALL FAILED!${NC}                   ${GREEN}│${NC}"
-            echo -e "  ${GREEN}└─────────────────────────────────────────────────────────────────┘${NC}"
-            echo ""
-            print_success "The external call to 0xDeaDbeeF in constructor returned false"
-            print_info "The call to non-preregistered address failed (as expected)"
-        else
-            print_warning "Constructor external call returned: $EXTERNAL_CALL_MADE"
-            print_info "This may indicate the external call wasn't blocked"
-        fi
-
-        # Now try callExternal() function
-        print_step "Step 7: Calling callExternal() Function"
-
-        print_substep "Calling callExternal() which tries to call 0xDeaDbeeF..."
-        echo ""
-
-        CALL_RESULT=$(cast call "$MALICIOUS_ADDR" "callExternal()(bool)" --rpc-url "$RPC_URL" 2>&1)
-
-        if [ "$CALL_RESULT" = "false" ]; then
-            echo ""
-            echo -e "  ${GREEN}┌─────────────────────────────────────────────────────────────────┐${NC}"
-            echo -e "  ${GREEN}│${NC}           ${BOLD}${GREEN}EXTERNAL CALL RETURNED FALSE!${NC}                      ${GREEN}│${NC}"
-            echo -e "  ${GREEN}└─────────────────────────────────────────────────────────────────┘${NC}"
-            echo ""
-            print_success "callExternal() returned false"
-            print_info "The call to 0xDeaDbeeF failed (no code at that address)"
-        elif echo "$CALL_RESULT" | grep -qi "error\|revert\|blocked"; then
-            echo ""
-            echo -e "  ${GREEN}┌─────────────────────────────────────────────────────────────────┐${NC}"
-            echo -e "  ${GREEN}│${NC}              ${BOLD}${GREEN}EXTERNAL CALL BLOCKED!${NC}                          ${GREEN}│${NC}"
-            echo -e "  ${GREEN}└─────────────────────────────────────────────────────────────────┘${NC}"
-            echo ""
-            print_success "The privacy proxy blocked the external call!"
-            echo -e "  ${WHITE}Response:${NC}"
-            echo "$CALL_RESULT" | head -3 | sed 's/^/  │ /'
-        else
-            print_warning "callExternal() returned: $CALL_RESULT"
-        fi
+        print_error "Contract was deployed at $MALICIOUS_ADDR (code size: $CODE_SIZE bytes)"
+        print_error "This is a SECURITY ISSUE - bytecode validation failed!"
     fi
+else
+    echo ""
+    echo -e "  ${YELLOW}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "  ${YELLOW}│${NC}              ${BOLD}${YELLOW}UNEXPECTED RESPONSE${NC}                              ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    print_warning "Could not parse proxy response"
+    echo "$DEPLOY_RESULT"
 fi
 
 # =============================================================================
@@ -380,22 +515,25 @@ echo -e "${CYAN}│${NC}  ${YELLOW}Contract:${NC}            MaliciousBox"
 echo -e "${CYAN}│${NC}  ${YELLOW}External Target:${NC}     0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
 echo -e "${CYAN}│${NC}  ${YELLOW}Target Preregistered:${NC} ${RED}NO${NC}"
 echo -e "${CYAN}├─────────────────────────────────────────────────────────────────────┤${NC}"
-echo -e "${CYAN}│${NC}  ${GREEN}Deployment:${NC}          Allowed (to preregistered address)"
-echo -e "${CYAN}│${NC}  ${YELLOW}Internal CALL:${NC}       Not blocked (EVM internal execution)"
+echo -e "${CYAN}│${NC}  ${GREEN}Deployment:${NC}          ${RED}BLOCKED${NC} (bytecode contains unauthorized CALL)"
+echo -e "${CYAN}│${NC}  ${YELLOW}Reason:${NC}              External call to non-owned address detected"
 echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -e "${WHITE}Security Model Clarification:${NC}"
-echo -e "  ${CYAN}•${NC} Deployment TO preregistered addresses: ${GREEN}allowed${NC}"
-echo -e "  ${CYAN}•${NC} RPC transactions TO non-allowed addresses: ${RED}blocked${NC}"
-echo -e "  ${CYAN}•${NC} Internal CALL opcodes (contract-to-contract): ${YELLOW}NOT blocked${NC}"
+echo -e "${WHITE}Security Model - Bytecode Validation:${NC}"
+echo -e "  ${CYAN}•${NC} Proxy analyzes bytecode BEFORE allowing deployment"
+echo -e "  ${CYAN}•${NC} All CALL/DELEGATECALL targets are extracted from bytecode"
+echo -e "  ${CYAN}•${NC} Each target must be: owned by org, preregistered, or a precompile"
+echo -e "  ${CYAN}•${NC} Deployments with unauthorized external calls are ${RED}BLOCKED${NC}"
 echo ""
-echo -e "  ${WHITE}Why internal CALLs aren't blocked:${NC}"
-echo -e "  ${CYAN}•${NC} The privacy proxy intercepts RPC requests, not EVM opcodes"
-echo -e "  ${CYAN}•${NC} Blocking internal CALLs would require a modified EVM"
-echo -e "  ${CYAN}•${NC} call() to address with no code returns true (like EOA)"
-echo ""
-echo -e "  ${WHITE}What IS protected:${NC}"
+echo -e "${WHITE}What IS protected:${NC}"
 echo -e "  ${CYAN}•${NC} Users can only send transactions through the proxy RPC"
 echo -e "  ${CYAN}•${NC} Factory deployments must target preregistered addresses"
-echo -e "  ${CYAN}•${NC} Contract interactions are logged and can be audited"
+echo -e "  ${CYAN}•${NC} Deployed bytecode cannot call unauthorized addresses"
+echo -e "  ${CYAN}•${NC} CREATE/CREATE2 opcodes blocked (prevents nested deployments)"
+echo -e "  ${CYAN}•${NC} Dynamic DELEGATECALL blocked (except for known proxy patterns)"
+echo ""
+echo -e "${WHITE}Note:${NC}"
+echo -e "  ${CYAN}•${NC} This demo requires the privacy proxy to be running"
+echo -e "  ${CYAN}•${NC} Mock authentication must be enabled (dev mode)"
+echo -e "  ${CYAN}•${NC} The org must have a CREATE3 factory configured"
 echo ""
