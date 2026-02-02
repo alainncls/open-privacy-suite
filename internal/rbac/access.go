@@ -395,7 +395,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// eth_getLogs can have multiple addresses in the filter, unlike other methods
 	// that target a single contract. We validate ALL addresses in the filter.
 	if req.Method == "eth_getLogs" {
-		if err := c.validateGetLogsAccessWithCrossOrgCheck(ctx, perms, req.Params); err != nil {
+		if err := c.validateGetLogsAccessWithCrossOrgCheck(ctx, perms, org.ID, req.Params); err != nil {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  err.Error(),
@@ -1125,7 +1125,7 @@ func GetGetLogsAddresses(params []any) []string {
 // validateGetLogsAccessWithCrossOrgCheck validates eth_getLogs access with cross-org isolation.
 // This extends ValidateGetLogsAccess to also check that contracts accessed via default_claims
 // are not registered to other organizations (P0 security fix).
-func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Context, perms *EffectivePermissions, params []any) error {
+func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Context, perms *EffectivePermissions, orgID string, params []any) error {
 	if len(params) == 0 {
 		return fmt.Errorf("eth_getLogs: missing filter parameter")
 	}
@@ -1159,15 +1159,27 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 
 		// CROSS-ORG ISOLATION CHECK (P0 Security Fix)
 		// If user doesn't have explicit access but got access via default_claims,
-		// verify the contract isn't registered to any other organization.
+		// check if the contract is owned by another organization.
+		// Allow access to: (1) contracts in user's own org, (2) public contracts
 		if !hasExplicitAccess {
-			isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+			// First check if contract is in user's org
+			isOwnedByUserOrg, err := c.store.IsAddressOwnedByOrg(ctx, addr, orgID)
 			if err != nil {
-				return fmt.Errorf("eth_getLogs: failed to check contract registration: %w", err)
+				return fmt.Errorf("eth_getLogs: failed to check contract ownership: %w", err)
 			}
-			if isRegisteredToAnyOrg {
-				return fmt.Errorf("eth_getLogs: contract %s is registered to another organization", addr)
+
+			if !isOwnedByUserOrg {
+				// Contract is not in user's org - check if it's registered to ANY org
+				isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
+				if err != nil {
+					return fmt.Errorf("eth_getLogs: failed to check contract registration: %w", err)
+				}
+				if isRegisteredToAnyOrg {
+					// Contract belongs to another organization - deny access
+					return fmt.Errorf("eth_getLogs: contract %s is registered to another organization", addr)
+				}
 			}
+			// Contract is in user's org OR truly public (not registered to any org) - allow with default_claims
 		}
 	}
 
