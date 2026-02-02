@@ -136,6 +136,16 @@ func (s *mockAccessControllerStore) IsAddressOwnedByOrg(ctx context.Context, add
 	return false, nil
 }
 
+func (s *mockAccessControllerStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	addr := strings.ToLower(address)
+	for orgID, addrs := range s.orgOwnedAddresses {
+		if addrs[addr] {
+			return orgID, nil
+		}
+	}
+	return "", nil
+}
+
 func (s *mockAccessControllerStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
 	return s.contractRegistration[strings.ToLower(address)], nil
 }

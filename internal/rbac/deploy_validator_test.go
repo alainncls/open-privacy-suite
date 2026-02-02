@@ -106,6 +106,18 @@ func (s *deployValidatorTestStore) IsAddressOwnedByOrg(ctx context.Context, addr
 	return false, nil
 }
 
+func (s *deployValidatorTestStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	normalizedAddr := normalizeHexAddress(address)
+	for orgID, addrs := range s.orgOwnedAddresses {
+		for addr, owned := range addrs {
+			if owned && normalizeHexAddress(addr) == normalizedAddr {
+				return orgID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
 func (s *deployValidatorTestStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
 	normalizedAddr := normalizeHexAddress(address)
 	for addr, registered := range s.anyOrgRegistrations {

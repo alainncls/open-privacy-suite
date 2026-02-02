@@ -252,6 +252,14 @@ func (m *MockStore) IsAddressOwnedByOrg(ctx context.Context, address string, org
 	}
 	return false, nil
 }
+func (m *MockStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	for _, c := range m.contracts {
+		if strings.ToLower(c.Address) == strings.ToLower(address) {
+			return c.OrgID, nil
+		}
+	}
+	return "", nil
+}
 func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil

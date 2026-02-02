@@ -41,6 +41,16 @@ func (m *MockUpgradeStore) IsAddressOwnedByOrg(ctx context.Context, address stri
 	return false, nil
 }
 
+func (m *MockUpgradeStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	addr := strings.ToLower(address)
+	for orgID, addrs := range m.ownedAddresses {
+		if addrs[addr] {
+			return orgID, nil
+		}
+	}
+	return "", nil
+}
+
 func (m *MockUpgradeStore) AddManagedProxy(address, orgID, proxyType string) {
 	addr := strings.ToLower(address)
 	m.managedProxies[addr] = &ManagedProxy{

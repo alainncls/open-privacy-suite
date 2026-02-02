@@ -58,6 +58,16 @@ func (s *factoryCallTestStore) IsAddressOwnedByOrg(ctx context.Context, address 
 	return false, nil
 }
 
+func (s *factoryCallTestStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	addr := strings.ToLower(address)
+	for orgID, addrs := range s.orgOwnedAddresses {
+		if addrs[addr] {
+			return orgID, nil
+		}
+	}
+	return "", nil
+}
+
 func (s *factoryCallTestStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
 	return s.anyOrgContracts[strings.ToLower(address)], nil
 }

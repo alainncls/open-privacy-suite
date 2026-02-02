@@ -47,6 +47,10 @@ type Store interface {
 	// IsAddressOwnedByOrg checks if a contract address belongs to the given organization.
 	// This is used for deployment validation to ensure contracts only call addresses owned by the org.
 	IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error)
+	// GetContractOwnerOrgID returns the org ID that owns a contract address.
+	// Returns empty string if the contract is not registered to any organization (public contract).
+	// This is used for multi-org user support to determine which org context to use.
+	GetContractOwnerOrgID(ctx context.Context, address string) (string, error)
 
 	// Contract Grant operations
 	CreateContractGrant(ctx context.Context, grant *ContractGrant) error
