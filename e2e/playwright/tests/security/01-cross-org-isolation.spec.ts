@@ -8,39 +8,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { getJWTToken } from '../../helpers/auth.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
-
-// Helper to create a user and get a mock token
-async function createUserWithToken(request: any, userDID: string, orgSlug: string = 'default') {
-  // First ensure user exists in RBAC
-  const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-  const orgs = await orgsResp.json();
-  const org = orgs.find((o: any) => o.slug === orgSlug);
-
-  if (!org) {
-    throw new Error(`Organization ${orgSlug} not found`);
-  }
-
-  // Create or get user
-  const usersResp = await request.get(`${API_URL}/api/v1/orgs/${org.id}/users`);
-  const users = await usersResp.json();
-  let user = users.find((u: any) => u.external_id === userDID);
-
-  if (!user) {
-    // User doesn't exist - we need to create via auth flow or admin API
-    const createResp = await request.post(`${API_URL}/api/v1/orgs/${org.id}/users`, {
-      data: { external_id: userDID, kyc: true }
-    });
-    if (createResp.ok()) {
-      user = await createResp.json();
-    }
-  }
-
-  // For testing, we use mock JWT token
-  // In dev mode, the proxy accepts mock.DID tokens
-  return `mock.${userDID}`;
-}
 
 // Helper to make authenticated RPC call
 async function rpcCall(request: any, token: string, method: string, params: any[] = []) {
@@ -71,123 +41,154 @@ test.describe('Cross-Organization Isolation', () => {
   let userBToken: string;
   let groupAId: string;
   let groupBId: string;
+  // Unique ID per test worker - timestamp + random suffix for parallel execution
+  let testRunId: string;
 
   test.beforeAll(async ({ request }) => {
-    // Create Organization A
+    // Generate unique test run ID inside beforeAll to avoid conflicts with parallel workers
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+    // Create Organization A - unique per test run
     const orgAResp = await request.post(`${API_URL}/api/v1/orgs`, {
-      data: { slug: 'security-org-a', name: 'Security Test Org A' }
+      data: { slug: `security-org-a-${testRunId}`, name: 'Security Test Org A' }
     });
     if (orgAResp.ok()) {
       const orgA = await orgAResp.json();
       orgAId = orgA.id;
     } else {
-      // Org might exist, try to get it
-      const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgs = await orgsResp.json();
-      const existingOrgA = orgs.find((o: any) => o.slug === 'security-org-a');
-      if (existingOrgA) {
-        orgAId = existingOrgA.id;
-      }
+      throw new Error(`Failed to create org A: ${await orgAResp.text()}`);
     }
 
-    // Create Organization B
+    // Create Organization B - unique per test run
     const orgBResp = await request.post(`${API_URL}/api/v1/orgs`, {
-      data: { slug: 'security-org-b', name: 'Security Test Org B' }
+      data: { slug: `security-org-b-${testRunId}`, name: 'Security Test Org B' }
     });
     if (orgBResp.ok()) {
       const orgB = await orgBResp.json();
       orgBId = orgB.id;
     } else {
-      const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgs = await orgsResp.json();
-      const existingOrgB = orgs.find((o: any) => o.slug === 'security-org-b');
-      if (existingOrgB) {
-        orgBId = existingOrgB.id;
-      }
+      throw new Error(`Failed to create org B: ${await orgBResp.text()}`);
     }
 
     expect(orgAId).toBeDefined();
     expect(orgBId).toBeDefined();
 
-    // Create groups with read permissions
+    // Create group A
     const groupAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/groups`, {
       data: {
         slug: 'security-group-a',
-        name: 'Security Group A',
-        allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-        default_claims: ['read']
+        name: 'Security Group A'
       }
     });
     if (groupAResp.ok()) {
       const groupA = await groupAResp.json();
       groupAId = groupA.id;
     } else {
-      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${orgAId}/groups`);
-      const groups = await groupsResp.json();
-      const existingGroup = groups.find((g: any) => g.slug === 'security-group-a');
-      if (existingGroup) {
-        groupAId = existingGroup.id;
-      }
+      throw new Error(`Failed to create group A: ${await groupAResp.text()}`);
     }
 
+    // Set group A access permissions via separate endpoint
+    await request.put(`${API_URL}/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
+      data: {
+        allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
+        default_claims: ['read']
+      }
+    });
+
+    // Create group B
     const groupBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/groups`, {
       data: {
         slug: 'security-group-b',
-        name: 'Security Group B',
-        allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-        default_claims: ['read']
+        name: 'Security Group B'
       }
     });
     if (groupBResp.ok()) {
       const groupB = await groupBResp.json();
       groupBId = groupB.id;
     } else {
-      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${orgBId}/groups`);
-      const groups = await groupsResp.json();
-      const existingGroup = groups.find((g: any) => g.slug === 'security-group-b');
-      if (existingGroup) {
-        groupBId = existingGroup.id;
+      throw new Error(`Failed to create group B: ${await groupBResp.text()}`);
+    }
+
+    // Set group B access permissions via separate endpoint
+    await request.put(`${API_URL}/api/v1/orgs/${orgBId}/groups/${groupBId}/access`, {
+      data: {
+        allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
+        default_claims: ['read']
+      }
+    });
+
+    // Create contracts for each org (unique addresses per test run)
+    // Use the timestamp's hex representation as part of the address
+    // Ethereum addresses are 40 hex chars (20 bytes), so we need: 2 prefix + 8 timestamp + 30 filler = 40
+    const hexTs = Date.now().toString(16).slice(-8);
+    contractA = '0xaa' + hexTs + 'a'.repeat(30); // Unique contract A (40 hex chars)
+    contractB = '0xbb' + hexTs + 'b'.repeat(30); // Unique contract B (40 hex chars)
+
+    const contractAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/contracts`, {
+      data: { address: contractA, name: 'Contract A' }
+    });
+    if (!contractAResp.ok()) {
+      throw new Error(`Failed to create contract A: ${await contractAResp.text()}`);
+    }
+
+    const contractBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/contracts`, {
+      data: { address: contractB, name: 'Contract B' }
+    });
+    if (!contractBResp.ok()) {
+      throw new Error(`Failed to create contract B: ${await contractBResp.text()}`);
+    }
+
+    // Create unique DIDs for this test run
+    const timestamp = Date.now();
+    const userADID = `did:security:user-a-${timestamp}`;
+    const userBDID = `did:security:user-b-${timestamp}`;
+
+    // Step 1: Authenticate users first - this creates them via EnsureUserExists
+    userAToken = await getJWTToken(request, userADID);
+    userBToken = await getJWTToken(request, userBDID);
+
+    // Step 2: Find users by external ID to get their internal IDs
+    const usersResp = await request.get(`${API_URL}/api/v1/users`);
+    const users = await usersResp.json();
+    const userA = users.find((u: any) => u.external_id === userADID);
+    const userB = users.find((u: any) => u.external_id === userBDID);
+
+    if (!userA) {
+      throw new Error(`User A not created after auth: ${userADID}`);
+    }
+    if (!userB) {
+      throw new Error(`User B not created after auth: ${userBDID}`);
+    }
+
+    // Step 3: Update KYC status using internal IDs
+    await request.put(`${API_URL}/api/v1/users/${userA.id}`, {
+      data: { kyc: true }
+    });
+    await request.put(`${API_URL}/api/v1/users/${userB.id}`, {
+      data: { kyc: true }
+    });
+
+    // Step 4: Add users to their respective groups using internal IDs
+    if (groupAId) {
+      const memAResp = await request.post(`${API_URL}/api/v1/users/${userA.id}/memberships`, {
+        data: { org_id: orgAId, group_id: groupAId }
+      });
+      if (!memAResp.ok()) {
+        throw new Error(`Failed to create membership for user A: ${await memAResp.text()}`);
+      }
+    }
+    if (groupBId) {
+      const memBResp = await request.post(`${API_URL}/api/v1/users/${userB.id}/memberships`, {
+        data: { org_id: orgBId, group_id: groupBId }
+      });
+      if (!memBResp.ok()) {
+        throw new Error(`Failed to create membership for user B: ${await memBResp.text()}`);
       }
     }
 
-    // Create contracts for each org (using fake addresses for testing)
-    contractA = '0x' + 'a'.repeat(40); // 0xaaaa...
-    contractB = '0x' + 'b'.repeat(40); // 0xbbbb...
-
-    await request.post(`${API_URL}/api/v1/orgs/${orgAId}/contracts`, {
-      data: { address: contractA, name: 'Contract A' }
-    });
-    await request.post(`${API_URL}/api/v1/orgs/${orgBId}/contracts`, {
-      data: { address: contractB, name: 'Contract B' }
-    });
-
-    // Create users with tokens
-    userAToken = `mock.did:security:user-a-${Date.now()}`;
-    userBToken = `mock.did:security:user-b-${Date.now()}`;
-
-    // Create users in their respective orgs
-    const userADID = userAToken.replace('mock.', '');
-    const userBDID = userBToken.replace('mock.', '');
-
-    // Create user A and add to group A
-    await request.put(`${API_URL}/api/v1/users/${encodeURIComponent(userADID)}`, {
-      data: { kyc: true }
-    });
-    if (groupAId) {
-      await request.post(`${API_URL}/api/v1/orgs/${orgAId}/users/${encodeURIComponent(userADID)}/memberships`, {
-        data: { group_id: groupAId }
-      });
-    }
-
-    // Create user B and add to group B
-    await request.put(`${API_URL}/api/v1/users/${encodeURIComponent(userBDID)}`, {
-      data: { kyc: true }
-    });
-    if (groupBId) {
-      await request.post(`${API_URL}/api/v1/orgs/${orgBId}/users/${encodeURIComponent(userBDID)}/memberships`, {
-        data: { group_id: groupBId }
-      });
-    }
+    // Step 5: Get new JWT tokens with updated KYC status
+    userAToken = await getJWTToken(request, userADID);
+    userBToken = await getJWTToken(request, userBDID);
   });
 
   test('SECURITY-001: User A cannot access Contract B (cross-org isolation)', async ({ request }) => {
@@ -199,7 +200,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied due to cross-org isolation
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('registered to another organization');
+    expect(result.body.error).toContain('belongs to an organization you are not a member of');
   });
 
   test('SECURITY-002: User B cannot access Contract A (cross-org isolation)', async ({ request }) => {
@@ -211,7 +212,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied due to cross-org isolation
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('registered to another organization');
+    expect(result.body.error).toContain('belongs to an organization you are not a member of');
   });
 
   test('SECURITY-003: User A CAN access their own Contract A', async ({ request }) => {
@@ -234,7 +235,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('registered to another organization');
+    expect(result.body.error).toContain('belongs to an organization you are not a member of');
   });
 
   test('SECURITY-005: eth_getLogs with mixed-org addresses is denied', async ({ request }) => {
@@ -263,7 +264,9 @@ test.describe('Cross-Organization Isolation', () => {
 
   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
     // Create an address that's not registered to any org
-    const publicContract = '0x' + '1'.repeat(40);
+    // Use a unique address unlikely to be registered (40 hex chars)
+    const hexTs = Date.now().toString(16).slice(-8);
+    const publicContract = '0xee' + hexTs + 'e'.repeat(30);
 
     // User A should be able to access via default_claims
     const result = await rpcCall(request, userAToken, 'eth_call', [
