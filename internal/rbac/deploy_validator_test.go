@@ -59,17 +59,19 @@ const (
 type deployValidatorTestStore struct {
 	*MockStore
 	// Additional control for testing
-	orgOwnedAddresses   map[string]map[string]bool // orgID -> address -> owned
-	anyOrgRegistrations map[string]bool            // address -> registered to any org
-	managedProxies      []*ManagedProxy            // Registered managed proxies
+	orgOwnedAddresses      map[string]map[string]bool // orgID -> address -> owned
+	anyOrgRegistrations    map[string]bool            // address -> registered to any org
+	preregisteredAddresses map[string]map[string]bool // orgID -> address -> preregistered
+	managedProxies         []*ManagedProxy            // Registered managed proxies
 }
 
 func newDeployValidatorTestStore() *deployValidatorTestStore {
 	return &deployValidatorTestStore{
-		MockStore:           NewMockStore(),
-		orgOwnedAddresses:   make(map[string]map[string]bool),
-		anyOrgRegistrations: make(map[string]bool),
-		managedProxies:      make([]*ManagedProxy, 0),
+		MockStore:              NewMockStore(),
+		orgOwnedAddresses:      make(map[string]map[string]bool),
+		anyOrgRegistrations:    make(map[string]bool),
+		preregisteredAddresses: make(map[string]map[string]bool),
+		managedProxies:         make([]*ManagedProxy, 0),
 	}
 }
 
@@ -82,6 +84,13 @@ func (s *deployValidatorTestStore) setOrgOwnsAddress(orgID, address string, owne
 
 func (s *deployValidatorTestStore) setAddressRegisteredToAnyOrg(address string, registered bool) {
 	s.anyOrgRegistrations[address] = registered
+}
+
+func (s *deployValidatorTestStore) setAddressPreregistered(orgID, address string, preregistered bool) {
+	if s.preregisteredAddresses[orgID] == nil {
+		s.preregisteredAddresses[orgID] = make(map[string]bool)
+	}
+	s.preregisteredAddresses[orgID][address] = preregistered
 }
 
 func (s *deployValidatorTestStore) IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error) {
@@ -97,11 +106,35 @@ func (s *deployValidatorTestStore) IsAddressOwnedByOrg(ctx context.Context, addr
 	return false, nil
 }
 
+func (s *deployValidatorTestStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	normalizedAddr := normalizeHexAddress(address)
+	for orgID, addrs := range s.orgOwnedAddresses {
+		for addr, owned := range addrs {
+			if owned && normalizeHexAddress(addr) == normalizedAddr {
+				return orgID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
 func (s *deployValidatorTestStore) IsContractRegisteredToAnyOrg(ctx context.Context, address string) (bool, error) {
 	normalizedAddr := normalizeHexAddress(address)
 	for addr, registered := range s.anyOrgRegistrations {
 		if normalizeHexAddress(addr) == normalizedAddr {
 			return registered, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *deployValidatorTestStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	if addrs, ok := s.preregisteredAddresses[orgID]; ok {
+		normalizedAddr := normalizeHexAddress(address)
+		for addr, preregistered := range addrs {
+			if normalizeHexAddress(addr) == normalizedAddr {
+				return preregistered, nil
+			}
 		}
 	}
 	return false, nil
@@ -237,10 +270,30 @@ func TestDeploymentValidator_CallingOtherOrgsAddress(t *testing.T) {
 	}
 }
 
-func TestDeploymentValidator_CallingTrulyPublicAddress(t *testing.T) {
+func TestDeploymentValidator_CallingUnregisteredAddress(t *testing.T) {
 	store := newDeployValidatorTestStore()
-	// The address is NOT registered to any org (truly public)
-	// Don't set any ownership
+	// The address is NOT registered to any org and NOT preregistered
+	// Under the new security policy, calling such addresses is not allowed
+
+	validator := NewDeploymentValidator(store)
+
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPublic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Errorf("expected deployment to be denied when calling unregistered address, but it was allowed")
+	}
+	if !strings.Contains(result.Reason, "not allowed for org") {
+		t.Errorf("expected reason to mention 'not allowed for org', got: %s", result.Reason)
+	}
+}
+
+func TestDeploymentValidator_CallingPreregisteredAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	// The address is preregistered for org1 (whitelisted for deployment)
+	store.setAddressPreregistered("org1", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true)
 
 	validator := NewDeploymentValidator(store)
 
@@ -250,7 +303,39 @@ func TestDeploymentValidator_CallingTrulyPublicAddress(t *testing.T) {
 	}
 
 	if !result.Allowed {
-		t.Errorf("expected deployment to be allowed when calling truly public address, got denied: %s", result.Reason)
+		t.Errorf("expected deployment to be allowed when calling preregistered address, got denied: %s", result.Reason)
+	}
+}
+
+// TestDeploymentValidator_RealMaliciousBoxBytecode tests with the actual compiled MaliciousBox bytecode
+// that calls 0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF
+func TestDeploymentValidator_RealMaliciousBoxBytecode(t *testing.T) {
+	// This is the actual compiled bytecode of MaliciousBox.sol
+	// which contains a call to 0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF
+	maliciousBoxBytecode := "0x6080604052348015600e575f5ffd5b505f73deadbeefdeadbeefdeadbeefdeadbeefdeadbeef73ffffffffffffffffffffffffffffffffffffffff1660405160459060cc565b5f604051808303815f865af19150503d805f8114607c576040519150601f19603f3d011682016040523d82523d5f602084013e6081565b606091505b505090508060015f6101000a81548160ff0219169083151502179055505060de565b5f81905092915050565b50565b5f60b95f8360a3565b915060c28260ad565b5f82019050919050565b5f60d48260b0565b9150819050919050565b610390806100eb5f395ff3fe608060405234801561000f575f5ffd5b5060043610610055575f3560e01c80632e64cec11461005957806354fd4d50146100775780635f431992146100955780636057361d146100b357806380acdcd9146100cf575b5f5ffd5b6100616100ed565b60405161006e91906101e4565b60405180910390f35b61007f6100f5565b60405161008c919061026d565b60405180910390f35b61009d610132565b6040516100aa91906102a7565b60405180910390f35b6100cd60048036038101906100c891906102ee565b6101b1565b005b6100d76101ba565b6040516100e491906102a7565b60405180910390f35b5f5f54905090565b60606040518060400160405280600f81526020017f6d616c6963696f75732d312e302e300000000000000000000000000000000000815250905090565b5f73deadbeefdeadbeefdeadbeefdeadbeefdeadbeef73ffffffffffffffffffffffffffffffffffffffff1660405161016a90610346565b5f604051808303815f865af19150503d805f81146101a3576040519150601f19603f3d011682016040523d82523d5f602084013e6101a8565b606091505b50508091505090565b805f8190555050565b60015f9054906101000a900460ff1681565b5f819050919050565b6101de816101cc565b82525050565b5f6020820190506101f75f8301846101d5565b92915050565b5f81519050919050565b5f82825260208201905092915050565b8281835e5f83830152505050565b5f601f19601f8301169050919050565b5f61023f826101fd565b6102498185610207565b9350610259818560208601610217565b61026281610225565b840191505092915050565b5f6020820190508181035f8301526102858184610235565b905092915050565b5f8115159050919050565b6102a18161028d565b82525050565b5f6020820190506102ba5f830184610298565b92915050565b5f5ffd5b6102cd816101cc565b81146102d7575f5ffd5b50565b5f813590506102e8816102c4565b92915050565b5f60208284031215610303576103026102c0565b5b5f610310848285016102da565b91505092915050565b5f81905092915050565b50565b5f6103315f83610319565b915061033c82610323565b5f82019050919050565b5f61035082610326565b915081905091905056fea2646970667358221220c1e3ec3981a40d2d03869b4d8eb2262a4a2a565668950ed43561fcc03d55f67864736f6c634300081e0033"
+
+	store := newDeployValidatorTestStore()
+	// Address 0xDeaDbeeF is NOT preregistered
+	validator := NewDeploymentValidator(store)
+
+	result, err := validator.ValidateDeployment(context.Background(), "org1", maliciousBoxBytecode)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Log what was detected
+	t.Logf("Constant targets detected: %v", result.ConstantTargets)
+	t.Logf("Has dynamic calls: %v", result.HasDynamicCalls)
+	t.Logf("Allowed: %v", result.Allowed)
+	t.Logf("Reason: %s", result.Reason)
+
+	// The deployment should be DENIED because it calls 0xDeaDbeeF which is not preregistered
+	if result.Allowed {
+		t.Errorf("expected deployment to be denied when calling unregistered 0xDeaDbeeF, but it was allowed")
+	}
+	// Verify the reason mentions the blocked address
+	if !strings.Contains(strings.ToLower(result.Reason), "deadbeef") && !strings.Contains(result.Reason, "not allowed") {
+		t.Errorf("expected reason to mention deadbeef address or 'not allowed', got: %s", result.Reason)
 	}
 }
 

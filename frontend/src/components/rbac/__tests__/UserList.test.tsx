@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithRBACContext } from './test-utils';
-import UserList from '../UserList';
 import {
   mockUsers,
   mockUserFull,
@@ -13,6 +12,19 @@ import {
   createMockUser,
 } from '@/test/mocks/rbac-fixtures';
 import { mockUser, mockUser2 } from '@/test/mocks/handlers';
+
+// Mock the useOrgContext hook from RBACManager
+// Use the shared TestOrgContext from test-utils so MockOrgProvider works
+vi.mock('../RBACManager', async () => {
+  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  return {
+    OrgContext: TestOrgContext,
+    useOrgContext,
+  };
+});
+
+// Import after mock is set up
+import UserList from '../UserList';
 
 // Mock useNavigate
 const mockNavigate = vi.fn();

@@ -577,6 +577,22 @@ export const handlers = [
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
+  // Org config endpoints for CREATE3 factory
+  http.get('/api/v1/orgs/:orgId/config/create3', () => {
+    return HttpResponse.json({
+      factory: '0x1234567890123456789012345678901234567890',
+      configured: true,
+    });
+  }),
+
+  http.put('/api/v1/orgs/:orgId/config/create3', async ({ request }) => {
+    const body = await request.json() as { factory: string };
+    return HttpResponse.json({
+      factory: body.factory,
+      configured: true,
+    });
+  }),
+
   // Dev endpoints for CREATE3 factory
   http.get('/api/v1/dev/create3-factory', () => {
     return HttpResponse.json(mockCreate3Factory);

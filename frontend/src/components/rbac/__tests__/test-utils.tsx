@@ -1,4 +1,4 @@
-import React, { ReactElement, useState } from 'react';
+import React, { ReactElement, useState, createContext, useContext } from 'react';
 import { render, RenderOptions, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { expect } from 'vitest';
@@ -7,7 +7,8 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import type { Organization } from '@/types/rbac';
 import { mockOrganization } from '@/test/mocks/handlers';
 
-// OrgContext types mirroring RBACManager
+// Create a test context that can be shared across test files
+// This is exported so test files can use it in their vi.mock factories
 interface OrgContextType {
   selectedOrg: Organization | null;
   setSelectedOrg: (org: Organization | null) => void;
@@ -15,16 +16,19 @@ interface OrgContextType {
   refreshOrgs: () => Promise<void>;
 }
 
-const OrgContext = React.createContext<OrgContextType | null>(null);
+export const TestOrgContext = createContext<OrgContextType | null>(null);
 
-// Re-export the hook for tests
+// Re-export a useOrgContext that reads from TestOrgContext
 export function useOrgContext() {
-  const context = React.useContext(OrgContext);
+  const context = useContext(TestOrgContext);
   if (!context) {
-    throw new Error('useOrgContext must be used within RBACManager or test wrapper');
+    throw new Error('useOrgContext must be used within provider');
   }
   return context;
 }
+
+// Alias for backwards compatibility
+export const OrgContext = TestOrgContext;
 
 // Mock OrgContext provider for testing
 interface MockOrgProviderProps {
@@ -52,7 +56,7 @@ function MockOrgProvider({
   };
 
   return (
-    <OrgContext.Provider
+    <TestOrgContext.Provider
       value={{
         selectedOrg,
         setSelectedOrg: handleSetSelectedOrg,
@@ -61,7 +65,7 @@ function MockOrgProvider({
       }}
     >
       {children}
-    </OrgContext.Provider>
+    </TestOrgContext.Provider>
   );
 }
 

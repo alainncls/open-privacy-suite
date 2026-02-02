@@ -61,14 +61,36 @@ Hierarchical permission containers with:
 - Materialized path for efficient queries (e.g., "root.engineering.devops")
 - Associated permissions (methods, contracts, rate limits)
 
-### Roles
+### Claims
 
-Named permission sets with claims:
-- `reader` - Can call read methods (eth_call, eth_getBalance, etc.)
-- `writer` - Can send transactions (eth_sendTransaction)
-- `deployer` - Can deploy contracts
-- `admin` - Full administrative access
-- `upgrade` - Can upgrade contracts
+Claims are capability tokens that grant specific actions. Groups define `default_claims` that apply to all contracts, and `ContractGrants` can assign additional claims for specific contracts.
+
+| Claim | Purpose | Required For |
+|-------|---------|--------------|
+| `read` | Read blockchain state | `eth_call`, `eth_getBalance`, `eth_getCode`, etc. |
+| `write` | Modify blockchain state | `eth_sendTransaction` (non-deployment) |
+| `deploy` | Deploy new contracts | `eth_sendTransaction` with empty `to`, `eth_estimateGas` for deployment |
+| `admin` | Administrative actions | CREATE3 factory deployment |
+| `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on managed proxies |
+
+**Claim inheritance:**
+- `default_claims` from groups apply to all contracts not explicitly registered
+- `ContractGrant` claims apply to specific contracts and override default_claims for that contract
+- Multiple memberships combine claims via UNION
+
+**Deploy claim special handling:**
+- Required for contract deployment (`to` field missing/empty/null)
+- Also required for `eth_estimateGas` when estimating deployment gas
+- Triggers bytecode validation to ensure deployed contracts don't access cross-org resources
+
+### Roles (Legacy)
+
+Named permission sets with claims (being migrated to direct claim assignment):
+- `reader` - Has `read` claim
+- `writer` - Has `read`, `write` claims
+- `deployer` - Has `read`, `write`, `deploy` claims
+- `admin` - Has all claims
+- `upgrade` - Has `read`, `write`, `upgrade` claims
 
 ### Permissions
 
@@ -128,6 +150,61 @@ A user can be a member of multiple groups. When computing effective permissions:
 1. Compute permissions for each membership (restrictive inheritance)
 2. Apply **UNION** across all memberships (user gets combined permissions)
 3. Apply **MAXIMUM** for rate limits across memberships
+
+### Multi-Organization Users
+
+Users can be members of groups in multiple organizations. The system handles this through **target-based organization context**:
+
+**How it works:**
+1. User sends RPC request targeting a contract
+2. System looks up which organization owns the target contract
+3. Verifies user is a member of that organization
+4. Loads effective permissions from that organization's groups
+5. Performs access check using org-specific permissions
+
+**Example:**
+```
+User: Alice (member of Org A and Org B)
+
+Org A memberships:
+  - Group: engineering (allowed_methods: [eth_sendTransaction])
+
+Org B memberships:
+  - Group: readers (allowed_methods: [eth_call])
+
+Request: eth_call to contract owned by Org B
+  → Org context = Org B
+  → Permissions = readers group
+  → eth_call is allowed ✓
+
+Request: eth_sendTransaction to contract owned by Org B
+  → Org context = Org B
+  → Permissions = readers group
+  → eth_sendTransaction NOT allowed ✗
+```
+
+**Organization context determination:**
+
+| Target | Org Context | Behavior |
+|--------|-------------|----------|
+| Contract owned by Org A | Org A | Use Org A memberships |
+| Contract owned by Org B | Org B | Use Org B memberships |
+| Public contract (no owner) | User's default org | Use default org memberships |
+| Contract owned by Org C (user not member) | - | Request denied |
+| No target (deployment) | User's default org | Use default org memberships |
+
+**API for checking multi-org access:**
+```bash
+# Check access with explicit org context
+curl -X POST http://localhost:8080/api/access/check \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_external_id": "did:example:alice",
+    "org_slug": "org-b",
+    "method": "eth_call",
+    "target_address": "0x1234..."
+  }'
+```
 
 ## Use Cases
 
@@ -271,6 +348,13 @@ Note: Permissions are determined by the user's role claims, not by contract-spec
 | POST | /api/orgs/:org_id/contracts | Create contract ownership |
 | PUT | /api/orgs/:org_id/contracts/:address | Update contract |
 | DELETE | /api/orgs/:org_id/contracts/:address | Delete contract |
+
+### Organization Config
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/orgs/:org_id/config/create3 | Get org's CREATE3 factory address |
+| PUT | /api/orgs/:org_id/config/create3 | Set org's CREATE3 factory address |
 
 ### Pre-registered Addresses
 
@@ -452,6 +536,58 @@ The new implementation address is extracted and validated for org ownership befo
 ### Pre-registered Addresses (CREATE3)
 
 For upgradeable proxies that will deploy future implementations at deterministic addresses, you can pre-register CREATE3 addresses before the code is known.
+
+#### Per-Organization Factory Configuration
+
+**CRITICAL SECURITY**: Each organization has its own CREATE3 factory contract. This ensures complete isolation between organizations - Org A cannot deploy contracts that could interact with Org B's addresses.
+
+**Factory Address Storage:**
+- Stored in `organization.settings["factory_address"]`
+- Set automatically on first pre-registration, or manually via API
+- All subsequent pre-registrations must use the same factory
+
+**API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /api/v1/orgs/:org_id/config/create3 | Get org's factory address |
+| PUT | /api/v1/orgs/:org_id/config/create3 | Set org's factory address |
+
+**Get factory configuration:**
+```bash
+curl http://localhost:8080/api/v1/orgs/{org_id}/config/create3
+```
+
+Response:
+```json
+{
+  "factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf",
+  "configured": true
+}
+```
+
+**Set factory configuration:**
+```bash
+curl -X PUT http://localhost:8080/api/v1/orgs/{org_id}/config/create3 \
+  -H "Content-Type: application/json" \
+  -d '{"factory": "0x9fBB3DF7C40Da2e5A0dE984fFE2CCB7C47cd0ABf"}'
+```
+
+**Factory Validation on Pre-registration:**
+
+When pre-registering addresses, the factory is validated:
+1. If org has a factory configured → input factory MUST match
+2. If org has no factory → input factory is saved as org's factory
+3. Mismatched factory → request rejected with 400 error
+
+This prevents accidental or malicious use of a different factory that could break isolation.
+
+**Production vs Development:**
+
+| Environment | Factory Deployment | Configuration |
+|-------------|-------------------|---------------|
+| Development | Auto-deployed via UI (Anvil account 0) | Auto-configured on first use |
+| Production | Deployed directly to node (outside proxy) | Set via API before first pre-registration |
 
 #### Complete Contract Lifecycle Flow
 

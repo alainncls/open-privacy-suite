@@ -1,0 +1,314 @@
+package rbac
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+// OrgContext encapsulates organization-scoped access decisions.
+// It provides a unified interface for all cross-org isolation checks,
+// pre-loading user membership data once for efficient reuse.
+//
+// Usage:
+//
+//	orgCtx, err := NewOrgContext(ctx, store, user, targetAddress)
+//	if err != nil { return err }  // Cross-org violation detected early
+//
+//	// Later, for additional address checks:
+//	err = orgCtx.CheckAddressInScope(ctx, anotherAddress)
+type OrgContext struct {
+	org        *Organization   // The determined org context (can be nil for public/no-target)
+	user       *User           // The authenticated user
+	userOrgIDs map[string]bool // Pre-loaded: all orgs user belongs to
+	store      Store           // For additional lookups
+}
+
+// NewOrgContext creates an OrgContext from a target address.
+// This determines the org context based on contract ownership:
+//   - If target is owned by an org the user belongs to, use that org
+//   - If target is public (not owned by any org), org is nil
+//   - If target is owned by an org the user does NOT belong to, returns error
+//
+// Parameters:
+//   - ctx: Context for database calls
+//   - store: RBAC store for lookups
+//   - user: The authenticated user
+//   - targetAddress: The target contract address (can be empty)
+//
+// Returns:
+//   - OrgContext if valid
+//   - Error if cross-org isolation is violated
+func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress string) (*OrgContext, error) {
+	// Pre-load user's org memberships
+	userOrgIDs, err := getUserOrgIDs(ctx, store, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user organizations: %w", err)
+	}
+
+	oc := &OrgContext{
+		user:       user,
+		userOrgIDs: userOrgIDs,
+		store:      store,
+	}
+
+	// If no target address, org context remains nil (will use default org later)
+	if targetAddress == "" {
+		return oc, nil
+	}
+
+	// Determine org from target address ownership
+	addr := strings.ToLower(strings.TrimSpace(targetAddress))
+	ownerOrgID, err := store.GetContractOwnerOrgID(ctx, addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contract owner: %w", err)
+	}
+
+	if ownerOrgID == "" {
+		// Contract is public (not owned by any org)
+		return oc, nil
+	}
+
+	// Contract is owned by an org - verify user is a member
+	if !userOrgIDs[ownerOrgID] {
+		return nil, fmt.Errorf("contract %s belongs to an organization you are not a member of", targetAddress)
+	}
+
+	// User is a member - set the org context
+	org, err := store.GetOrganization(ctx, ownerOrgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization: %w", err)
+	}
+	oc.org = org
+
+	return oc, nil
+}
+
+// NewOrgContextForOrg creates an OrgContext for an explicit org.
+// Used when the organization is already known (e.g., deployments using user's default org).
+func NewOrgContextForOrg(ctx context.Context, store Store, user *User, orgID string) (*OrgContext, error) {
+	// Pre-load user's org memberships
+	userOrgIDs, err := getUserOrgIDs(ctx, store, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user organizations: %w", err)
+	}
+
+	// Verify user is a member of the specified org
+	if !userOrgIDs[orgID] {
+		return nil, fmt.Errorf("user is not a member of organization %s", orgID)
+	}
+
+	org, err := store.GetOrganization(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization: %w", err)
+	}
+
+	return &OrgContext{
+		org:        org,
+		user:       user,
+		userOrgIDs: userOrgIDs,
+		store:      store,
+	}, nil
+}
+
+// OrgID returns the organization ID, or empty string if public context.
+func (oc *OrgContext) OrgID() string {
+	if oc.org == nil {
+		return ""
+	}
+	return oc.org.ID
+}
+
+// Org returns the organization, or nil if public context.
+func (oc *OrgContext) Org() *Organization {
+	return oc.org
+}
+
+// User returns the user.
+func (oc *OrgContext) User() *User {
+	return oc.user
+}
+
+// UserOrgIDs returns the set of org IDs the user belongs to.
+func (oc *OrgContext) UserOrgIDs() map[string]bool {
+	return oc.userOrgIDs
+}
+
+// IsPublicContext returns true if no org context was determined.
+// This happens when the target address is not owned by any org.
+func (oc *OrgContext) IsPublicContext() bool {
+	return oc.org == nil
+}
+
+// UserBelongsToOrg returns true if the user belongs to the determined org.
+// Always returns true for public context (no org = no restriction).
+func (oc *OrgContext) UserBelongsToOrg() bool {
+	if oc.org == nil {
+		return true
+	}
+	return oc.userOrgIDs[oc.org.ID]
+}
+
+// CheckAddressInScope validates that an address is accessible in this org context.
+// Used for operations that interact with multiple addresses (e.g., eth_getLogs).
+//
+// Rules:
+//   - If address is in current org context: allowed
+//   - If address is in another org user belongs to: allowed (multi-org support)
+//   - If address is in an org user does NOT belong to: denied
+//   - If address is public (not registered to any org): allowed
+func (oc *OrgContext) CheckAddressInScope(ctx context.Context, address string) error {
+	addr := strings.ToLower(strings.TrimSpace(address))
+	if addr == "" {
+		return nil // No address to check
+	}
+
+	ownerOrgID, err := oc.store.GetContractOwnerOrgID(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("failed to check contract owner: %w", err)
+	}
+
+	if ownerOrgID == "" {
+		// Contract is public (not owned by any org) - allowed
+		return nil
+	}
+
+	// Contract is owned by an org - check if user is a member
+	if !oc.userOrgIDs[ownerOrgID] {
+		return fmt.Errorf("contract %s belongs to an organization you are not a member of", address)
+	}
+
+	return nil
+}
+
+// CheckMultiAddressesInScope validates multiple addresses are all in scope.
+// Returns error on first cross-org violation found.
+func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses []string) error {
+	for _, addr := range addresses {
+		if err := oc.CheckAddressInScope(ctx, addr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckDefaultClaimsAllowed validates whether default_claims can be used for an address.
+// This prevents using default_claims to access contracts registered to other orgs.
+//
+// Parameters:
+//   - ctx: Context
+//   - address: The target address
+//   - hasExplicitAccess: Whether user has explicit ContractAccess for this address
+//
+// Returns:
+//   - nil if default_claims can be used
+//   - error if the contract is registered to another org
+func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool) error {
+	if hasExplicitAccess {
+		// User has explicit access - no need to check default_claims
+		return nil
+	}
+
+	addr := strings.ToLower(strings.TrimSpace(address))
+	if addr == "" {
+		return nil
+	}
+
+	// First check if contract is in current org context
+	if oc.org != nil {
+		isOwnedByCurrentOrg, err := oc.store.IsAddressOwnedByOrg(ctx, addr, oc.org.ID)
+		if err != nil {
+			return fmt.Errorf("failed to check contract ownership: %w", err)
+		}
+		if isOwnedByCurrentOrg {
+			// Contract is in user's current org - allow default_claims
+			return nil
+		}
+	}
+
+	// Check if contract is registered to ANY org
+	isRegisteredToAnyOrg, err := oc.store.IsContractRegisteredToAnyOrg(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("failed to check contract registration: %w", err)
+	}
+
+	if isRegisteredToAnyOrg {
+		// Contract is registered to some org but user doesn't have explicit access
+		// This means it's either:
+		// 1. In another org the user doesn't belong to
+		// 2. In user's org but they weren't granted explicit access
+		// For case 1, deny. For case 2, they should have default_claims from their org.
+		// Check if it's in ANY of user's orgs
+		for orgID := range oc.userOrgIDs {
+			isInUserOrg, err := oc.store.IsAddressOwnedByOrg(ctx, addr, orgID)
+			if err != nil {
+				return fmt.Errorf("failed to check contract ownership: %w", err)
+			}
+			if isInUserOrg {
+				// Contract is in one of user's orgs - allow default_claims
+				return nil
+			}
+		}
+		// Contract is registered but not in any of user's orgs
+		return fmt.Errorf("contract %s is registered to another organization", address)
+	}
+
+	// Contract is truly public (not registered anywhere) - allow default_claims
+	return nil
+}
+
+// ValidateFactoryCallOrgs checks factory calls against all orgs the user belongs to.
+// Returns the validation result if this is a factory call, or nil if not.
+func (oc *OrgContext) ValidateFactoryCallOrgs(
+	ctx context.Context,
+	targetAddr string,
+	calldata []byte,
+	validator *FactoryCallValidator,
+) (*FactoryCallValidationResult, error) {
+	// Check each org the user is a member of
+	for orgID := range oc.userOrgIDs {
+		org, err := oc.store.GetOrganization(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get organization: %w", err)
+		}
+		if org == nil {
+			continue
+		}
+
+		factoryAddress := GetOrgFactoryAddress(org)
+		if factoryAddress == "" {
+			continue
+		}
+
+		// Check if target matches this org's factory
+		result, err := validator.ValidateFactoryCall(ctx, org.ID, factoryAddress, targetAddr, calldata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate factory call for org %s: %w", org.Slug, err)
+		}
+
+		// If this is a factory call to this org's factory, return the result
+		if result.IsFactoryCall && result.IsDeployCall {
+			return result, nil
+		}
+	}
+
+	// Not a factory call for any of user's orgs
+	return nil, nil
+}
+
+// getUserOrgIDs returns the set of organization IDs the user belongs to.
+func getUserOrgIDs(ctx context.Context, store Store, userID string) (map[string]bool, error) {
+	memberships, err := store.ListUserMembershipsWithDetails(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	orgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			orgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	return orgIDs, nil
+}

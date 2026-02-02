@@ -331,9 +331,9 @@ test.describe('Multi-Organization Users', () => {
       const org1 = await ctx.fixture.createOrg('contractorg1');
       const org2 = await ctx.fixture.createOrg('contractorg2');
 
-      // Create different contract addresses for each org (simpler test)
-      const contractAddress1 = '0x' + '1'.repeat(40);
-      const contractAddress2 = '0x' + '2'.repeat(40);
+      // Create different contract addresses for each org (use unique addresses to avoid conflicts)
+      const contractAddress1 = ctx.fixture.contractAddress();
+      const contractAddress2 = ctx.fixture.contractAddress();
 
       await ctx.rbac.createContract(org1.id, {
         address: contractAddress1,

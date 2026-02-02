@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Contract } from '@/types/rbac';
+import type { Contract, ContractSyncCheckResponse, ContractSyncStatus } from '@/types/rbac';
 
 // Helper to get contract address from either new or legacy format
 const getContractAddress = (contract: Contract): string => {
@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
-import { FileCode2, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle } from 'lucide-react';
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
@@ -35,6 +35,14 @@ export default function ContractList() {
   const [editing, setEditing] = useState<Contract | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Sync with chain state
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<ContractSyncCheckResponse | null>(null);
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
+  const [deletingStale, setDeletingStale] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (orgId) {
@@ -77,6 +85,54 @@ export default function ContractList() {
     await loadContracts();
   };
 
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  // Sync with chain - check contracts exist on-chain
+  const handleSyncCheck = async () => {
+    if (!orgId) return;
+    try {
+      setSyncing(true);
+      setSyncError(null);
+      const response = await rbacApi.contracts.syncCheck(orgId);
+      setSyncResult(response.data);
+
+      // Always show the dialog with results
+      setShowSyncDialog(true);
+    } catch (error) {
+      console.error('Failed to sync contracts:', error);
+      setSyncError('Failed to check contracts against chain');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Delete stale (missing) contracts
+  const handleDeleteStale = async () => {
+    if (!orgId || !syncResult || !syncResult.missing?.length) return;
+
+    try {
+      setDeletingStale(true);
+      const contractIds = syncResult.missing.map(c => c.id);
+      await rbacApi.contracts.syncDelete(orgId, contractIds);
+      setShowSyncDialog(false);
+      setSyncResult(null);
+      await loadContracts();
+    } catch (error) {
+      console.error('Failed to delete stale contracts:', error);
+      setSyncError('Failed to delete stale contracts');
+    } finally {
+      setDeletingStale(false);
+    }
+  };
+
   const truncateAddress = (address: string | undefined) => {
     if (!address) return '-';
     if (address.length <= 16) return address;
@@ -100,10 +156,22 @@ export default function ContractList() {
             Registered contracts with access grants for groups
           </p>
         </div>
-        <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-          <Plus className="w-4 h-4" />
-          Add Contract
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleSyncCheck}
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            disabled={syncing || contracts.length === 0}
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Checking...' : 'Sync with Chain'}
+          </Button>
+          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Contract
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -151,6 +219,17 @@ export default function ContractList() {
                     >
                       {truncateAddress(getContractAddress(contract))}
                     </span>
+                    <button
+                      onClick={() => copyToClipboard(getContractAddress(contract), contract.id)}
+                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      title="Copy address"
+                    >
+                      {copiedId === contract.id ? (
+                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
                   </div>
                 </TableCell>
                 <TableCell>
@@ -241,6 +320,153 @@ export default function ContractList() {
         buttonLabel="OK"
         variant="error"
       />
+
+      {/* Sync Error Alert */}
+      <AlertDialog
+        open={!!syncError}
+        onOpenChange={() => setSyncError(null)}
+        title="Sync Error"
+        description={syncError || ''}
+        buttonLabel="OK"
+        variant="error"
+      />
+
+      {/* Sync Results Dialog */}
+      <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sync with Chain Results</DialogTitle>
+          </DialogHeader>
+          {syncResult && (
+            <div className="space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="p-3 rounded-lg bg-[#DCFCE7]">
+                  <div className="text-2xl font-semibold text-[#166534]">
+                    {syncResult.existing?.length ?? 0}
+                  </div>
+                  <div className="text-xs text-[#166534]">On Chain</div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#FEF3C7]">
+                  <div className="text-2xl font-semibold text-[#92400E]">
+                    {syncResult.missing?.length ?? 0}
+                  </div>
+                  <div className="text-xs text-[#92400E]">Missing</div>
+                </div>
+                <div className="p-3 rounded-lg bg-[#FEE2E2]">
+                  <div className="text-2xl font-semibold text-[#991B1B]">
+                    {syncResult.errors?.length ?? 0}
+                  </div>
+                  <div className="text-xs text-[#991B1B]">Errors</div>
+                </div>
+              </div>
+
+              {/* All synced message */}
+              {!syncResult.missing?.length && !syncResult.errors?.length && (
+                <div className="p-4 rounded-lg bg-[#DCFCE7] text-[#166534] text-center">
+                  <Check className="w-6 h-6 mx-auto mb-2" />
+                  <p className="font-medium">All contracts exist on chain!</p>
+                </div>
+              )}
+
+              {/* Missing contracts list */}
+              {(syncResult.missing?.length ?? 0) > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-[#92400E]">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="font-medium text-sm">
+                      Contracts not found on chain:
+                    </span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto border rounded-lg divide-y">
+                    {(syncResult.missing ?? []).map((contract: ContractSyncStatus) => (
+                      <div
+                        key={contract.id}
+                        className="px-3 py-2 flex items-center justify-between text-sm"
+                      >
+                        <span className="font-mono text-xs">
+                          {truncateAddress(contract.address)}
+                        </span>
+                        <span className="text-[#6B7280]">
+                          {contract.name || 'Unnamed'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Errors list */}
+              {(syncResult.errors?.length ?? 0) > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-[#991B1B]">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="font-medium text-sm">
+                      Chain unavailable for these contracts (not deleted):
+                    </span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto border rounded-lg divide-y">
+                    {(syncResult.errors ?? []).map((contract: ContractSyncStatus) => (
+                      <div
+                        key={contract.id}
+                        className="px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs">
+                            {truncateAddress(contract.address)}
+                          </span>
+                          <span className="text-[#6B7280]">
+                            {contract.name || 'Unnamed'}
+                          </span>
+                        </div>
+                        {contract.error && (
+                          <div className="text-xs text-[#991B1B] mt-1">
+                            {contract.error}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowSyncDialog(false);
+                    setSyncResult(null);
+                  }}
+                >
+                  Close
+                </Button>
+                {(syncResult.missing?.length ?? 0) > 0 && (
+                  <Button
+                    variant="destructive"
+                    onClick={handleDeleteStale}
+                    disabled={deletingStale}
+                    className="gap-2"
+                  >
+                    {deletingStale ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Deleting...
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-4 h-4" />
+                        Delete {syncResult.missing?.length ?? 0} Missing Contract
+                        {(syncResult.missing?.length ?? 0) > 1 ? 's' : ''}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

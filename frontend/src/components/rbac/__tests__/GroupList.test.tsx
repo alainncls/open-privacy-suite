@@ -15,14 +15,22 @@ import {
 import { mockGroup, mockGroupAccess, mockOrganization } from '@/test/mocks/handlers';
 
 // Mock the useOrgContext hook from RBACManager
-vi.mock('../RBACManager', () => ({
-  useOrgContext: () => ({
-    selectedOrg: mockOrganization,
-    setSelectedOrg: vi.fn(),
-    organizations: [mockOrganization],
-    refreshOrgs: vi.fn(),
-  }),
-}));
+// Note: vi.mock is hoisted, so create context inside the factory
+vi.mock('../RBACManager', async () => {
+  const { createContext } = await import('react');
+  const { mockOrganization } = await import('@/test/mocks/handlers');
+  const MockOrgContext = createContext(null);
+  // Return a static context since GroupList.test.tsx doesn't use renderWithRBACContext
+  return {
+    OrgContext: MockOrgContext,
+    useOrgContext: () => ({
+      selectedOrg: mockOrganization,
+      setSelectedOrg: vi.fn(),
+      organizations: [mockOrganization],
+      refreshOrgs: vi.fn(),
+    }),
+  };
+});
 
 // Create a fresh QueryClient for each test
 function createTestQueryClient() {

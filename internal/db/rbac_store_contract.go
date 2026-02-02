@@ -185,6 +185,27 @@ func (d *DB) IsAddressOwnedByOrg(ctx context.Context, address string, orgID stri
 	return exists, nil
 }
 
+// GetContractOwnerOrgID returns the org ID that owns a contract address.
+// Returns empty string if the contract is not registered to any organization.
+// This checks both registered contracts and preregistered addresses.
+func (d *DB) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
+	query := `
+		SELECT org_id FROM contracts WHERE LOWER(address) = LOWER($1)
+		UNION
+		SELECT org_id FROM preregistered_addresses WHERE LOWER(address) = LOWER($1)
+		LIMIT 1
+	`
+	var orgID string
+	err := d.conn.QueryRowContext(ctx, query, address).Scan(&orgID)
+	if err == sql.ErrNoRows {
+		return "", nil // Not registered to any org (public contract)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get contract owner org: %w", err)
+	}
+	return orgID, nil
+}
+
 func scanContract(row *sql.Row) (*rbac.Contract, error) {
 	contract := &rbac.Contract{}
 	var name sql.NullString

@@ -99,25 +99,53 @@ func ExtractCallTargets(bc *Bytecode) *AnalysisResult {
 // findAddressSource looks backwards from a CALL opcode to find where the address comes from.
 // Returns the address (if constant) and the source opcode name.
 func findAddressSource(opcodes []Opcode, callIndex int) (string, string) {
-	// Look at the last 20 opcodes before the call
-	// This is a heuristic - real EVM execution would track the stack
-	startIdx := callIndex - 20
-	if startIdx < 0 {
-		startIdx = 0
+	// Use two windows:
+	// - Small window (10 opcodes): Check for dynamic sources first (SLOAD, CALLDATALOAD, MLOAD)
+	//   These are strong indicators that the address is loaded at runtime
+	// - Large window (50 opcodes): Check for constant addresses (PUSH20/PUSH32)
+	//   Solidity compiler can place these far from the CALL due to stack manipulation
+
+	smallWindowStart := callIndex - 10
+	if smallWindowStart < 0 {
+		smallWindowStart = 0
 	}
 
-	// Track if we've seen a DUP that might have copied an address
-	var lastPush20Addr string
+	largeWindowStart := callIndex - 50
+	if largeWindowStart < 0 {
+		largeWindowStart = 0
+	}
 
-	for i := callIndex - 1; i >= startIdx; i-- {
+	// First pass: check small window for dynamic sources
+	// If we find SLOAD/CALLDATALOAD close to the CALL, it's likely the address source
+	for i := callIndex - 1; i >= smallWindowStart; i-- {
+		op := opcodes[i]
+
+		if op.Code == SLOAD {
+			return "", "SLOAD"
+		}
+		if op.Code == CALLDATALOAD {
+			return "", "CALLDATALOAD"
+		}
+	}
+
+	// Second pass: look for constant addresses in the larger window
+	// Solidity compiler generates many intermediate operations between PUSH20 and CALL
+	for i := callIndex - 1; i >= largeWindowStart; i-- {
 		op := opcodes[i]
 
 		// PUSH20 is the most common pattern for constant addresses
 		if op.Code == PUSH20 {
 			if len(op.Args) == 20 {
 				addr := "0x" + hex.EncodeToString(op.Args)
-				lastPush20Addr = strings.ToLower(addr)
-				return lastPush20Addr, "PUSH20"
+				addrLower := strings.ToLower(addr)
+
+				// Skip address masks (0xffffff...ffff) used by Solidity for type conversion
+				// These are not actual call targets
+				if addrLower == "0xffffffffffffffffffffffffffffffffffffffff" {
+					continue
+				}
+
+				return addrLower, "PUSH20"
 			}
 		}
 
@@ -134,23 +162,26 @@ func findAddressSource(opcodes []Opcode, callIndex int) (string, string) {
 				}
 				if isZeroPadded {
 					addr := "0x" + hex.EncodeToString(op.Args[12:])
-					return strings.ToLower(addr), "PUSH32"
+					addrLower := strings.ToLower(addr)
+
+					// Skip address masks
+					if addrLower == "0xffffffffffffffffffffffffffffffffffffffff" {
+						continue
+					}
+
+					return addrLower, "PUSH32"
 				}
 			}
 		}
+	}
 
-		// Check for dynamic sources - these indicate the address comes from runtime data
-		if op.Code == SLOAD {
-			return "", "SLOAD"
-		}
-		if op.Code == CALLDATALOAD {
-			return "", "CALLDATALOAD"
-		}
+	// Third pass: check larger window for MLOAD
+	// MLOAD is checked last because Solidity uses it for memory management,
+	// but if no constant address is found, MLOAD might be the address source
+	for i := callIndex - 1; i >= largeWindowStart; i-- {
+		op := opcodes[i]
 		if op.Code == MLOAD {
 			return "", "MLOAD"
-		}
-		if op.Code == EXTCODESIZE {
-			return "", "EXTCODESIZE"
 		}
 	}
 

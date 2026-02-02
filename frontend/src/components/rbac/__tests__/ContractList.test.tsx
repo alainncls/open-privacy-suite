@@ -12,29 +12,14 @@ import {
 import { mockContract, mockOrganization } from '@/test/mocks/handlers';
 
 // Mock the useOrgContext hook from RBACManager
-// Must be before importing ContractList
-vi.mock('../RBACManager', () => ({
-  useOrgContext: () => ({
-    selectedOrg: {
-      id: 'org-1',
-      slug: 'test-org',
-      name: 'Test Organization',
-      settings: {},
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    },
-    setSelectedOrg: vi.fn(),
-    organizations: [{
-      id: 'org-1',
-      slug: 'test-org',
-      name: 'Test Organization',
-      settings: {},
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    }],
-    refreshOrgs: vi.fn(),
-  }),
-}));
+// Use the shared TestOrgContext from test-utils so MockOrgProvider works
+vi.mock('../RBACManager', async () => {
+  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  return {
+    OrgContext: TestOrgContext,
+    useOrgContext,
+  };
+});
 
 // Import after mock is set up
 import ContractList from '../ContractList';

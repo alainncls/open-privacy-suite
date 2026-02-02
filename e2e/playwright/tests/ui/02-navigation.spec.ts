@@ -80,9 +80,9 @@ test.describe('Admin Navigation', () => {
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
     // Wait for dashboard content to load
-    // Status cards should display proxy and node status
-    await expect(page.getByText('Proxy')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Node')).toBeVisible();
+    // Status cards should display proxy and node status (use exact match to avoid header)
+    await expect(page.getByRole('heading', { name: 'Proxy', exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: 'Node', exact: true })).toBeVisible();
   });
 
   test('RBAC manager shows sub-tabs', async ({ page }) => {

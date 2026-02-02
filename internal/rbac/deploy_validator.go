@@ -154,10 +154,12 @@ func (v *DeploymentValidator) ValidateDeployment(
 
 // isAddressAllowedForOrg checks if an address can be called by contracts in the org.
 // An address is allowed if:
-// 1. It is owned by this org, OR
-// 2. It is not registered to ANY org (truly public contract)
+// 1. It is owned by this org (already deployed by the org), OR
+// 2. It is preregistered for this org (whitelisted for deployment)
+//
+// Note: Precompile addresses are checked before this function is called.
 func (v *DeploymentValidator) isAddressAllowedForOrg(ctx context.Context, addr, orgID string) (bool, error) {
-	// Check if address is owned by this org
+	// Check if address is owned by this org (already deployed contract)
 	owned, err := v.store.IsAddressOwnedByOrg(ctx, addr, orgID)
 	if err != nil {
 		return false, err
@@ -166,17 +168,17 @@ func (v *DeploymentValidator) isAddressAllowedForOrg(ctx context.Context, addr, 
 		return true, nil
 	}
 
-	// Check if address is registered to ANY org (if so, not allowed - belongs to other org)
-	registeredToAnyOrg, err := v.store.IsContractRegisteredToAnyOrg(ctx, addr)
+	// Check if address is preregistered for this org (whitelisted for deployment)
+	preregistered, err := v.store.IsAddressPreregistered(ctx, orgID, addr)
 	if err != nil {
 		return false, err
 	}
-	if registeredToAnyOrg {
-		return false, nil // Belongs to another org
+	if preregistered {
+		return true, nil
 	}
 
-	// Not registered to any org - it's a public contract, allow
-	return true, nil
+	// Address is neither owned nor preregistered - deny
+	return false, nil
 }
 
 // RegisterDeployedProxy registers a deployed proxy contract for upgrade interception.

@@ -6,31 +6,23 @@ import { server } from '@/test/mocks/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
-import OrganizationList from '../OrganizationList';
 import { mockOrganizations, createMockOrganization } from '@/test/mocks/rbac-fixtures';
 import type { Organization } from '@/types/rbac';
 import React, { useState } from 'react';
 
-// OrgContext types mirroring RBACManager
-interface OrgContextType {
-  selectedOrg: Organization | null;
-  setSelectedOrg: (org: Organization | null) => void;
-  organizations: Organization[];
-  refreshOrgs: () => Promise<void>;
-}
+// Mock the useOrgContext hook from RBACManager
+// Use the shared TestOrgContext from test-utils so MockOrgProvider works
+vi.mock('../RBACManager', async () => {
+  const { TestOrgContext, useOrgContext } = await import('./test-utils');
+  return {
+    OrgContext: TestOrgContext,
+    useOrgContext,
+  };
+});
 
-const OrgContext = React.createContext<OrgContextType | null>(null);
-
-// Mock the useOrgContext hook import
-vi.mock('../RBACManager', () => ({
-  useOrgContext: () => {
-    const context = React.useContext(OrgContext);
-    if (!context) {
-      throw new Error('useOrgContext must be used within provider');
-    }
-    return context;
-  },
-}));
+// Import after mock is set up
+import OrganizationList from '../OrganizationList';
+import { TestOrgContext } from './test-utils';
 
 // Note: We no longer mock window.confirm and window.alert since we use styled dialogs
 
@@ -77,7 +69,7 @@ function MockOrgProvider({
   };
 
   return (
-    <OrgContext.Provider
+    <TestOrgContext.Provider
       value={{
         selectedOrg,
         setSelectedOrg: handleSetSelectedOrg,
@@ -86,7 +78,7 @@ function MockOrgProvider({
       }}
     >
       {children}
-    </OrgContext.Provider>
+    </TestOrgContext.Provider>
   );
 }
 

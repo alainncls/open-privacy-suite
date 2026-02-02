@@ -121,7 +121,7 @@ test.describe('Access Control', () => {
 
     expect(status).toBe(403);
     expect(body).toHaveProperty('error');
-    // Without membership, user has no permissions, so method is not allowed
-    expect((body as { error: string }).error).toContain('not allowed');
+    // Without membership, user has no permissions
+    expect((body as { error: string }).error).toContain('no organization membership');
   });
 });

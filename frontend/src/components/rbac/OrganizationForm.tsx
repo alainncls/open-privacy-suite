@@ -70,8 +70,9 @@ export default function OrganizationForm({
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">Name</label>
+        <label htmlFor="org-name" className="block text-sm font-medium text-[#374151]">Name</label>
         <Input
+          id="org-name"
           type="text"
           value={name}
           onChange={e => handleNameChange(e.target.value)}
@@ -82,8 +83,9 @@ export default function OrganizationForm({
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">Slug</label>
+        <label htmlFor="org-slug" className="block text-sm font-medium text-[#374151]">Slug</label>
         <Input
+          id="org-slug"
           type="text"
           value={slug}
           onChange={e => setSlug(e.target.value)}

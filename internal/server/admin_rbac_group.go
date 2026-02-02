@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,6 +34,12 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate slug format before database insertion
+	if errMsg := validateSlug(input.Slug); errMsg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		return
 	}
 
@@ -74,6 +81,11 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
+		// Check for unique constraint violation (duplicate slug in org)
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "group with this slug already exists in this organization"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

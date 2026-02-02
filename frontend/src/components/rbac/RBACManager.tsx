@@ -36,7 +36,7 @@ interface OrgContextType {
   refreshOrgs: () => Promise<void>;
 }
 
-const OrgContext = createContext<OrgContextType | null>(null);
+export const OrgContext = createContext<OrgContextType | null>(null);
 
 export function useOrgContext() {
   const context = useContext(OrgContext);
@@ -144,7 +144,7 @@ export default function RBACManager() {
   };
 
   // Tabs that require org selection
-  const orgRequiredTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
 
   return (
