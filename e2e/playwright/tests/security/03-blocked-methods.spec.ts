@@ -7,7 +7,7 @@
 
 import { test, expect } from '@playwright/test';
 
-const API_URL = process.env.API_URL || 'http://localhost:8080';
+const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 // Use a mock token for authenticated requests
 const MOCK_TOKEN = 'mock.did:security:blocked-methods-test';

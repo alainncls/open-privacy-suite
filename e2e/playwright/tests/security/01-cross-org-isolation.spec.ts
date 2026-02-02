@@ -9,7 +9,7 @@
 
 import { test, expect } from '@playwright/test';
 
-const API_URL = process.env.API_URL || 'http://localhost:8080';
+const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 // Helper to create a user and get a mock token
 async function createUserWithToken(request: any, userDID: string, orgSlug: string = 'default') {
