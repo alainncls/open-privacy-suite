@@ -22,8 +22,8 @@ test.describe('Organization CRUD', () => {
     const orgsTab = page.locator(selectors.rbac.tabOrganizations);
     await expect(orgsTab).toHaveAttribute('data-state', 'active');
 
-    // Should see "Organizations" heading
-    await expect(page.getByText('Organizations')).toBeVisible();
+    // Should see "Organizations" heading (use role selector to avoid matching tab/badge text)
+    await expect(page.getByRole('heading', { name: 'Organizations', exact: true })).toBeVisible();
     await expect(page.getByText('Top-level tenants that contain groups and contracts')).toBeVisible();
 
     // Add Organization button should be visible
@@ -41,8 +41,8 @@ test.describe('Organization CRUD', () => {
     const dialog = page.locator(selectors.common.dialog);
     await expect(dialog).toBeVisible();
 
-    // Dialog should have correct title
-    await expect(dialog.getByText('Create Organization')).toBeVisible();
+    // Dialog should have correct title (use heading role to avoid matching button)
+    await expect(dialog.getByRole('heading', { name: 'Create Organization' })).toBeVisible();
 
     // Form fields should be present
     await expect(dialog.getByLabel(/name/i)).toBeVisible();

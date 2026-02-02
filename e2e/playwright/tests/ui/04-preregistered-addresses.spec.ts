@@ -38,8 +38,8 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     // Tab should be active
     await expect(page.locator(selectors.rbac.tabPreregistered)).toHaveAttribute('data-state', 'active');
 
-    // Should see "Pre-registered Addresses" heading
-    await expect(page.getByText('Pre-registered Addresses')).toBeVisible();
+    // Should see "Pre-registered Addresses" heading (use role to avoid matching other text)
+    await expect(page.getByRole('heading', { name: 'Pre-registered Addresses' })).toBeVisible();
 
     // Should see the description text
     await expect(page.getByText(/CREATE3 addresses whitelisted/i)).toBeVisible();
