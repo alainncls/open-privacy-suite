@@ -350,35 +350,30 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Get all organizations the user is a member of
-	userOrgIDs, err := c.getUserOrganizationIDs(ctx, user.ID)
+	// Create OrgContext - handles cross-org isolation from the start
+	// This replaces the scattered getUserOrganizationIDs + getOrgContextForTarget calls
+	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
+	orgCtx, err := NewOrgContext(ctx, c.store, user, targetAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user organizations: %w", err)
+		// Cross-org violation detected (e.g., contract belongs to org user is not member of)
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  err.Error(),
+		}, nil
 	}
-	if len(userOrgIDs) == 0 {
+
+	// Ensure user has org membership
+	if len(orgCtx.UserOrgIDs()) == 0 {
 		return &AccessCheckResult{
 			Allowed: false,
 			Reason:  "user has no organization membership",
 		}, nil
 	}
 
-	// Determine organization context based on target address (for multi-org support)
-	// If the target contract is owned by an org the user is a member of, use that org's context
-	// This allows multi-org users to access contracts from all their organizations
-	var org *Organization
-	targetAddr := strings.ToLower(strings.TrimSpace(req.TargetAddress))
-	if targetAddr != "" {
-		org, err = c.getOrgContextForTarget(ctx, userOrgIDs, targetAddr)
-		if err != nil {
-			return &AccessCheckResult{
-				Allowed: false,
-				Reason:  err.Error(),
-			}, nil
-		}
-	}
-
-	// If no target address or contract is public (not owned by any org), use user's default org
+	// Determine which org to use for permissions
+	org := orgCtx.Org()
 	if org == nil {
+		// No target-based org context (public contract or no target), use user's default org
 		org, err = c.getUserDefaultOrganization(ctx, user.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to determine user organization: %w", err)
@@ -420,7 +415,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// eth_getLogs can have multiple addresses in the filter, unlike other methods
 	// that target a single contract. We validate ALL addresses in the filter.
 	if req.Method == "eth_getLogs" {
-		if err := c.validateGetLogsAccessWithCrossOrgCheck(ctx, perms, userOrgIDs, req.Params); err != nil {
+		if err := c.validateGetLogsWithOrgContext(ctx, perms, orgCtx, req.Params); err != nil {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  err.Error(),
@@ -457,36 +452,14 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 
-		// CROSS-ORG ISOLATION CHECK (P0 Security Fix)
+		// CROSS-ORG ISOLATION CHECK (P0 Security Fix) - now encapsulated in OrgContext
 		// If user doesn't have explicit access but got access via default_claims,
 		// we must verify the contract isn't registered to a DIFFERENT organization.
-		// This prevents users from using default_claims to access contracts belonging to other orgs.
-		// Contracts owned by the user's org are allowed with default_claims.
-		// NOTE: This check applies to ALL operations (read and write) - a user should never
-		// be able to use default_claims to interact with contracts registered to another org.
-		if !hasExplicitAccess {
-			// User is relying on default_claims - first check if contract is in user's org
-			isOwnedByUserOrg, err := c.store.IsAddressOwnedByOrg(ctx, addr, org.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check contract ownership: %w", err)
-			}
-
-			if !isOwnedByUserOrg {
-				// Contract is not in user's org - check if it's registered to any org
-				isRegisteredToAnyOrg, err := c.store.IsContractRegisteredToAnyOrg(ctx, addr)
-				if err != nil {
-					return nil, fmt.Errorf("failed to check contract registration: %w", err)
-				}
-
-				if isRegisteredToAnyOrg {
-					// Contract belongs to another organization - deny access
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  fmt.Sprintf("contract %s is registered to another organization", req.TargetAddress),
-					}, nil
-				}
-			}
-			// Contract is in user's org OR truly public (not registered to any org) - allow with default_claims
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  err.Error(),
+			}, nil
 		}
 
 		// Check if user has the required claim on this contract
@@ -523,16 +496,19 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					}, nil
 				}
 
-				// Validate CREATE3 factory deploy() calls
+				// Validate CREATE3 factory deploy() calls using OrgContext
 				// Check ALL orgs the user is a member of, not just their primary org.
 				// This ensures that if a user sends a tx to an org's factory, we validate
 				// using that org's settings (preregistered addresses, bytecode rules).
-				factoryValidationResult, err := c.validateFactoryCallForUserOrgs(ctx, user.ID, addr, calldata)
+				factoryResult, err := orgCtx.ValidateFactoryCallOrgs(ctx, addr, calldata, c.factoryCallValidator)
 				if err != nil {
 					return nil, fmt.Errorf("failed to validate factory call: %w", err)
 				}
-				if factoryValidationResult != nil && !factoryValidationResult.Allowed {
-					return factoryValidationResult, nil
+				if factoryResult != nil && !factoryResult.Allowed {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
+					}, nil
 				}
 			}
 		}
@@ -1247,6 +1223,52 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 			if access == nil || !containsClaim(access.Claims, ClaimRead) {
 				return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateGetLogsWithOrgContext validates eth_getLogs access using OrgContext for cross-org checks.
+// This is the preferred method that uses the encapsulated OrgContext for cleaner cross-org validation.
+func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, perms *EffectivePermissions, orgCtx *OrgContext, params []any) error {
+	if len(params) == 0 {
+		return fmt.Errorf("eth_getLogs: missing filter parameter")
+	}
+
+	filterObj, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("eth_getLogs: invalid filter parameter type")
+	}
+
+	// Extract addresses from filter
+	addresses := extractGetLogsAddresses(filterObj)
+
+	// SECURITY: Require address filter to prevent broad queries
+	if len(addresses) == 0 {
+		return fmt.Errorf("eth_getLogs: address filter required for security")
+	}
+
+	// Check all addresses are in scope using OrgContext (cross-org isolation)
+	if err := orgCtx.CheckMultiAddressesInScope(ctx, addresses); err != nil {
+		return fmt.Errorf("eth_getLogs: %w", err)
+	}
+
+	// Check user has read claim on each address
+	for _, addr := range addresses {
+		hasExplicitAccess := perms.IsContractRegistered(addr)
+
+		// For contracts in user's orgs or public contracts, check claims
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
+			// Contract is in another org - should have been caught by CheckMultiAddressesInScope,
+			// but double-check here for defense in depth
+			return fmt.Errorf("eth_getLogs: %w", err)
+		}
+
+		// Verify read claim exists
+		access := perms.GetContractAccess(addr)
+		if access == nil || !containsClaim(access.Claims, ClaimRead) {
+			return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
 		}
 	}
 
