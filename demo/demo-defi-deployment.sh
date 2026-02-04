@@ -177,6 +177,16 @@ fi
 print_value "Organization ID" "$ORG_ID"
 print_value "Organization Slug" "$ORG_SLUG"
 
+# Clean up any stale preregistered addresses to avoid cross-org issues
+# This is necessary because addresses from other orgs (e.g., E2E tests) can interfere
+print_substep "Cleaning up stale preregistered addresses..."
+if command -v docker-compose &> /dev/null; then
+    docker-compose exec -T postgres psql -U postgres -d privacy_proxy -c "DELETE FROM preregistered_addresses;" > /dev/null 2>&1 || true
+elif command -v docker &> /dev/null; then
+    docker exec privacy-proxy-postgres-1 psql -U postgres -d privacy_proxy -c "DELETE FROM preregistered_addresses;" > /dev/null 2>&1 || true
+fi
+print_success "Cleanup complete"
+
 # =============================================================================
 # Step 3: Authentication
 # =============================================================================

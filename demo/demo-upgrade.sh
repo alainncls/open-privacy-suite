@@ -150,6 +150,15 @@ fi
 
 print_value "Organization" "$ORG_SLUG ($ORG_ID)"
 
+# Clean up stale preregistered addresses from previous runs
+print_substep "Cleaning up stale preregistered addresses..."
+if command -v docker-compose &> /dev/null; then
+    docker-compose exec -T postgres psql -U postgres -d privacy_proxy -c "DELETE FROM preregistered_addresses;" > /dev/null 2>&1 || true
+elif command -v docker &> /dev/null; then
+    docker exec privacy-proxy-postgres-1 psql -U postgres -d privacy_proxy -c "DELETE FROM preregistered_addresses;" > /dev/null 2>&1 || true
+fi
+print_success "Cleanup complete"
+
 # =============================================================================
 # Step 2: Authentication
 # =============================================================================
