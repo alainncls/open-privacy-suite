@@ -13,6 +13,10 @@
 
 set -e
 
+# Default to allowing preregistration in demo mode
+# In production, only org admins would have this capability
+ALLOW_PREREGISTER="${ALLOW_PREREGISTER:-true}"
+
 # Colors for pretty output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
