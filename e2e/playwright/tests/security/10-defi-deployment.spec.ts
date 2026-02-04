@@ -665,14 +665,18 @@ test.describe('DeFi Deployment Error Handling', () => {
     expect(result.status).toBeGreaterThanOrEqual(400);
   });
 
-  test('DEFI-022: Invalid salt prefix rejected', async ({ request }) => {
+  test('DEFI-022: Text salt prefix is allowed (not just hex)', async ({ request }) => {
+    // Text salt prefixes are intentionally allowed - they get hashed internally
+    // Examples: "myapp-v1", "token-deployment", etc.
     const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
       factory: '0x' + '1'.repeat(40),
-      salt_prefix: 'invalid-salt',
+      salt_prefix: 'text-salt-prefix',
       count: 1
     });
 
-    expect(result.ok).toBe(false);
+    // Text salt prefixes should be accepted (they're hashed to bytes32)
+    expect(result.ok).toBe(true);
+    expect(result.body.addresses).toHaveLength(1);
   });
 
   test('DEFI-023: Zero count rejected', async ({ request }) => {

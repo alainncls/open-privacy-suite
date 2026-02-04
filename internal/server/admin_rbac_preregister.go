@@ -49,6 +49,12 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 		return
 	}
 
+	// Validate constructor ABI format if provided
+	if input.ConstructorABI != "" && !strings.HasPrefix(strings.TrimSpace(input.ConstructorABI), "[") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "constructor_abi must be a valid JSON array"})
+		return
+	}
+
 	// Validate factory matches org's configured factory (security: per-org isolation)
 	inputFactory := strings.ToLower(input.Factory)
 	if org.Settings != nil {
