@@ -372,3 +372,209 @@ func TestFactoryAddressNormalization(t *testing.T) {
 		assert.Equal(t, strings.ToLower(mixedCaseFactory), response["factory"])
 	})
 }
+
+func TestConstructorABIAPI(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	// Clean up preregistered_addresses table
+	server.db.Conn().ExecContext(t.Context(), "DELETE FROM preregistered_addresses")
+
+	org := createTestOrganization(t, server, "constructor-abi-test-org")
+	testFactory := "0x4444444444444444444444444444444444444444"
+
+	// First preregister an address
+	preregBody := map[string]any{
+		"factory":     testFactory,
+		"salt_prefix": "0xabitest",
+		"count":       1,
+	}
+	jsonBody, _ := json.Marshal(preregBody)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/addresses/preregister", org.ID), bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var preregResponse map[string]any
+	json.Unmarshal(w.Body.Bytes(), &preregResponse)
+	addresses := preregResponse["addresses"].([]any)
+	require.Len(t, addresses, 1)
+	testAddress := addresses[0].(map[string]any)["address"].(string)
+
+	t.Run("UpdateConstructorABI", func(t *testing.T) {
+		abiJSON := `[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]`
+
+		body := map[string]any{
+			"constructor_abi": abiJSON,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/addresses/preregistered/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response map[string]any
+		json.Unmarshal(w.Body.Bytes(), &response)
+		assert.Equal(t, "constructor ABI updated", response["message"])
+	})
+
+	t.Run("ListShowsConstructorABI", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/addresses/preregistered", org.ID), nil)
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var addresses []map[string]any
+		json.Unmarshal(w.Body.Bytes(), &addresses)
+
+		// Find our test address
+		var found bool
+		for _, addr := range addresses {
+			if addr["address"] == testAddress {
+				found = true
+				assert.NotEmpty(t, addr["constructor_abi"], "constructor_abi should be set")
+				assert.Contains(t, addr["constructor_abi"], "oracle")
+				break
+			}
+		}
+		assert.True(t, found, "test address should be in the list")
+	})
+
+	t.Run("UpdateConstructorABI_InvalidJSON", func(t *testing.T) {
+		body := map[string]any{
+			"constructor_abi": "not valid json",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/addresses/preregistered/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("UpdateConstructorABI_NonExistentAddress", func(t *testing.T) {
+		body := map[string]any{
+			"constructor_abi": `[{"type":"constructor","inputs":[]}]`,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/addresses/preregistered/0x9999999999999999999999999999999999999999/abi", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("UpdateConstructorABI_ClearABI", func(t *testing.T) {
+		// First set an ABI
+		body := map[string]any{
+			"constructor_abi": `[{"type":"constructor","inputs":[{"name":"test","type":"uint256"}]}]`,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/addresses/preregistered/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		// Now we can't really "clear" it since constructor_abi is required
+		// But we can set it to an empty constructor
+		body = map[string]any{
+			"constructor_abi": `[{"type":"constructor","inputs":[]}]`,
+		}
+		jsonBody, _ = json.Marshal(body)
+
+		req = httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/addresses/preregistered/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestPreregisterWithConstructorABI(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	// Clean up preregistered_addresses table
+	server.db.Conn().ExecContext(t.Context(), "DELETE FROM preregistered_addresses")
+
+	org := createTestOrganization(t, server, "prereg-with-abi-org")
+	testFactory := "0x5555555555555555555555555555555555555555"
+
+	t.Run("PreregisterWithABI", func(t *testing.T) {
+		abiJSON := `[{"type":"constructor","inputs":[{"name":"admin","type":"address"},{"name":"fee","type":"uint256"}]}]`
+
+		body := map[string]any{
+			"factory":         testFactory,
+			"salt_prefix":     "0xwithabi",
+			"count":           2,
+			"note":            "Contract with constructor",
+			"constructor_abi": abiJSON,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/addresses/preregister", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var response map[string]any
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		addresses, ok := response["addresses"].([]any)
+		require.True(t, ok, "response should contain addresses array")
+		assert.Len(t, addresses, 2)
+
+		// Verify each address has the ABI
+		for _, addr := range addresses {
+			addrMap := addr.(map[string]any)
+			assert.NotEmpty(t, addrMap["constructor_abi"])
+			assert.Contains(t, addrMap["constructor_abi"], "admin")
+		}
+	})
+
+	t.Run("PreregisterWithoutABI", func(t *testing.T) {
+		// Addresses can be preregistered without ABI (ABI added later)
+		body := map[string]any{
+			"factory":     testFactory,
+			"salt_prefix": "0xnoabi",
+			"count":       1,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/addresses/preregister", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var response map[string]any
+		json.Unmarshal(w.Body.Bytes(), &response)
+
+		addresses, ok := response["addresses"].([]any)
+		require.True(t, ok)
+		assert.Len(t, addresses, 1)
+
+		// ABI should be empty
+		addrMap := addresses[0].(map[string]any)
+		assert.Empty(t, addrMap["constructor_abi"])
+	})
+}

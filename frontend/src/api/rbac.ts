@@ -124,6 +124,10 @@ export const rbacApi = {
       api.post<PreregisterResponse>(`/orgs/${orgId}/addresses/preregister`, input),
     delete: (orgId: string, address: string) =>
       api.delete(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}`),
+    updateABI: (orgId: string, address: string, constructorABI: string) =>
+      api.put(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}/abi`, {
+        constructor_abi: constructorABI,
+      }),
   },
 
   // Utilities

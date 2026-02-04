@@ -191,6 +191,10 @@ func (m *MockCrossOrgStore) GetManagedProxy(ctx context.Context, address string)
 func (m *MockCrossOrgStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error { return nil }
 func (m *MockCrossOrgStore) IsManagedProxy(ctx context.Context, address string) (bool, error) { return false, nil }
 
+// Constructor ABI operations
+func (m *MockCrossOrgStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
+func (m *MockCrossOrgStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
+
 // Helper to normalize address
 func normalizeAddress(addr string) string {
 	if len(addr) >= 2 && addr[:2] == "0x" {

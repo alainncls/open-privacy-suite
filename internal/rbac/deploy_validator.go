@@ -37,6 +37,11 @@ type ValidationResult struct {
 	// Factory detection fields
 	IsTrustedFactory bool   // Whether this is a whitelisted factory contract
 	FactoryName      string // Name of the factory if whitelisted
+
+	// Constructor validation fields
+	ConstructorAddresses []string // Addresses found in constructor arguments
+	ConstructorValidated bool     // Whether constructor args were validated
+	HasConstructorArgs   bool     // Whether bytecode has constructor arguments
 }
 
 // ValidateDeployment checks if a contract deployment is allowed.
@@ -144,6 +149,153 @@ func (v *DeploymentValidator) ValidateDeployment(
 		if !allowed {
 			result.Allowed = false
 			result.Reason = fmt.Sprintf("call target %s not allowed for org", addr)
+			return result, nil
+		}
+	}
+
+	result.Allowed = true
+	return result, nil
+}
+
+// ValidateDeploymentWithABI validates a deployment with constructor argument validation.
+// If the bytecode has constructor arguments (trailing bytes after opcodes), the ABI is REQUIRED.
+// If no constructor arguments exist, the ABI is optional.
+//
+// This method performs all the same validations as ValidateDeployment, plus:
+// - Detects if bytecode has constructor arguments
+// - If args exist and no ABI provided: REJECTS deployment
+// - If args exist and ABI provided: decodes args and validates any addresses
+func (v *DeploymentValidator) ValidateDeploymentWithABI(
+	ctx context.Context,
+	orgID string,
+	bytecodeHex string,
+	constructorABI string,
+) (*ValidationResult, error) {
+	// Parse bytecode
+	bc, err := bytecode.ParseHex(bytecodeHex)
+	if err != nil {
+		return &ValidationResult{
+			Allowed: false,
+			Reason:  "invalid bytecode: " + err.Error(),
+		}, nil
+	}
+
+	// Handle empty bytecode
+	if bc.IsEmpty() {
+		return &ValidationResult{
+			Allowed: true,
+			Reason:  "",
+		}, nil
+	}
+
+	// Analyze bytecode for call targets
+	analysis := bytecode.ExtractCallTargets(bc)
+
+	// Detect if this is a proxy contract
+	proxyInfo := bytecode.DetectProxyPattern(bc)
+
+	result := &ValidationResult{
+		ConstantTargets: analysis.ConstantAddrs,
+		HasDynamicCalls: analysis.HasDynamicCall,
+		HasCreate:       analysis.HasCreate,
+		HasCreate2:      analysis.HasCreate2,
+		IsProxy:         proxyInfo.IsProxy,
+		ProxyType:       string(proxyInfo.ProxyType),
+		ProxyInfo:       proxyInfo,
+		// HasConstructorArgs will be set after constructor extraction
+	}
+
+	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
+	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
+	if analysis.HasCreate || analysis.HasCreate2 {
+		// Check if this is a trusted factory contract
+		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
+		if trustedFactory != nil {
+			// This is a whitelisted factory - allow it
+			result.IsTrustedFactory = true
+			result.FactoryName = trustedFactory.Name
+			result.Allowed = true
+			return result, nil
+		}
+
+		result.Allowed = false
+		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
+		return result, nil
+	}
+
+	// Check 2: Block contracts with dynamic call targets
+	// Exception: Proxy contracts are expected to have dynamic DELEGATECALL patterns
+	if analysis.HasDynamicCall && !proxyInfo.IsProxy {
+		result.Allowed = false
+		result.Reason = "contract contains dynamic external calls (address from storage/calldata)"
+		return result, nil
+	}
+
+	// Check 3: Verify all constant call targets are allowed
+	for _, target := range analysis.CallTargets {
+		if target.TargetType != bytecode.CallTargetConstant {
+			continue
+		}
+
+		addr := strings.ToLower(target.Address)
+
+		// Precompiles are always allowed
+		if precompile.IsPrecompileAddress(addr) {
+			continue
+		}
+
+		// DELEGATECALL requires org ownership (library must be org-owned)
+		if target.OpcodeName == "DELEGATECALL" {
+			owned, err := v.store.IsAddressOwnedByOrg(ctx, addr, orgID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check DELEGATECALL target ownership: %w", err)
+			}
+			if !owned {
+				result.Allowed = false
+				result.Reason = fmt.Sprintf("DELEGATECALL target %s must be owned by org", addr)
+				return result, nil
+			}
+			continue
+		}
+
+		// Regular CALL: target must be org-owned or truly public
+		allowed, err := v.isAddressAllowedForOrg(ctx, addr, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check CALL target: %w", err)
+		}
+		if !allowed {
+			result.Allowed = false
+			result.Reason = fmt.Sprintf("call target %s not allowed for org", addr)
+			return result, nil
+		}
+	}
+
+	// Check 4: Constructor argument validation
+	constructorResult, err := bytecode.ExtractConstructorArgs(bc.Raw, constructorABI)
+	if err != nil {
+		result.Allowed = false
+		result.Reason = err.Error()
+		return result, nil
+	}
+
+	result.ConstructorAddresses = constructorResult.Addresses
+	result.ConstructorValidated = true
+	result.HasConstructorArgs = constructorResult.HasArgs
+
+	// Validate each address from constructor args
+	for _, addr := range constructorResult.Addresses {
+		// Precompiles are always allowed
+		if precompile.IsPrecompileAddress(addr) {
+			continue
+		}
+
+		allowed, err := v.isAddressAllowedForOrg(ctx, addr, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check constructor arg address: %w", err)
+		}
+		if !allowed {
+			result.Allowed = false
+			result.Reason = fmt.Sprintf("constructor argument contains address %s not allowed for org", addr)
 			return result, nil
 		}
 	}

@@ -102,6 +102,9 @@ type Store interface {
 	DeletePreregisteredAddress(ctx context.Context, orgID, address string) error
 	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
 	MarkAddressUsed(ctx context.Context, address string) error
+	// Constructor ABI operations (for immutable address validation)
+	GetConstructorABI(ctx context.Context, orgID, address string) (string, error)
+	UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error
 
 	// Managed Proxy operations (for upgrade validation)
 	CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error

@@ -25,8 +25,8 @@ func (d *DB) CreatePreregisteredAddresses(ctx context.Context, addresses []*rbac
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO preregistered_addresses (id, org_id, address, factory, salt, note)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO preregistered_addresses (id, org_id, address, factory, salt, note, constructor_abi)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at
 	`)
 	if err != nil {
@@ -37,7 +37,7 @@ func (d *DB) CreatePreregisteredAddresses(ctx context.Context, addresses []*rbac
 	for _, addr := range addresses {
 		err := stmt.QueryRowContext(ctx,
 			addr.ID, addr.OrgID, strings.ToLower(addr.Address),
-			strings.ToLower(addr.Factory), addr.Salt, addr.Note,
+			strings.ToLower(addr.Factory), addr.Salt, addr.Note, nullString(addr.ConstructorABI),
 		).Scan(&addr.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to insert preregistered address %s: %w", addr.Address, err)
@@ -54,7 +54,7 @@ func (d *DB) CreatePreregisteredAddresses(ctx context.Context, addresses []*rbac
 // ListPreregisteredAddresses returns all preregistered addresses for an organization.
 func (d *DB) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*rbac.PreregisteredAddress, error) {
 	query := `
-		SELECT id, org_id, address, factory, salt, note, created_at, used_at
+		SELECT id, org_id, address, factory, salt, note, constructor_abi, created_at, used_at
 		FROM preregistered_addresses
 		WHERE org_id = $1
 		ORDER BY created_at DESC
@@ -72,7 +72,7 @@ func (d *DB) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*r
 // GetPreregisteredAddressByAddress returns a preregistered address by its address within an org.
 func (d *DB) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*rbac.PreregisteredAddress, error) {
 	query := `
-		SELECT id, org_id, address, factory, salt, note, created_at, used_at
+		SELECT id, org_id, address, factory, salt, note, constructor_abi, created_at, used_at
 		FROM preregistered_addresses
 		WHERE org_id = $1 AND LOWER(address) = LOWER($2)
 	`
@@ -113,6 +113,51 @@ func (d *DB) IsAddressPreregistered(ctx context.Context, orgID, address string) 
 	return exists, nil
 }
 
+// GetConstructorABI returns the constructor ABI for a preregistered address.
+// Returns empty string if address is not preregistered or has no ABI set.
+func (d *DB) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
+	query := `
+		SELECT constructor_abi
+		FROM preregistered_addresses
+		WHERE org_id = $1 AND LOWER(address) = LOWER($2)
+	`
+	var constructorABI sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, orgID, address).Scan(&constructorABI)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get constructor ABI: %w", err)
+	}
+	if constructorABI.Valid {
+		return constructorABI.String, nil
+	}
+	return "", nil
+}
+
+// UpdateConstructorABI updates the constructor ABI for a preregistered address.
+func (d *DB) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
+	result, err := d.conn.ExecContext(ctx, `
+		UPDATE preregistered_addresses
+		SET constructor_abi = $1
+		WHERE org_id = $2 AND LOWER(address) = LOWER($3)
+	`, nullString(abi), orgID, address)
+	if err != nil {
+		return fmt.Errorf("failed to update constructor ABI: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 // MarkAddressUsed marks a preregistered address as used (deployed).
 func (d *DB) MarkAddressUsed(ctx context.Context, address string) error {
 	result, err := d.conn.ExecContext(ctx, `
@@ -140,11 +185,12 @@ func (d *DB) MarkAddressUsed(ctx context.Context, address string) error {
 func scanPreregisteredAddress(row *sql.Row) (*rbac.PreregisteredAddress, error) {
 	addr := &rbac.PreregisteredAddress{}
 	var note sql.NullString
+	var constructorABI sql.NullString
 	var usedAt sql.NullTime
 
 	err := row.Scan(
 		&addr.ID, &addr.OrgID, &addr.Address, &addr.Factory,
-		&addr.Salt, &note, &addr.CreatedAt, &usedAt,
+		&addr.Salt, &note, &constructorABI, &addr.CreatedAt, &usedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -155,6 +201,9 @@ func scanPreregisteredAddress(row *sql.Row) (*rbac.PreregisteredAddress, error) 
 
 	if note.Valid {
 		addr.Note = note.String
+	}
+	if constructorABI.Valid {
+		addr.ConstructorABI = constructorABI.String
 	}
 	if usedAt.Valid {
 		addr.UsedAt = &usedAt.Time
@@ -168,17 +217,21 @@ func scanPreregisteredAddresses(rows *sql.Rows) ([]*rbac.PreregisteredAddress, e
 	for rows.Next() {
 		addr := &rbac.PreregisteredAddress{}
 		var note sql.NullString
+		var constructorABI sql.NullString
 		var usedAt sql.NullTime
 
 		if err := rows.Scan(
 			&addr.ID, &addr.OrgID, &addr.Address, &addr.Factory,
-			&addr.Salt, &note, &addr.CreatedAt, &usedAt,
+			&addr.Salt, &note, &constructorABI, &addr.CreatedAt, &usedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan preregistered address: %w", err)
 		}
 
 		if note.Valid {
 			addr.Note = note.String
+		}
+		if constructorABI.Valid {
+			addr.ConstructorABI = constructorABI.String
 		}
 		if usedAt.Valid {
 			addr.UsedAt = &usedAt.Time
@@ -192,4 +245,12 @@ func scanPreregisteredAddresses(rows *sql.Rows) ([]*rbac.PreregisteredAddress, e
 	}
 
 	return addresses, nil
+}
+
+// nullString converts a string to sql.NullString, treating empty string as NULL.
+func nullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: s, Valid: true}
 }

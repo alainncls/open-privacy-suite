@@ -301,6 +301,14 @@ func (m *MockStore) MarkAddressUsed(ctx context.Context, address string) error {
 	return nil
 }
 
+// Constructor ABI stubs
+func (m *MockStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
+	return "", nil
+}
+func (m *MockStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
+	return nil
+}
+
 // Managed proxy stubs
 func (m *MockStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
 	return nil

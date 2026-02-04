@@ -308,14 +308,15 @@ func (ca ContractAccess) HasClaim(claim Claim) bool {
 // These addresses can be whitelisted before the actual contract is deployed,
 // enabling upgradeable proxy patterns where implementation addresses need pre-approval.
 type PreregisteredAddress struct {
-	ID        string     `json:"id"`
-	OrgID     string     `json:"org_id"`
-	Address   string     `json:"address"` // The pre-computed CREATE3 address (lowercase 0x-prefixed)
-	Factory   string     `json:"factory"` // The CREATE3 factory contract address
-	Salt      []byte     `json:"salt"`    // The 32-byte salt used for address derivation
-	Note      string     `json:"note,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UsedAt    *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
+	ID             string     `json:"id"`
+	OrgID          string     `json:"org_id"`
+	Address        string     `json:"address"`         // The pre-computed CREATE3 address (lowercase 0x-prefixed)
+	Factory        string     `json:"factory"`         // The CREATE3 factory contract address
+	Salt           []byte     `json:"salt"`            // The 32-byte salt used for address derivation
+	Note           string     `json:"note,omitempty"`
+	ConstructorABI string     `json:"constructor_abi,omitempty"` // Contract ABI JSON for constructor arg validation
+	CreatedAt      time.Time  `json:"created_at"`
+	UsedAt         *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
 }
 
 // ManagedProxy represents a proxy contract that is tracked for upgrade validation.

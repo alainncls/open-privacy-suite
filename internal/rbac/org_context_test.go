@@ -134,6 +134,8 @@ func (m *MockOrgContextStore) CreateManagedProxy(ctx context.Context, proxy *Man
 func (m *MockOrgContextStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) { return nil, nil }
 func (m *MockOrgContextStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error { return nil }
 func (m *MockOrgContextStore) IsManagedProxy(ctx context.Context, address string) (bool, error) { return false, nil }
+func (m *MockOrgContextStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
+func (m *MockOrgContextStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
 
 func TestNewOrgContext(t *testing.T) {
 	ctx := context.Background()
