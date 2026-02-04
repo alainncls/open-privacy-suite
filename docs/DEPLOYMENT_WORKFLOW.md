@@ -220,9 +220,10 @@ Transaction arrives
 Handled automatically because CREATE3 addresses are computed before any deployment:
 
 ```javascript
-// Addresses computed first (deterministic)
-Pool:   0x111...  = CREATE3(factory, deployer, "pool-salt")
-Router: 0x222...  = CREATE3(factory, deployer, "router-salt")
+// Addresses computed first (deterministic with org-scoped salts)
+// Salt = keccak256(orgID || saltPrefix || counter)
+Pool:   0x111...  = CREATE3(factory, keccak256(orgID + "pool-salt" + 0))
+Router: 0x222...  = CREATE3(factory, keccak256(orgID + "router-salt" + 0))
 
 // Constructor args resolved
 Pool.constructor(router: 0x222...)
@@ -230,6 +231,8 @@ Router.constructor(pool: 0x111...)
 
 // Deploy in any order - addresses are known!
 ```
+
+**Cross-org isolation**: The org ID is included in salt computation, so different organizations using the same factory and salt prefix will get different addresses. This prevents address collision attacks.
 
 ### Upgradeable Proxies
 
@@ -243,6 +246,24 @@ Registers:
 - Implementation contract addresses
 - Proxy contract addresses
 - Admin/upgrade authority addresses
+
+### Auto-Registration After Deployment
+
+When deploying through the CREATE3 factory via the privacy proxy, contracts are **automatically registered** in the RBAC system. This happens transparently:
+
+1. You preregister addresses (via API or CLI)
+2. You deploy via the CREATE3 factory
+3. Privacy proxy detects the successful factory deploy
+4. Contract is auto-registered in the `contracts` table with metadata
+
+**No manual registration step required!**
+
+The auto-registered contract includes:
+- Factory address used for deployment
+- Salt value used
+- `auto_registered: true` flag in metadata
+
+You can then optionally add fine-grained grants (specific claims per group) via the admin API or UI.
 
 ### External Dependencies
 
@@ -264,15 +285,18 @@ These must be pre-approved by org admin via the admin API.
 
 | Layer | Check | Timing |
 |-------|-------|--------|
+| Org-Scoped Salts | Salt = keccak256(orgID + prefix + i) | Prepare |
 | Address Ownership | All deployed addresses belong to org | Prepare |
 | Constructor Args | All address params authorized | Prepare |
 | Bytecode Integrity | Hash matches registration | Deploy |
+| Auto-Registration | Contract added to RBAC after deploy | Deploy |
 | Runtime Calls | All call targets authorized | Every tx |
 | State Access | Storage modifications traced | Every tx |
 
 ### What's Protected
 
 - **Cross-org calls**: Contract in Org A cannot call contract in Org B
+- **Address collision**: Org-scoped salts ensure different orgs get different CREATE3 addresses
 - **Unauthorized addresses**: Cannot deploy to or interact with unregistered addresses
 - **Hidden dependencies**: Constructor args with addresses must be declared via ABI
 
