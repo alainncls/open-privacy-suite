@@ -83,6 +83,52 @@ func (d *DB) IsManagedProxy(ctx context.Context, address string) (bool, error) {
 	return exists, nil
 }
 
+// ListManagedProxies returns all managed proxies for an organization.
+func (d *DB) ListManagedProxies(ctx context.Context, orgID string) ([]*rbac.ManagedProxy, error) {
+	query := `
+		SELECT id, org_id, proxy_address, proxy_type, current_impl, created_at, updated_at
+		FROM managed_proxies
+		WHERE org_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := d.conn.QueryContext(ctx, query, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list managed proxies: %w", err)
+	}
+	defer rows.Close()
+
+	var proxies []*rbac.ManagedProxy
+	for rows.Next() {
+		proxy := &rbac.ManagedProxy{}
+		var currentImpl sql.NullString
+
+		err := rows.Scan(
+			&proxy.ID,
+			&proxy.OrgID,
+			&proxy.ProxyAddress,
+			&proxy.ProxyType,
+			&currentImpl,
+			&proxy.CreatedAt,
+			&proxy.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan managed proxy: %w", err)
+		}
+
+		if currentImpl.Valid {
+			proxy.CurrentImpl = currentImpl.String
+		}
+		proxies = append(proxies, proxy)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate managed proxies: %w", err)
+	}
+
+	return proxies, nil
+}
+
 func scanManagedProxy(row *sql.Row) (*rbac.ManagedProxy, error) {
 	proxy := &rbac.ManagedProxy{}
 	var currentImpl sql.NullString

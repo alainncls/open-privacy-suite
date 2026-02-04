@@ -396,7 +396,8 @@ EOF
     TX_HASH=$(echo "$RESULT" | jq -r '.result // empty')
 
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
-        print_error "Failed to deploy $name"
+        ERROR=$(echo "$RESULT" | jq -r 'if .error | type == "object" then .error.message else .error // "Unknown error" end' 2>/dev/null)
+        print_error "Failed to deploy $name: $ERROR"
         return 1
     fi
     print_success "$name deployed"
@@ -435,6 +436,34 @@ ROUTER_INIT=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADD
 ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER_V1_IMPL" "$ROUTER_INIT")
 ROUTER_PROXY_INITCODE="${PROXY_BYTECODE}${ROUTER_PROXY_CONSTRUCTOR:2}"
 deploy_create3 "$ROUTER_PROXY_SALT" "$ROUTER_PROXY_INITCODE" "Router Proxy"
+
+# Register proxies as managed proxies for upgrade validation
+print_substep "Registering proxies for upgrade management..."
+
+register_managed_proxy() {
+    local proxy_addr="$1"
+    local impl_addr="$2"
+    local name="$3"
+
+    RESULT=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/proxies" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"proxy_address\": \"$proxy_addr\",
+            \"proxy_type\": \"erc1967\",
+            \"current_impl\": \"$impl_addr\"
+        }")
+
+    if echo "$RESULT" | jq -e '.proxy_address' > /dev/null 2>&1; then
+        print_success "$name registered as managed proxy"
+    else
+        ERROR=$(echo "$RESULT" | jq -r '.error // "Unknown error"' 2>/dev/null)
+        print_info "$name: $ERROR"
+    fi
+}
+
+register_managed_proxy "$TOKEN_PROXY" "$TOKEN_V1_IMPL" "Token Proxy"
+register_managed_proxy "$POOL_PROXY" "$POOL_V1_IMPL" "Pool Proxy"
+register_managed_proxy "$ROUTER_PROXY" "$ROUTER_V1_IMPL" "Router Proxy"
 
 # =============================================================================
 # Step 8: Interact with V1
@@ -523,7 +552,8 @@ RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
 if echo "$RESULT" | jq -e '.result' > /dev/null 2>&1; then
     print_success "DemoToken upgraded"
 else
-    print_error "DemoToken upgrade failed"
+    ERROR=$(echo "$RESULT" | jq -r 'if .error | type == "object" then .error.message else .error // "Unknown error" end' 2>/dev/null)
+    print_error "DemoToken upgrade failed: $ERROR"
 fi
 
 # Upgrade Pool
@@ -536,7 +566,8 @@ RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
 if echo "$RESULT" | jq -e '.result' > /dev/null 2>&1; then
     print_success "LiquidityPool upgraded"
 else
-    print_error "LiquidityPool upgrade failed"
+    ERROR=$(echo "$RESULT" | jq -r 'if .error | type == "object" then .error.message else .error // "Unknown error" end' 2>/dev/null)
+    print_error "LiquidityPool upgrade failed: $ERROR"
 fi
 
 # Upgrade Router
@@ -549,7 +580,8 @@ RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
 if echo "$RESULT" | jq -e '.result' > /dev/null 2>&1; then
     print_success "SwapRouter upgraded"
 else
-    print_error "SwapRouter upgrade failed"
+    ERROR=$(echo "$RESULT" | jq -r 'if .error | type == "object" then .error.message else .error // "Unknown error" end' 2>/dev/null)
+    print_error "SwapRouter upgrade failed: $ERROR"
 fi
 
 # =============================================================================
