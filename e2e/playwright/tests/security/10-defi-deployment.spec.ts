@@ -102,7 +102,7 @@ const ROUTER_CONSTRUCTOR_ABI = JSON.stringify([
   }
 ]);
 
-test.describe('DeFi Contract Deployment Flow', () => {
+test.describe.serial('DeFi Contract Deployment Flow', () => {
   let orgId: string;
   let orgSlug: string;
   let groupId: string;
