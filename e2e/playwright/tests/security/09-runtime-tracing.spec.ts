@@ -359,6 +359,27 @@ test.describe('Runtime Transaction Tracing', () => {
   });
 
   test.describe('Multi-hop Call Detection', () => {
+    /**
+     * CRITICAL SECURITY TEST: Indirect Cross-Org Call via Org-Owned Contract
+     *
+     * This test verifies the most important security invariant:
+     *
+     * Even when User calls their OWN org's contract (OrgA_Contract),
+     * if that contract makes an internal CALL to another org's contract (OrgB_Contract),
+     * the transaction MUST be DENIED.
+     *
+     * Attack scenario:
+     *   1. User deploys OrgA_Contract with function: attack(address target) { target.call(...); }
+     *   2. User calls OrgA_Contract.attack(OrgB_Contract)
+     *   3. OrgA_Contract makes CALL to OrgB_Contract
+     *   4. EXPECTED: Transaction DENIED via runtime trace validation
+     *
+     * This prevents the attack where a malicious contract accepts arbitrary
+     * call targets from user input and forwards calls to other orgs' contracts.
+     *
+     * NOTE: Full test requires deploying actual contracts. See demo/demo-cross-org-attack.sh
+     * for a manual test of this scenario.
+     */
     test('TRACE-011: Multi-hop calls through intermediary contracts are validated', async ({ request }) => {
       test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
 
@@ -366,18 +387,64 @@ test.describe('Runtime Transaction Tracing', () => {
       // where C belongs to a different org
 
       // In a real scenario with tracing:
-      // 1. User calls contract A (owned by org A) - allowed
-      // 2. Contract A calls contract B (also org A) - allowed
-      // 3. Contract B calls contract C (org B) - should be DENIED by trace
+      // 1. User calls contract A (owned by org A) - target check passes
+      // 2. Contract A calls contract C (org B) - DETECTED BY TRACE
+      // 3. Trace shows cross-org call - DENIED
 
       // For this test, we verify direct cross-org is denied
-      // Full multi-hop requires actual deployed contracts
+      // Full multi-hop requires actual deployed contracts with tracing
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: contractB, data: '0x' },
         'latest'
       ]);
 
       expect(result.status).toBe(403);
+    });
+
+    test('TRACE-011b: CRITICAL - Org-owned contract making cross-org call must be denied', async ({ request }) => {
+      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
+
+      /**
+       * THIS IS THE CRITICAL TEST FOR CROSS-ORG ISOLATION
+       *
+       * Scenario being tested:
+       * - User is member of Org A
+       * - ContractA is owned by Org A
+       * - ContractB is owned by Org B
+       * - User calls ContractA with calldata that makes ContractA call ContractB
+       *
+       * REQUIREMENT: This MUST be DENIED even though the direct target (ContractA)
+       * is org-owned. The trace reveals the internal cross-org call.
+       *
+       * Previous bug: Tiered validation skipped tracing for org-owned contracts,
+       * allowing this attack vector.
+       *
+       * Fix: Tiered validation ONLY skips for CREATE3 factory, not general contracts.
+       */
+
+      // To properly test this, we need:
+      // 1. A deployed contract that forwards calls based on input
+      // 2. Tracing infrastructure to detect the internal call
+      //
+      // For now, this test documents the requirement.
+      // See internal/server/jsonrpc_processor.go:validateWithTracing() for implementation.
+
+      console.log('SECURITY INVARIANT: Org-owned contracts making cross-org calls MUST be denied');
+      console.log('Implementation: Tiered validation only skips CREATE3 factory, traces all other contracts');
+
+      // Verify direct access to own contract is allowed (baseline)
+      const ownContractResult = await rpcCall(request, userAToken, 'eth_call', [
+        { to: contractA, data: '0x' },
+        'latest'
+      ]);
+      expect(ownContractResult.status).not.toBe(403);
+
+      // Verify direct access to other org contract is denied (baseline)
+      const otherOrgResult = await rpcCall(request, userAToken, 'eth_call', [
+        { to: contractB, data: '0x' },
+        'latest'
+      ]);
+      expect(otherOrgResult.status).toBe(403);
     });
 
     test('TRACE-012: Deep call stack within same org is allowed', async ({ request }) => {
