@@ -80,8 +80,9 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 		}
 	}
 
-	// Generate CREATE3 addresses
-	generated, err := create3.GenerateAddressPoolFromHex(input.Factory, input.SaltPrefix, input.Count)
+	// Generate CREATE3 addresses with org-scoped salts for cross-org isolation
+	// This ensures different orgs get different addresses even with the same salt prefix
+	generated, err := create3.GenerateAddressPoolFromHexForOrg(input.Factory, orgID, input.SaltPrefix, input.Count)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

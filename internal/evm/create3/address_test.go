@@ -285,6 +285,109 @@ func TestCalculateCREATE3Address_DifferentFactories(t *testing.T) {
 	}
 }
 
+func TestGenerateAddressPoolForOrg(t *testing.T) {
+	factory := common.HexToAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C")
+	prefix := []byte("test-prefix")
+
+	// Generate 10 addresses for org1
+	addresses, err := GenerateAddressPoolForOrg(factory, "org-1", prefix, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(addresses) != 10 {
+		t.Errorf("expected 10 addresses, got %d", len(addresses))
+	}
+
+	// All addresses should be unique
+	seen := make(map[common.Address]bool)
+	for i, ga := range addresses {
+		if seen[ga.Address] {
+			t.Errorf("duplicate address at index %d: %s", i, ga.Address.Hex())
+		}
+		seen[ga.Address] = true
+	}
+
+	// Generate again with same inputs - should be identical (deterministic)
+	addresses2, err := GenerateAddressPoolForOrg(factory, "org-1", prefix, 10)
+	if err != nil {
+		t.Fatalf("unexpected error on second generation: %v", err)
+	}
+
+	for i := range addresses {
+		if addresses[i].Address != addresses2[i].Address {
+			t.Errorf("address mismatch at index %d: got %s, want %s",
+				i, addresses2[i].Address.Hex(), addresses[i].Address.Hex())
+		}
+	}
+}
+
+func TestGenerateAddressPoolForOrg_CrossOrgIsolation(t *testing.T) {
+	// This is the critical test: same factory + same salt prefix
+	// but different org IDs should produce DIFFERENT addresses
+	factory := common.HexToAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C")
+	prefix := []byte("my-app")
+
+	// Generate addresses for two different orgs with same salt prefix
+	addressesOrg1, err := GenerateAddressPoolForOrg(factory, "org-1", prefix, 5)
+	if err != nil {
+		t.Fatalf("unexpected error for org-1: %v", err)
+	}
+
+	addressesOrg2, err := GenerateAddressPoolForOrg(factory, "org-2", prefix, 5)
+	if err != nil {
+		t.Fatalf("unexpected error for org-2: %v", err)
+	}
+
+	// All addresses from org-1 should be different from all addresses from org-2
+	org1Addrs := make(map[common.Address]bool)
+	for _, ga := range addressesOrg1 {
+		org1Addrs[ga.Address] = true
+	}
+
+	for i, ga := range addressesOrg2 {
+		if org1Addrs[ga.Address] {
+			t.Errorf("org-2 address[%d] %s matches an org-1 address - cross-org isolation FAILED",
+				i, ga.Address.Hex())
+		}
+	}
+}
+
+func TestGenerateAddressPoolForOrg_RequiresOrgID(t *testing.T) {
+	factory := common.HexToAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C")
+	prefix := []byte("test")
+
+	// Empty orgID should error
+	_, err := GenerateAddressPoolForOrg(factory, "", prefix, 5)
+	if err == nil {
+		t.Error("expected error for empty orgID")
+	}
+}
+
+func TestGenerateAddressPoolFromHexForOrg(t *testing.T) {
+	// Test that the hex wrapper works correctly with org-scoped generation
+	factory := "0x4e59b44847b379578588920cA78FbF26c0B4956C"
+	orgID := "test-org-123"
+	saltPrefix := "myapp-v1"
+
+	addresses, err := GenerateAddressPoolFromHexForOrg(factory, orgID, saltPrefix, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(addresses) != 5 {
+		t.Errorf("expected 5 addresses, got %d", len(addresses))
+	}
+
+	// Should be deterministic
+	addresses2, _ := GenerateAddressPoolFromHexForOrg(factory, orgID, saltPrefix, 5)
+	for i := range addresses {
+		if addresses[i].Address != addresses2[i].Address {
+			t.Errorf("not deterministic at index %d", i)
+		}
+	}
+}
+
 // Benchmark for address generation
 func BenchmarkCalculateCREATE3Address(b *testing.B) {
 	factory := common.HexToAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C")
