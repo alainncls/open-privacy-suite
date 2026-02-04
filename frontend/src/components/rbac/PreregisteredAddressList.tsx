@@ -264,7 +264,7 @@ export default function PreregisteredAddressList() {
               <TableHead>Factory</TableHead>
               <TableHead>Salt</TableHead>
               <TableHead>Note</TableHead>
-              <TableHead>ABI</TableHead>
+              {!runtimeTracingEnabled && <TableHead>ABI</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -346,24 +346,21 @@ export default function PreregisteredAddressList() {
                     {addr.note || '-'}
                   </span>
                 </TableCell>
-                <TableCell>
-                  {addr.constructor_abi ? (
-                    <Badge variant="default" className="gap-1 bg-[#8950FA] hover:bg-[#7C3AED]">
-                      <FileCode className="w-3 h-3" />
-                      Set
-                    </Badge>
-                  ) : runtimeTracingEnabled ? (
-                    <Badge variant="outline" className="gap-1 text-[#6B7280]">
-                      <FileCode className="w-3 h-3" />
-                      Optional
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="gap-1 text-[#D97706] border-[#FDE68A]">
-                      <FileCode className="w-3 h-3" />
-                      Not set
-                    </Badge>
-                  )}
-                </TableCell>
+                {!runtimeTracingEnabled && (
+                  <TableCell>
+                    {addr.constructor_abi ? (
+                      <Badge variant="default" className="gap-1 bg-[#8950FA] hover:bg-[#7C3AED]">
+                        <FileCode className="w-3 h-3" />
+                        Set
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="gap-1 text-[#D97706] border-[#FDE68A]">
+                        <FileCode className="w-3 h-3" />
+                        Not set
+                      </Badge>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   {addr.used_at ? (
                     <Badge variant="default" className="gap-1 bg-[#10B981] hover:bg-[#059669]">
@@ -384,15 +381,17 @@ export default function PreregisteredAddressList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openAbiEditor(addr)}
-                      className="text-[#6B7280] hover:text-[#374151] hover:bg-[#F1F5F9]"
-                      title="Edit contract ABI"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
+                    {!runtimeTracingEnabled && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openAbiEditor(addr)}
+                        className="text-[#6B7280] hover:text-[#374151] hover:bg-[#F1F5F9]"
+                        title="Edit contract ABI"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -485,22 +484,13 @@ export default function PreregisteredAddressList() {
               )}
             </div>
 
-            {runtimeTracingEnabled ? (
-              <div className="p-3 rounded-lg bg-[#F0FDF4] border border-[#BBF7D0]">
-                <p className="text-xs text-[#166534]">
-                  <strong>Runtime tracing is enabled.</strong> ABI is optional. Any addresses in constructor
-                  arguments will be validated at runtime when the contract makes calls.
-                </p>
-              </div>
-            ) : (
-              <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
-                <p className="text-xs text-[#92400E]">
-                  <strong>Note:</strong> The ABI is required when deploying contracts with constructor
-                  arguments that contain addresses. If the ABI is not set, deployments with constructor
-                  args will be rejected.
-                </p>
-              </div>
-            )}
+            <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
+              <p className="text-xs text-[#92400E]">
+                <strong>Note:</strong> The ABI is required when deploying contracts with constructor
+                arguments that contain addresses. If the ABI is not set, deployments with constructor
+                args will be rejected.
+              </p>
+            </div>
           </div>
 
           <div className="flex justify-end gap-3">
