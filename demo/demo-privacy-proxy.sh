@@ -349,9 +349,11 @@ if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
     git add -A
     git commit -m "Initial" --quiet
 
+    # Remove any copied local artifacts (these are gitignored but cp -r copies them)
+    rm -rf lib out cache
     mkdir -p lib
-    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
-    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || { print_error "Failed to clone openzeppelin-contracts-upgradeable"; exit 1; }
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || { print_error "Failed to clone openzeppelin-contracts"; exit 1; }
 
     forge build --quiet
 
@@ -492,12 +494,13 @@ git add -A
 git commit -m "Initial" --quiet
 
 print_substep "Installing dependencies..."
+# Remove any copied local artifacts (these are gitignored but cp -r copies them)
+rm -rf lib out cache
 mkdir -p lib
-# Clone dependencies (skip if already exists)
-[ -d "lib/openzeppelin-contracts-upgradeable" ] || git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || true
-[ -d "lib/openzeppelin-contracts" ] || git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null || true
-[ -d "lib/forge-std" ] || git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null || true
-[ -d "lib/solady" ] || git clone --quiet --depth 1 https://github.com/Vectorized/solady.git lib/solady 2>/dev/null || true
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || { print_error "Failed to clone openzeppelin-contracts-upgradeable"; exit 1; }
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || { print_error "Failed to clone openzeppelin-contracts"; exit 1; }
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std || { print_error "Failed to clone forge-std"; exit 1; }
+git clone --quiet --depth 1 https://github.com/Vectorized/solady.git lib/solady || { print_error "Failed to clone solady"; exit 1; }
 print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."

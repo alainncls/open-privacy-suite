@@ -271,32 +271,63 @@ FACTORY_CODE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/nu
 print_value "Factory code size" "$FACTORY_CODE bytes"
 
 # =============================================================================
-# Step 5: Compute Addresses (The Magic of CREATE3)
+# Step 5 & 6: Preregister and Compute Addresses (The Magic of CREATE3)
 # =============================================================================
 
-print_step "Step 5: Computing Deterministic Addresses"
+print_step "Step 5: Preregistering & Computing Addresses"
 
 echo -e "  ${WHITE}CREATE3 address computation:${NC}"
 echo -e "  ${CYAN}address = hash(factory, salt)${NC} - NOT dependent on bytecode!"
 echo ""
 
-# Define salts for our contracts
+# Generate a unique salt prefix for this deployment
 TIMESTAMP=$(date +%s)
-TOKEN_SALT=$(cast keccak "defi-demo-$TIMESTAMP-token" 2>/dev/null)
-POOL_SALT=$(cast keccak "defi-demo-$TIMESTAMP-pool" 2>/dev/null)
-ROUTER_SALT=$(cast keccak "defi-demo-$TIMESTAMP-router" 2>/dev/null)
+SALT_PREFIX="defi-demo-$TIMESTAMP"
 
-print_substep "Generated salts:"
-print_value "Token Salt" "${TOKEN_SALT:0:20}..."
-print_value "Pool Salt" "${POOL_SALT:0:20}..."
-print_value "Router Salt" "${ROUTER_SALT:0:20}..."
+print_substep "Using salt prefix: $SALT_PREFIX"
 
-# Compute addresses using the factory's getDeployed function
-print_substep "Computing addresses from factory..."
+# Use batch preregistration API to register 3 addresses (token, pool, router)
+print_substep "Preregistering 3 addresses with privacy proxy..."
 
-TOKEN_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$TOKEN_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null)
-POOL_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$POOL_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null)
-ROUTER_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$ROUTER_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null)
+PREREG_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"factory\": \"$CREATE3_FACTORY\",
+        \"salt_prefix\": \"$SALT_PREFIX\",
+        \"count\": 3,
+        \"note\": \"DeFi demo contracts\"
+    }")
+
+# Check for errors
+if echo "$PREREG_RESP" | jq -e '.error' > /dev/null 2>&1; then
+    ERROR=$(echo "$PREREG_RESP" | jq -r '.error')
+    print_error "Preregistration failed: $ERROR"
+    exit 1
+fi
+
+# Extract the 3 preregistered addresses
+ADDRESSES=$(echo "$PREREG_RESP" | jq -r '.addresses')
+if [ -z "$ADDRESSES" ] || [ "$ADDRESSES" = "null" ]; then
+    print_error "No addresses returned from preregistration"
+    echo "Response: $PREREG_RESP"
+    exit 1
+fi
+
+# Get addresses and salts (index 0=token, 1=pool, 2=router)
+TOKEN_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[0].address')
+TOKEN_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[0].salt')
+POOL_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[1].address')
+POOL_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[1].salt')
+ROUTER_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[2].address')
+ROUTER_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[2].salt')
+
+# Verify addresses are valid
+if [ -z "$TOKEN_ADDR" ] || [ "$TOKEN_ADDR" = "null" ]; then
+    print_error "Failed to get token address"
+    exit 1
+fi
+
+print_success "3 addresses preregistered successfully"
 
 echo ""
 echo -e "  ${WHITE}Pre-computed Addresses (known BEFORE deployment):${NC}"
@@ -308,41 +339,11 @@ echo -e "  ${CYAN}└───────────────────�
 
 print_info "These addresses are guaranteed - we can use them in constructors!"
 
-# =============================================================================
-# Step 6: Preregister Addresses
-# =============================================================================
-
-print_step "Step 6: Preregistering Addresses"
-
-print_substep "Registering addresses with privacy proxy..."
-
-# Preregister each address with its specific salt
-for ENTRY in "token:$TOKEN_SALT:$TOKEN_ADDR" "pool:$POOL_SALT:$POOL_ADDR" "router:$ROUTER_SALT:$ROUTER_ADDR"; do
-    NAME=$(echo "$ENTRY" | cut -d: -f1)
-    SALT=$(echo "$ENTRY" | cut -d: -f2)
-    ADDR=$(echo "$ENTRY" | cut -d: -f3)
-
-    PREREG_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"factory\": \"$CREATE3_FACTORY\",
-            \"salt\": \"$SALT\",
-            \"note\": \"DeFi demo - $NAME\"
-        }")
-
-    if echo "$PREREG_RESP" | jq -e '.address' > /dev/null 2>&1; then
-        RETURNED_ADDR=$(echo "$PREREG_RESP" | jq -r '.address')
-        if [ "$RETURNED_ADDR" = "$ADDR" ]; then
-            print_success "$NAME preregistered: $ADDR"
-        else
-            print_error "Address mismatch for $NAME!"
-            exit 1
-        fi
-    else
-        # May already be registered
-        print_info "$NAME may already be registered"
-    fi
-done
+# Print salts for reference
+print_substep "Generated salts:"
+print_value "Token Salt" "${TOKEN_SALT:0:20}..."
+print_value "Pool Salt" "${POOL_SALT:0:20}..."
+print_value "Router Salt" "${ROUTER_SALT:0:20}..."
 
 # =============================================================================
 # Step 7: Build Contracts
@@ -370,19 +371,21 @@ git add -A
 git commit -m "Initial" --quiet
 
 print_substep "Installing dependencies..."
+# Remove any copied local artifacts (these are gitignored but cp -r copies them)
+rm -rf lib out cache
 mkdir -p lib
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
-git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || { print_error "Failed to clone openzeppelin-contracts-upgradeable"; exit 1; }
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || { print_error "Failed to clone openzeppelin-contracts"; exit 1; }
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std || { print_error "Failed to clone forge-std"; exit 1; }
 
 print_substep "Compiling..."
 forge build --quiet
 print_success "Contracts compiled"
 
-# Get bytecode
-TOKEN_BYTECODE=$(forge inspect DemoToken bytecode)
-POOL_BYTECODE=$(forge inspect LiquidityPool bytecode)
-ROUTER_BYTECODE=$(forge inspect SwapRouter bytecode)
+# Get bytecode (use Simple* contracts for direct deployment - no UUPS pattern)
+TOKEN_BYTECODE=$(forge inspect SimpleDemoToken bytecode)
+POOL_BYTECODE=$(forge inspect SimpleLiquidityPool bytecode)
+ROUTER_BYTECODE=$(forge inspect SimpleSwapRouter bytecode)
 
 # =============================================================================
 # Step 8: Deploy with Cross-References
@@ -416,10 +419,14 @@ EOF
 )
 
     DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
-    TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty')
-    ERROR=$(echo "$DEPLOY_RESULT" | jq -r '.error.message // empty')
+    TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty' 2>/dev/null)
+    # Handle both JSON-RPC error format and simple error format
+    ERROR=$(echo "$DEPLOY_RESULT" | jq -r 'if .error | type == "object" then .error.message else .error // empty end' 2>/dev/null)
 
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+        if [ -z "$ERROR" ]; then
+            ERROR="Unknown error - Response: $DEPLOY_RESULT"
+        fi
         print_error "Failed to deploy $name: $ERROR"
         return 1
     fi
@@ -497,14 +504,14 @@ print_step "Step 10: Verifying Cross-References"
 
 print_substep "Checking that circular references work..."
 
-# Token -> Pool
-TOKEN_POOL=$(cast call "$TOKEN_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+# Token -> Pool (lowercase for comparison)
+TOKEN_POOL=$(cast call "$TOKEN_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
 # Pool -> Token
-POOL_TOKEN=$(cast call "$POOL_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+POOL_TOKEN=$(cast call "$POOL_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
 # Router -> Pool
-ROUTER_POOL=$(cast call "$ROUTER_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+ROUTER_POOL=$(cast call "$ROUTER_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
 # Router -> Token
-ROUTER_TOKEN=$(cast call "$ROUTER_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+ROUTER_TOKEN=$(cast call "$ROUTER_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
 
 echo ""
 echo -e "  ${WHITE}Cross-Reference Verification:${NC}"
@@ -513,25 +520,25 @@ echo -e "  ${CYAN}┌───────────────────�
 if [ "$TOKEN_POOL" = "$POOL_ADDR" ]; then
     echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} Token.pool() = $POOL_ADDR"
 else
-    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Token.pool() mismatch"
+    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Token.pool() mismatch: got $TOKEN_POOL"
 fi
 
 if [ "$POOL_TOKEN" = "$TOKEN_ADDR" ]; then
     echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} Pool.token() = $TOKEN_ADDR"
 else
-    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Pool.token() mismatch"
+    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Pool.token() mismatch: got $POOL_TOKEN"
 fi
 
 if [ "$ROUTER_POOL" = "$POOL_ADDR" ]; then
     echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} Router.pool() = $POOL_ADDR"
 else
-    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Router.pool() mismatch"
+    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Router.pool() mismatch: got $ROUTER_POOL"
 fi
 
 if [ "$ROUTER_TOKEN" = "$TOKEN_ADDR" ]; then
     echo -e "  ${CYAN}│${NC} ${GREEN}✓${NC} Router.token() = $TOKEN_ADDR"
 else
-    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Router.token() mismatch"
+    echo -e "  ${CYAN}│${NC} ${RED}✗${NC} Router.token() mismatch: got $ROUTER_TOKEN"
 fi
 
 echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
@@ -586,7 +593,7 @@ print_value "ETH Reserve" "$ETH_RESERVE wei"
 
 # Get quote
 print_substep "Getting swap quote (100 DEMO -> ETH)..."
-EXPECTED_OUT=$(cast call "$ROUTER_ADDR" "getTokenToEthOutput(uint256)(uint256)" "100000000000000000000" --rpc-url "$ANVIL_URL" 2>/dev/null)
+EXPECTED_OUT=$(cast call "$ROUTER_ADDR" "getQuote(uint256)(uint256)" "100000000000000000000" --rpc-url "$ANVIL_URL" 2>/dev/null)
 print_value "Expected ETH out" "$EXPECTED_OUT wei"
 
 # Approve router
@@ -602,7 +609,7 @@ rpc_call "eth_sendTransaction" "$TX_PARAMS" > /dev/null
 
 # Execute swap
 print_substep "Executing swap through router..."
-SWAP_CALLDATA=$(cast calldata "swapExactTokensForEth(uint256,uint256)" "100000000000000000000" "0")
+SWAP_CALLDATA=$(cast calldata "swap(uint256)" "100000000000000000000")
 NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
 NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
 TX_PARAMS=$(cat <<EOF
