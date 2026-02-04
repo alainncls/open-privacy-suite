@@ -200,18 +200,46 @@ fi
 print_success "Permissions configured"
 
 # =============================================================================
-# Step 3: Get CREATE3 Factory
+# Step 3: Get or Deploy CREATE3 Factory
 # =============================================================================
 
 print_step "Step 3: CREATE3 Factory"
 
+# Check if factory is configured for the org
 FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
 CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
 
-if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
-    print_error "No CREATE3 factory configured"
-    exit 1
+# Check if factory has code deployed
+if [ -n "$CREATE3_FACTORY" ] && [ "$CREATE3_FACTORY" != "null" ]; then
+    FACTORY_CODE=$(cast code "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0x")
+    if [ "$FACTORY_CODE" = "0x" ]; then
+        print_info "Factory at $CREATE3_FACTORY has no code, deploying new factory..."
+        CREATE3_FACTORY=""
+    fi
 fi
+
+# Deploy factory if needed
+if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+    print_substep "Deploying CREATE3 factory..."
+    # Use the dev endpoint to deploy the factory
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
+
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "Response: $DEPLOY_RESP"
+        exit 1
+    fi
+    print_success "Deployed factory: $CREATE3_FACTORY"
+
+    # Configure the org with the new factory
+    print_substep "Configuring org with factory..."
+    curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for org"
+fi
+
 print_success "Factory: $CREATE3_FACTORY"
 
 # =============================================================================
@@ -310,6 +338,7 @@ git commit -m "Initial" --quiet
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
 
 print_substep "Compiling V1 and V2 contracts..."
 forge build --quiet

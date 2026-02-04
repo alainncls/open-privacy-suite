@@ -300,33 +300,42 @@ if [ -z "$CREATE3_FACTORY" ]; then
     print_substep "Fetching factory address from org config..."
     FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
     CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
+fi
 
-    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
-        print_error "No CREATE3 factory configured for this organization"
-        print_info "Please configure a factory first via the admin UI or API"
-        exit 1
+# Check if we need to deploy a factory
+NEED_FACTORY=false
+if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+    NEED_FACTORY=true
+else
+    # Verify factory has code
+    FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+    if [ "$FACTORY_CODE_SIZE" = "0" ]; then
+        print_info "Factory at $CREATE3_FACTORY has no code, deploying new factory..."
+        NEED_FACTORY=true
     fi
 fi
 
-print_success "CREATE3 Factory: $CREATE3_FACTORY"
+if [ "$NEED_FACTORY" = true ]; then
+    print_substep "Deploying CREATE3 factory..."
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
-# Verify factory has code deployed
-print_substep "Verifying factory contract is deployed..."
-FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
-if [ "$FACTORY_CODE_SIZE" = "0" ]; then
-    print_error "No contract found at factory address: $CREATE3_FACTORY"
-    echo ""
-    echo -e "  ${WHITE}The CREATE3 factory contract needs to be deployed first.${NC}"
-    echo -e "  ${WHITE}This typically happens when:${NC}"
-    echo -e "  ${CYAN}1.${NC} The chain was reset (Anvil restarted without persistence)"
-    echo -e "  ${CYAN}2.${NC} The factory was never deployed to this network"
-    echo ""
-    echo -e "  ${WHITE}To deploy a CREATE3 factory, you can use:${NC}"
-    echo -e "  ${GREEN}forge create --rpc-url $RPC_URL --private-key \$DEPLOYER_PRIVATE_KEY \\"
-    echo -e "    path/to/CREATE3Factory.sol:CREATE3Factory${NC}"
-    echo ""
-    exit 1
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "Response: $DEPLOY_RESP"
+        exit 1
+    fi
+    print_success "Deployed factory: $CREATE3_FACTORY"
+
+    # Configure the org with the new factory
+    curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for org"
 fi
+
+print_success "CREATE3 Factory: $CREATE3_FACTORY"
+FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
 print_success "Factory contract verified (code size: $FACTORY_CODE_SIZE bytes)"
 
 # =============================================================================
@@ -564,7 +573,7 @@ git add -A
 git commit -m "Initial" --quiet
 
 # Install dependencies using git clone directly (forge install has interactive prompts)
-print_substep "Installing OpenZeppelin contracts..."
+print_substep "Installing dependencies..."
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || {
     print_error "Failed to clone openzeppelin-contracts-upgradeable"
@@ -574,7 +583,11 @@ git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contrac
     print_error "Failed to clone openzeppelin-contracts"
     exit 1
 }
-print_success "OpenZeppelin contracts installed"
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null || {
+    print_error "Failed to clone forge-std"
+    exit 1
+}
+print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."
 forge build --quiet

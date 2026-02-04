@@ -197,31 +197,64 @@ print_info "Note: Direct deployment uses regular CREATE opcode"
 print_info "      Addresses are determined by nonce, not deterministically"
 echo ""
 
+# Helper function to deploy and extract address
+# Usage: deploy_contract "path/to/Contract.sol:Contract" ["arg1 arg2 ..."]
+deploy_contract() {
+    local contract_path="$1"
+    local constructor_args="$2"
+
+    local result
+
+    # Use non-JSON mode for more reliable parsing
+    if [ -n "$constructor_args" ]; then
+        # shellcheck disable=SC2086
+        result=$(forge create "$contract_path" \
+            --rpc-url "$ANVIL_URL" \
+            --private-key "$PRIVATE_KEY" \
+            --broadcast \
+            --constructor-args $constructor_args 2>&1) || true
+    else
+        result=$(forge create "$contract_path" \
+            --rpc-url "$ANVIL_URL" \
+            --private-key "$PRIVATE_KEY" \
+            --broadcast 2>&1) || true
+    fi
+
+    # Extract "Deployed to:" address from output
+    local addr
+    addr=$(echo "$result" | grep -o 'Deployed to: 0x[a-fA-F0-9]\{40\}' | sed 's/Deployed to: //' | head -1)
+
+    if [ -z "$addr" ]; then
+        print_error "Failed to deploy $contract_path"
+        echo "  Output: $result" | head -5 >&2
+        return 1
+    fi
+
+    echo "$addr"
+}
+
 # Deploy DemoToken Implementation
 print_substep "Deploying DemoToken implementation..."
-DEMOTOKEN_IMPL_RESULT=$(forge create src/token/DemoToken.sol:DemoToken \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-DEMOTOKEN_IMPL=$(echo "$DEMOTOKEN_IMPL_RESULT" | jq -r '.deployedTo')
+DEMOTOKEN_IMPL=$(deploy_contract "src/token/DemoToken.sol:DemoToken")
+if [ -z "$DEMOTOKEN_IMPL" ]; then
+    exit 1
+fi
 print_success "DemoToken impl: $DEMOTOKEN_IMPL"
 
 # Deploy LiquidityPool Implementation
 print_substep "Deploying LiquidityPool implementation..."
-LIQUIDITYPOOL_IMPL_RESULT=$(forge create src/pool/LiquidityPool.sol:LiquidityPool \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-LIQUIDITYPOOL_IMPL=$(echo "$LIQUIDITYPOOL_IMPL_RESULT" | jq -r '.deployedTo')
+LIQUIDITYPOOL_IMPL=$(deploy_contract "src/pool/LiquidityPool.sol:LiquidityPool")
+if [ -z "$LIQUIDITYPOOL_IMPL" ]; then
+    exit 1
+fi
 print_success "LiquidityPool impl: $LIQUIDITYPOOL_IMPL"
 
 # Deploy SwapRouter Implementation
 print_substep "Deploying SwapRouter implementation..."
-SWAPROUTER_IMPL_RESULT=$(forge create src/router/SwapRouter.sol:SwapRouter \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-SWAPROUTER_IMPL=$(echo "$SWAPROUTER_IMPL_RESULT" | jq -r '.deployedTo')
+SWAPROUTER_IMPL=$(deploy_contract "src/router/SwapRouter.sol:SwapRouter")
+if [ -z "$SWAPROUTER_IMPL" ]; then
+    exit 1
+fi
 print_success "SwapRouter impl: $SWAPROUTER_IMPL"
 
 # =============================================================================
@@ -244,76 +277,119 @@ EOF
 
 forge build --quiet
 
-# For direct deployment, we can't pre-compute addresses easily
-# So we deploy in order: Pool -> Token -> Router
-# But Token needs Pool address and Pool needs Token address (circular!)
-# In direct deployment, we work around this by:
-# 1. Deploy proxies first without initialization
-# 2. Then initialize them with each other's addresses
+# For circular dependencies with CREATE opcode, we predict future addresses
+# using nonces. Then we can initialize each contract with the others' addresses
+# during deployment.
 
-# Deploy all proxies first (with empty init data)
+PROXY_BYTECODE=$(forge inspect DeployableProxy bytecode)
+
+print_substep "Computing future proxy addresses..."
+
+# Get current nonce
+CURRENT_NONCE=$(cast nonce "$DEPLOYER_ADDRESS" --rpc-url "$ANVIL_URL" 2>/dev/null)
+print_value "Current nonce" "$CURRENT_NONCE"
+
+# Compute addresses for the next 3 deployments
+TOKEN_PROXY=$(cast compute-address "$DEPLOYER_ADDRESS" --nonce "$CURRENT_NONCE" --rpc-url "$ANVIL_URL" 2>/dev/null | grep -o '0x[a-fA-F0-9]\{40\}')
+POOL_PROXY=$(cast compute-address "$DEPLOYER_ADDRESS" --nonce "$((CURRENT_NONCE + 1))" --rpc-url "$ANVIL_URL" 2>/dev/null | grep -o '0x[a-fA-F0-9]\{40\}')
+ROUTER_PROXY=$(cast compute-address "$DEPLOYER_ADDRESS" --nonce "$((CURRENT_NONCE + 2))" --rpc-url "$ANVIL_URL" 2>/dev/null | grep -o '0x[a-fA-F0-9]\{40\}')
+
+print_value "Predicted Token Proxy" "$TOKEN_PROXY"
+print_value "Predicted Pool Proxy" "$POOL_PROXY"
+print_value "Predicted Router Proxy" "$ROUTER_PROXY"
+
+# Helper function to deploy proxy using cast send (avoids forge create argument parsing issues)
+deploy_proxy() {
+    local impl_addr="$1"
+    local init_data="$2"
+
+    # Get the proxy creation bytecode
+    local proxy_bytecode
+    proxy_bytecode=$(forge inspect DeployableProxy bytecode)
+
+    # Encode constructor args: (address implementation, bytes memory _data)
+    # Cast abi-encode handles the bytes parameter correctly
+    local encoded_args
+    encoded_args=$(cast abi-encode "constructor(address,bytes)" "$impl_addr" "$init_data")
+
+    # Remove 0x prefix from encoded_args for concatenation
+    local args_no_prefix="${encoded_args#0x}"
+
+    # Full deployment data = bytecode + encoded constructor args
+    local deploy_data="${proxy_bytecode}${args_no_prefix}"
+
+    # Deploy via cast send --create (options must come before --create)
+    local result
+    result=$(cast send \
+        --rpc-url "$ANVIL_URL" \
+        --private-key "$PRIVATE_KEY" \
+        --create "$deploy_data" 2>&1)
+
+    # Extract contract address from result
+    local addr
+    addr=$(echo "$result" | grep -o 'contractAddress[[:space:]]*0x[a-fA-F0-9]\{40\}' | grep -o '0x[a-fA-F0-9]\{40\}' | head -1)
+    if [ -z "$addr" ]; then
+        # Try alternate format
+        addr=$(echo "$result" | grep -oE '"contractAddress":\s*"0x[a-fA-F0-9]{40}"' | grep -o '0x[a-fA-F0-9]\{40\}' | head -1)
+    fi
+    if [ -z "$addr" ]; then
+        echo "DEPLOY_ERROR: $result" >&2
+        return 1
+    fi
+    echo "$addr"
+}
+
+# Deploy proxies WITH initialization data, using the predicted addresses
 print_substep "Deploying DemoToken proxy..."
-TOKEN_INIT_DATA="0x" # Empty - will initialize later
-TOKEN_PROXY_RESULT=$(forge create src/DeployProxy.sol:DeployableProxy \
-    --constructor-args "$DEMOTOKEN_IMPL" "$TOKEN_INIT_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-TOKEN_PROXY=$(echo "$TOKEN_PROXY_RESULT" | jq -r '.deployedTo')
-print_success "DemoToken proxy: $TOKEN_PROXY"
+TOKEN_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY")
+TOKEN_PROXY_ACTUAL=$(deploy_proxy "$DEMOTOKEN_IMPL" "$TOKEN_INIT_DATA")
+if [ -z "$TOKEN_PROXY_ACTUAL" ] || [[ "$TOKEN_PROXY_ACTUAL" == "DEPLOY_ERROR:"* ]]; then
+    print_error "Failed to deploy DemoToken proxy"
+    echo "$TOKEN_PROXY_ACTUAL"
+    exit 1
+fi
+print_success "DemoToken proxy: $TOKEN_PROXY_ACTUAL"
 
 print_substep "Deploying LiquidityPool proxy..."
-POOL_INIT_DATA="0x"
-POOL_PROXY_RESULT=$(forge create src/DeployProxy.sol:DeployableProxy \
-    --constructor-args "$LIQUIDITYPOOL_IMPL" "$POOL_INIT_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-POOL_PROXY=$(echo "$POOL_PROXY_RESULT" | jq -r '.deployedTo')
-print_success "LiquidityPool proxy: $POOL_PROXY"
+POOL_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$TOKEN_PROXY")
+POOL_PROXY_ACTUAL=$(deploy_proxy "$LIQUIDITYPOOL_IMPL" "$POOL_INIT_DATA")
+if [ -z "$POOL_PROXY_ACTUAL" ] || [[ "$POOL_PROXY_ACTUAL" == "DEPLOY_ERROR:"* ]]; then
+    print_error "Failed to deploy LiquidityPool proxy"
+    exit 1
+fi
+print_success "LiquidityPool proxy: $POOL_PROXY_ACTUAL"
 
 print_substep "Deploying SwapRouter proxy..."
-ROUTER_INIT_DATA="0x"
-ROUTER_PROXY_RESULT=$(forge create src/DeployProxy.sol:DeployableProxy \
-    --constructor-args "$SWAPROUTER_IMPL" "$ROUTER_INIT_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-ROUTER_PROXY=$(echo "$ROUTER_PROXY_RESULT" | jq -r '.deployedTo')
-print_success "SwapRouter proxy: $ROUTER_PROXY"
+ROUTER_INIT_DATA=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY" "$TOKEN_PROXY")
+ROUTER_PROXY_ACTUAL=$(deploy_proxy "$SWAPROUTER_IMPL" "$ROUTER_INIT_DATA")
+if [ -z "$ROUTER_PROXY_ACTUAL" ] || [[ "$ROUTER_PROXY_ACTUAL" == "DEPLOY_ERROR:"* ]]; then
+    print_error "Failed to deploy SwapRouter proxy"
+    exit 1
+fi
+print_success "SwapRouter proxy: $ROUTER_PROXY_ACTUAL"
 
-# =============================================================================
-# Step 5: Initialize Contracts
-# =============================================================================
+# Verify addresses match predictions
+print_substep "Verifying address predictions..."
+if [ "$TOKEN_PROXY" = "$TOKEN_PROXY_ACTUAL" ]; then
+    print_success "Token proxy address matched prediction"
+else
+    print_info "Token proxy: predicted $TOKEN_PROXY, actual $TOKEN_PROXY_ACTUAL"
+fi
+if [ "$POOL_PROXY" = "$POOL_PROXY_ACTUAL" ]; then
+    print_success "Pool proxy address matched prediction"
+else
+    print_info "Pool proxy: predicted $POOL_PROXY, actual $POOL_PROXY_ACTUAL"
+fi
+if [ "$ROUTER_PROXY" = "$ROUTER_PROXY_ACTUAL" ]; then
+    print_success "Router proxy address matched prediction"
+else
+    print_info "Router proxy: predicted $ROUTER_PROXY, actual $ROUTER_PROXY_ACTUAL"
+fi
 
-print_step "Step 5: Initializing Contracts"
-
-# Initialize DemoToken with pool address
-print_substep "Initializing DemoToken..."
-INIT_TOKEN_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY")
-cast send "$TOKEN_PROXY" "$INIT_TOKEN_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json > /dev/null 2>&1
-print_success "DemoToken initialized (owner: $DEPLOYER_ADDRESS, pool: $POOL_PROXY)"
-
-# Initialize LiquidityPool with token address
-print_substep "Initializing LiquidityPool..."
-INIT_POOL_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$TOKEN_PROXY")
-cast send "$POOL_PROXY" "$INIT_POOL_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json > /dev/null 2>&1
-print_success "LiquidityPool initialized (owner: $DEPLOYER_ADDRESS, token: $TOKEN_PROXY)"
-
-# Initialize SwapRouter with pool and token addresses
-print_substep "Initializing SwapRouter..."
-INIT_ROUTER_DATA=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY" "$TOKEN_PROXY")
-cast send "$ROUTER_PROXY" "$INIT_ROUTER_DATA" \
-    --rpc-url "$ANVIL_URL" \
-    --private-key "$PRIVATE_KEY" \
-    --json > /dev/null 2>&1
-print_success "SwapRouter initialized (owner: $DEPLOYER_ADDRESS, pool: $POOL_PROXY, token: $TOKEN_PROXY)"
+# Use actual addresses for the rest of the script
+TOKEN_PROXY="$TOKEN_PROXY_ACTUAL"
+POOL_PROXY="$POOL_PROXY_ACTUAL"
+ROUTER_PROXY="$ROUTER_PROXY_ACTUAL"
 
 # =============================================================================
 # Step 6: Verify Deployment
@@ -401,8 +477,12 @@ print_substep "Swapping 100 DEMO for ETH through router..."
 SWAP_RESULT=$(cast send "$ROUTER_PROXY" "swapExactTokensForEth(uint256,uint256)" "$SWAP_AMOUNT" "0" \
     --rpc-url "$ANVIL_URL" \
     --private-key "$PRIVATE_KEY" \
-    --json 2>/dev/null)
-SWAP_TX=$(echo "$SWAP_RESULT" | jq -r '.transactionHash')
+    --json 2>&1) || true
+SWAP_TX=$(echo "$SWAP_RESULT" | jq -r '.transactionHash // empty' 2>/dev/null)
+if [ -z "$SWAP_TX" ] || [ "$SWAP_TX" = "null" ]; then
+    # Fallback: try to extract from non-JSON output
+    SWAP_TX=$(echo "$SWAP_RESULT" | grep -o 'transactionHash.*0x[a-fA-F0-9]\{64\}' | grep -o '0x[a-fA-F0-9]\{64\}')
+fi
 print_success "Swap executed"
 print_value "Transaction" "$SWAP_TX"
 

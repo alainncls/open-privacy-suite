@@ -348,8 +348,17 @@ if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
     FACTORY_RESULT=$(forge create src/CREATE3Factory.sol:CREATE3Factory \
         --rpc-url "$ANVIL_URL" \
         --private-key "$PRIVATE_KEY" \
-        --json 2>/dev/null)
-    CREATE3_FACTORY=$(echo "$FACTORY_RESULT" | jq -r '.deployedTo')
+        --json 2>&1) || true
+    CREATE3_FACTORY=$(echo "$FACTORY_RESULT" | jq -r '.deployedTo // empty' 2>/dev/null)
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        # Fallback: try to parse from non-JSON output
+        CREATE3_FACTORY=$(echo "$FACTORY_RESULT" | grep -o 'Deployed to: 0x[a-fA-F0-9]\{40\}' | cut -d' ' -f3)
+    fi
+    if [ -z "$CREATE3_FACTORY" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "  Output: $FACTORY_RESULT"
+        exit 1
+    fi
     print_success "Factory deployed: $CREATE3_FACTORY"
 
     # Configure factory for org
@@ -363,15 +372,32 @@ if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
     rm -rf "$BUILD_DIR"
     cd "$SCRIPT_DIR"
 else
-    print_success "Factory already configured: $CREATE3_FACTORY"
+    print_success "Factory configured: $CREATE3_FACTORY"
 
     # Verify factory has code
     FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0")
     if [ "$FACTORY_CODE_SIZE" = "0" ]; then
-        print_error "Factory has no code (chain may have been reset)"
-        exit 1
+        print_info "Factory has no code (chain may have been reset), deploying new factory..."
+
+        # Deploy new factory via dev endpoint
+        DEPLOY_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/dev/create3-factory")
+        CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
+
+        if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+            print_error "Failed to deploy CREATE3 factory"
+            echo "Response: $DEPLOY_RESP"
+            exit 1
+        fi
+        print_success "Deployed new factory: $CREATE3_FACTORY"
+
+        # Update org configuration
+        curl -s -X PUT "${PROXY_API_URL}/orgs/$ORG_ID/config/create3" \
+            -H "Content-Type: application/json" \
+            -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+        print_success "Factory configuration updated"
+    else
+        print_value "Factory code size" "$FACTORY_CODE_SIZE bytes"
     fi
-    print_value "Factory code size" "$FACTORY_CODE_SIZE bytes"
 fi
 
 # =============================================================================
@@ -454,11 +480,12 @@ git config user.name "Demo"
 git add -A
 git commit -m "Initial" --quiet
 
-print_substep "Installing OpenZeppelin contracts..."
+print_substep "Installing dependencies..."
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
-print_success "OpenZeppelin contracts installed"
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
+print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."
 forge build --quiet
@@ -524,12 +551,16 @@ EOF
 )
 
     DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
-    TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty')
-    DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r 'if .error then .error.message else empty end')
+    TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty' 2>/dev/null)
+    DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r '.error.message // .error // empty' 2>/dev/null)
 
-    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ] || [ -n "$DEPLOY_ERROR" ]; then
-        print_error "Failed to deploy $name: $DEPLOY_ERROR"
-        echo "$DEPLOY_RESULT" | jq '.' 2>/dev/null || echo "$DEPLOY_RESULT"
+    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
+        if [ -n "$DEPLOY_ERROR" ] && [ "$DEPLOY_ERROR" != "null" ]; then
+            print_error "Failed to deploy $name: $DEPLOY_ERROR"
+        else
+            print_error "Failed to deploy $name"
+        fi
+        echo "Response: $DEPLOY_RESULT" | head -5
         return 1
     fi
 

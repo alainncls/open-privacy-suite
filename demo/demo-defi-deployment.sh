@@ -234,20 +234,40 @@ print_step "Step 4: CREATE3 Factory Configuration"
 FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
 CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
 
+# Check if we need to deploy a factory
+NEED_FACTORY=false
 if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
-    print_error "No CREATE3 factory configured for this organization"
-    print_info "Run demo-privacy-proxy.sh first to set up the factory"
-    exit 1
+    NEED_FACTORY=true
+else
+    # Verify factory has code
+    FACTORY_CODE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0")
+    if [ "$FACTORY_CODE" = "0" ]; then
+        print_info "Factory at $CREATE3_FACTORY has no code, deploying new factory..."
+        NEED_FACTORY=true
+    fi
+fi
+
+if [ "$NEED_FACTORY" = true ]; then
+    print_substep "Deploying CREATE3 factory..."
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
+
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "Response: $DEPLOY_RESP"
+        exit 1
+    fi
+    print_success "Deployed factory: $CREATE3_FACTORY"
+
+    # Configure the org with the new factory
+    curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for org"
 fi
 
 print_success "Factory: $CREATE3_FACTORY"
-
-# Verify factory
 FACTORY_CODE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0")
-if [ "$FACTORY_CODE" = "0" ]; then
-    print_error "Factory has no code (chain may have been reset)"
-    exit 1
-fi
 print_value "Factory code size" "$FACTORY_CODE bytes"
 
 # =============================================================================
@@ -353,6 +373,7 @@ print_substep "Installing dependencies..."
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
 
 print_substep "Compiling..."
 forge build --quiet

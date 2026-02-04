@@ -1,199 +1,233 @@
-# Privacy Proxy - CREATE3 Proxy Upgrade Demo
+# Privacy Proxy Demo Scripts
 
-This demo showcases the complete flow of deploying and upgrading contracts using the CREATE3 deterministic deployment pattern with preregistered addresses.
+This directory contains demo scripts showcasing the privacy proxy's deployment and RBAC features with UUPS upgradeable contracts.
+
+## Demo Scripts Overview
+
+| Script | Description | Requires Proxy |
+|--------|-------------|----------------|
+| `demo-anvil-direct.sh` | Baseline deployment directly to Anvil | No |
+| `demo-privacy-proxy.sh` | Full workflow through privacy proxy with RBAC | Yes |
+| `demo-defi-deployment.sh` | CREATE3 deterministic DeFi deployment | Yes |
+| `demo-upgrade.sh` | UUPS proxy upgrade demonstration | Yes |
+| `demo-proxy-upgrade.sh` | Proxy upgrade with preregistered addresses | Yes |
+| `demo-blocked-deployment.sh` | Demonstrates RBAC blocking unauthorized deploys | Yes |
 
 ## Prerequisites
 
 1. **Foundry** - Install from https://getfoundry.sh
-2. **Privacy Proxy** running with:
-   - Admin API available
-   - RPC endpoint configured
-   - An organization with CREATE3 factory configured
-3. **jq** - For JSON parsing
-4. **curl** - For API calls
+2. **jq** - For JSON parsing
+3. **curl** - For API calls
+4. **Anvil** - Running on localhost:8545
+
+For proxy scripts, also need:
+- **Privacy Proxy** running on localhost:8080
+- An organization configured in the proxy
+
+## Quick Start
+
+```bash
+# Run the baseline demo (no proxy needed, just Anvil)
+anvil &
+./demo-anvil-direct.sh
+
+# Run proxy demos (requires privacy proxy running)
+./demo-privacy-proxy.sh
+```
+
+## Script Details
+
+### demo-anvil-direct.sh (Baseline)
+
+**Purpose:** Demonstrates direct deployment to Anvil without RBAC - serves as a baseline to verify contract logic works correctly.
+
+**What it does:**
+1. Compiles DemoToken, LiquidityPool, and SwapRouter contracts
+2. Deploys implementation contracts using regular CREATE opcode
+3. Predicts proxy addresses using nonce-based address computation
+4. Deploys UUPS proxies with initialization data
+5. Verifies circular references (Token ↔ Pool ↔ Router)
+6. Tests contract interactions:
+   - Mints 1000 DEMO tokens
+   - Approves and adds liquidity to pool
+   - Executes a swap through the router
+
+**Key Points:**
+- Uses nonce-based address prediction to resolve circular dependencies
+- No RBAC or permissions - anyone with ETH can deploy
+- Demonstrates that contracts work correctly before adding proxy layer
+
+---
+
+### demo-privacy-proxy.sh (Full RBAC Workflow)
+
+**Purpose:** Demonstrates the complete deployment flow through the privacy proxy with RBAC enforcement.
+
+**What it does:**
+1. Authenticates user via mock token
+2. Sets up organization and user permissions
+3. Deploys/configures CREATE3 factory
+4. Preregisters contract addresses
+5. Deploys contracts through proxy to preregistered addresses
+6. Verifies deployment and tests interactions
+
+**Security Features:**
+- All transactions go through RBAC-enforced proxy
+- Addresses must be preregistered before deployment
+- User must have KYC and deploy permissions
+
+---
+
+### demo-defi-deployment.sh (CREATE3 Deterministic)
+
+**Purpose:** Showcases CREATE3 deterministic deployment for DeFi contracts with circular dependencies.
+
+**What it does:**
+1. Computes addresses deterministically using CREATE3 (factory + salt)
+2. Preregisters all addresses before any deployment
+3. Deploys Token, Pool, Router with known addresses
+4. Demonstrates that addresses are independent of bytecode
+
+**Key Benefit:** Same addresses across all EVM chains when using same factory and salts.
+
+---
+
+### demo-upgrade.sh (UUPS Upgrade Flow)
+
+**Purpose:** Demonstrates upgrading UUPS proxies from V1 to V2 implementations.
+
+**What it does:**
+1. Deploys V1 implementations (Token, Pool, Router)
+2. Deploys proxies pointing to V1
+3. Interacts with V1 (version returns "1.0.0")
+4. Deploys V2 implementations with new features
+5. Upgrades proxies to V2
+6. Verifies state preservation and new features
+
+**V2 Features:**
+- DemoTokenV2: `burn()` function
+- LiquidityPoolV2: Configurable fees
+- SwapRouterV2: Deadline protection
+
+---
+
+### demo-proxy-upgrade.sh (Preregistered Upgrade)
+
+**Purpose:** Shows the admin/deployer separation for contract upgrades.
+
+**Security Model:**
+- **Org Admin**: Preregisters addresses (controls WHERE)
+- **Deployer**: Deploys to preregistered addresses only
+
+---
+
+### demo-blocked-deployment.sh (RBAC Enforcement)
+
+**Purpose:** Demonstrates that the RBAC system blocks unauthorized deployments.
+
+**What it shows:**
+- Deployments to non-preregistered addresses are blocked
+- Users without proper permissions cannot deploy
+- Cross-org isolation is enforced
 
 ## Environment Variables
 
 ```bash
-# Required - use ORG_SLUG (recommended, this is what you see in the UI)
-export ORG_SLUG="your-org-slug"
-
-# Or use ORG_ID directly if you know it
-# export ORG_ID="uuid-of-your-org"
-
 # Optional (defaults shown)
 export ADMIN_API_URL="http://localhost:8080/api"
-export PROXY_RPC_URL="http://localhost:8080"   # Privacy proxy (RBAC-enforced)
-export ANVIL_RPC_URL="http://localhost:8545"   # Direct to node (read-only)
-export CREATE3_FACTORY="<fetched from org config if not set>"
+export PROXY_RPC_URL="http://localhost:8080"
+export ANVIL_URL="http://localhost:8545"
 
 # Deployer key - defaults to Anvil's first account
-export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 # Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
-
-**Note:** The script will automatically look up the organization ID from the slug via the API.
-
-**Important:** All transactions go through the privacy proxy (`PROXY_RPC_URL`) which enforces RBAC. The script automatically:
-1. Creates a user with DID `did:demo:deployer-<timestamp>`
-2. Authenticates via mock token (requires `ALLOW_MOCK_LOGIN=true` in dev mode)
-3. Sets up KYC and deploy permissions
-4. Sends transactions through the proxy with JWT authentication
-
-## Security Model
-
-The demo respects the separation of concerns between **org admins** and **deployers**:
-
-### Org Admin Role
-- Preregisters addresses (planning phase)
-- Determines WHERE contracts can be deployed
-- Controls the address pool
-
-### Deployer Role
-- Deploys to already-preregistered addresses only
-- Cannot deploy to arbitrary addresses
-- Picks from the pre-approved address pool
-
-### Demo Behavior
-
-1. **If preregistered addresses exist** → Uses them (realistic deployer flow)
-2. **If not enough addresses** → Stops and asks admin to preregister
-
-To run in admin mode (for initial setup or demos):
-```bash
-ALLOW_PREREGISTER=true ORG_SLUG="my-org" ./demo-proxy-upgrade.sh
-```
-
-## Running the Demo
-
-```bash
-./demo-proxy-upgrade.sh
-```
-
-## What the Demo Does
-
-### 1. Configuration Check
-- Validates environment variables
-- Fetches CREATE3 factory from org config (if not provided)
-
-### 2. Check Preregistered Addresses
-- Fetches existing preregistered addresses for the organization
-- API: `GET /api/orgs/:org_id/addresses/preregistered`
-- **If 3+ addresses exist**: Uses them for deployment (deployer flow)
-- **If not enough**: Stops and asks admin to preregister, OR
-- **With ALLOW_PREREGISTER=true**: Preregisters new addresses (admin flow)
-
-### 4. Build Contracts
-- Compiles BoxV1 and BoxV2 Solidity contracts
-- Uses OpenZeppelin's UUPS upgradeable pattern
-
-### 5. Deploy Implementation V1
-- Deploys BoxV1 to preregistered address via CREATE3 factory
-- Verifies deployment
-
-### 6. Deploy ERC1967 Proxy
-- Deploys proxy pointing to V1 implementation
-- Initializes with deployer as owner
-
-### 7. Interact with V1
-- Calls `version()` → returns "1.0.0"
-- Calls `store(42)` → stores value
-- Calls `retrieve()` → returns 42
-
-### 8. Deploy Implementation V2
-- Deploys BoxV2 to second preregistered address
-
-### 9. Upgrade Proxy
-- Calls `upgradeToAndCall()` to point proxy to V2
-
-### 10. Interact with V2
-- Calls `version()` → returns "2.0.0"
-- Calls `retrieve()` → returns 42 (state preserved!)
-- Calls `increment()` → new V2 function
-- Calls `retrieve()` → returns 43
 
 ## Contract Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     ERC1967 Proxy                           │
-│  (Preregistered Address #1)                                 │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Storage Slot 0x360894...                            │   │
-│  │ Implementation Address → BoxV1 or BoxV2             │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼ delegatecall
-┌─────────────────────────────────────────────────────────────┐
-│  BoxV1 (Preregistered Address #2)                           │
-│  - version() → "1.0.0"                                      │
-│  - store(uint256)                                           │
-│  - retrieve() → uint256                                     │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼ upgrade
-┌─────────────────────────────────────────────────────────────┐
-│  BoxV2 (Preregistered Address #3)                           │
-│  - version() → "2.0.0"                                      │
-│  - store(uint256)                                           │
-│  - retrieve() → uint256                                     │
-│  - increment() ← NEW!                                       │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        DemoToken Proxy                            │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ ERC1967 Storage: implementation → DemoToken V1/V2          │  │
+│  │ State: balances, allowances, owner, pool reference         │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ delegatecall
+┌──────────────────────────────────────────────────────────────────┐
+│  DemoToken Implementation (V1 or V2)                              │
+│  - ERC20 functionality                                            │
+│  - mint() (owner only)                                            │
+│  - pool reference for circular dependency                         │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                      LiquidityPool Proxy                          │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ State: token reference, reserves, liquidity shares         │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ delegatecall
+┌──────────────────────────────────────────────────────────────────┐
+│  LiquidityPool Implementation                                     │
+│  - addLiquidity() / removeLiquidity()                             │
+│  - swap() functionality                                           │
+│  - V2 adds: setFee(), configurable fees                           │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                       SwapRouter Proxy                            │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ State: pool reference, token reference                     │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ delegatecall
+┌──────────────────────────────────────────────────────────────────┐
+│  SwapRouter Implementation                                        │
+│  - swapTokensForETH() / swapETHForTokens()                        │
+│  - V2 adds: deadline protection                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## Security Features Demonstrated
+## Circular Dependency Resolution
 
-1. **Address Preregistration**: Addresses must be preregistered before deployment
-2. **CREATE3 Determinism**: Addresses are determined by factory + salt, not bytecode
-3. **Per-Org Isolation**: Each org has its own factory and address pool
-4. **Bytecode Validation**: Deployed bytecode is validated for security
+The contracts have circular dependencies:
+- Token needs Pool address (for authorized minting)
+- Pool needs Token address (to transfer tokens)
+- Router needs both Pool and Token addresses
 
-## Sample Output
+**Solution with CREATE3:**
+1. Compute all addresses deterministically BEFORE deployment
+2. Pass addresses during initialization
+3. Deploy in any order - addresses are already known
 
-```
-╔══════════════════════════════════════════════════════════════════════╗
-║                    CREATE3 Proxy Upgrade Demo                         ║
-╚══════════════════════════════════════════════════════════════════════╝
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-▶ Step 1: Checking CREATE3 Factory Configuration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ✓ CREATE3 Factory: 0x1234...
-
-...
-
-╔══════════════════════════════════════════════════════════════════════╗
-║                          Demo Complete!                               ║
-╚══════════════════════════════════════════════════════════════════════╝
-
-Summary:
-┌─────────────────────────────────────────────────────────────────────┐
-│  CREATE3 Factory:     0x1234...                                     │
-│  Proxy Address:       0xabcd...                                     │
-│  Implementation V1:   0x5678...                                     │
-│  Implementation V2:   0x9abc...                                     │
-├─────────────────────────────────────────────────────────────────────┤
-│  Version before upgrade:  "1.0.0"                                   │
-│  Version after upgrade:   "2.0.0"                                   │
-│  Value preserved:         42                                        │
-│  Value after increment:   43                                        │
-└─────────────────────────────────────────────────────────────────────┘
-```
+**Solution with CREATE (nonce-based):**
+1. Predict addresses using deployer + nonce
+2. Deploy proxies in predicted order
+3. Initialize with predicted addresses
 
 ## Troubleshooting
 
-### "No CREATE3 factory configured"
-Configure a factory for your org via:
+### "Could not connect to Anvil"
 ```bash
-curl -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
-  -H "Content-Type: application/json" \
-  -d '{"factory": "0x..."}'
+# Start Anvil
+anvil
+```
+
+### "No CREATE3 factory configured" / "Factory has no code"
+The scripts now auto-deploy the factory using the dev endpoint. If issues persist:
+```bash
+curl -X POST "http://localhost:8080/api/v1/dev/create3-factory"
 ```
 
 ### "target address is not preregistered"
-The CREATE3 factory call validation ensures all deployments go to preregistered addresses. Make sure you're using the salts returned from preregistration.
+Addresses must be preregistered before deployment. The demo scripts handle this automatically.
 
 ### "missing required deploy claim"
-Ensure your user has the `deploy` claim in their group's permissions.
+Ensure the user has deploy permissions in their group.
+
+### RBAC blocks upgrade calls
+The `upgradeToAndCall()` function may be blocked by RBAC if the V2 implementation address isn't properly registered. Use `demo-anvil-direct.sh` to verify contract logic works.

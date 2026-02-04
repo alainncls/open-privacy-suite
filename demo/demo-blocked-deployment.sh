@@ -281,22 +281,43 @@ if [ -z "$CREATE3_FACTORY" ]; then
     print_substep "Fetching factory address from org config..."
     FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/config/create3")
     CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
+fi
 
-    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
-        print_error "No CREATE3 factory configured for this organization"
-        exit 1
+# Check if we need to deploy a factory
+NEED_FACTORY=false
+if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+    NEED_FACTORY=true
+else
+    # Verify factory has code
+    FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
+    if [ "$FACTORY_CODE_SIZE" = "0" ]; then
+        print_info "Factory at $CREATE3_FACTORY has no code, deploying new factory..."
+        NEED_FACTORY=true
     fi
 fi
 
-print_success "CREATE3 Factory: $CREATE3_FACTORY"
+if [ "$NEED_FACTORY" = true ]; then
+    print_substep "Deploying CREATE3 factory..."
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
-# Verify factory has code (using Anvil directly for read-only check)
-FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
-if [ "$FACTORY_CODE_SIZE" = "0" ]; then
-    print_error "No contract found at factory address"
-    exit 1
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "Response: $DEPLOY_RESP"
+        exit 1
+    fi
+    print_success "Deployed factory: $CREATE3_FACTORY"
+
+    # Configure the org with the new factory
+    curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for org"
 fi
-print_success "Factory contract verified"
+
+print_success "CREATE3 Factory: $CREATE3_FACTORY"
+FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null || echo "0")
+print_success "Factory contract verified ($FACTORY_CODE_SIZE bytes)"
 
 # =============================================================================
 # Step 2: Get preregistered address
@@ -372,11 +393,12 @@ git config user.name "Demo"
 git add -A
 git commit -m "Initial" --quiet
 
-# Install OpenZeppelin
-print_substep "Installing OpenZeppelin contracts..."
+# Install dependencies
+print_substep "Installing dependencies..."
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
 print_success "Dependencies installed"
 
 print_substep "Compiling MaliciousBox..."
