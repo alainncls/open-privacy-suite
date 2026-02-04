@@ -8,6 +8,21 @@ const generateOrgSlug = () => `factory-test-${Date.now()}`;
 // Salt prefix must be unique per test run to avoid "address already registered" errors
 const generateSaltPrefix = (base: string) => `0x${base}${Date.now().toString(16).slice(-8)}`;
 
+// Helper to check if runtime tracing is enabled (ABI column is hidden when enabled)
+async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
+  const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+  try {
+    const response = await request.get(`${ADMIN_URL}/api/v1/status`);
+    if (response.ok()) {
+      const data = await response.json();
+      return data?.security?.runtime_tracing_enabled === true;
+    }
+  } catch {
+    // If we can't check, assume it's disabled
+  }
+  return false;
+}
+
 test.describe('Pre-registered Addresses and Factory Config', () => {
   test.beforeEach(async ({ page }) => {
     await mockLoginViaAPI(page);
@@ -463,6 +478,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('ABI column visible in table', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-column-test-${Date.now()}`;
@@ -498,6 +519,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('shows "Not set" badge when no ABI configured', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-notset-test-${Date.now()}`;
@@ -534,6 +561,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('can open ABI editor modal', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-editor-open-test-${Date.now()}`;
@@ -589,6 +622,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('can save ABI successfully', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-save-test-${Date.now()}`;
@@ -646,6 +685,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('shows JSON validation error for invalid ABI', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-validation-test-${Date.now()}`;
@@ -697,6 +742,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('can close ABI editor with cancel', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-cancel-test-${Date.now()}`;
@@ -746,6 +797,12 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
   });
 
   test('shows "Set" badge for address with ABI pre-configured', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
     const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
 
     const orgSlug = `abi-preset-test-${Date.now()}`;
