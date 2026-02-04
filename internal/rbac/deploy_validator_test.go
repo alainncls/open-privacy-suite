@@ -241,6 +241,28 @@ func TestDeploymentValidator_DynamicCall(t *testing.T) {
 	}
 }
 
+func TestDeploymentValidator_DynamicCallWithRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Enable runtime tracing - this should allow dynamic calls
+	validator.SetRuntimeTracingEnabled(true)
+
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With runtime tracing enabled, dynamic calls should be ALLOWED
+	// because they will be validated at execution time via debug_traceCall
+	if !result.Allowed {
+		t.Errorf("expected deployment to be ALLOWED when runtime tracing is enabled, got denied: %s", result.Reason)
+	}
+	if !result.HasDynamicCalls {
+		t.Error("expected HasDynamicCalls to be true")
+	}
+}
+
 func TestDeploymentValidator_CallingOrgOwnedAddress(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	// Register the address as owned by org1

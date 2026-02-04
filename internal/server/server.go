@@ -149,6 +149,13 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
 
+	// Configure runtime tracing mode for deployment validation
+	// When enabled, contracts with dynamic calls are allowed at deploy time
+	// because those calls will be validated at runtime via debug_traceCall
+	if cfg.EnableRuntimeTracing {
+		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
+	}
+
 	// Load additional trusted factory hashes from config
 	if len(cfg.TrustedFactoryHashes) > 0 {
 		for _, hash := range cfg.TrustedFactoryHashes {

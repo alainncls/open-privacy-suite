@@ -94,10 +94,12 @@ rpc_call() {
     local method="$1"
     local params="$2"
 
+    # Use stdin for data to handle large payloads (contract bytecode can be very long)
+    echo "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":1}" | \
     curl -s -X POST "$PROXY_RPC_URL" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":1}"
+        -d @-
 }
 
 # =============================================================================
@@ -109,9 +111,10 @@ api_call() {
     local data="$3"
 
     if [ -n "$data" ]; then
-        curl -s -X "$method" "${PROXY_API_URL}${endpoint}" \
+        # Use stdin for data to handle large payloads
+        echo "$data" | curl -s -X "$method" "${PROXY_API_URL}${endpoint}" \
             -H "Content-Type: application/json" \
-            -d "$data"
+            -d @-
     else
         curl -s -X "$method" "${PROXY_API_URL}${endpoint}"
     fi
@@ -482,9 +485,11 @@ git commit -m "Initial" --quiet
 
 print_substep "Installing dependencies..."
 mkdir -p lib
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
-git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null
+# Clone dependencies (skip if already exists)
+[ -d "lib/openzeppelin-contracts-upgradeable" ] || git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || true
+[ -d "lib/openzeppelin-contracts" ] || git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null || true
+[ -d "lib/forge-std" ] || git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null || true
+[ -d "lib/solady" ] || git clone --quiet --depth 1 https://github.com/Vectorized/solady.git lib/solady 2>/dev/null || true
 print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."
@@ -534,7 +539,17 @@ deploy_via_create3() {
 
     print_substep "Deploying $name..."
 
-    DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$salt" "$bytecode")
+    # deploy(bytes32,bytes) selector = 0xcdcb760a
+    # Use abi-encode for the arguments and prepend the selector
+    # This is more reliable than cast calldata for large bytecode
+    local encoded_args
+    encoded_args=$(cast abi-encode "f(bytes32,bytes)" "$salt" "$bytecode" 2>&1) || {
+        print_error "Failed to encode deployment data for $name"
+        echo "  Error: $encoded_args"
+        return 1
+    }
+    # Prepend the function selector (deploy(bytes32,bytes) = 0xcdcb760a)
+    DEPLOY_CALLDATA="0xcdcb760a${encoded_args:2}"
 
     NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
     NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
@@ -581,20 +596,41 @@ deploy_via_create3 "$ROUTER_IMPL_SALT" "$SWAPROUTER_BYTECODE" "SwapRouter Implem
 
 # Deploy proxies with initialization
 # Token: initialize(owner, pool)
-TOKEN_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR")
-TOKEN_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$TOKEN_IMPL_ADDR" "$TOKEN_INIT_DATA")
+print_substep "Preparing DemoToken Proxy deployment..."
+TOKEN_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR") || {
+    print_error "Failed to encode token initialization data"
+    exit 1
+}
+TOKEN_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$TOKEN_IMPL_ADDR" "$TOKEN_INIT_DATA") || {
+    print_error "Failed to encode token proxy constructor"
+    exit 1
+}
 TOKEN_PROXY_INITCODE="${PROXY_BYTECODE}${TOKEN_PROXY_CONSTRUCTOR:2}"
 deploy_via_create3 "$TOKEN_PROXY_SALT" "$TOKEN_PROXY_INITCODE" "DemoToken Proxy" "$TOKEN_PROXY_ADDR"
 
 # Pool: initialize(owner, token)
-POOL_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$TOKEN_PROXY_ADDR")
-POOL_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$POOL_IMPL_ADDR" "$POOL_INIT_DATA")
+print_substep "Preparing LiquidityPool Proxy deployment..."
+POOL_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$TOKEN_PROXY_ADDR") || {
+    print_error "Failed to encode pool initialization data"
+    exit 1
+}
+POOL_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$POOL_IMPL_ADDR" "$POOL_INIT_DATA") || {
+    print_error "Failed to encode pool proxy constructor"
+    exit 1
+}
 POOL_PROXY_INITCODE="${PROXY_BYTECODE}${POOL_PROXY_CONSTRUCTOR:2}"
 deploy_via_create3 "$POOL_PROXY_SALT" "$POOL_PROXY_INITCODE" "LiquidityPool Proxy" "$POOL_PROXY_ADDR"
 
 # Router: initialize(owner, pool, token)
-ROUTER_INIT_DATA=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR" "$TOKEN_PROXY_ADDR")
-ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER_IMPL_ADDR" "$ROUTER_INIT_DATA")
+print_substep "Preparing SwapRouter Proxy deployment..."
+ROUTER_INIT_DATA=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR" "$TOKEN_PROXY_ADDR") || {
+    print_error "Failed to encode router initialization data"
+    exit 1
+}
+ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER_IMPL_ADDR" "$ROUTER_INIT_DATA") || {
+    print_error "Failed to encode router proxy constructor"
+    exit 1
+}
 ROUTER_PROXY_INITCODE="${PROXY_BYTECODE}${ROUTER_PROXY_CONSTRUCTOR:2}"
 deploy_via_create3 "$ROUTER_PROXY_SALT" "$ROUTER_PROXY_INITCODE" "SwapRouter Proxy" "$ROUTER_PROXY_ADDR"
 

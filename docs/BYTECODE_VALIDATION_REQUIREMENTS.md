@@ -114,6 +114,10 @@ Therefore: upgrade targets are always validated
 
 ### At Deployment Time
 
+The behavior of deployment validation depends on whether **runtime tracing** is enabled via `ENABLE_RUNTIME_TRACING=true`:
+
+#### Without Runtime Tracing (default)
+
 | Pattern | Action | Reason |
 |---------|--------|--------|
 | Dynamic CALL | **BLOCK** | Can call any address at runtime |
@@ -122,6 +126,21 @@ Therefore: upgrade targets are always validated
 | Static CALL to non-org address | **BLOCK** | Cross-org interaction (unless cross-org permission configured) |
 | Static CALL to org-owned address | **ALLOW** | Safe, predictable |
 | CREATE/CREATE2 | **BLOCK** | Bypasses address preregistration |
+
+#### With Runtime Tracing Enabled
+
+When `ENABLE_RUNTIME_TRACING=true`, dynamic calls are **ALLOWED** at deployment time because they will be validated at execution time via `debug_traceCall`. This enables compatibility with more contracts (e.g., OpenZeppelin upgradeable contracts) while maintaining security through runtime validation.
+
+| Pattern | Action | Reason |
+|---------|--------|--------|
+| Dynamic CALL | **ALLOW** | Validated at runtime via trace |
+| Dynamic STATICCALL | **ALLOW** | Validated at runtime via trace |
+| Dynamic DELEGATECALL | **ALLOW** | Validated at runtime via trace |
+| Static CALL to non-org address | **BLOCK** | Cross-org interaction (unless cross-org permission configured) |
+| Static CALL to org-owned address | **ALLOW** | Safe, predictable |
+| CREATE/CREATE2 | **BLOCK** | Bypasses address preregistration |
+
+See `RUNTIME_VALIDATION_ANALYSIS.md` for detailed analysis of the runtime tracing approach.
 
 ### Constructor Argument Validation
 

@@ -603,6 +603,65 @@ func TestAccessController_FactoryCallIntegration(t *testing.T) {
 	})
 }
 
+func TestFactoryCallValidator_RuntimeTracingAllowsDynamicCalls(t *testing.T) {
+	// This test verifies that when runtime tracing is enabled,
+	// contracts with dynamic calls are allowed through factory deployment
+	// because those calls will be validated at execution time via debug_traceCall
+	store := newFactoryCallTestStore()
+
+	factoryAddr := "0x1234567890123456789012345678901234567890"
+	orgID := "org1"
+
+	// Preregister target address
+	var salt [32]byte
+	copy(salt[:], []byte("runtime-trace-test-000000000000"))
+	targetAddr, _ := create3.CalculateCREATE3AddressFromHex(factoryAddr, "0x"+hex.EncodeToString(salt[:]))
+	store.setAddressPreregistered(orgID, targetAddr.Hex())
+
+	// Create bytecode with dynamic calls (SLOAD then CALL - loads call target from storage)
+	// This matches the bytecodeWithDynamicCall constant in deploy_validator_test.go
+	// PUSH1 0x00 SLOAD ... CALL STOP - the SLOAD makes the call target dynamic
+	bytecodeWithDynamicCall, _ := hex.DecodeString("600054600060006000600060006000f100")
+
+	t.Run("without runtime tracing - dynamic calls are blocked", func(t *testing.T) {
+		deployValidator := NewDeploymentValidator(store)
+		// Runtime tracing NOT enabled (default)
+
+		validator := NewFactoryCallValidator(store, deployValidator)
+		calldata := buildDeployCalldata(salt, bytecodeWithDynamicCall)
+
+		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddr, factoryAddr, calldata)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.Allowed {
+			t.Error("expected dynamic call to be BLOCKED without runtime tracing")
+		}
+		if !strings.Contains(result.Reason, "dynamic") {
+			t.Errorf("expected reason to mention dynamic calls, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("with runtime tracing - dynamic calls are allowed", func(t *testing.T) {
+		deployValidator := NewDeploymentValidator(store)
+		// Enable runtime tracing
+		deployValidator.SetRuntimeTracingEnabled(true)
+
+		validator := NewFactoryCallValidator(store, deployValidator)
+		calldata := buildDeployCalldata(salt, bytecodeWithDynamicCall)
+
+		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddr, factoryAddr, calldata)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !result.Allowed {
+			t.Errorf("expected dynamic call to be ALLOWED with runtime tracing, got: %s", result.Reason)
+		}
+	})
+}
+
 // Helper function for context
 func ctx() context.Context {
 	return context.Background()

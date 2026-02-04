@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
+
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -218,36 +220,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil
 	}
 
-	// Tiered validation: skip tracing if target is known to be org-owned
-	// This optimization avoids expensive tracing for simple intra-org calls
-	if p.runtimeTracer.IsTieredEnabled() {
-		// Check if target is already known to be owned by user's org
-		// (This would require getting user's org context, which CheckAccess already validated)
-		// For now, we trace all transactions when tracing is enabled
-		// A future optimization can cache org-owned addresses
-	}
-
-	// Extract transaction parameters for tracing
-	from, to, data, value := extractTxParams(req.Params)
-	if to == "" {
-		return nil // Deployment - skip
-	}
-
-	// Perform the trace
-	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
-	if err != nil {
-		// Trace failed - log and deny for safety
-		return &ProcessError{
-			StatusCode: http.StatusForbidden,
-			Message:    fmt.Sprintf("runtime trace failed: %v", err),
-		}
-	}
-
-	if traceResult == nil {
-		return nil // Tracing not applicable
-	}
-
-	// Get user's organization IDs for validation
+	// Get user info early for tiered validation
 	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 	if err != nil || user == nil {
 		return &ProcessError{
@@ -270,6 +243,61 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		if m.Group != nil {
 			userOrgIDs[m.Group.OrgID] = true
 		}
+	}
+
+	// Tiered validation: skip tracing if target is known to be org-owned
+	// This is critical for factory calls - the factory uses CREATE2/CREATE internally
+	// which would be blocked by trace validation, but the RBAC factory call validation
+	// already verified the call is legitimate.
+	if p.runtimeTracer.IsTieredEnabled() {
+		normalizedTarget := strings.ToLower(strings.TrimSpace(targetAddr))
+
+		// Check if target is owned by any of the user's orgs or is the org's factory
+		for orgID := range userOrgIDs {
+			// Check 1: Is this the org's CREATE3 factory?
+			// The factory uses CREATE2/CREATE internally which would fail trace validation,
+			// but factory calls are already validated by factory_call_validator in RBAC CheckAccess
+			org, err := p.rbacAccessCtrl.Store().GetOrganization(ctx, orgID)
+			if err == nil && org != nil {
+				factoryAddr := rbac.GetOrgFactoryAddress(org)
+				if factoryAddr != "" && strings.ToLower(factoryAddr) == normalizedTarget {
+					// Target is org's factory - skip tracing
+					return nil
+				}
+			}
+
+			// Check 2: Is target in org's registered contracts?
+			isOwned, err := p.rbacAccessCtrl.Store().IsAddressOwnedByOrg(ctx, normalizedTarget, orgID)
+			if err != nil {
+				// Log but don't fail - proceed with full tracing
+				continue
+			}
+			if isOwned {
+				// Target is org-owned, skip tracing
+				// The RBAC CheckAccess already validated the call
+				return nil
+			}
+		}
+	}
+
+	// Extract transaction parameters for tracing
+	from, to, data, value := extractTxParams(req.Params)
+	if to == "" {
+		return nil // Deployment - skip
+	}
+
+	// Perform the trace
+	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	if err != nil {
+		// Trace failed - log and deny for safety
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("runtime trace failed: %v", err),
+		}
+	}
+
+	if traceResult == nil {
+		return nil // Tracing not applicable
 	}
 
 	// Validate the trace against org isolation rules

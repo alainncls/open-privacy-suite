@@ -279,6 +279,14 @@ func (c *AccessController) Store() Store {
 	return c.store
 }
 
+// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
+// When runtime tracing is enabled, contracts with dynamic calls are allowed at deploy time
+// because those calls will be validated at runtime via debug_traceCall.
+// This must be called after NewAccessController to configure the behavior.
+func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
+	c.deployValidator.SetRuntimeTracingEnabled(enabled)
+}
+
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)

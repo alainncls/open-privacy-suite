@@ -12,12 +12,21 @@ import (
 
 // DeploymentValidator validates contract deployments against org security rules.
 type DeploymentValidator struct {
-	store Store
+	store                  Store
+	runtimeTracingEnabled  bool // When true, dynamic calls are allowed (validated at runtime instead)
 }
 
 // NewDeploymentValidator creates a new deployment validator.
 func NewDeploymentValidator(store Store) *DeploymentValidator {
 	return &DeploymentValidator{store: store}
+}
+
+// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
+// When runtime tracing is enabled, contracts with dynamic calls are ALLOWED at deploy time
+// because those calls will be validated at runtime via debug_traceCall.
+// This aligns with the security model documented in RUNTIME_VALIDATION_ANALYSIS.md.
+func (v *DeploymentValidator) SetRuntimeTracingEnabled(enabled bool) {
+	v.runtimeTracingEnabled = enabled
 }
 
 // ValidationResult contains the result of deployment validation.
@@ -114,9 +123,11 @@ func (v *DeploymentValidator) ValidateDeployment(
 	}
 
 	// Check 2: Block contracts with dynamic call targets
-	// Exception: Proxy contracts are expected to have dynamic DELEGATECALL patterns
+	// Exception 1: Proxy contracts are expected to have dynamic DELEGATECALL patterns
 	// (they load the implementation address from storage and delegatecall to it)
-	if analysis.HasDynamicCall && !proxyInfo.IsProxy {
+	// Exception 2: When runtime tracing is enabled, dynamic calls are validated at execution time
+	// via debug_traceCall, so we allow them at deploy time (see RUNTIME_VALIDATION_ANALYSIS.md)
+	if analysis.HasDynamicCall && !proxyInfo.IsProxy && !v.runtimeTracingEnabled {
 		result.Allowed = false
 		result.Reason = "contract contains dynamic external calls (address from storage/calldata)"
 		return result, nil
@@ -239,8 +250,9 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	}
 
 	// Check 2: Block contracts with dynamic call targets
-	// Exception: Proxy contracts are expected to have dynamic DELEGATECALL patterns
-	if analysis.HasDynamicCall && !proxyInfo.IsProxy {
+	// Exception 1: Proxy contracts are expected to have dynamic DELEGATECALL patterns
+	// Exception 2: When runtime tracing is enabled, dynamic calls are validated at execution time
+	if analysis.HasDynamicCall && !proxyInfo.IsProxy && !v.runtimeTracingEnabled {
 		result.Allowed = false
 		result.Reason = "contract contains dynamic external calls (address from storage/calldata)"
 		return result, nil
