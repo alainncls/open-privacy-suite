@@ -590,14 +590,20 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 
 // StatusResponse represents the system status
 type StatusResponse struct {
-	Proxy ProxyStatus `json:"proxy"`
-	Node  NodeStatus  `json:"node"`
+	Proxy    ProxyStatus    `json:"proxy"`
+	Node     NodeStatus     `json:"node"`
+	Security SecurityStatus `json:"security"`
 }
 
 // ProxyStatus represents the proxy status
 type ProxyStatus struct {
 	Status string `json:"status"`
 	Port   string `json:"port"`
+}
+
+// SecurityStatus represents the security configuration status
+type SecurityStatus struct {
+	RuntimeTracingEnabled bool `json:"runtime_tracing_enabled"`
 }
 
 // NodeStatus represents the node status
@@ -612,6 +618,9 @@ func (s *Server) getStatus(c *gin.Context) {
 	// Check node health
 	nodeHealth := s.proxy.CheckHealth()
 
+	// Check if runtime tracing is enabled
+	runtimeTracingEnabled := s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
+
 	status := StatusResponse{
 		Proxy: ProxyStatus{
 			Status: "running",
@@ -622,6 +631,9 @@ func (s *Server) getStatus(c *gin.Context) {
 			URL:       nodeHealth.URL,
 			LatencyMs: nodeHealth.LatencyMs,
 			Error:     nodeHealth.Error,
+		},
+		Security: SecurityStatus{
+			RuntimeTracingEnabled: runtimeTracingEnabled,
 		},
 	}
 

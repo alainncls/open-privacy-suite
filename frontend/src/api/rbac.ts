@@ -137,6 +137,16 @@ export const rbacApi = {
     getCacheStats: () => api.get<CacheStats>('/cache/stats'),
   },
 
+  // System status
+  status: {
+    get: () =>
+      api.get<{
+        proxy: { status: string; port: string };
+        node: { status: string; url: string; latency_ms: number; error?: string };
+        security: { runtime_tracing_enabled: boolean };
+      }>('/status'),
+  },
+
   // Org config endpoints
   orgConfig: {
     getCreate3Factory: (orgId: string) =>

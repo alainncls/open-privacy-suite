@@ -330,6 +330,16 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	}
 
 	// Check 4: Constructor argument validation
+	// When runtime tracing is enabled and no ABI is provided, skip constructor validation.
+	// Any addresses in constructor args will be validated at runtime when the contract makes calls.
+	if constructorABI == "" && v.runtimeTracingEnabled {
+		// Skip constructor validation - runtime tracing will catch any cross-org calls
+		result.ConstructorValidated = false
+		result.HasConstructorArgs = false // We don't know without ABI
+		result.Allowed = true
+		return result, nil
+	}
+
 	constructorResult, err := bytecode.ExtractConstructorArgs(bc.Raw, constructorABI)
 	if err != nil {
 		result.Allowed = false

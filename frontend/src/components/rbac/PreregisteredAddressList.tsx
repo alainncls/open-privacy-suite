@@ -39,12 +39,28 @@ export default function PreregisteredAddressList() {
   const [abiValue, setAbiValue] = useState('');
   const [abiSaving, setAbiSaving] = useState(false);
   const [abiError, setAbiError] = useState<string | null>(null);
+  // Runtime tracing status
+  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(false);
 
   useEffect(() => {
     if (orgId) {
       loadAddresses();
     }
   }, [orgId]);
+
+  // Load runtime tracing status
+  useEffect(() => {
+    const loadStatus = async () => {
+      try {
+        const response = await rbacApi.status.get();
+        setRuntimeTracingEnabled(response.data?.security?.runtime_tracing_enabled ?? false);
+      } catch {
+        // Default to false if we can't fetch status
+        setRuntimeTracingEnabled(false);
+      }
+    };
+    loadStatus();
+  }, []);
 
   // Load factory address from org config only (per-org isolation)
   useEffect(() => {
@@ -336,8 +352,13 @@ export default function PreregisteredAddressList() {
                       <FileCode className="w-3 h-3" />
                       Set
                     </Badge>
+                  ) : runtimeTracingEnabled ? (
+                    <Badge variant="outline" className="gap-1 text-[#6B7280]">
+                      <FileCode className="w-3 h-3" />
+                      Optional
+                    </Badge>
                   ) : (
-                    <Badge variant="outline" className="gap-1 text-[#94A3B8]">
+                    <Badge variant="outline" className="gap-1 text-[#D97706] border-[#FDE68A]">
                       <FileCode className="w-3 h-3" />
                       Not set
                     </Badge>
@@ -464,13 +485,22 @@ export default function PreregisteredAddressList() {
               )}
             </div>
 
-            <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
-              <p className="text-xs text-[#92400E]">
-                <strong>Note:</strong> The ABI is required when deploying contracts with constructor
-                arguments that contain addresses. If the ABI is not set, deployments with constructor
-                args will be rejected.
-              </p>
-            </div>
+            {runtimeTracingEnabled ? (
+              <div className="p-3 rounded-lg bg-[#F0FDF4] border border-[#BBF7D0]">
+                <p className="text-xs text-[#166534]">
+                  <strong>Runtime tracing is enabled.</strong> ABI is optional. Any addresses in constructor
+                  arguments will be validated at runtime when the contract makes calls.
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
+                <p className="text-xs text-[#92400E]">
+                  <strong>Note:</strong> The ABI is required when deploying contracts with constructor
+                  arguments that contain addresses. If the ABI is not set, deployments with constructor
+                  args will be rejected.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3">

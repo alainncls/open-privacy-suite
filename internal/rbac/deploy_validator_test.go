@@ -1225,3 +1225,51 @@ func TestValidateDeploymentWithABI_StillValidatesOtherRules(t *testing.T) {
 		t.Error("expected HasCreate to be true")
 	}
 }
+
+// TestValidateDeploymentWithABI_NoABIWithRuntimeTracing tests that ABI is optional when runtime tracing is enabled.
+func TestValidateDeploymentWithABI_NoABIWithRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Enable runtime tracing
+	validator.SetRuntimeTracingEnabled(true)
+
+	// No ABI provided - should be allowed when runtime tracing is enabled
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be allowed - runtime tracing will catch any cross-org calls at execution time
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed when runtime tracing is enabled, got reason: %s", result.Reason)
+	}
+	if result.ConstructorValidated {
+		t.Error("expected ConstructorValidated to be false when ABI is skipped")
+	}
+}
+
+// TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing tests that ABI is required when runtime tracing is disabled.
+func TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Runtime tracing is disabled by default
+	// No ABI provided - should be denied
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be denied - ABI is required without runtime tracing
+	if result.Allowed {
+		t.Error("expected deployment to be denied when ABI is required but not provided")
+	}
+	if !strings.Contains(result.Reason, "ABI is required") {
+		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
+	}
+}
