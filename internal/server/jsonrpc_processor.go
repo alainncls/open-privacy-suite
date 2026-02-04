@@ -306,37 +306,30 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		}
 	}
 
-	// Tiered validation: skip tracing if target is known to be org-owned
-	// This is critical for factory calls - the factory uses CREATE2/CREATE internally
-	// which would be blocked by trace validation, but the RBAC factory call validation
-	// already verified the call is legitimate.
+	// SECURITY: We only skip tracing for the CREATE3 factory, not for general org-owned contracts.
+	//
+	// Why NOT skip for org-owned contracts:
+	// An org-owned contract could accept arbitrary calldata and make external calls to
+	// other orgs' contracts, violating cross-org isolation. Example:
+	//   User → OrgA_Contract.attack(OrgB_Address) → OrgB_Contract  ❌ VIOLATION
+	//
+	// Why skip for factory:
+	// The CREATE3 factory is a known, audited contract with deterministic behavior.
+	// It only does CREATE2/CREATE internally (no arbitrary external calls), and
+	// factory calls are already validated by factory_call_validator in RBAC CheckAccess.
 	if p.runtimeTracer.IsTieredEnabled() {
 		normalizedTarget := strings.ToLower(strings.TrimSpace(targetAddr))
 
-		// Check if target is owned by any of the user's orgs or is the org's factory
 		for orgID := range userOrgIDs {
-			// Check 1: Is this the org's CREATE3 factory?
-			// The factory uses CREATE2/CREATE internally which would fail trace validation,
-			// but factory calls are already validated by factory_call_validator in RBAC CheckAccess
+			// Only skip tracing for the org's CREATE3 factory
 			org, err := p.rbacAccessCtrl.Store().GetOrganization(ctx, orgID)
 			if err == nil && org != nil {
 				factoryAddr := rbac.GetOrgFactoryAddress(org)
 				if factoryAddr != "" && strings.ToLower(factoryAddr) == normalizedTarget {
 					// Target is org's factory - skip tracing
+					// Factory behavior is deterministic and already validated
 					return nil
 				}
-			}
-
-			// Check 2: Is target in org's registered contracts?
-			isOwned, err := p.rbacAccessCtrl.Store().IsAddressOwnedByOrg(ctx, normalizedTarget, orgID)
-			if err != nil {
-				// Log but don't fail - proceed with full tracing
-				continue
-			}
-			if isOwned {
-				// Target is org-owned, skip tracing
-				// The RBAC CheckAccess already validated the call
-				return nil
 			}
 		}
 	}

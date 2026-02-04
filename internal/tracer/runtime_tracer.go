@@ -47,7 +47,8 @@ func (rt *RuntimeTracer) IsEnabled() bool {
 }
 
 // IsTieredEnabled returns whether tiered validation is enabled.
-// When tiered validation is enabled, known org-owned addresses skip tracing.
+// When enabled, only the org's CREATE3 factory skips tracing (not general org-owned contracts).
+// This is because org-owned contracts could still make cross-org calls via user-supplied calldata.
 func (rt *RuntimeTracer) IsTieredEnabled() bool {
 	return rt.tiered
 }
