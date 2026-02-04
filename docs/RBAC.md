@@ -495,14 +495,22 @@ The RBAC system includes bytecode analysis to sandbox deployed contracts, preven
 
 When a user with the `deploy` claim deploys a contract, the bytecode is analyzed to ensure:
 
-1. **No dynamic external calls**: All CALL/DELEGATECALL/STATICCALL targets must be constant addresses
-2. **Org ownership**: All call targets must be owned by the deploying user's organization
-3. **No nested deployments**: CREATE/CREATE2 opcodes are blocked (prevents deploying child contracts that bypass validation)
-4. **Precompile whitelist**: Standard EVM precompiles (0x01-0x09) are always allowed
+1. **Org ownership**: All static call targets must be owned by the deploying user's organization
+2. **No nested deployments**: CREATE/CREATE2 opcodes are blocked (prevents deploying child contracts that bypass validation)
+3. **Precompile whitelist**: Standard EVM precompiles (0x01-0x09) are always allowed
 
-**Rejected bytecode patterns:**
-- Dynamic call targets (address from storage, calldata, or computation)
+**With Runtime Tracing Enabled (`ENABLE_RUNTIME_TRACING=true`, default):**
+
+Dynamic calls (address from storage, calldata, or computation) are **allowed** at deployment because they are validated at runtime via `debug_traceCall`. This enables compatibility with:
+- OpenZeppelin upgradeable contracts
+- UUPS proxies with dynamic DELEGATECALL
+- Contracts with configurable dependencies
+
+**Rejected bytecode patterns (always):**
 - CREATE/CREATE2 opcodes (nested deployment)
+
+**Rejected bytecode patterns (only when runtime tracing disabled):**
+- Dynamic call targets (address from storage, calldata, or computation)
 - DELEGATECALL to non-org-owned addresses
 
 ### Proxy Pattern Support
@@ -982,6 +990,7 @@ The deployment validator detects Diamond patterns but does not implement:
 - ZK-attested memberships require valid Privado ID credentials
 - Permission cache is invalidated when permissions change
 - Audit logging tracks all RBAC changes
-- Deployment bytecode validation prevents cross-org calls via internal EVM execution
+- **Runtime transaction tracing** validates all addresses touched by transactions (when `ENABLE_RUNTIME_TRACING=true`)
+- Deployment bytecode validation prevents nested deployments via CREATE/CREATE2
 - Proxy upgrade interception prevents upgrading to non-org-owned implementations
 - All precompile addresses (0x01-0x09) are whitelisted for standard cryptographic operations

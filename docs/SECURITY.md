@@ -56,10 +56,34 @@ Contract deployments require the `deploy` claim:
 
 **Bytecode validation** is performed on deployments:
 - No CREATE/CREATE2 opcodes (prevents nested deployments)
-- No dynamic DELEGATECALL targets
 - All static CALL targets must be org-owned or precompiles
 
+When `ENABLE_RUNTIME_TRACING=true` (default), dynamic calls are **allowed** at deployment because they are validated at runtime via transaction tracing.
+
 **CREATE3 factory deployments** additionally require the `admin` claim.
+
+### Runtime Transaction Validation
+
+When `ENABLE_RUNTIME_TRACING=true`, every transaction is traced using `debug_traceCall` before being forwarded to the node:
+
+```
+Transaction → debug_traceCall → Extract all CALL/DELEGATECALL/STATICCALL targets
+                                      ↓
+                              Validate each target:
+                              ├── Org-owned? → Allowed
+                              ├── Precompile (0x01-0x09)? → Allowed
+                              ├── Shared infrastructure? → Allowed
+                              ├── Other org's contract? → DENIED
+                              └── CREATE/CREATE2 detected? → DENIED
+```
+
+**Benefits of runtime tracing:**
+- Catches **all** internal calls, including from custom multicall contracts
+- Validates dynamic DELEGATECALL targets that can't be known at deployment
+- Provides comprehensive cross-org isolation
+- Defense-in-depth with bytecode validation
+
+**Performance:** ~50-200ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
 
 ### Cross-Organization Isolation
 
@@ -194,7 +218,7 @@ Configured via Gin middleware. Adjust in `internal/server/server.go` for product
 |------|------------|------------|
 | Parameter validation | Only method/contract validated | Upstream node validation |
 | Token revocation | Database lookup per request | Consider Redis for high volume |
-| Multicall | Only 3 hardcoded addresses blocked | Custom multicall contracts could bypass; consider blocking aggregate() selector |
+| Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
 | Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
 | Localhost IP ranges | 172.x prefix check is overly broad | See SECURITY_FINDINGS.md for fix |
 | Historical state | Only eth_call/eth_getStorageAt blocked | Other methods (eth_getBalance) accept historical blocks |
