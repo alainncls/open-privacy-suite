@@ -1,0 +1,2250 @@
+docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml up -d --build postgres anvil proxy-backend proxy-frontend
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.10kB done
+#1 DONE 0.0s
+
+#2 [proxy-frontend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 462B done
+#2 DONE 0.0s
+
+#3 [proxy-backend internal] load build definition from Dockerfile.backend
+#3 transferring dockerfile: 909B done
+#3 DONE 0.0s
+
+#4 [proxy-backend internal] load metadata for docker.io/library/golang:1.24-bookworm
+#4 ...
+
+#5 [auth] library/golang:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#6 [auth] library/debian:pull token for registry-1.docker.io
+#6 DONE 0.0s
+
+#7 [auth] library/node:pull token for registry-1.docker.io
+#7 DONE 0.0s
+
+#8 [proxy-backend internal] load metadata for docker.io/library/debian:bookworm-slim
+#8 ...
+
+#4 [proxy-backend internal] load metadata for docker.io/library/golang:1.24-bookworm
+#4 DONE 1.1s
+
+#9 [proxy-frontend internal] load metadata for docker.io/library/node:20-alpine
+#9 DONE 1.2s
+
+#10 [proxy-frontend internal] load .dockerignore
+#10 transferring context: 60B done
+#10 DONE 0.0s
+
+#8 [proxy-backend internal] load metadata for docker.io/library/debian:bookworm-slim
+#8 DONE 1.2s
+
+#11 [proxy-frontend 1/6] FROM docker.io/library/node:20-alpine@sha256:09e2b3d9726018aecf269bd35325f46bf75046a643a66d28360ec71132750ec8
+#11 DONE 0.0s
+
+#12 [proxy-backend internal] load .dockerignore
+#12 transferring context: 712B done
+#12 DONE 0.0s
+
+#13 [proxy-frontend internal] load build context
+#13 transferring context: 9.54kB done
+#13 DONE 0.0s
+
+#14 [proxy-backend builder 1/7] FROM docker.io/library/golang:1.24-bookworm@sha256:1c64c586e1cf9dc4c394c5896ec574659c792a0840f4fa0eb54a88de146e978b
+#14 DONE 0.0s
+
+#15 [proxy-backend stage-1 1/4] FROM docker.io/library/debian:bookworm-slim@sha256:56ff6d36d4eb3db13a741b342ec466f121480b5edded42e4b7ee850ce7a418ee
+#15 DONE 0.0s
+
+#16 [proxy-frontend 4/6] COPY package.json package-lock.json* ./
+#16 CACHED
+
+#17 [proxy-frontend 2/6] RUN apk add --no-cache wget
+#17 CACHED
+
+#18 [proxy-frontend 3/6] WORKDIR /app
+#18 CACHED
+
+#19 [proxy-frontend 5/6] RUN npm install --ignore-scripts && npm rebuild esbuild
+#19 CACHED
+
+#20 [proxy-backend internal] load build context
+#20 transferring context: 49.84kB 0.0s done
+#20 DONE 0.1s
+
+#21 [proxy-backend builder 2/7] RUN apt-get update && apt-get install -y --no-install-recommends     build-essential     libgmp-dev     && rm -rf /var/lib/apt/lists/*
+#21 CACHED
+
+#22 [proxy-backend builder 3/7] WORKDIR /app
+#22 CACHED
+
+#23 [proxy-backend builder 4/7] COPY go.mod go.sum ./
+#23 CACHED
+
+#24 [proxy-backend builder 5/7] RUN go mod download
+#24 CACHED
+
+#25 [proxy-frontend 6/6] COPY . .
+#25 DONE 0.3s
+
+#26 [proxy-backend builder 6/7] COPY . .
+#26 ...
+
+#27 [proxy-frontend] exporting to image
+#27 exporting layers 0.1s done
+#27 writing image sha256:e67e253eee33be08097acd7297b3b351f669856fecbd92b3b5dd2ac1cf436fc5 done
+#27 naming to docker.io/library/privacy-proxy-e2e-proxy-frontend done
+#27 DONE 0.1s
+
+#28 [proxy-frontend] resolving provenance for metadata file
+#28 DONE 0.0s
+
+#26 [proxy-backend builder 6/7] COPY . .
+#26 DONE 0.8s
+
+#29 [proxy-backend builder 7/7] RUN CGO_ENABLED=1 GOOS=linux go build -o /app/bin/privacy-proxy ./cmd/server
+#29 DONE 17.0s
+
+#30 [proxy-backend stage-1 2/4] RUN apt-get update && apt-get install -y --no-install-recommends     ca-certificates     wget     postgresql-client     libgmp10     && rm -rf /var/lib/apt/lists/*
+#30 CACHED
+
+#31 [proxy-backend stage-1 3/4] WORKDIR /app
+#31 CACHED
+
+#32 [proxy-backend stage-1 4/4] COPY --from=builder /app/bin/privacy-proxy .
+#32 CACHED
+
+#33 [proxy-backend] exporting to image
+#33 exporting layers done
+#33 writing image sha256:9f3ccf4c77c9d967884487d218be48c4f2722678f9330c92e15d1a6d1521d278 done
+#33 naming to docker.io/library/privacy-proxy-e2e-proxy-backend done
+#33 DONE 0.0s
+
+#34 [proxy-backend] resolving provenance for metadata file
+#34 DONE 0.0s
+ privacy-proxy-e2e-proxy-backend  Built
+ privacy-proxy-e2e-proxy-frontend  Built
+ Network privacy-proxy-e2e_e2e-network  Creating
+ Network privacy-proxy-e2e_e2e-network  Created
+ Volume privacy-proxy-e2e_e2e-postgres-data  Creating
+ Volume privacy-proxy-e2e_e2e-postgres-data  Created
+ Container privacy-proxy-e2e-postgres-1  Creating
+ Container privacy-proxy-e2e-anvil-1  Creating
+ Container privacy-proxy-e2e-postgres-1  Created
+ Container privacy-proxy-e2e-anvil-1  Created
+ Container privacy-proxy-e2e-proxy-backend-1  Creating
+ Container privacy-proxy-e2e-proxy-backend-1  Created
+ Container privacy-proxy-e2e-proxy-frontend-1  Creating
+ Container privacy-proxy-e2e-proxy-frontend-1  Created
+ Container privacy-proxy-e2e-anvil-1  Starting
+ Container privacy-proxy-e2e-postgres-1  Starting
+ Container privacy-proxy-e2e-anvil-1  Started
+ Container privacy-proxy-e2e-postgres-1  Started
+ Container privacy-proxy-e2e-postgres-1  Waiting
+ Container privacy-proxy-e2e-anvil-1  Waiting
+ Container privacy-proxy-e2e-anvil-1  Healthy
+ Container privacy-proxy-e2e-postgres-1  Healthy
+ Container privacy-proxy-e2e-proxy-backend-1  Starting
+ Container privacy-proxy-e2e-proxy-backend-1  Started
+ Container privacy-proxy-e2e-proxy-backend-1  Waiting
+ Container privacy-proxy-e2e-proxy-backend-1  Healthy
+ Container privacy-proxy-e2e-proxy-frontend-1  Starting
+ Container privacy-proxy-e2e-proxy-frontend-1  Started
+docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml run --rm playwright npm test; \
+	status=$?; \
+	docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml down -v; \
+	exit $status
+ Container privacy-proxy-e2e-postgres-1  Running
+ Container privacy-proxy-e2e-anvil-1  Running
+ Container privacy-proxy-e2e-proxy-backend-1  Running
+ Container privacy-proxy-e2e-proxy-frontend-1  Running
+ Container privacy-proxy-e2e-postgres-1  Waiting
+ Container privacy-proxy-e2e-anvil-1  Waiting
+ Container privacy-proxy-e2e-postgres-1  Healthy
+ Container privacy-proxy-e2e-anvil-1  Healthy
+ Container privacy-proxy-e2e-proxy-backend-1  Waiting
+ Container privacy-proxy-e2e-proxy-backend-1  Healthy
+
+> privacy-proxy-e2e@1.0.0 test
+> playwright test
+
+Starting global setup...
+Waiting for Privacy Proxy at http://proxy-backend:8080/health...
+Privacy Proxy is ready!
+Waiting for Frontend (Vite) at http://proxy-frontend:5173...
+Frontend (Vite) is ready!
+All services ready!
+
+Running 471 tests using 8 workers
+
+  ✓    1 [api] › tests/auth-formats.spec.ts:6:7 › Auth Formats › auth request returns session and auth_request (44ms)
+  ✓    4 [api] › tests/auth-formats.spec.ts:20:7 › Auth Formats › auth_request JSON is reasonably sized for QR encoding (40ms)
+  ✓    9 [api] › tests/auth-formats.spec.ts:60:7 › Auth Formats › auth_request contains required iden3comm fields for wallet (19ms)
+  ✓    5 [api] › tests/auth-formats.spec.ts:32:7 › Auth Formats › auth_request can generate valid iden3comm deeplink (52ms)
+  ✓   11 [api] › tests/authorization.spec.ts:5:7 › Authorization › denies unauthenticated request (10ms)
+  ✓   10 [api] › tests/authorization.spec.ts:12:7 › Authorization › denies request with invalid JWT (24ms)
+  ✓   12 [api] › tests/authorization.spec.ts:19:7 › Authorization › denies request with malformed Authorization header (13ms)
+  ✓   13 [api] › tests/authorization.spec.ts:38:7 › Authorization › denies request with empty Authorization header (7ms)
+  ✓    6 [api] › tests/access-control.spec.ts:103:7 › Access Control › denies user without membership (133ms)
+  ✓    7 [api] › tests/access-control.spec.ts:62:7 › Access Control › denies banned user (154ms)
+  ✓    2 [api] › tests/access-control.spec.ts:19:7 › Access Control › allows method in whitelist (206ms)
+  ✓    3 [api] › tests/access-control.spec.ts:83:7 › Access Control › denies user without KYC (200ms)
+  ✓    8 [api] › tests/access-control.spec.ts:42:7 › Access Control › denies method not in whitelist (155ms)
+  ✓   14 [api] › tests/multicall.spec.ts:38:7 › Multicall Blocking › blocks eth_call to Multicall3 address (108ms)
+  ✓   18 [api] › tests/rbac/01-organizations.spec.ts:15:7 › RBAC Organizations › creates organization with unique slug (30ms)
+  ✓   15 [api] › tests/multicall.spec.ts:54:7 › Multicall Blocking › blocks eth_call to Multicall3 address (lowercase) (112ms)
+  ✓   19 [api] › tests/rbac/01-organizations.spec.ts:27:7 › RBAC Organizations › list orgs includes created organization (28ms)
+  ✓   16 [api] › tests/multicall.spec.ts:70:7 › Multicall Blocking › allows eth_call to non-Multicall address (106ms)
+  ✓   20 [api] › tests/rbac/01-organizations.spec.ts:49:7 › RBAC Organizations › returns null for non-existent organization (14ms)
+  ✓   22 [api] › tests/rbac/01-organizations.spec.ts:56:7 › RBAC Organizations › updates organization name (15ms)
+  ✓   23 [api] › tests/rbac/01-organizations.spec.ts:68:7 › RBAC Organizations › updates organization settings (15ms)
+  ✓   21 [api] › tests/rbac/01-organizations.spec.ts:38:7 › RBAC Organizations › gets organization by ID (24ms)
+  ✓   25 [api] › tests/rbac/01-organizations.spec.ts:90:7 › RBAC Organizations › creates multiple organizations independently (19ms)
+  ✓   24 [api] › tests/rbac/01-organizations.spec.ts:78:7 › RBAC Organizations › rejects duplicate slug on create (27ms)
+  ✓   17 [api] › tests/multicall.spec.ts:86:7 › Multicall Blocking › allows eth_getBalance even with Multicall3 as address param (138ms)
+  ✓   27 [api] › tests/rbac/02-groups.spec.ts:32:7 › RBAC Groups › creates child group with depth 1 (54ms)
+  ✓   26 [api] › tests/rbac/02-groups.spec.ts:15:7 › RBAC Groups › creates root group with depth 0 (79ms)
+  ✓   33 [api] › tests/rbac/02-groups.spec.ts:134:7 › RBAC Groups › returns null for non-existent group (9ms)
+  ✓   28 [api] › tests/rbac/02-groups.spec.ts:45:7 › RBAC Groups › creates 3-level hierarchy (79ms)
+  ✓   32 [api] › tests/rbac/02-groups.spec.ts:121:7 › RBAC Groups › gets group by ID (48ms)
+  ✓   30 [api] › tests/rbac/02-groups.spec.ts:86:7 › RBAC Groups › updates group access (67ms)
+  ✓   29 [api] › tests/rbac/02-groups.spec.ts:61:7 › RBAC Groups › sets and retrieves group access (78ms)
+  ✓   31 [api] › tests/rbac/02-groups.spec.ts:108:7 › RBAC Groups › lists groups in organization (83ms)
+  ✓   35 [api] › tests/rbac/02-groups.spec.ts:161:7 › RBAC Groups › deletes group (42ms)
+  ✓   40 [api] › tests/rbac/03-api-response-formats.spec.ts:64:9 › RBAC API Response Formats › Linked Addresses Endpoint › returns 404 for non-existent user (8ms)
+  ✓   36 [api] › tests/rbac/03-api-response-formats.spec.ts:23:9 › RBAC API Response Formats › Linked Addresses Endpoint › returns addresses in correct format with wrapper object (27ms)
+  ✓   39 [api] › tests/rbac/03-api-response-formats.spec.ts:34:9 › RBAC API Response Formats › Linked Addresses Endpoint › linked address has correct field names (29ms)
+  ✓   34 [api] › tests/rbac/02-groups.spec.ts:143:7 › RBAC Groups › updates group name and description (71ms)
+  ✓   46 [api] › tests/rbac/03-api-response-formats.spec.ts:216:9 › RBAC API Response Formats › User Endpoint › returns user in correct format (23ms)
+  ✓   38 [api] › tests/rbac/03-api-response-formats.spec.ts:76:9 › RBAC API Response Formats › Effective Permissions Endpoint › returns permissions in correct format (76ms)
+  ✓   47 [api] › tests/rbac/03-api-response-formats.spec.ts:240:9 › RBAC API Response Formats › Organization Endpoint › returns organization in correct format (16ms)
+  ✓   45 [api] › tests/rbac/03-api-response-formats.spec.ts:200:9 › RBAC API Response Formats › Memberships Endpoint › membership source is correct value (53ms)
+  ✓   42 [api] › tests/rbac/03-api-response-formats.spec.ts:131:9 › RBAC API Response Formats › Effective Permissions Endpoint › default_claims contains expected values (66ms)
+  ✓   44 [api] › tests/rbac/03-api-response-formats.spec.ts:172:9 › RBAC API Response Formats › Memberships Endpoint › returns memberships with group details (76ms)
+  ✓   41 [api] › tests/rbac/03-api-response-formats.spec.ts:113:9 › RBAC API Response Formats › Effective Permissions Endpoint › allowed_methods contains expected values (102ms)
+  ✓   43 [api] › tests/rbac/03-api-response-formats.spec.ts:150:9 › RBAC API Response Formats › Effective Permissions Endpoint › rate limits are returned correctly (89ms)
+  ✓   37 [api] › tests/rbac/02-groups.spec.ts:177:7 › RBAC Groups › creates hierarchy using helper (124ms)
+  ✓   48 [api] › tests/rbac/03-api-response-formats.spec.ts:256:9 › RBAC API Response Formats › Group Endpoint › returns group in correct format (48ms)
+  ✓   50 [api] › tests/rbac/03-api-response-formats.spec.ts:309:9 › RBAC API Response Formats › Contract Endpoint › returns contract in correct format (32ms)
+  ✓   51 [api] › tests/rbac/04-users.spec.ts:15:7 › RBAC Users › user is auto-created on authentication (36ms)
+  ✓   53 [api] › tests/rbac/04-users.spec.ts:43:7 › RBAC Users › updates user note (31ms)
+  ✓   49 [api] › tests/rbac/03-api-response-formats.spec.ts:278:9 › RBAC API Response Formats › Group Endpoint › group access returns correct format (63ms)
+  ✓   55 [api] › tests/rbac/04-users.spec.ts:63:7 › RBAC Users › lists users (33ms)
+  ✓   56 [api] › tests/rbac/04-users.spec.ts:53:7 › RBAC Users › updates user metadata (35ms)
+  ✓   52 [api] › tests/rbac/04-users.spec.ts:23:7 › RBAC Users › updates user KYC status (51ms)
+  ✓   59 [api] › tests/rbac/04-users.spec.ts:92:7 › RBAC Users › returns null for non-existent user (5ms)
+  ✓   54 [api] › tests/rbac/04-users.spec.ts:33:7 › RBAC Users › updates user banned status (70ms)
+  ✓   58 [api] › tests/rbac/04-users.spec.ts:83:7 › RBAC Users › finds user by external ID (140ms)
+  ✓   57 [api] › tests/rbac/04-users.spec.ts:73:7 › RBAC Users › gets user by ID (153ms)
+  ✓   67 [api] › tests/rbac/05-contracts.spec.ts:15:7 › RBAC Contracts › creates contract (34ms)
+  ✓   60 [api] › tests/rbac/04-users.spec.ts:149:7 › RBAC Users › removes membership from user (170ms)
+  ✓   63 [api] › tests/rbac/04-users.spec.ts:99:7 › RBAC Users › adds membership to user (169ms)
+  ✓   66 [api] › tests/rbac/05-contracts.spec.ts:30:7 › RBAC Contracts › updates contract name (41ms)
+  ✓   64 [api] › tests/rbac/04-users.spec.ts:114:7 › RBAC Users › adds membership to group with access (212ms)
+  ✓   61 [api] › tests/rbac/04-users.spec.ts:131:7 › RBAC Users › lists user memberships (255ms)
+  ✓   68 [api] › tests/rbac/05-contracts.spec.ts:43:7 › RBAC Contracts › updates contract metadata (73ms)
+  ✓   62 [api] › tests/rbac/04-users.spec.ts:170:7 › RBAC Users › creates user with membership using fixture helper (261ms)
+  ✓   71 [api] › tests/rbac/05-contracts.spec.ts:70:7 › RBAC Contracts › deletes contract (71ms)
+  ✓   72 [api] › tests/rbac/05-contracts.spec.ts:103:7 › RBAC Contracts › contract address is stored lowercase (50ms)
+  ✓   70 [api] › tests/rbac/05-contracts.spec.ts:56:7 › RBAC Contracts › lists contracts in organization (100ms)
+  ✓   69 [api] › tests/rbac/05-contracts.spec.ts:88:7 › RBAC Contracts › creates multiple contracts (108ms)
+  ✓   65 [api] › tests/rbac/04-users.spec.ts:187:7 › RBAC Users › adds multiple memberships using fixture helper (226ms)
+  ✓   73 [api] › tests/rbac/05-contracts.spec.ts:116:7 › RBAC Contracts › creates contract grant for group (79ms)
+  ✓   75 [api] › tests/rbac/05-contracts.spec.ts:155:7 › RBAC Contracts › deletes contract grant (105ms)
+  ✓   74 [api] › tests/rbac/05-contracts.spec.ts:132:7 › RBAC Contracts › lists contract grants (124ms)
+  ✓   77 [api] › tests/rbac/10-method-access.spec.ts:39:7 › RBAC Method Access Enforcement › denies method NOT in allowlist via checkAccess API (132ms)
+  ✓   78 [api] › tests/rbac/10-method-access.spec.ts:62:7 › RBAC Method Access Enforcement › RPC request allowed for method in allowlist (130ms)
+  ✓   79 [api] › tests/rbac/10-method-access.spec.ts:88:7 › RBAC Method Access Enforcement › RPC request denied for method not in allowlist (127ms)
+  ✓   76 [api] › tests/rbac/10-method-access.spec.ts:16:7 › RBAC Method Access Enforcement › allows method in allowlist via checkAccess API (148ms)
+  ✓   80 [api] › tests/rbac/10-method-access.spec.ts:114:7 › RBAC Method Access Enforcement › allows multiple methods in allowlist (115ms)
+  ✓   81 [api] › tests/rbac/10-method-access.spec.ts:138:7 › RBAC Method Access Enforcement › denies when allowlist is empty (86ms)
+  ✓   82 [api] › tests/rbac/10-method-access.spec.ts:161:7 › RBAC Method Access Enforcement › returns rate limits in access check result (109ms)
+  ✓   83 [api] › tests/rbac/11-contract-access.spec.ts:16:7 › RBAC Contract Access Enforcement › allows contract with grant via checkAccess API (99ms)
+  ✓   86 [api] › tests/rbac/11-contract-access.spec.ts:106:7 › RBAC Contract Access Enforcement › allows method without contract address (89ms)
+  ✓   85 [api] › tests/rbac/11-contract-access.spec.ts:81:7 › RBAC Contract Access Enforcement › default_claims allows access to unregistered contracts (112ms)
+  ✓   87 [api] › tests/rbac/11-contract-access.spec.ts:129:7 › RBAC Contract Access Enforcement › RPC eth_call to contract with grant succeeds (111ms)
+  ✓   84 [api] › tests/rbac/11-contract-access.spec.ts:48:7 › RBAC Contract Access Enforcement › denies contract without grant when no default_claims (122ms)
+  ✓   88 [api] › tests/rbac/11-contract-access.spec.ts:159:7 › RBAC Contract Access Enforcement › RPC eth_call to unregistered contract allowed with default_claims (111ms)
+  ✓   91 [api] › tests/rbac/12-claim-enforcement.spec.ts:15:7 › RBAC Claim Enforcement › allows when user has required claim (84ms)
+  ✓   89 [api] › tests/rbac/11-contract-access.spec.ts:183:7 › RBAC Contract Access Enforcement › grants for multiple contracts work independently (151ms)
+  ✓   92 [api] › tests/rbac/12-claim-enforcement.spec.ts:39:7 › RBAC Claim Enforcement › denies when user lacks required claim (80ms)
+  ✓   93 [api] › tests/rbac/12-claim-enforcement.spec.ts:63:7 › RBAC Claim Enforcement › denies when user has some but not all required claims (65ms)
+  ✓   90 [api] › tests/rbac/11-contract-access.spec.ts:228:7 › RBAC Contract Access Enforcement › contract address comparison is case-insensitive (115ms)
+  ✓   94 [api] › tests/rbac/12-claim-enforcement.spec.ts:87:7 › RBAC Claim Enforcement › allows when no claims are required (84ms)
+  ✓   96 [api] › tests/rbac/12-claim-enforcement.spec.ts:136:7 › RBAC Claim Enforcement › returns all user claims in successful check (75ms)
+  ✓   95 [api] › tests/rbac/12-claim-enforcement.spec.ts:110:7 › RBAC Claim Enforcement › group with all claims grants all access (94ms)
+  ✓   97 [api] › tests/rbac/12-claim-enforcement.spec.ts:161:7 › RBAC Claim Enforcement › group with empty claims denies claim-required access (75ms)
+  ✓   99 [api] › tests/rbac/13-user-status.spec.ts:16:7 › RBAC User Status Enforcement › banned user is denied via checkAccess API (62ms)
+  ✓   98 [api] › tests/rbac/12-claim-enforcement.spec.ts:185:7 › RBAC Claim Enforcement › multiple claims all satisfied (71ms)
+  ✓  100 [api] › tests/rbac/13-user-status.spec.ts:40:7 › RBAC User Status Enforcement › banned user denied via RPC request (64ms)
+  ✓  105 [api] › tests/rbac/13-user-status.spec.ts:175:7 › RBAC User Status Enforcement › user not found returns denied (6ms)
+  ✓  101 [api] › tests/rbac/13-user-status.spec.ts:63:7 › RBAC User Status Enforcement › non-KYC user is denied via checkAccess API (63ms)
+  ✓  102 [api] › tests/rbac/13-user-status.spec.ts:86:7 › RBAC User Status Enforcement › non-KYC user denied via RPC request (74ms)
+  ✓  104 [api] › tests/rbac/13-user-status.spec.ts:140:7 › RBAC User Status Enforcement › unbanning user restores access (80ms)
+  ✓  106 [api] › tests/rbac/13-user-status.spec.ts:188:7 › RBAC User Status Enforcement › banned takes precedence over other checks (74ms)
+  ✓  103 [api] › tests/rbac/13-user-status.spec.ts:106:7 › RBAC User Status Enforcement › KYC update enables access (106ms)
+  ✓  107 [api] › tests/rbac/13-user-status.spec.ts:214:7 › RBAC User Status Enforcement › KYC check happens after ban check (79ms)
+  ✓  108 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:15:7 › RBAC Hierarchy Inheritance › methods use INTERSECTION down hierarchy (97ms)
+  ✓  111 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:154:7 › RBAC Hierarchy Inheritance › rate limits use MINIMUM down hierarchy (82ms)
+  ✓  110 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:113:7 › RBAC Hierarchy Inheritance › admin grants use UNION down hierarchy (116ms)
+  ✓  109 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:63:7 › RBAC Hierarchy Inheritance › contract grants use UNION across hierarchy (135ms)
+  ✓  114 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:259:7 › RBAC Hierarchy Inheritance › user in root group gets root permissions (75ms)
+  ✓  112 [api] › tests/rbac/14-hierarchy-inheritance.spec.ts:193:7 › RBAC Hierarchy Inheritance › 3-level hierarchy with progressive restriction (105ms)
+  ✓  113 [api] › tests/rbac/15-multiple-memberships.spec.ts:15:7 › RBAC Multiple Memberships › methods UNIONed across memberships (96ms)
+  ✓  117 [api] › tests/rbac/15-multiple-memberships.spec.ts:146:7 › RBAC Multiple Memberships › rate limits take MAX across memberships (67ms)
+  ✓  116 [api] › tests/rbac/15-multiple-memberships.spec.ts:112:7 › RBAC Multiple Memberships › claims UNIONed across groups (86ms)
+  ✓  115 [api] › tests/rbac/15-multiple-memberships.spec.ts:64:7 › RBAC Multiple Memberships › contracts UNIONed across memberships (108ms)
+  ✓  121 [api] › tests/rbac/16-function-selectors.spec.ts:24:7 › RBAC Function Selector Enforcement › allows function selector in allowlist via checkAccess API (62ms)
+  ✓  122 [api] › tests/rbac/16-function-selectors.spec.ts:58:7 › RBAC Function Selector Enforcement › denies function selector NOT in allowlist via checkAccess API (88ms)
+  ✓  118 [api] › tests/rbac/15-multiple-memberships.spec.ts:185:7 › RBAC Multiple Memberships › multiple memberships with different depths (143ms)
+  ✓  119 [api] › tests/rbac/15-multiple-memberships.spec.ts:241:7 › RBAC Multiple Memberships › three group memberships combine correctly (151ms)
+  ✓  123 [api] › tests/rbac/16-function-selectors.spec.ts:91:7 › RBAC Function Selector Enforcement › allows all functions when no functions restriction exists (101ms)
+  ✓  124 [api] › tests/rbac/16-function-selectors.spec.ts:123:7 › RBAC Function Selector Enforcement › RPC request allowed for function selector in allowlist (103ms)
+  ✓  120 [api] › tests/rbac/15-multiple-memberships.spec.ts:289:7 › RBAC Multiple Memberships › admin grants combine across memberships (155ms)
+  ✓  125 [api] › tests/rbac/16-function-selectors.spec.ts:157:7 › RBAC Function Selector Enforcement › RPC request denied for function selector NOT in allowlist (109ms)
+  ✓  127 [api] › tests/rbac/17-overlapping-grants.spec.ts:98:7 › RBAC Overlapping Contract Grants › user in 2 groups gets UNION of function selectors on same contract (95ms)
+  ✓  126 [api] › tests/rbac/17-overlapping-grants.spec.ts:26:7 › RBAC Overlapping Contract Grants › user in 2 groups gets UNION of claims on same contract (138ms)
+  ✓  129 [api] › tests/rbac/17-overlapping-grants.spec.ts:207:7 › RBAC Overlapping Contract Grants › overlapping grants with different function restrictions merge correctly (116ms)
+  ✓  133 [api] › tests/rbac/17-overlapping-grants.spec.ts:412:7 › RBAC Overlapping Contract Grants › RPC: overlapping grants allow operations via actual RPC calls (102ms)
+  ✓  132 [api] › tests/rbac/17-overlapping-grants.spec.ts:372:7 › RBAC Overlapping Contract Grants › admin grant from one group combines with regular grants (115ms)
+  ✓  130 [api] › tests/rbac/17-overlapping-grants.spec.ts:254:7 › RBAC Overlapping Contract Grants › one group with functions=null gives access to all functions (130ms)
+  ✓  128 [api] › tests/rbac/17-overlapping-grants.spec.ts:143:7 › RBAC Overlapping Contract Grants › user in 2 groups with partial overlap gets full UNION (175ms)
+  ✓  131 [api] › tests/rbac/17-overlapping-grants.spec.ts:297:7 › RBAC Overlapping Contract Grants › claims escalate through group overlap: read-only becomes read+write (155ms)
+  ✓  135 [api] › tests/rbac/18-write-operations.spec.ts:68:7 › RBAC Write Operations (eth_sendTransaction) › allows eth_sendTransaction when user has write claim (159ms)
+  ✓  134 [api] › tests/rbac/18-write-operations.spec.ts:34:7 › RBAC Write Operations (eth_sendTransaction) › denies eth_sendTransaction when user has only read claim (180ms)
+  ✓  138 [api] › tests/rbac/18-write-operations.spec.ts:146:7 › RBAC Write Operations (eth_sendTransaction) › default_claims allows write to unregistered contracts (182ms)
+  ✓  136 [api] › tests/rbac/18-write-operations.spec.ts:95:7 › RBAC Write Operations (eth_sendTransaction) › denies eth_sendTransaction when method not in allowed_methods (210ms)
+  ✓  139 [api] › tests/rbac/18-write-operations.spec.ts:167:7 › RBAC Write Operations (eth_sendTransaction) › eth_sendRawTransaction requires write claim (215ms)
+  ✓  141 [api] › tests/rbac/18-write-operations.spec.ts:214:7 › RBAC Write Operations (eth_sendTransaction) › write operations blocked for non-KYC user (196ms)
+  ✓  137 [api] › tests/rbac/18-write-operations.spec.ts:114:7 › RBAC Write Operations (eth_sendTransaction) › write claim on one contract does not grant write on another (255ms)
+  ✓  140 [api] › tests/rbac/18-write-operations.spec.ts:188:7 › RBAC Write Operations (eth_sendTransaction) › write operations blocked for banned user even with write claim (225ms)
+  ✓  143 [api] › tests/rbac/18-write-operations.spec.ts:263:7 › RBAC Write Operations (eth_sendTransaction) › function-level restriction on write operations (143ms)
+  ✓  142 [api] › tests/rbac/18-write-operations.spec.ts:232:7 › RBAC Write Operations (eth_sendTransaction) › write via two groups: one has method, other has claim (164ms)
+  ✓  145 [api] › tests/rbac/18-write-operations.spec.ts:360:7 › RBAC Write Operations - Hierarchy › child group cannot expand write access beyond parent (105ms)
+  ✓  147 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:30:7 › RBAC Deploy Claim Enforcement › denies contract deployment without deploy claim (72ms)
+  ✓  148 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:55:7 › RBAC Deploy Claim Enforcement › allows contract deployment with deploy claim (69ms)
+  ✓  146 [api] › tests/rbac/18-write-operations.spec.ts:388:7 › RBAC Write Operations - Hierarchy › write claim inherited down hierarchy (129ms)
+  ✓  149 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:79:7 › RBAC Deploy Claim Enforcement › deploy claim via contract grant allows deployment (110ms)
+  ✓  150 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:104:7 › RBAC Deploy Claim Enforcement › RPC: deploy transaction blocked without deploy claim (93ms)
+  ✓  144 [api] › tests/rbac/18-write-operations.spec.ts:303:7 › RBAC Write Operations (eth_sendTransaction) › multiple users with different write permissions on same contract (233ms)
+  ✓  151 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:136:7 › RBAC Deploy Claim Enforcement › RPC: deploy transaction allowed with deploy claim (126ms)
+  ✓  152 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:162:7 › RBAC Deploy Claim Enforcement › RPC: deploy with to=null blocked without deploy claim (113ms)
+  ✓  153 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:186:7 › RBAC Deploy Claim Enforcement › RPC: deploy with to="" blocked without deploy claim (112ms)
+  ✓  154 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:210:7 › RBAC Deploy Claim Enforcement › RPC: regular transaction to contract allowed with write claim (133ms)
+  ✓  155 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:238:7 › RBAC Deploy Claim Enforcement › RPC: eth_estimateGas for deployment blocked without deploy claim (109ms)
+  ✓  156 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:263:7 › RBAC Deploy Claim Enforcement › RPC: eth_estimateGas for deployment allowed with deploy claim (110ms)
+  ✓  157 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:288:7 › RBAC Deploy Claim Enforcement › RPC: eth_estimateGas for regular call allowed with read claim (99ms)
+  ✓  159 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:358:7 › RBAC Upgrade Claim Enforcement › denies upgrade operation without upgrade claim (103ms)
+  ✓  160 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:391:7 › RBAC Upgrade Claim Enforcement › allows upgrade operation with upgrade claim (103ms)
+  ✓  158 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:313:7 › RBAC Deploy Claim Enforcement › two groups combine to grant deploy permission (144ms)
+  ✓  161 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:422:7 › RBAC Upgrade Claim Enforcement › upgrade claim is contract-specific in effective permissions (150ms)
+  ✓  162 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:466:7 › RBAC Upgrade Claim Enforcement › user with no upgrade claim on any contract fails upgrade check (120ms)
+  ✓  164 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:551:7 › RBAC Admin Claim Enforcement › denies admin operation without admin claim (125ms)
+  ✓  163 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:499:7 › RBAC Upgrade Claim Enforcement › upgrade claim combined across multiple groups (152ms)
+  ✓  165 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:582:7 › RBAC Admin Claim Enforcement › allows admin operation with admin claim (121ms)
+  ✓  166 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:613:7 › RBAC Admin Claim Enforcement › admin claim grants full access to contract (138ms)
+  ✓  167 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:647:7 › RBAC Admin Claim Enforcement › admin claim inherited through group hierarchy when child has no grant (123ms)
+  ✓  169 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:728:7 › RBAC Admin Claim Enforcement › multiple claims required simultaneously (100ms)
+  ✓  170 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:759:7 › RBAC Admin Claim Enforcement › missing one claim from multiple required fails (101ms)
+  ✓  168 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:686:7 › RBAC Admin Claim Enforcement › hierarchy grants use INTERSECTION when both parent and child have grants (138ms)
+  ✓  173 [api] › tests/rbac/20-cache-invalidation.spec.ts:15:7 › RBAC Cache Invalidation › permission update reflects immediately (101ms)
+  ✓  171 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:804:7 › RBAC All Claims Combined › user with all claims can perform any operation (108ms)
+  ✓  174 [api] › tests/rbac/20-cache-invalidation.spec.ts:52:7 › RBAC Cache Invalidation › group claim update reflects immediately (93ms)
+  ✓  181 [api] › tests/rbac/20-cache-invalidation.spec.ts:341:7 › RBAC Cache Invalidation › cache stats are available (5ms)
+  ✓  177 [api] › tests/rbac/20-cache-invalidation.spec.ts:141:7 › RBAC Cache Invalidation › user ban reflects immediately (98ms)
+  ✓  175 [api] › tests/rbac/20-cache-invalidation.spec.ts:90:7 › RBAC Cache Invalidation › membership removal reflects immediately (116ms)
+  ✓  178 [api] › tests/rbac/20-cache-invalidation.spec.ts:225:7 › RBAC Cache Invalidation › rate limit update reflects (88ms)
+  ✓  179 [api] › tests/rbac/20-cache-invalidation.spec.ts:263:7 › RBAC Cache Invalidation › KYC status update reflects (83ms)
+  ✓  180 [api] › tests/rbac/20-cache-invalidation.spec.ts:297:7 › RBAC Cache Invalidation › adding new membership reflects (98ms)
+  ✓  176 [api] › tests/rbac/20-cache-invalidation.spec.ts:175:7 › RBAC Cache Invalidation › contract grant update reflects (150ms)
+  ✓  172 [api] › tests/rbac/19-deploy-upgrade-admin.spec.ts:847:7 › RBAC All Claims Combined › claims assembled from 5 different groups (236ms)
+  ✓  182 [api] › tests/rbac/21-permission-revocation.spec.ts:19:7 › RBAC Permission Revocation - Membership Removal › removing membership revokes method access (82ms)
+  ✓  185 [api] › tests/rbac/21-permission-revocation.spec.ts:148:7 › RBAC Permission Revocation - Membership Removal › RPC: removing membership immediately blocks RPC access (94ms)
+  ✓  184 [api] › tests/rbac/21-permission-revocation.spec.ts:111:7 › RBAC Permission Revocation - Membership Removal › removing membership revokes contract-specific claims (103ms)
+  ✓  186 [api] › tests/rbac/21-permission-revocation.spec.ts:185:7 › RBAC Permission Revocation - Grant Removal › removing contract grant revokes access to that contract (93ms)
+  ✓  183 [api] › tests/rbac/21-permission-revocation.spec.ts:52:7 › RBAC Permission Revocation - Membership Removal › removing one membership keeps access from other memberships (120ms)
+  ✓  189 [api] › tests/rbac/21-permission-revocation.spec.ts:312:7 › RBAC Permission Revocation - Grant Removal › RPC: removing grant immediately blocks RPC access to contract (107ms)
+  ✓  190 [api] › tests/rbac/21-permission-revocation.spec.ts:361:7 › RBAC Permission Revocation - Group Access Changes › removing method from group access blocks that method (94ms)
+  ✓  187 [api] › tests/rbac/21-permission-revocation.spec.ts:228:7 › RBAC Permission Revocation - Grant Removal › removing grant from one group keeps access from another group (136ms)
+  ✓  188 [api] › tests/rbac/21-permission-revocation.spec.ts:273:7 › RBAC Permission Revocation - Grant Removal › updating grant to remove claims works correctly (119ms)
+  ✓  192 [api] › tests/rbac/21-permission-revocation.spec.ts:398:7 › RBAC Permission Revocation - Group Access Changes › removing default_claims blocks access to unregistered contracts (74ms)
+  ✓  193 [api] › tests/rbac/21-permission-revocation.spec.ts:493:7 › RBAC Permission Revocation - User Status Changes › banning user immediately revokes all access (70ms)
+  ✓  191 [api] › tests/rbac/21-permission-revocation.spec.ts:439:7 › RBAC Permission Revocation - Group Access Changes › reducing rate limits takes effect immediately (87ms)
+  ✓  194 [api] › tests/rbac/21-permission-revocation.spec.ts:528:7 › RBAC Permission Revocation - User Status Changes › revoking KYC immediately blocks access (70ms)
+  ✓  196 [api] › tests/rbac/21-permission-revocation.spec.ts:604:7 › RBAC Permission Revocation - Cascading Effects › deleting group revokes all access for members (102ms)
+  ✓  199 [api] › tests/rbac/22-edge-cases.spec.ts:61:7 › RBAC Edge Cases - Empty Permissions › user with ONLY empty method group is blocked (123ms)
+  ✓  198 [api] › tests/rbac/22-edge-cases.spec.ts:24:7 › RBAC Edge Cases - Empty Permissions › user in group with empty methods + group with methods gets UNION (135ms)
+  ✓  197 [api] › tests/rbac/21-permission-revocation.spec.ts:637:7 › RBAC Permission Revocation - Cascading Effects › deleting contract removes all grants for that contract (142ms)
+  ✓  200 [api] › tests/rbac/22-edge-cases.spec.ts:86:7 › RBAC Edge Cases - Empty Permissions › user with empty default_claims + empty contract grants has no claims (118ms)
+  ✓  195 [api] › tests/rbac/21-permission-revocation.spec.ts:562:7 › RBAC Permission Revocation - User Status Changes › RPC: banning user with valid token blocks all requests (151ms)
+  ✓  201 [api] › tests/rbac/22-edge-cases.spec.ts:133:7 › RBAC Edge Cases - No Memberships › user with no memberships (after removal) is blocked (118ms)
+  ✓  207 [api] › tests/rbac/22-edge-cases.spec.ts:513:7 › RBAC Edge Cases - Rate Limit Edge Cases › zero rate limits (if allowed) block all requests (83ms)
+  ✓  204 [api] › tests/rbac/22-edge-cases.spec.ts:299:7 › RBAC Edge Cases - Hierarchy Edge Cases › child group with superset methods still gets intersection (101ms)
+  ✓  202 [api] › tests/rbac/22-edge-cases.spec.ts:178:7 › RBAC Edge Cases - Hierarchy Edge Cases › deep hierarchy (5 levels) with progressive restriction (213ms)
+  ✓  206 [api] › tests/rbac/22-edge-cases.spec.ts:435:7 › RBAC Edge Cases - Rate Limit Edge Cases › null rate limits from one group + defined limits from another results in unlimited (112ms)
+  ✓  205 [api] › tests/rbac/22-edge-cases.spec.ts:354:7 › RBAC Edge Cases - Address Normalization › contract grants work regardless of address case (115ms)
+  ✓  209 [api] › tests/rbac/22-edge-cases.spec.ts:477:7 › RBAC Edge Cases - Rate Limit Edge Cases › both groups with defined limits takes MAX (118ms)
+  ✓  208 [api] › tests/rbac/22-edge-cases.spec.ts:389:7 › RBAC Edge Cases - Address Normalization › mixed case addresses in RPC calls work (127ms)
+  ✓  203 [api] › tests/rbac/22-edge-cases.spec.ts:241:7 › RBAC Edge Cases - Hierarchy Edge Cases › user in multiple hierarchy paths gets combined permissions (188ms)
+  ✓  212 [api] › tests/rbac/22-edge-cases.spec.ts:638:7 › RBAC Edge Cases - Boundary Values › very long method names are handled correctly (117ms)
+  ✓  210 [api] › tests/rbac/22-edge-cases.spec.ts:553:7 › RBAC Edge Cases - Concurrent Operations › multiple parallel access checks return consistent results (126ms)
+  ✓  215 [api] › tests/rbac/22-edge-cases.spec.ts:752:7 › RBAC Edge Cases - Multicall Bypass Prevention › RPC: eth_call to Multicall3 with aggregate is blocked (105ms)
+  ✓  211 [api] › tests/rbac/22-edge-cases.spec.ts:586:7 › RBAC Edge Cases - Concurrent Operations › permission change during parallel requests is handled consistently (140ms)
+  ✓  216 [api] › tests/rbac/22-edge-cases.spec.ts:779:7 › RBAC Edge Cases - Multicall Bypass Prevention › RPC: eth_sendTransaction to Multicall3 is blocked (107ms)
+  ✓  213 [api] › tests/rbac/22-edge-cases.spec.ts:662:7 › RBAC Edge Cases - Boundary Values › many methods (100+) in allowed_methods works (131ms)
+  ✓  217 [api] › tests/rbac/22-edge-cases.spec.ts:806:7 › RBAC Edge Cases - Multicall Bypass Prevention › RPC: eth_estimateGas to Multicall3 is blocked (108ms)
+  ✓  220 [api] › tests/rbac/23-multi-org-users.spec.ts:22:9 › Multi-Organization Users › Cross-Org Membership › user can be member of groups in multiple organizations (84ms)
+  ✓  218 [api] › tests/rbac/22-edge-cases.spec.ts:833:7 › RBAC Edge Cases - Multicall Bypass Prevention › RPC: call to Multicall3 with non-multicall function is allowed (105ms)
+  ✓  219 [api] › tests/rbac/22-edge-cases.spec.ts:859:7 › RBAC Edge Cases - Multicall Bypass Prevention › RPC: call to regular contract with multicall selector is allowed (116ms)
+  ✓  222 [api] › tests/rbac/23-multi-org-users.spec.ts:78:9 › Multi-Organization Users › Cross-Org Membership › user can have similar groups in different orgs (88ms)
+  ✓  221 [api] › tests/rbac/23-multi-org-users.spec.ts:49:9 › Multi-Organization Users › Cross-Org Membership › memberships include group org_id for frontend grouping (101ms)
+  ✓  223 [api] › tests/rbac/23-multi-org-users.spec.ts:110:9 › Multi-Organization Users › Per-Org Effective Permissions › effective permissions are org-specific (115ms)
+  ✓  224 [api] › tests/rbac/23-multi-org-users.spec.ts:154:9 › Multi-Organization Users › Per-Org Effective Permissions › permissions in one org do not affect another org (84ms)
+  ✓  225 [api] › tests/rbac/23-multi-org-users.spec.ts:181:9 › Multi-Organization Users › Per-Org Effective Permissions › multiple memberships in same org combine permissions (97ms)
+  ✘  226 [api] › tests/rbac/23-multi-org-users.spec.ts:218:9 › Multi-Organization Users › Cross-Org Access Checks › access check respects org context (112ms)
+  ✘  228 [api] › tests/rbac/23-multi-org-users.spec.ts:277:9 › Multi-Organization Users › Cross-Org Access Checks › rate limits are org-specific (106ms)
+  ✘  229 [api] › tests/rbac/23-multi-org-users.spec.ts:414:9 › Multi-Organization Users › Membership Management › removing membership from one org does not affect other orgs (122ms)
+  ✓  227 [api] › tests/rbac/23-multi-org-users.spec.ts:329:9 › Multi-Organization Users › Cross-Org Contract Access › contract grants are org-specific (129ms)
+  ✘  231 [api] › tests/security/01-cross-org-isolation.spec.ts:178:7 › Cross-Organization Isolation › SECURITY-001: User A cannot access Contract B (cross-org isolation) (17ms)
+  ✓  230 [api] › tests/rbac/23-multi-org-users.spec.ts:477:9 › Multi-Organization Users › Membership Management › user status (banned) affects all orgs (153ms)
+  ✓  232 [api] › tests/security/01-cross-org-isolation.spec.ts:202:7 › Cross-Organization Isolation › SECURITY-003: User A CAN access their own Contract A (27ms)
+  ✘  235 [api] › tests/security/01-cross-org-isolation.spec.ts:214:7 › Cross-Organization Isolation › SECURITY-004: eth_getLogs cannot include cross-org contracts (10ms)
+  ✘  233 [api] › tests/security/01-cross-org-isolation.spec.ts:225:7 › Cross-Organization Isolation › SECURITY-005: eth_getLogs with mixed-org addresses is denied (18ms)
+  ✓  234 [api] › tests/security/01-cross-org-isolation.spec.ts:249:7 › Cross-Organization Isolation › SECURITY-007: Public contract (not registered to any org) is accessible (16ms)
+  ✘  236 [api] › tests/security/01-cross-org-isolation.spec.ts:265:7 › Cross-Organization Isolation › SECURITY-008: eth_getCode on cross-org contract is denied (30ms)
+  ✓  214 [api] › tests/rbac/22-edge-cases.spec.ts:696:7 › RBAC Edge Cases - Boundary Values › user in many groups (20+) gets combined permissions (1.1s)
+  ✘  237 [api] › tests/security/01-cross-org-isolation.spec.ts:274:7 › Cross-Organization Isolation › SECURITY-009: eth_getStorageAt on cross-org contract is denied (16ms)
+  ✘  238 [api] › tests/rbac/23-multi-org-users.spec.ts:277:9 › Multi-Organization Users › Cross-Org Access Checks › rate limits are org-specific (retry #1) (242ms)
+  ✘  239 [api] › tests/rbac/23-multi-org-users.spec.ts:218:9 › Multi-Organization Users › Cross-Org Access Checks › access check respects org context (retry #1) (226ms)
+  ✘  240 [api] › tests/rbac/23-multi-org-users.spec.ts:414:9 › Multi-Organization Users › Membership Management › removing membership from one org does not affect other orgs (retry #1) (237ms)
+  ✘  241 [api] › tests/security/01-cross-org-isolation.spec.ts:178:7 › Cross-Organization Isolation › SECURITY-001: User A cannot access Contract B (cross-org isolation) (retry #1) (20ms)
+  ✘  242 [api] › tests/security/01-cross-org-isolation.spec.ts:214:7 › Cross-Organization Isolation › SECURITY-004: eth_getLogs cannot include cross-org contracts (retry #1) (18ms)
+  ✘  243 [api] › tests/security/01-cross-org-isolation.spec.ts:225:7 › Cross-Organization Isolation › SECURITY-005: eth_getLogs with mixed-org addresses is denied (retry #1) (23ms)
+  ✘  244 [api] › tests/security/01-cross-org-isolation.spec.ts:265:7 › Cross-Organization Isolation › SECURITY-008: eth_getCode on cross-org contract is denied (retry #1) (74ms)
+  ✘  245 [api] › tests/security/01-cross-org-isolation.spec.ts:274:7 › Cross-Organization Isolation › SECURITY-009: eth_getStorageAt on cross-org contract is denied (retry #1) (23ms)
+  ✘  246 [api] › tests/rbac/23-multi-org-users.spec.ts:277:9 › Multi-Organization Users › Cross-Org Access Checks › rate limits are org-specific (retry #2) (152ms)
+  ✘  247 [api] › tests/rbac/23-multi-org-users.spec.ts:414:9 › Multi-Organization Users › Membership Management › removing membership from one org does not affect other orgs (retry #2) (146ms)
+  ✘  248 [api] › tests/rbac/23-multi-org-users.spec.ts:218:9 › Multi-Organization Users › Cross-Org Access Checks › access check respects org context (retry #2) (149ms)
+  ✘  249 [api] › tests/security/01-cross-org-isolation.spec.ts:178:7 › Cross-Organization Isolation › SECURITY-001: User A cannot access Contract B (cross-org isolation) (retry #2) (22ms)
+  ✘  250 [api] › tests/security/01-cross-org-isolation.spec.ts:214:7 › Cross-Organization Isolation › SECURITY-004: eth_getLogs cannot include cross-org contracts (retry #2) (78ms)
+  ✘  251 [api] › tests/security/01-cross-org-isolation.spec.ts:225:7 › Cross-Organization Isolation › SECURITY-005: eth_getLogs with mixed-org addresses is denied (retry #2) (64ms)
+  ✘  252 [api] › tests/security/01-cross-org-isolation.spec.ts:265:7 › Cross-Organization Isolation › SECURITY-008: eth_getCode on cross-org contract is denied (retry #2) (55ms)
+  ✓  254 [api] › tests/security/02-auth-bypass.spec.ts:14:7 › Authentication Bypass Attempts › AUTH-001: Request without Authorization header is denied (27ms)
+  ✓  256 [api] › tests/security/02-auth-bypass.spec.ts:111:7 › Authentication Bypass Attempts › AUTH-006: Request with expired JWT is denied (6ms)
+  ✘  253 [api] › tests/security/01-cross-org-isolation.spec.ts:274:7 › Cross-Organization Isolation › SECURITY-009: eth_getStorageAt on cross-org contract is denied (retry #2) (31ms)
+  ✓  258 [api] › tests/security/02-auth-bypass.spec.ts:132:7 › Authentication Bypass Attempts › AUTH-007: Algorithm confusion attack (alg:none) is rejected (4ms)
+  ✓  255 [api] › tests/security/02-auth-bypass.spec.ts:45:7 › Authentication Bypass Attempts › AUTH-003: Request with "Bearer" only (no token) is denied (40ms)
+  ✓  259 [api] › tests/security/02-auth-bypass.spec.ts:155:7 › Authentication Bypass Attempts › AUTH-008: JWKS confusion (different kid) is rejected (10ms)
+  ✓  261 [api] › tests/security/02-auth-bypass.spec.ts:197:7 › Authentication Bypass Attempts › AUTH-010: Token in query parameter is not accepted (3ms)
+  ✓  260 [api] › tests/security/02-auth-bypass.spec.ts:178:7 › Authentication Bypass Attempts › AUTH-009: Case sensitivity in Authorization header (3ms)
+  ✓  257 [api] › tests/security/02-auth-bypass.spec.ts:28:7 › Authentication Bypass Attempts › AUTH-002: Request with empty Authorization header is denied (31ms)
+  ✓  262 [api] › tests/security/02-auth-bypass.spec.ts:211:7 › Authentication Bypass Attempts › AUTH-011: Token in request body is not accepted (2ms)
+  ✓  263 [api] › tests/security/02-auth-bypass.spec.ts:226:7 › Authentication Bypass Attempts › AUTH-012: Multiple Authorization headers are handled safely (4ms)
+  ✓  264 [api] › tests/security/02-auth-bypass.spec.ts:252:7 › Mock Token Security (Dev Mode) › MOCK-001: Mock token format is validated (27ms)
+  ✓  266 [api] › tests/security/02-auth-bypass.spec.ts:314:7 › Session Security › SESSION-002: OAuth session enumeration is not possible (12ms)
+  ✓  265 [api] › tests/security/02-auth-bypass.spec.ts:283:7 › Session Security › SESSION-001: Session ID enumeration is not possible (44ms)
+  ✓  268 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_accountRange is blocked (10ms)
+  ✓  267 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_traceTransaction is blocked (19ms)
+  ✓  270 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_removePeer is blocked (14ms)
+  ✓  271 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_gcStats is blocked (6ms)
+  ✓  273 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_nodeInfo is blocked (8ms)
+  ✓  274 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_memStats is blocked (17ms)
+  ✓  272 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_traceBlock is blocked (25ms)
+  ✓  275 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_peers is blocked (15ms)
+  ✓  276 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_setHead is blocked (11ms)
+  ✓  278 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_datadir is blocked (21ms)
+  ✓  277 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_traceBlockByNumber is blocked (49ms)
+  ✓  279 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_verbosity is blocked (17ms)
+  ✓  282 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_traceBlockByHash is blocked (13ms)
+  ✓  283 [api] › tests/security/03-blocked-methods.spec.ts:106:9 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-002: Unknown debug_* method is blocked by prefix (14ms)
+  ✓  281 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_startRPC is blocked (19ms)
+  ✓  284 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_dumpBlock is blocked (26ms)
+  ✓  280 [api] › tests/security/02-auth-bypass.spec.ts:62:7 › Authentication Bypass Attempts › AUTH-004: Request with malformed JWT is denied (58ms)
+  ✓  286 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_stopRPC is blocked (29ms)
+  ✓  285 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_addPeer is blocked (33ms)
+  ✓  287 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_preimage is blocked (18ms)
+  ✓  289 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_startHTTP is blocked (12ms)
+  ✓  291 [api] › tests/security/03-blocked-methods.spec.ts:99:11 › Blocked Method Enforcement › Debug Namespace Blocking › BLOCKED-001: debug_storageRangeAt is blocked (19ms)
+  ✘  269 [api] › tests/security/01-cross-org-isolation.spec.ts:190:7 › Cross-Organization Isolation › SECURITY-002: User B cannot access Contract A (cross-org isolation) (20ms)
+  ✓  290 [api] › tests/security/03-blocked-methods.spec.ts:166:11 › Blocked Method Enforcement › Miner Namespace Blocking › BLOCKED-005: miner_start is blocked (7ms)
+  ✓  292 [api] › tests/security/03-blocked-methods.spec.ts:194:9 › Blocked Method Enforcement › Raw Transaction Blocking › BLOCKED-009: eth_sendRawTransaction is blocked (15ms)
+  ✓  296 [api] › tests/security/03-blocked-methods.spec.ts:204:9 › Blocked Method Enforcement › Signing Method Blocking › BLOCKED-010: eth_sign is blocked (9ms)
+  ✓  295 [api] › tests/security/03-blocked-methods.spec.ts:166:11 › Blocked Method Enforcement › Miner Namespace Blocking › BLOCKED-005: miner_stop is blocked (6ms)
+  ✓  298 [api] › tests/security/03-blocked-methods.spec.ts:166:11 › Blocked Method Enforcement › Miner Namespace Blocking › BLOCKED-005: miner_setEtherbase is blocked (8ms)
+  ✓  297 [api] › tests/security/03-blocked-methods.spec.ts:209:9 › Blocked Method Enforcement › Signing Method Blocking › BLOCKED-011: eth_signTransaction is blocked (10ms)
+  ✓  288 [api] › tests/security/03-blocked-methods.spec.ts:128:11 › Blocked Method Enforcement › Admin Namespace Blocking › BLOCKED-003: admin_stopHTTP is blocked (14ms)
+  ✓  299 [api] › tests/security/03-blocked-methods.spec.ts:166:11 › Blocked Method Enforcement › Miner Namespace Blocking › BLOCKED-005: miner_setGasPrice is blocked (10ms)
+  ✓  300 [api] › tests/security/03-blocked-methods.spec.ts:217:9 › Blocked Method Enforcement › Subscription Blocking › BLOCKED-012: eth_subscribe is blocked (11ms)
+  ✓  302 [api] › tests/security/03-blocked-methods.spec.ts:176:9 › Blocked Method Enforcement › Txpool Namespace Blocking › BLOCKED-006: txpool_content is blocked (10ms)
+  ✓  301 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_sign is blocked (18ms)
+  ✓  303 [api] › tests/security/03-blocked-methods.spec.ts:222:9 › Blocked Method Enforcement › Subscription Blocking › BLOCKED-013: eth_unsubscribe is blocked (10ms)
+  ✓  304 [api] › tests/security/03-blocked-methods.spec.ts:181:9 › Blocked Method Enforcement › Txpool Namespace Blocking › BLOCKED-007: txpool_status is blocked (19ms)
+  ✓  293 [api] › tests/security/03-blocked-methods.spec.ts:265:7 › Blocked Method Bypass Attempts › BYPASS-003: Prefix/suffix variations do not bypass blocking (90ms)
+  ✓  305 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_signTransaction is blocked (10ms)
+  ✓  307 [api] › tests/security/03-blocked-methods.spec.ts:186:9 › Blocked Method Enforcement › Txpool Namespace Blocking › BLOCKED-008: txpool_inspect is blocked (24ms)
+  ✓  308 [api] › tests/security/03-blocked-methods.spec.ts:283:7 › Blocked Method Bypass Attempts › BYPASS-004: URL encoding does not bypass blocking (13ms)
+  ✓  309 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_unlockAccount is blocked (11ms)
+  ✓  313 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_newAccount is blocked (11ms)
+  ✓  311 [api] › tests/security/02-auth-bypass.spec.ts:91:7 › Authentication Bypass Attempts › AUTH-005: Request with forged JWT signature is denied (26ms)
+  ✓  312 [api] › tests/security/03-blocked-methods.spec.ts:289:7 › Blocked Method Bypass Attempts › BYPASS-005: Null bytes do not bypass blocking (32ms)
+  ✓  314 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_listAccounts is blocked (17ms)
+  ✓  306 [api] › tests/security/03-blocked-methods.spec.ts:235:7 › Blocked Method Bypass Attempts › BYPASS-001: Case variation does not bypass blocking (47ms)
+  ✓  310 [api] › tests/security/03-blocked-methods.spec.ts:322:7 › Allowed Methods Still Work › ALLOWED-005: web3_clientVersion is allowed (15ms)
+  ✓  317 [api] › tests/security/03-blocked-methods.spec.ts:148:11 › Blocked Method Enforcement › Personal Namespace Blocking › BLOCKED-004: personal_importRawKey is blocked (10ms)
+  ✓  318 [api] › tests/security/03-blocked-methods.spec.ts:251:7 › Blocked Method Bypass Attempts › BYPASS-002: Unicode homoglyphs do not bypass blocking (16ms)
+  ✘  294 [api] › tests/security/01-cross-org-isolation.spec.ts:235:7 › Cross-Organization Isolation › SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly (18ms)
+  ✓  315 [api] › tests/security/03-blocked-methods.spec.ts:301:7 › Allowed Methods Still Work › ALLOWED-001: eth_blockNumber is allowed (13ms)
+  ✓  322 [api] › tests/security/03-blocked-methods.spec.ts:307:7 › Allowed Methods Still Work › ALLOWED-002: eth_chainId is allowed (12ms)
+  ✓  323 [api] › tests/security/03-blocked-methods.spec.ts:312:7 › Allowed Methods Still Work › ALLOWED-003: eth_gasPrice is allowed (15ms)
+  ✓  320 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.aggregate3Value() is blocked (7ms)
+  ✓  319 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.tryAggregate() is blocked (12ms)
+  ✓  321 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.aggregate() is blocked (6ms)
+  ✓  324 [api] › tests/security/03-blocked-methods.spec.ts:317:7 › Allowed Methods Still Work › ALLOWED-004: net_version is allowed (8ms)
+  ✓  326 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.tryBlockAndAggregate() is blocked (5ms)
+  ✓  316 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.aggregate() is blocked (31ms)
+  ✓  325 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.blockAndAggregate() is blocked (9ms)
+  ✓  327 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.aggregate3() is blocked (8ms)
+  ✓  328 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.aggregate() is blocked (6ms)
+  ✓  332 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.aggregate3Value() is blocked (6ms)
+  ✓  329 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.aggregate3() is blocked (9ms)
+  ✓  330 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.tryAggregate() is blocked (9ms)
+  ✓  333 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.aggregate3() is blocked (6ms)
+  ✓  334 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.blockAndAggregate() is blocked (6ms)
+  ✓  335 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.aggregate3Value() is blocked (14ms)
+  ✓  336 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall2.tryBlockAndAggregate() is blocked (20ms)
+  ✓  331 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.tryAggregate() is blocked (12ms)
+FINDING: Custom Multicall address bypasses detection!
+Response: { status: [33m200[39m, body: { jsonrpc: [32m'2.0'[39m, id: [33m1[39m, result: [32m'0x'[39m } }
+  ✓  338 [api] › tests/security/04-multicall-bypass.spec.ts:211:7 › Multicall Bypass Attempts › BYPASS-001: Multicall via different address (custom deployment) (10ms)
+  ✓  337 [api] › tests/security/04-multicall-bypass.spec.ts:148:9 › Multicall Detection and Blocking › eth_sendTransaction to Multicall Contracts › MULTICALL-004: eth_sendTransaction to Multicall3.aggregate() is blocked (13ms)
+  ✓  340 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall3.blockAndAggregate() is blocked (25ms)
+  ✓  343 [api] › tests/security/04-multicall-bypass.spec.ts:234:7 › Multicall Bypass Attempts › BYPASS-002: Nested call through allowed contract to Multicall (1ms)
+  ✓  342 [api] › tests/security/04-multicall-bypass.spec.ts:110:13 › Multicall Detection and Blocking › eth_call to Multicall Contracts › MULTICALL-001: eth_call to Multicall1.tryBlockAndAggregate() is blocked (8ms)
+  ✓  344 [api] › tests/security/04-multicall-bypass.spec.ts:163:9 › Multicall Detection and Blocking › Case Sensitivity in Multicall Detection › MULTICALL-005: Uppercase Multicall address is still blocked (6ms)
+  ✓  345 [api] › tests/security/04-multicall-bypass.spec.ts:244:7 › Multicall Bypass Attempts › BYPASS-003: Empty calldata to Multicall address (6ms)
+  ✓  346 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: '; DROP TABLE organizations; -... (5ms)
+  ✓  341 [api] › tests/security/04-multicall-bypass.spec.ts:267:7 › Multicall Bypass Attempts › BYPASS-005: Selector with wrong prefix (12ms)
+  ✓  347 [api] › tests/security/04-multicall-bypass.spec.ts:127:9 › Multicall Detection and Blocking › eth_estimateGas to Multicall Contracts › MULTICALL-002: eth_estimateGas to Multicall3.aggregate() is blocked (11ms)
+  ✓  348 [api] › tests/security/04-multicall-bypass.spec.ts:172:9 › Multicall Detection and Blocking › Case Sensitivity in Multicall Detection › MULTICALL-006: Mixed case Multicall address is still blocked (10ms)
+  ✓  350 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: ' OR '1'='1... (10ms)
+  ✓  353 [api] › tests/security/04-multicall-bypass.spec.ts:188:9 › Multicall Detection and Blocking › Non-Multicall Calls to Multicall Address › MULTICALL-007: Non-multicall function call to Multicall address is allowed (8ms)
+  ✓  352 [api] › tests/security/04-multicall-bypass.spec.ts:137:9 › Multicall Detection and Blocking › eth_estimateGas to Multicall Contracts › MULTICALL-003: eth_estimateGas to Multicall3.tryAggregate() is blocked (8ms)
+  ✓  349 [api] › tests/security/04-multicall-bypass.spec.ts:255:7 › Multicall Bypass Attempts › BYPASS-004: Partial selector to Multicall (20ms)
+  ✓  354 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: '; SELECT * FROM users; --... (9ms)
+  ✓  355 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: ' UNION SELECT * FROM users --... (7ms)
+  ✓  356 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: 1; DELETE FROM organizations W... (9ms)
+  ✓  357 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: admin'--... (5ms)
+  ✓  361 [api] › tests/security/05-input-validation.spec.ts:119:11 › SQL Injection Tests › User External ID Injection › SQLI-002: User external_id injection: '; DROP TABLE users; --... (2ms)
+  ✓  360 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: '; WAITFOR DELAY '0:0:5'--... (7ms)
+  ✓  358 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: {{7*7}}... (10ms)
+  ✓  359 [api] › tests/security/05-input-validation.spec.ts:91:11 › SQL Injection Tests › Organization Slug Injection › SQLI-001: Organization slug injection: ${7*7}... (9ms)
+  ✓  362 [api] › tests/security/05-input-validation.spec.ts:119:11 › SQL Injection Tests › User External ID Injection › SQLI-002: User external_id injection: ' OR '1'='1... (2ms)
+  ✓  364 [api] › tests/security/05-input-validation.spec.ts:132:9 › SQL Injection Tests › Contract Address Injection › SQLI-003: Contract address with SQL payload (7ms)
+  ✓  351 [api] › tests/security/04-multicall-bypass.spec.ts:285:7 › Multicall via Different Methods › MULTICALL-008: eth_getCode on Multicall address is allowed (8ms)
+  ✓  368 [api] › tests/security/04-multicall-bypass.spec.ts:293:7 › Multicall via Different Methods › MULTICALL-009: eth_getBalance on Multicall address is allowed (10ms)
+eth_getStorageAt on Multicall: status=200
+  ✓  369 [api] › tests/security/04-multicall-bypass.spec.ts:298:7 › Multicall via Different Methods › MULTICALL-010: eth_getStorageAt on Multicall address behavior (9ms)
+  ✓  363 [api] › tests/security/05-input-validation.spec.ts:161:9 › JSON-RPC Input Validation › Batch Request Blocking › INPUT-001: Batch JSON-RPC request is blocked (3ms)
+  ✓  370 [api] › tests/security/05-input-validation.spec.ts:180:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-002: Missing jsonrpc field (14ms)
+  ✓  366 [api] › tests/security/05-input-validation.spec.ts:251:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-007: Null method (20ms)
+  ✓  372 [api] › tests/security/05-input-validation.spec.ts:193:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-003: Missing method field (8ms)
+  ✓  365 [api] › tests/security/05-input-validation.spec.ts:211:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-004: Wrong jsonrpc version (25ms)
+  ✓  373 [api] › tests/security/05-input-validation.spec.ts:271:9 › JSON-RPC Input Validation › Oversized Requests › INPUT-008: Request body > 1MB is rejected (12ms)
+  ✘  339 [api] › tests/security/01-cross-org-isolation.spec.ts:284:7 › Cross-Organization Isolation › SECURITY-010: eth_sendTransaction to cross-org contract is denied (33ms)
+  ✓  376 [api] › tests/security/05-input-validation.spec.ts:297:9 › JSON-RPC Input Validation › Oversized Requests › INPUT-009: Very long method name is handled (5ms)
+  ✓  375 [api] › tests/security/05-input-validation.spec.ts:224:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-005: Negative ID (21ms)
+  ✓  367 [api] › tests/security/05-input-validation.spec.ts:313:7 › Address Validation › ADDR-001: Invalid address format is rejected (56ms)
+  ✓  377 [api] › tests/security/06-admin-api-access.spec.ts:18:9 › Admin API Localhost Restriction › Organization Endpoints › ADMIN-001: GET /api/v1/orgs requires localhost (4ms)
+  ✓  378 [api] › tests/security/05-input-validation.spec.ts:239:9 › JSON-RPC Input Validation › Malformed JSON-RPC › INPUT-006: Invalid params type (string instead of array) (3ms)
+  ✓  371 [api] › tests/security/05-input-validation.spec.ts:363:7 › Special Characters in Input › SPECIAL-002: Unicode in method name (10ms)
+  ✓  380 [api] › tests/security/06-admin-api-access.spec.ts:25:9 › Admin API Localhost Restriction › Organization Endpoints › ADMIN-002: POST /api/v1/orgs requires localhost (7ms)
+  ✓  379 [api] › tests/security/05-input-validation.spec.ts:330:7 › Address Validation › ADDR-002: Checksummed vs non-checksummed addresses (12ms)
+  ✓  382 [api] › tests/security/06-admin-api-access.spec.ts:32:9 › Admin API Localhost Restriction › Organization Endpoints › ADMIN-003: DELETE /api/v1/orgs/:id requires localhost (4ms)
+  ✓  374 [api] › tests/security/05-input-validation.spec.ts:417:7 › Content-Type Handling › CONTENT-002: Wrong Content-Type header (3ms)
+  ✓  384 [api] › tests/security/06-admin-api-access.spec.ts:41:9 › Admin API Localhost Restriction › User Endpoints › ADMIN-004: PUT /api/v1/users/:id (set KYC) requires localhost (2ms)
+  ✓  381 [api] › tests/security/05-input-validation.spec.ts:376:7 › Special Characters in Input › SPECIAL-003: Control characters in params (5ms)
+  ✓  385 [api] › tests/security/05-input-validation.spec.ts:434:7 › Content-Type Handling › CONTENT-003: XML content with JSON Content-Type (2ms)
+  ✓  387 [api] › tests/security/06-admin-api-access.spec.ts:61:9 › Admin API Localhost Restriction › Group Endpoints › ADMIN-006: GET /api/v1/orgs/:org_id/groups requires localhost (8ms)
+  ✓  386 [api] › tests/security/06-admin-api-access.spec.ts:50:9 › Admin API Localhost Restriction › User Endpoints › ADMIN-005: Setting banned=true requires localhost (12ms)
+  ✓  389 [api] › tests/security/06-admin-api-access.spec.ts:72:9 › Admin API Localhost Restriction › Group Endpoints › ADMIN-007: POST /api/v1/orgs/:org_id/groups requires localhost (8ms)
+  ✓  392 [api] › tests/security/06-admin-api-access.spec.ts:121:9 › Localhost IP Detection Bypass Attempts › X-Forwarded-For Header Manipulation › BYPASS-001: X-Forwarded-For: 127.0.0.1 from external IP (5ms)
+  ✓  390 [api] › tests/security/06-admin-api-access.spec.ts:87:9 › Admin API Localhost Restriction › Contract Endpoints › ADMIN-008: POST /api/v1/orgs/:org_id/contracts requires localhost (9ms)
+  ✓  391 [api] › tests/security/06-admin-api-access.spec.ts:102:9 › Admin API Localhost Restriction › Membership Endpoints › ADMIN-009: POST memberships requires localhost (7ms)
+  ✓  383 [api] › tests/security/05-input-validation.spec.ts:350:7 › Special Characters in Input › SPECIAL-001: Null bytes in request (2ms)
+  ✓  393 [api] › tests/security/06-admin-api-access.spec.ts:136:9 › Localhost IP Detection Bypass Attempts › X-Forwarded-For Header Manipulation › BYPASS-002: X-Real-IP header manipulation (2ms)
+  ✓  394 [api] › tests/security/06-admin-api-access.spec.ts:146:9 › Localhost IP Detection Bypass Attempts › X-Forwarded-For Header Manipulation › BYPASS-003: Multiple X-Forwarded-For values (2ms)
+Status with X-Forwarded-For: 172.255.255.255 = 200
+Status with X-Forwarded-For: 172.0.0.1 = 200
+  ✓  398 [api] › tests/security/06-admin-api-access.spec.ts:198:9 › Localhost IP Detection Bypass Attempts › Docker Network Range Abuse › BYPASS-006: 172.255.255.255 (outside Docker range) (3ms)
+  ✓  397 [api] › tests/security/06-admin-api-access.spec.ts:212:7 › Logs and Status Endpoints › ADMIN-010: GET /api/v1/logs requires localhost (3ms)
+  ✓  396 [api] › tests/security/06-admin-api-access.spec.ts:182:9 › Localhost IP Detection Bypass Attempts › Docker Network Range Abuse › BYPASS-005: 172.0.0.1 (outside Docker range but matches prefix) (2ms)
+  ✓  395 [api] › tests/security/06-admin-api-access.spec.ts:160:9 › Localhost IP Detection Bypass Attempts › IPv6 Variations › BYPASS-004: IPv6 localhost variations (9ms)
+  ✓  388 [api] › tests/security/05-input-validation.spec.ts:400:7 › Content-Type Handling › CONTENT-001: Missing Content-Type header (12ms)
+  ✓  399 [api] › tests/security/06-admin-api-access.spec.ts:217:7 › Logs and Status Endpoints › ADMIN-011: GET /api/v1/status requires localhost (2ms)
+  ✓  401 [api] › tests/security/06-admin-api-access.spec.ts:232:7 › Dev Endpoints › DEV-001: GET /api/v1/dev/create3-factory requires localhost (1ms)
+  ✓  400 [api] › tests/security/06-admin-api-access.spec.ts:222:7 › Logs and Status Endpoints › ADMIN-012: POST /api/v1/test-request requires localhost (6ms)
+  ✓  402 [api] › tests/security/06-admin-api-access.spec.ts:237:7 › Dev Endpoints › DEV-002: POST /api/v1/dev/create3-factory requires localhost (7ms)
+  ✓  403 [api] › tests/security/06-admin-api-access.spec.ts:245:7 › Legacy API Endpoints (Deprecation) › LEGACY-001: /api/* endpoints return deprecation headers (5ms)
+  ✓  405 [api] › tests/security/07-historical-state.spec.ts:137:7 › eth_call Historical State Blocking › HIST-004: eth_call with "finalized" is allowed (10ms)
+  ✓  404 [api] › tests/security/07-historical-state.spec.ts:108:7 › eth_call Historical State Blocking › HIST-001: eth_call with "latest" is allowed (13ms)
+  ✓  406 [api] › tests/security/07-historical-state.spec.ts:166:7 › eth_call Historical State Blocking › HIST-007: eth_call with no block param defaults to latest (8ms)
+eth_getTransactionCount with historical block: status=200
+  ✓  408 [api] › tests/security/07-historical-state.spec.ts:203:7 › eth_getStorageAt Historical State Blocking › HIST-010: eth_getStorageAt with decimal block number (5ms)
+  ✓  407 [api] › tests/security/07-historical-state.spec.ts:242:7 › Other Methods with Block Parameters › HIST-013: eth_getTransactionCount with historical block (15ms)
+  ✓  410 [api] › tests/security/07-historical-state.spec.ts:146:7 › eth_call Historical State Blocking › HIST-005: eth_call with block number is BLOCKED (6ms)
+  ✓  411 [api] › tests/security/07-historical-state.spec.ts:118:7 › eth_call Historical State Blocking › HIST-002: eth_call with "pending" is allowed (6ms)
+  ✓  415 [api] › tests/security/07-historical-state.spec.ts:156:7 › eth_call Historical State Blocking › HIST-006: eth_call with block hash is BLOCKED (6ms)
+  ✓  416 [api] › tests/security/07-historical-state.spec.ts:127:7 › eth_call Historical State Blocking › HIST-003: eth_call with "safe" is allowed (8ms)
+  ✓  414 [api] › tests/security/07-historical-state.spec.ts:258:7 › Block Parameter Variations › HIST-014: Block 0x0 (genesis) is historical (4ms)
+eth_getBalance with historical block: status=200
+  ✓  412 [api] › tests/security/07-historical-state.spec.ts:182:7 › eth_getStorageAt Historical State Blocking › HIST-008: eth_getStorageAt with "latest" is allowed (13ms)
+eth_call with "earliest": status=200
+  ✓  413 [api] › tests/security/07-historical-state.spec.ts:222:7 › Other Methods with Block Parameters › HIST-011: eth_getBalance with historical block (10ms)
+  ✓  417 [api] › tests/security/07-historical-state.spec.ts:276:7 › Block Parameter Variations › HIST-016: "earliest" tag is historical (7ms)
+  ✓  419 [api] › tests/security/07-historical-state.spec.ts:267:7 › Block Parameter Variations › HIST-015: Block 0x1 is historical (7ms)
+  ✓  418 [api] › tests/security/07-historical-state.spec.ts:308:7 › Block Parameter Variations › HIST-019: Very large block number (6ms)
+eth_getCode with historical block: status=200
+  ✓  420 [api] › tests/security/07-historical-state.spec.ts:192:7 › eth_getStorageAt Historical State Blocking › HIST-009: eth_getStorageAt with block number is BLOCKED (8ms)
+  ✓  421 [api] › tests/security/07-historical-state.spec.ts:233:7 › Other Methods with Block Parameters › HIST-012: eth_getCode with historical block (5ms)
+  ✓  422 [api] › tests/security/07-historical-state.spec.ts:288:7 › Block Parameter Variations › HIST-017: Empty string block param (11ms)
+  ✓  427 [api] › tests/security/07-historical-state.spec.ts:298:7 › Block Parameter Variations › HIST-018: null block param (6ms)
+  ✓  424 [api] › tests/security/07-historical-state.spec.ts:344:7 › Case Sensitivity in Block Tags › HIST-022: "PENDING" (uppercase) is allowed (9ms)
+  ✓  423 [api] › tests/security/07-historical-state.spec.ts:325:7 › Case Sensitivity in Block Tags › HIST-020: "LATEST" (uppercase) is allowed (11ms)
+  ✓  429 [api] › tests/security/07-historical-state.spec.ts:335:7 › Case Sensitivity in Block Tags › HIST-021: "Latest" (mixed case) is allowed (7ms)
+  ✓  425 [api] › tests/security/08-deployment-validation.spec.ts:191:7 › Deploy Claim Enforcement › DEPLOY-003: eth_estimateGas for deployment also requires deploy claim (16ms)
+  ✓  426 [api] › tests/security/08-deployment-validation.spec.ts:166:7 › Deploy Claim Enforcement › DEPLOY-001: User with deploy claim can deploy (22ms)
+  ✓  433 [api] › tests/security/08-deployment-validation.spec.ts:205:7 › Deploy Claim Enforcement › DEPLOY-004: User with deploy claim can estimate deployment gas (11ms)
+  ✓  434 [api] › tests/security/08-deployment-validation.spec.ts:178:7 › Deploy Claim Enforcement › DEPLOY-002: User without deploy claim CANNOT deploy (12ms)
+  ✓  428 [api] › tests/security/08-deployment-validation.spec.ts:223:7 › Deployment Detection › DEPLOY-005: Missing "to" field = deployment (14ms)
+  ✘  409 [api] › tests/security/01-cross-org-isolation.spec.ts:190:7 › Cross-Organization Isolation › SECURITY-002: User B cannot access Contract A (cross-org isolation) (retry #1) (21ms)
+  ✓  437 [api] › tests/security/08-deployment-validation.spec.ts:232:7 › Deployment Detection › DEPLOY-006: "to": null = deployment (8ms)
+  ✓  430 [api] › tests/security/08-deployment-validation.spec.ts:241:7 › Deployment Detection › DEPLOY-007: "to": "" = deployment (14ms)
+  ✓  439 [api] › tests/security/08-deployment-validation.spec.ts:249:7 › Deployment Detection › DEPLOY-008: "to": "0x" = deployment (8ms)
+  ✓  431 [api] › tests/security/08-deployment-validation.spec.ts:257:7 › Deployment Detection › DEPLOY-009: Valid "to" address = NOT deployment (30ms)
+CREATE2 opcode deployment: status=403, body={"error":"access denied: deployment validation failed: contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"}
+  ✓  435 [api] › tests/security/08-deployment-validation.spec.ts:293:7 › Bytecode Validation - CREATE/CREATE2 Detection › DEPLOY-011: Bytecode with CREATE2 opcode is blocked (10ms)
+  ✓  436 [api] › tests/security/08-deployment-validation.spec.ts:323:7 › eth_sendRawTransaction Blocking › DEPLOY-013: eth_sendRawTransaction is globally blocked (16ms)
+0x data deployment: status=403
+  ✓  438 [api] › tests/security/08-deployment-validation.spec.ts:349:7 › Empty Bytecode Handling › DEPLOY-015: Deployment with "0x" data is rejected (10ms)
+No data deployment: status=403
+CREATE opcode deployment: status=403, body={"error":"access denied: deployment validation failed: contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"}
+  ✓  443 [api] › tests/security/08-deployment-validation.spec.ts:357:7 › Empty Bytecode Handling › DEPLOY-016: Deployment with missing data field is handled (13ms)
+  ✓  440 [api] › tests/security/08-deployment-validation.spec.ts:280:7 › Bytecode Validation - CREATE/CREATE2 Detection › DEPLOY-010: Bytecode with CREATE opcode is blocked (8ms)
+Empty data deployment: status=403
+  ✓  442 [api] › tests/security/08-deployment-validation.spec.ts:340:7 › Empty Bytecode Handling › DEPLOY-014: Deployment with empty data is rejected (7ms)
+Dynamic DELEGATECALL deployment: status=200, body={"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"No Signer available"}}
+  ✓  441 [api] › tests/security/08-deployment-validation.spec.ts:308:7 › Bytecode Validation - Dynamic DELEGATECALL › DEPLOY-012: Bytecode with dynamic DELEGATECALL is blocked (unless proxy) (8ms)
+  ✘  432 [api] › tests/security/01-cross-org-isolation.spec.ts:235:7 › Cross-Organization Isolation › SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly (retry #1) (23ms)
+  ✘  444 [api] › tests/security/01-cross-org-isolation.spec.ts:284:7 › Cross-Organization Isolation › SECURITY-010: eth_sendTransaction to cross-org contract is denied (retry #1) (35ms)
+  ✘  445 [api] › tests/security/01-cross-org-isolation.spec.ts:190:7 › Cross-Organization Isolation › SECURITY-002: User B cannot access Contract A (cross-org isolation) (retry #2) (36ms)
+  ✘  451 [api] › tests/security/01-cross-org-isolation.spec.ts:235:7 › Cross-Organization Isolation › SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly (retry #2) (53ms)
+  ✘  452 [api] › tests/security/01-cross-org-isolation.spec.ts:284:7 › Cross-Organization Isolation › SECURITY-010: eth_sendTransaction to cross-org contract is denied (retry #2) (35ms)
+  ✓  447 [ui] › tests/ui/01-auth.spec.ts:47:7 › Authentication Flow › mock login button is visible when VITE_ALLOW_MOCK_LOGIN is true (2.7s)
+  ✓  446 [ui] › tests/ui/01-auth.spec.ts:17:7 › Authentication Flow › login page displays correctly (2.9s)
+  ✓  450 [ui] › tests/ui/01-auth.spec.ts:83:7 › Authentication Flow › API-based mock login sets authentication correctly (2.8s)
+  ✓  449 [ui] › tests/ui/01-auth.spec.ts:64:7 › Authentication Flow › successful mock login redirects to link-wallet page (4.1s)
+  ✓  456 [ui] › tests/ui/02-navigation.spec.ts:11:7 › Admin Navigation › admin header displays correctly (1.9s)
+  ✓  457 [ui] › tests/ui/02-navigation.spec.ts:27:7 › Admin Navigation › navigation tabs are visible and functional (1.9s)
+  ✓  455 [ui] › tests/ui/01-auth.spec.ts:139:7 › Authentication Flow › error state displays correctly and allows retry (2.1s)
+  ✓  459 [ui] › tests/ui/02-navigation.spec.ts:42:7 › Admin Navigation › clicking Dashboard tab navigates to dashboard (1.7s)
+  ✓  458 [ui] › tests/ui/01-auth.spec.ts:120:7 › Authentication Flow › login page has proper accessibility structure (2.0s)
+  ✓  460 [ui] › tests/ui/02-navigation.spec.ts:53:7 › Admin Navigation › clicking Access Logs tab navigates to logs (1.4s)
+  ✘  462 [ui] › tests/ui/02-navigation.spec.ts:78:7 › Admin Navigation › dashboard shows status cards (1.3s)
+  ✓  461 [ui] › tests/ui/02-navigation.spec.ts:64:7 › Admin Navigation › clicking RBAC tab navigates to RBAC manager (1.6s)
+  ✘  448 [ui] › tests/ui/01-auth.spec.ts:33:7 › Authentication Flow › login page shows QR code for authentication (7.1s)
+  ✓  463 [ui] › tests/ui/02-navigation.spec.ts:88:7 › Admin Navigation › RBAC manager shows sub-tabs (1.4s)
+  ✓  465 [ui] › tests/ui/02-navigation.spec.ts:124:7 › Admin Navigation › active tab is visually indicated (1.2s)
+  ✓  466 [ui] › tests/ui/02-navigation.spec.ts:144:7 › Admin Navigation › URL directly to RBAC sub-route loads correctly (1.3s)
+  ✓  468 [ui] › tests/ui/02-navigation.spec.ts:157:7 › Admin Navigation › admin layout is responsive (1.5s)
+  ✓  464 [ui] › tests/ui/02-navigation.spec.ts:103:7 › Admin Navigation › navigating between RBAC sub-tabs updates URL (2.8s)
+  ✘  453 [ui] › tests/ui/01-auth.spec.ts:98:7 › Authentication Flow › unauthenticated user is redirected to login (7.3s)
+  ✘  467 [ui] › tests/ui/02-navigation.spec.ts:78:7 › Admin Navigation › dashboard shows status cards (retry #1) (1.8s)
+  ✓  469 [ui] › tests/ui/02-navigation.spec.ts:175:7 › Admin Navigation › navigation preserves scroll position within sections (1.9s)
+  ✘  470 [ui] › tests/ui/03-organizations.spec.ts:15:7 › Organization CRUD › organizations list displays correctly (2.0s)
+  ✘  454 [ui] › tests/ui/01-auth.spec.ts:106:7 › Authentication Flow › clearing auth redirects back to login (7.9s)
+  ✘  472 [ui] › tests/ui/03-organizations.spec.ts:33:7 › Organization CRUD › can open create organization dialog (2.5s)
+  ✓  474 [ui] › tests/ui/03-organizations.spec.ts:72:7 › Organization CRUD › create organization form auto-generates slug from name (2.2s)
+  ✓  473 [ui] › tests/ui/03-organizations.spec.ts:56:7 › Organization CRUD › can close create organization dialog with cancel (2.6s)
+  ✘  476 [ui] › tests/ui/02-navigation.spec.ts:78:7 › Admin Navigation › dashboard shows status cards (retry #2) (1.5s)
+  ✓  479 [ui] › tests/ui/03-organizations.spec.ts:120:7 › Organization CRUD › organization form validates required fields (2.4s)
+  ✘  477 [ui] › tests/ui/03-organizations.spec.ts:15:7 › Organization CRUD › organizations list displays correctly (retry #1) (2.7s)
+  ✘  481 [ui] › tests/ui/03-organizations.spec.ts:33:7 › Organization CRUD › can open create organization dialog (retry #1) (2.5s)
+  ✓  478 [ui] › tests/ui/03-organizations.spec.ts:90:7 › Organization CRUD › can create a new organization (4.3s)
+  ✘  471 [ui] › tests/ui/01-auth.spec.ts:33:7 › Authentication Flow › login page shows QR code for authentication (retry #1) (7.8s)
+  ✘  484 [ui] › tests/ui/03-organizations.spec.ts:15:7 › Organization CRUD › organizations list displays correctly (retry #2) (2.1s)
+  ✓  486 [ui] › tests/ui/03-organizations.spec.ts:223:7 › Organization CRUD › organization list shows created date (1.1s)
+  ✘  485 [ui] › tests/ui/03-organizations.spec.ts:33:7 › Organization CRUD › can open create organization dialog (retry #2) (1.9s)
+  ✓  482 [ui] › tests/ui/03-organizations.spec.ts:139:7 › Organization CRUD › can edit an existing organization (4.8s)
+  ✘  475 [ui] › tests/ui/01-auth.spec.ts:98:7 › Authentication Flow › unauthenticated user is redirected to login (retry #1) (7.5s)
+  ✓  483 [ui] › tests/ui/03-organizations.spec.ts:184:7 › Organization CRUD › can delete an organization (4.7s)
+  ✘  489 [ui] › tests/ui/03-organizations.spec.ts:301:7 › Organization CRUD › delete error shows alert dialog (1.6s)
+  ✓  487 [ui] › tests/ui/03-organizations.spec.ts:250:7 › Organization CRUD › clicking organization row selects it (2.9s)
+  ✓  491 [ui] › tests/ui/03-organizations.spec.ts:280:7 › Organization CRUD › empty state shows create button (1.6s)
+  ✓  490 [ui] › tests/ui/03-organizations.spec.ts:231:7 › Organization CRUD › organization list shows slug badge (2.5s)
+  ✓  492 [ui] › tests/ui/03-organizations.spec.ts:314:7 › Organization CRUD › organization form shows validation hints (1.8s)
+  ✘  480 [ui] › tests/ui/01-auth.spec.ts:106:7 › Authentication Flow › clearing auth redirects back to login (retry #1) (8.4s)
+  ✓  495 [ui] › tests/ui/04-preregistered-addresses.spec.ts:51:7 › Pre-registered Addresses and Factory Config › shows empty state when no addresses preregistered (3.1s)
+  ✘  494 [ui] › tests/ui/04-preregistered-addresses.spec.ts:14:7 › Pre-registered Addresses and Factory Config › preregistered addresses tab loads correctly (3.2s)
+  ✘  497 [ui] › tests/ui/03-organizations.spec.ts:301:7 › Organization CRUD › delete error shows alert dialog (retry #1) (2.4s)
+  ✘  488 [ui] › tests/ui/01-auth.spec.ts:33:7 › Authentication Flow › login page shows QR code for authentication (retry #2) (6.3s)
+  ✓  496 [ui] › tests/ui/04-preregistered-addresses.spec.ts:79:7 › Pre-registered Addresses and Factory Config › preregister dialog opens and shows form fields (3.6s)
+  ✓  498 [ui] › tests/ui/04-preregistered-addresses.spec.ts:120:7 › Pre-registered Addresses and Factory Config › can close preregister dialog with cancel (3.9s)
+  ✘  493 [ui] › tests/ui/01-auth.spec.ts:98:7 › Authentication Flow › unauthenticated user is redirected to login (retry #2) (6.4s)
+  ✘  504 [ui] › tests/ui/03-organizations.spec.ts:301:7 › Organization CRUD › delete error shows alert dialog (retry #2) (1.8s)
+  ✓  501 [ui] › tests/ui/04-preregistered-addresses.spec.ts:249:7 › Pre-registered Addresses and Factory Config › preregistered addresses table shows correct columns (2.6s)
+  ✓  503 [ui] › tests/ui/04-preregistered-addresses.spec.ts:296:7 › Pre-registered Addresses and Factory Config › preregistered address row has copy buttons (2.5s)
+  ✓  505 [ui] › tests/ui/04-preregistered-addresses.spec.ts:214:7 › Pre-registered Addresses and Factory Config › factory address displays with copy button (2.4s)
+  ✓  500 [ui] › tests/ui/04-preregistered-addresses.spec.ts:153:7 › Pre-registered Addresses and Factory Config › different orgs show independent factory configurations (4.3s)
+  ✘  502 [ui] › tests/ui/04-preregistered-addresses.spec.ts:14:7 › Pre-registered Addresses and Factory Config › preregistered addresses tab loads correctly (retry #1) (3.3s)
+  ✓  506 [ui] › tests/ui/04-preregistered-addresses.spec.ts:336:7 › Pre-registered Addresses and Factory Config › pending status badge shown for unused addresses (2.1s)
+  ✘  499 [ui] › tests/ui/01-auth.spec.ts:106:7 › Authentication Flow › clearing auth redirects back to login (retry #2) (7.3s)
+  ✓  508 [ui] › tests/ui/04-preregistered-addresses.spec.ts:372:7 › Pre-registered Addresses and Factory Config › delete button exists for preregistered addresses (1.9s)
+  ✓  507 [ui] › tests/ui/04-preregistered-addresses.spec.ts:408:7 › Pre-registered Addresses and Factory Config › can delete a preregistered address (3.2s)
+  ✘  509 [ui] › tests/ui/04-preregistered-addresses.spec.ts:14:7 › Pre-registered Addresses and Factory Config › preregistered addresses tab loads correctly (retry #2) (2.0s)
+
+
+  1) [api] › tests/rbac/23-multi-org-users.spec.ts:218:9 › Multi-Organization Users › Cross-Org Access Checks › access check respects org context 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mtrue[39m
+    Received: [31mfalse[39m
+
+      264 |         method: 'eth_call',
+      265 |       });
+    > 266 |       expect(check3.allowed).toBe(true);
+          |                              ^
+      267 |
+      268 |       // Check access in org2 - should deny eth_sendTransaction
+      269 |       const check4 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:266:30
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mtrue[39m
+    Received: [31mfalse[39m
+
+      264 |         method: 'eth_call',
+      265 |       });
+    > 266 |       expect(check3.allowed).toBe(true);
+          |                              ^
+      267 |
+      268 |       // Check access in org2 - should deny eth_sendTransaction
+      269 |       const check4 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:266:30
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/rbac-23-multi-org-users-Mu-c748a--check-respects-org-context-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/rbac-23-multi-org-users-Mu-c748a--check-respects-org-context-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mtrue[39m
+    Received: [31mfalse[39m
+
+      248 |         method: 'eth_sendTransaction',
+      249 |       });
+    > 250 |       expect(check1.allowed).toBe(true);
+          |                              ^
+      251 |
+      252 |       // Check access in org1 - should deny eth_call (not in allowed methods)
+      253 |       const check2 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:250:30
+
+  2) [api] › tests/rbac/23-multi-org-users.spec.ts:277:9 › Multi-Organization Users › Cross-Org Access Checks › rate limits are org-specific 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m10[39m
+    Received: [31m1000[39m
+
+      321 |       });
+      322 |       expect(check2.allowed).toBe(true);
+    > 323 |       expect(check2.rate_limit_rps).toBe(10);
+          |                                     ^
+      324 |       expect(check2.rate_limit_daily).toBe(1000);
+      325 |     });
+      326 |   });
+        at /app/tests/rbac/23-multi-org-users.spec.ts:323:37
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m10[39m
+    Received: [31m1000[39m
+
+      321 |       });
+      322 |       expect(check2.allowed).toBe(true);
+    > 323 |       expect(check2.rate_limit_rps).toBe(10);
+          |                                     ^
+      324 |       expect(check2.rate_limit_daily).toBe(1000);
+      325 |     });
+      326 |   });
+        at /app/tests/rbac/23-multi-org-users.spec.ts:323:37
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/rbac-23-multi-org-users-Mu-b2181-ate-limits-are-org-specific-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/rbac-23-multi-org-users-Mu-b2181-ate-limits-are-org-specific-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m10[39m
+    Received: [31m1000[39m
+
+      321 |       });
+      322 |       expect(check2.allowed).toBe(true);
+    > 323 |       expect(check2.rate_limit_rps).toBe(10);
+          |                                     ^
+      324 |       expect(check2.rate_limit_daily).toBe(1000);
+      325 |     });
+      326 |   });
+        at /app/tests/rbac/23-multi-org-users.spec.ts:323:37
+
+  3) [api] › tests/rbac/23-multi-org-users.spec.ts:414:9 › Multi-Organization Users › Membership Management › removing membership from one org does not affect other orgs 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mfalse[39m
+    Received: [31mtrue[39m
+
+      464 |         method: 'eth_call',
+      465 |       });
+    > 466 |       expect(check1.allowed).toBe(false);
+          |                              ^
+      467 |
+      468 |       // Verify access is still allowed in org2
+      469 |       check2 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:466:30
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mfalse[39m
+    Received: [31mtrue[39m
+
+      464 |         method: 'eth_call',
+      465 |       });
+    > 466 |       expect(check1.allowed).toBe(false);
+          |                              ^
+      467 |
+      468 |       // Verify access is still allowed in org2
+      469 |       check2 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:466:30
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/rbac-23-multi-org-users-Mu-a7380--does-not-affect-other-orgs-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/rbac-23-multi-org-users-Mu-a7380--does-not-affect-other-orgs-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32mfalse[39m
+    Received: [31mtrue[39m
+
+      464 |         method: 'eth_call',
+      465 |       });
+    > 466 |       expect(check1.allowed).toBe(false);
+          |                              ^
+      467 |
+      468 |       // Verify access is still allowed in org2
+      469 |       check2 = await ctx.rbac.checkAccess({
+        at /app/tests/rbac/23-multi-org-users.spec.ts:466:30
+
+  4) [api] › tests/security/01-cross-org-isolation.spec.ts:178:7 › Cross-Organization Isolation › SECURITY-001: User A cannot access Contract B (cross-org isolation) 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      184 |
+      185 |     // Should be denied due to cross-org isolation
+    > 186 |     expect(result.status).toBe(403);
+          |                           ^
+      187 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      188 |   });
+      189 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:186:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      184 |
+      185 |     // Should be denied due to cross-org isolation
+    > 186 |     expect(result.status).toBe(403);
+          |                           ^
+      187 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      188 |   });
+      189 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:186:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-2cc30-ract-B-cross-org-isolation--api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-2cc30-ract-B-cross-org-isolation--api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      184 |
+      185 |     // Should be denied due to cross-org isolation
+    > 186 |     expect(result.status).toBe(403);
+          |                           ^
+      187 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      188 |   });
+      189 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:186:27
+
+  5) [api] › tests/security/01-cross-org-isolation.spec.ts:190:7 › Cross-Organization Isolation › SECURITY-002: User B cannot access Contract A (cross-org isolation) 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      196 |
+      197 |     // Should be denied due to cross-org isolation
+    > 198 |     expect(result.status).toBe(403);
+          |                           ^
+      199 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      200 |   });
+      201 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:198:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      196 |
+      197 |     // Should be denied due to cross-org isolation
+    > 198 |     expect(result.status).toBe(403);
+          |                           ^
+      199 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      200 |   });
+      201 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:198:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-7c0ba-ract-A-cross-org-isolation--api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-7c0ba-ract-A-cross-org-isolation--api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      196 |
+      197 |     // Should be denied due to cross-org isolation
+    > 198 |     expect(result.status).toBe(403);
+          |                           ^
+      199 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      200 |   });
+      201 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:198:27
+
+  6) [api] › tests/security/01-cross-org-isolation.spec.ts:214:7 › Cross-Organization Isolation › SECURITY-004: eth_getLogs cannot include cross-org contracts 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      219 |
+      220 |     // Should be denied
+    > 221 |     expect(result.status).toBe(403);
+          |                           ^
+      222 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      223 |   });
+      224 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:221:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      219 |
+      220 |     // Should be denied
+    > 221 |     expect(result.status).toBe(403);
+          |                           ^
+      222 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      223 |   });
+      224 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:221:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-f2fa7-include-cross-org-contracts-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-f2fa7-include-cross-org-contracts-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      219 |
+      220 |     // Should be denied
+    > 221 |     expect(result.status).toBe(403);
+          |                           ^
+      222 |     expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      223 |   });
+      224 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:221:27
+
+  7) [api] › tests/security/01-cross-org-isolation.spec.ts:225:7 › Cross-Organization Isolation › SECURITY-005: eth_getLogs with mixed-org addresses is denied 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      230 |
+      231 |     // Should be denied because contractB is from another org
+    > 232 |     expect(result.status).toBe(403);
+          |                           ^
+      233 |   });
+      234 |
+      235 |   test('SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:232:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      230 |
+      231 |     // Should be denied because contractB is from another org
+    > 232 |     expect(result.status).toBe(403);
+          |                           ^
+      233 |   });
+      234 |
+      235 |   test('SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:232:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-3163d-xed-org-addresses-is-denied-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-3163d-xed-org-addresses-is-denied-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      230 |
+      231 |     // Should be denied because contractB is from another org
+    > 232 |     expect(result.status).toBe(403);
+          |                           ^
+      233 |   });
+      234 |
+      235 |   test('SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:232:27
+
+  8) [api] › tests/security/01-cross-org-isolation.spec.ts:235:7 › Cross-Organization Isolation › SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      244 |     // OR allowed only for truly public addresses (not registered to any org)
+      245 |     // Since contractB IS registered to orgB, it should be denied
+    > 246 |     expect(result.status).toBe(403);
+          |                           ^
+      247 |   });
+      248 |
+      249 |   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:246:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      244 |     // OR allowed only for truly public addresses (not registered to any org)
+      245 |     // Since contractB IS registered to orgB, it should be denied
+    > 246 |     expect(result.status).toBe(403);
+          |                           ^
+      247 |   });
+      248 |
+      249 |   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:246:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-36e1d-es-default-claims-correctly-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-36e1d-es-default-claims-correctly-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      244 |     // OR allowed only for truly public addresses (not registered to any org)
+      245 |     // Since contractB IS registered to orgB, it should be denied
+    > 246 |     expect(result.status).toBe(403);
+          |                           ^
+      247 |   });
+      248 |
+      249 |   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:246:27
+
+  9) [api] › tests/security/01-cross-org-isolation.spec.ts:265:7 › Cross-Organization Isolation › SECURITY-008: eth_getCode on cross-org contract is denied 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      269 |     ]);
+      270 |
+    > 271 |     expect(result.status).toBe(403);
+          |                           ^
+      272 |   });
+      273 |
+      274 |   test('SECURITY-009: eth_getStorageAt on cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:271:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      269 |     ]);
+      270 |
+    > 271 |     expect(result.status).toBe(403);
+          |                           ^
+      272 |   });
+      273 |
+      274 |   test('SECURITY-009: eth_getStorageAt on cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:271:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-e36fe-ross-org-contract-is-denied-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-e36fe-ross-org-contract-is-denied-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      269 |     ]);
+      270 |
+    > 271 |     expect(result.status).toBe(403);
+          |                           ^
+      272 |   });
+      273 |
+      274 |   test('SECURITY-009: eth_getStorageAt on cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:271:27
+
+  10) [api] › tests/security/01-cross-org-isolation.spec.ts:274:7 › Cross-Organization Isolation › SECURITY-009: eth_getStorageAt on cross-org contract is denied 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      279 |     ]);
+      280 |
+    > 281 |     expect(result.status).toBe(403);
+          |                           ^
+      282 |   });
+      283 |
+      284 |   test('SECURITY-010: eth_sendTransaction to cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:281:27
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      279 |     ]);
+      280 |
+    > 281 |     expect(result.status).toBe(403);
+          |                           ^
+      282 |   });
+      283 |
+      284 |   test('SECURITY-010: eth_sendTransaction to cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:281:27
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-cb705-ross-org-contract-is-denied-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-cb705-ross-org-contract-is-denied-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m403[39m
+    Received: [31m200[39m
+
+      279 |     ]);
+      280 |
+    > 281 |     expect(result.status).toBe(403);
+          |                           ^
+      282 |   });
+      283 |
+      284 |   test('SECURITY-010: eth_sendTransaction to cross-org contract is denied', async ({ request }) => {
+        at /app/tests/security/01-cross-org-isolation.spec.ts:281:27
+
+  11) [api] › tests/security/01-cross-org-isolation.spec.ts:284:7 › Cross-Organization Isolation › SECURITY-010: eth_sendTransaction to cross-org contract is denied 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mnot[2m.[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: not [32m200[39m
+
+      289 |     // Should be denied - either 403 (RBAC) or might also fail for other reasons
+      290 |     // but definitely should not succeed
+    > 291 |     expect(result.status).not.toBe(200);
+          |                               ^
+      292 |   });
+      293 | });
+      294 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:291:31
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mnot[2m.[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: not [32m200[39m
+
+      289 |     // Should be denied - either 403 (RBAC) or might also fail for other reasons
+      290 |     // but definitely should not succeed
+    > 291 |     expect(result.status).not.toBe(200);
+          |                               ^
+      292 |   });
+      293 | });
+      294 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:291:31
+
+    attachment #1: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/security-01-cross-org-isol-7ab9e-ross-org-contract-is-denied-api-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/security-01-cross-org-isol-7ab9e-ross-org-contract-is-denied-api-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mnot[2m.[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: not [32m200[39m
+
+      289 |     // Should be denied - either 403 (RBAC) or might also fail for other reasons
+      290 |     // but definitely should not succeed
+    > 291 |     expect(result.status).not.toBe(200);
+          |                               ^
+      292 |   });
+      293 | });
+      294 |
+        at /app/tests/security/01-cross-org-isolation.spec.ts:291:31
+
+  12) [ui] › tests/ui/01-auth.spec.ts:33:7 › Authentication Flow › login page shows QR code for authentication 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[data-testid="auth-loading"]')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[data-testid="auth-loading"]')[22m
+
+
+      35 |
+      36 |     // Wait for loading to complete and QR section to appear
+    > 37 |     await expect(page.locator(selectors.login.authLoading)).toBeVisible();
+         |                                                             ^
+      38 |     await expect(page.locator(selectors.login.qrSection)).toBeVisible({ timeout: 10000 });
+      39 |
+      40 |     // QR code should be visible on desktop
+        at /app/tests/ui/01-auth.spec.ts:37:61
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[data-testid="auth-loading"]')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[data-testid="auth-loading"]')[22m
+
+
+      35 |
+      36 |     // Wait for loading to complete and QR section to appear
+    > 37 |     await expect(page.locator(selectors.login.authLoading)).toBeVisible();
+         |                                                             ^
+      38 |     await expect(page.locator(selectors.login.qrSection)).toBeVisible({ timeout: 10000 });
+      39 |
+      40 |     // QR code should be visible on desktop
+        at /app/tests/ui/01-auth.spec.ts:37:61
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[data-testid="auth-loading"]')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[data-testid="auth-loading"]')[22m
+
+
+      35 |
+      36 |     // Wait for loading to complete and QR section to appear
+    > 37 |     await expect(page.locator(selectors.login.authLoading)).toBeVisible();
+         |                                                             ^
+      38 |     await expect(page.locator(selectors.login.qrSection)).toBeVisible({ timeout: 10000 });
+      39 |
+      40 |     // QR code should be visible on desktop
+        at /app/tests/ui/01-auth.spec.ts:37:61
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-f15da--QR-code-for-authentication-ui-retry2/error-context.md
+
+  13) [ui] › tests/ui/01-auth.spec.ts:98:7 › Authentication Flow › unauthenticated user is redirected to login 
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    8 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      101 |
+      102 |     // Should be redirected to login page
+    > 103 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      104 |   });
+      105 |
+      106 |   test('clearing auth redirects back to login', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:103:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    8 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      101 |
+      102 |     // Should be redirected to login page
+    > 103 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      104 |   });
+      105 |
+      106 |   test('clearing auth redirects back to login', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:103:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    8 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      101 |
+      102 |     // Should be redirected to login page
+    > 103 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      104 |   });
+      105 |
+      106 |   test('clearing auth redirects back to login', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:103:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-5726e-user-is-redirected-to-login-ui-retry2/error-context.md
+
+  14) [ui] › tests/ui/01-auth.spec.ts:106:7 › Authentication Flow › clearing auth redirects back to login 
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    8 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      115 |
+      116 |     // Should be redirected to login
+    > 117 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      118 |   });
+      119 |
+      120 |   test('login page has proper accessibility structure', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:117:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    9 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      115 |
+      116 |     // Should be redirected to login
+    > 117 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      118 |   });
+      119 |
+      120 |   test('login page has proper accessibility structure', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:117:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mpage[39m[2m).[22mtoHaveURL[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Expected pattern: [32m/\/login/[39m
+    Received string:  [31m"http://proxy-frontend:5173/admin/dashboard"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toHaveURL" with timeout 5000ms[22m
+    [2m    8 × unexpected value "http://proxy-frontend:5173/admin/dashboard"[22m
+
+
+      115 |
+      116 |     // Should be redirected to login
+    > 117 |     await expect(page).toHaveURL(/\/login/);
+          |                        ^
+      118 |   });
+      119 |
+      120 |   test('login page has proper accessibility structure', async ({ page }) => {
+        at /app/tests/ui/01-auth.spec.ts:117:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/01-auth-Authentication-Flo-324c9-uth-redirects-back-to-login-ui-retry2/error-context.md
+
+  15) [ui] › tests/ui/02-navigation.spec.ts:78:7 › Admin Navigation › dashboard shows status cards ─
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Proxy')
+    Expected: visible
+    Error: strict mode violation: getByText('Proxy') resolved to 2 elements:
+        1) <h1 class="text-lg font-semibold text-[#0F0F0F]">Privacy Proxy</h1> aka getByRole('heading', { name: 'Privacy Proxy' })
+        2) <h3 class="font-semibold tracking-tight text-[#0F0F0F] text-lg">Proxy</h3> aka getByRole('heading', { name: 'Proxy', exact: true })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for getByText('Proxy')[22m
+
+
+      82 |     // Wait for dashboard content to load
+      83 |     // Status cards should display proxy and node status
+    > 84 |     await expect(page.getByText('Proxy')).toBeVisible({ timeout: 10000 });
+         |                                           ^
+      85 |     await expect(page.getByText('Node')).toBeVisible();
+      86 |   });
+      87 |
+        at /app/tests/ui/02-navigation.spec.ts:84:43
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Proxy')
+    Expected: visible
+    Error: strict mode violation: getByText('Proxy') resolved to 2 elements:
+        1) <h1 class="text-lg font-semibold text-[#0F0F0F]">Privacy Proxy</h1> aka getByRole('heading', { name: 'Privacy Proxy' })
+        2) <h3 class="font-semibold tracking-tight text-[#0F0F0F] text-lg">Proxy</h3> aka getByRole('heading', { name: 'Proxy', exact: true })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for getByText('Proxy')[22m
+
+
+      82 |     // Wait for dashboard content to load
+      83 |     // Status cards should display proxy and node status
+    > 84 |     await expect(page.getByText('Proxy')).toBeVisible({ timeout: 10000 });
+         |                                           ^
+      85 |     await expect(page.getByText('Node')).toBeVisible();
+      86 |   });
+      87 |
+        at /app/tests/ui/02-navigation.spec.ts:84:43
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Proxy')
+    Expected: visible
+    Error: strict mode violation: getByText('Proxy') resolved to 2 elements:
+        1) <h1 class="text-lg font-semibold text-[#0F0F0F]">Privacy Proxy</h1> aka getByRole('heading', { name: 'Privacy Proxy' })
+        2) <h3 class="font-semibold tracking-tight text-[#0F0F0F] text-lg">Proxy</h3> aka getByRole('heading', { name: 'Proxy', exact: true })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for getByText('Proxy')[22m
+
+
+      82 |     // Wait for dashboard content to load
+      83 |     // Status cards should display proxy and node status
+    > 84 |     await expect(page.getByText('Proxy')).toBeVisible({ timeout: 10000 });
+         |                                           ^
+      85 |     await expect(page.getByText('Node')).toBeVisible();
+      86 |   });
+      87 |
+        at /app/tests/ui/02-navigation.spec.ts:84:43
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/02-navigation-Admin-Navigation-dashboard-shows-status-cards-ui-retry2/error-context.md
+
+  16) [ui] › tests/ui/03-organizations.spec.ts:15:7 › Organization CRUD › organizations list displays correctly 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      24 |
+      25 |     // Should see "Organizations" heading
+    > 26 |     await expect(page.getByText('Organizations')).toBeVisible();
+         |                                                   ^
+      27 |     await expect(page.getByText('Top-level tenants that contain groups and contracts')).toBeVisible();
+      28 |
+      29 |     // Add Organization button should be visible
+        at /app/tests/ui/03-organizations.spec.ts:26:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      24 |
+      25 |     // Should see "Organizations" heading
+    > 26 |     await expect(page.getByText('Organizations')).toBeVisible();
+         |                                                   ^
+      27 |     await expect(page.getByText('Top-level tenants that contain groups and contracts')).toBeVisible();
+      28 |
+      29 |     // Add Organization button should be visible
+        at /app/tests/ui/03-organizations.spec.ts:26:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      24 |
+      25 |     // Should see "Organizations" heading
+    > 26 |     await expect(page.getByText('Organizations')).toBeVisible();
+         |                                                   ^
+      27 |     await expect(page.getByText('Top-level tenants that contain groups and contracts')).toBeVisible();
+      28 |
+      29 |     // Add Organization button should be visible
+        at /app/tests/ui/03-organizations.spec.ts:26:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-aa6be-ons-list-displays-correctly-ui-retry2/error-context.md
+
+  17) [ui] › tests/ui/03-organizations.spec.ts:33:7 › Organization CRUD › can open create organization dialog 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[role="dialog"]').getByText('Create Organization')
+    Expected: visible
+    Error: strict mode violation: locator('[role="dialog"]').getByText('Create Organization') resolved to 2 elements:
+        1) <h2 id="radix-:rq:" class="text-lg font-semibold leading-none tracking-tight text-[#0F0F0F]">Create Organization</h2> aka getByRole('heading', { name: 'Create Organization' })
+        2) <button type="submit" class="inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8950FA]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] bg-[#8950FA] text-white hover:bg-[#6B3DD4] hover:shadow-primary h-10 px-6 py-2 gap-2">…</button> aka getByRole('button', { name: 'Create Organization' })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[role="dialog"]').getByText('Create Organization')[22m
+
+
+      43 |
+      44 |     // Dialog should have correct title
+    > 45 |     await expect(dialog.getByText('Create Organization')).toBeVisible();
+         |                                                           ^
+      46 |
+      47 |     // Form fields should be present
+      48 |     await expect(dialog.getByLabel(/name/i)).toBeVisible();
+        at /app/tests/ui/03-organizations.spec.ts:45:59
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[role="dialog"]').getByText('Create Organization')
+    Expected: visible
+    Error: strict mode violation: locator('[role="dialog"]').getByText('Create Organization') resolved to 2 elements:
+        1) <h2 id="radix-:rq:" class="text-lg font-semibold leading-none tracking-tight text-[#0F0F0F]">Create Organization</h2> aka getByRole('heading', { name: 'Create Organization' })
+        2) <button type="submit" class="inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8950FA]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] bg-[#8950FA] text-white hover:bg-[#6B3DD4] hover:shadow-primary h-10 px-6 py-2 gap-2">…</button> aka getByRole('button', { name: 'Create Organization' })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[role="dialog"]').getByText('Create Organization')[22m
+
+
+      43 |
+      44 |     // Dialog should have correct title
+    > 45 |     await expect(dialog.getByText('Create Organization')).toBeVisible();
+         |                                                           ^
+      46 |
+      47 |     // Form fields should be present
+      48 |     await expect(dialog.getByLabel(/name/i)).toBeVisible();
+        at /app/tests/ui/03-organizations.spec.ts:45:59
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('[role="dialog"]').getByText('Create Organization')
+    Expected: visible
+    Error: strict mode violation: locator('[role="dialog"]').getByText('Create Organization') resolved to 2 elements:
+        1) <h2 id="radix-:rq:" class="text-lg font-semibold leading-none tracking-tight text-[#0F0F0F]">Create Organization</h2> aka getByRole('heading', { name: 'Create Organization' })
+        2) <button type="submit" class="inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8950FA]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] bg-[#8950FA] text-white hover:bg-[#6B3DD4] hover:shadow-primary h-10 px-6 py-2 gap-2">…</button> aka getByRole('button', { name: 'Create Organization' })
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('[role="dialog"]').getByText('Create Organization')[22m
+
+
+      43 |
+      44 |     // Dialog should have correct title
+    > 45 |     await expect(dialog.getByText('Create Organization')).toBeVisible();
+         |                                                           ^
+      46 |
+      47 |     // Form fields should be present
+      48 |     await expect(dialog.getByLabel(/name/i)).toBeVisible();
+        at /app/tests/ui/03-organizations.spec.ts:45:59
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-fd20e--create-organization-dialog-ui-retry2/error-context.md
+
+  18) [ui] › tests/ui/03-organizations.spec.ts:301:7 › Organization CRUD › delete error shows alert dialog 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      309 |     // We can't easily trigger it without an org that has dependencies
+      310 |     // Just verify the page loaded correctly
+    > 311 |     await expect(page.getByText('Organizations')).toBeVisible();
+          |                                                   ^
+      312 |   });
+      313 |
+      314 |   test('organization form shows validation hints', async ({ page }) => {
+        at /app/tests/ui/03-organizations.spec.ts:311:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      309 |     // We can't easily trigger it without an org that has dependencies
+      310 |     // Just verify the page loaded correctly
+    > 311 |     await expect(page.getByText('Organizations')).toBeVisible();
+          |                                                   ^
+      312 |   });
+      313 |
+      314 |   test('organization form shows validation hints', async ({ page }) => {
+        at /app/tests/ui/03-organizations.spec.ts:311:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Organizations')
+    Expected: visible
+    Error: strict mode violation: getByText('Organizations') resolved to 6 elements:
+        1) <p class="text-sm text-[#6B7280] mt-0.5">Manage organizations, groups, roles, and permissi…</p> aka getByText('Manage organizations, groups')
+        2) <span class="text-sm">Global (all organizations)</span> aka getByText('Global (all organizations)')
+        3) <span>Organizations</span> aka getByTestId('tab-organizations')
+        4) <h3 class="text-sm font-medium text-[#374151]">Organizations</h3> aka getByRole('heading', { name: 'Organizations' })
+        5) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">1; DELETE FROM organizations WHERE 1=1; --</div> aka getByText('1; DELETE FROM organizations')
+        6) <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-all duration-200 border-[#CBD5E1] text-[#374151] bg-transparent font-mono text-xs">'; DROP TABLE organizations; --</div> aka getByText('\'; DROP TABLE organizations')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Organizations')[22m
+
+
+      309 |     // We can't easily trigger it without an org that has dependencies
+      310 |     // Just verify the page loaded correctly
+    > 311 |     await expect(page.getByText('Organizations')).toBeVisible();
+          |                                                   ^
+      312 |   });
+      313 |
+      314 |   test('organization form shows validation hints', async ({ page }) => {
+        at /app/tests/ui/03-organizations.spec.ts:311:51
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/03-organizations-Organizat-0f8a1-te-error-shows-alert-dialog-ui-retry2/error-context.md
+
+  19) [ui] › tests/ui/04-preregistered-addresses.spec.ts:14:7 › Pre-registered Addresses and Factory Config › preregistered addresses tab loads correctly 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Pre-registered Addresses')
+    Expected: visible
+    Error: strict mode violation: getByText('Pre-registered Addresses') resolved to 2 elements:
+        1) <h3 class="text-sm font-medium text-[#374151]">Pre-registered Addresses</h3> aka getByRole('heading', { name: 'Pre-registered Addresses' })
+        2) <p class="text-[#6B7280] mb-2">No pre-registered addresses</p> aka getByText('No pre-registered addresses')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Pre-registered Addresses')[22m
+
+
+      40 |
+      41 |     // Should see "Pre-registered Addresses" heading
+    > 42 |     await expect(page.getByText('Pre-registered Addresses')).toBeVisible();
+         |                                                              ^
+      43 |
+      44 |     // Should see the description text
+      45 |     await expect(page.getByText(/CREATE3 addresses whitelisted/i)).toBeVisible();
+        at /app/tests/ui/04-preregistered-addresses.spec.ts:42:62
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Pre-registered Addresses')
+    Expected: visible
+    Error: strict mode violation: getByText('Pre-registered Addresses') resolved to 2 elements:
+        1) <h3 class="text-sm font-medium text-[#374151]">Pre-registered Addresses</h3> aka getByRole('heading', { name: 'Pre-registered Addresses' })
+        2) <p class="text-[#6B7280] mb-2">No pre-registered addresses</p> aka getByText('No pre-registered addresses')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Pre-registered Addresses')[22m
+
+
+      40 |
+      41 |     // Should see "Pre-registered Addresses" heading
+    > 42 |     await expect(page.getByText('Pre-registered Addresses')).toBeVisible();
+         |                                                              ^
+      43 |
+      44 |     // Should see the description text
+      45 |     await expect(page.getByText(/CREATE3 addresses whitelisted/i)).toBeVisible();
+        at /app/tests/ui/04-preregistered-addresses.spec.ts:42:62
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry1/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry1/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry1/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Retry #2 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByText('Pre-registered Addresses')
+    Expected: visible
+    Error: strict mode violation: getByText('Pre-registered Addresses') resolved to 2 elements:
+        1) <h3 class="text-sm font-medium text-[#374151]">Pre-registered Addresses</h3> aka getByRole('heading', { name: 'Pre-registered Addresses' })
+        2) <p class="text-[#6B7280] mb-2">No pre-registered addresses</p> aka getByText('No pre-registered addresses')
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for getByText('Pre-registered Addresses')[22m
+
+
+      40 |
+      41 |     // Should see "Pre-registered Addresses" heading
+    > 42 |     await expect(page.getByText('Pre-registered Addresses')).toBeVisible();
+         |                                                              ^
+      43 |
+      44 |     // Should see the description text
+      45 |     await expect(page.getByText(/CREATE3 addresses whitelisted/i)).toBeVisible();
+        at /app/tests/ui/04-preregistered-addresses.spec.ts:42:62
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry2/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry2/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/04-preregistered-addresses-38a29-dresses-tab-loads-correctly-ui-retry2/error-context.md
+
+  19 failed
+    [api] › tests/rbac/23-multi-org-users.spec.ts:218:9 › Multi-Organization Users › Cross-Org Access Checks › access check respects org context 
+    [api] › tests/rbac/23-multi-org-users.spec.ts:277:9 › Multi-Organization Users › Cross-Org Access Checks › rate limits are org-specific 
+    [api] › tests/rbac/23-multi-org-users.spec.ts:414:9 › Multi-Organization Users › Membership Management › removing membership from one org does not affect other orgs 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:178:7 › Cross-Organization Isolation › SECURITY-001: User A cannot access Contract B (cross-org isolation) 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:190:7 › Cross-Organization Isolation › SECURITY-002: User B cannot access Contract A (cross-org isolation) 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:214:7 › Cross-Organization Isolation › SECURITY-004: eth_getLogs cannot include cross-org contracts 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:225:7 › Cross-Organization Isolation › SECURITY-005: eth_getLogs with mixed-org addresses is denied 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:235:7 › Cross-Organization Isolation › SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:265:7 › Cross-Organization Isolation › SECURITY-008: eth_getCode on cross-org contract is denied 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:274:7 › Cross-Organization Isolation › SECURITY-009: eth_getStorageAt on cross-org contract is denied 
+    [api] › tests/security/01-cross-org-isolation.spec.ts:284:7 › Cross-Organization Isolation › SECURITY-010: eth_sendTransaction to cross-org contract is denied 
+    [ui] › tests/ui/01-auth.spec.ts:33:7 › Authentication Flow › login page shows QR code for authentication 
+    [ui] › tests/ui/01-auth.spec.ts:98:7 › Authentication Flow › unauthenticated user is redirected to login 
+    [ui] › tests/ui/01-auth.spec.ts:106:7 › Authentication Flow › clearing auth redirects back to login 
+    [ui] › tests/ui/02-navigation.spec.ts:78:7 › Admin Navigation › dashboard shows status cards ───
+    [ui] › tests/ui/03-organizations.spec.ts:15:7 › Organization CRUD › organizations list displays correctly 
+    [ui] › tests/ui/03-organizations.spec.ts:33:7 › Organization CRUD › can open create organization dialog 
+    [ui] › tests/ui/03-organizations.spec.ts:301:7 › Organization CRUD › delete error shows alert dialog 
+    [ui] › tests/ui/04-preregistered-addresses.spec.ts:14:7 › Pre-registered Addresses and Factory Config › preregistered addresses tab loads correctly 
+  452 passed (47.1s)
+
+ Container privacy-proxy-e2e-proxy-frontend-1  Stopping
+ Container privacy-proxy-e2e-proxy-frontend-1  Stopped
+ Container privacy-proxy-e2e-proxy-frontend-1  Removing
+ Container privacy-proxy-e2e-proxy-frontend-1  Removed
+ Container privacy-proxy-e2e-proxy-backend-1  Stopping
+ Container privacy-proxy-e2e-proxy-backend-1  Stopped
+ Container privacy-proxy-e2e-proxy-backend-1  Removing
+ Container privacy-proxy-e2e-proxy-backend-1  Removed
+ Container privacy-proxy-e2e-anvil-1  Stopping
+ Container privacy-proxy-e2e-postgres-1  Stopping
+ Container privacy-proxy-e2e-anvil-1  Stopped
+ Container privacy-proxy-e2e-anvil-1  Removing
+ Container privacy-proxy-e2e-anvil-1  Removed
+ Container privacy-proxy-e2e-postgres-1  Stopped
+ Container privacy-proxy-e2e-postgres-1  Removing
+ Container privacy-proxy-e2e-postgres-1  Removed
+ Volume privacy-proxy-e2e_e2e-postgres-data  Removing
+ Network privacy-proxy-e2e_e2e-network  Removing
+ Volume privacy-proxy-e2e_e2e-postgres-data  Removed
+ Network privacy-proxy-e2e_e2e-network  Removed
+make: *** [e2e] Error 1

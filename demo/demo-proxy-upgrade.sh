@@ -409,22 +409,57 @@ print_step "Step 4: Deploying Implementation V1"
 print_substep "Deploying BoxV1 to preregistered address via CREATE3..."
 print_info "Target address: $IMPL_V1_ADDR"
 print_info "Salt: ${IMPL_V1_SALT:0:20}..."
+print_info "Factory: $CREATE3_FACTORY"
+print_info "Bytecode length: ${#BOXV1_BYTECODE} chars"
+
+# Verify variables are set
+if [ -z "$IMPL_V1_SALT" ]; then
+    print_error "IMPL_V1_SALT is empty!"
+    exit 1
+fi
+if [ -z "$BOXV1_BYTECODE" ]; then
+    print_error "BOXV1_BYTECODE is empty!"
+    exit 1
+fi
 
 # Deploy via CREATE3 factory
 # The factory.deploy(bytes32 salt, bytes creationCode) function
-DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V1_SALT" "$BOXV1_BYTECODE")
+print_substep "Building deployment calldata..."
+set +e
+DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V1_SALT" "$BOXV1_BYTECODE" 2>&1)
+CALLDATA_EXIT_CODE=$?
+set -e
 
+if [ "$CALLDATA_EXIT_CODE" -ne 0 ] || [ -z "$DEPLOY_CALLDATA" ]; then
+    print_error "Failed to build deployment calldata (exit code: $CALLDATA_EXIT_CODE)"
+    echo -e "  ${WHITE}Salt:${NC} $IMPL_V1_SALT"
+    echo -e "  ${WHITE}Bytecode length:${NC} ${#BOXV1_BYTECODE}"
+    echo -e "  ${WHITE}Error:${NC} $DEPLOY_CALLDATA"
+    exit 1
+fi
+
+print_substep "Sending deployment transaction..."
+# Temporarily disable set -e to capture errors from cast send
+set +e
 DEPLOY_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_CALLDATA" \
     --private-key "$DEPLOYER_PRIVATE_KEY" \
     --rpc-url "$RPC_URL" \
     --json 2>&1)
+DEPLOY_EXIT_CODE=$?
+set -e
 
 TX_HASH_V1=$(echo "$DEPLOY_RESULT" | jq -r '.transactionHash' 2>/dev/null)
 
-if [ -z "$TX_HASH_V1" ] || [ "$TX_HASH_V1" = "null" ]; then
-    print_error "Failed to deploy BoxV1"
+if [ "$DEPLOY_EXIT_CODE" -ne 0 ] || [ -z "$TX_HASH_V1" ] || [ "$TX_HASH_V1" = "null" ]; then
+    print_error "Failed to deploy BoxV1 (exit code: $DEPLOY_EXIT_CODE)"
     echo -e "  ${WHITE}Error details:${NC}"
-    echo "$DEPLOY_RESULT" | head -10
+    echo "$DEPLOY_RESULT" | head -20
+    echo ""
+    echo -e "  ${WHITE}Possible causes:${NC}"
+    echo -e "  ${CYAN}1.${NC} CREATE3 factory not deployed (chain was reset?)"
+    echo -e "  ${CYAN}2.${NC} Salt already used (address already has code)"
+    echo -e "  ${CYAN}3.${NC} Insufficient funds for gas"
+    echo -e "  ${CYAN}4.${NC} RPC connection issue"
     exit 1
 fi
 
@@ -483,13 +518,20 @@ print_substep "Deploying proxy via CREATE3..."
 
 DEPLOY_PROXY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$PROXY_SALT" "$PROXY_INIT_CODE")
 
-TX_HASH_PROXY=$(cast send "$CREATE3_FACTORY" "$DEPLOY_PROXY_CALLDATA" \
+set +e
+DEPLOY_PROXY_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_PROXY_CALLDATA" \
     --private-key "$DEPLOYER_PRIVATE_KEY" \
     --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+    --json 2>&1)
+DEPLOY_PROXY_EXIT_CODE=$?
+set -e
 
-if [ -z "$TX_HASH_PROXY" ] || [ "$TX_HASH_PROXY" = "null" ]; then
-    print_error "Failed to deploy proxy"
+TX_HASH_PROXY=$(echo "$DEPLOY_PROXY_RESULT" | jq -r '.transactionHash' 2>/dev/null)
+
+if [ "$DEPLOY_PROXY_EXIT_CODE" -ne 0 ] || [ -z "$TX_HASH_PROXY" ] || [ "$TX_HASH_PROXY" = "null" ]; then
+    print_error "Failed to deploy proxy (exit code: $DEPLOY_PROXY_EXIT_CODE)"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$DEPLOY_PROXY_RESULT" | head -20
     exit 1
 fi
 
@@ -529,13 +571,20 @@ print_info "Target address: $IMPL_V2_ADDR"
 
 DEPLOY_V2_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V2_SALT" "$BOXV2_BYTECODE")
 
-TX_HASH_V2=$(cast send "$CREATE3_FACTORY" "$DEPLOY_V2_CALLDATA" \
+set +e
+DEPLOY_V2_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_V2_CALLDATA" \
     --private-key "$DEPLOYER_PRIVATE_KEY" \
     --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+    --json 2>&1)
+DEPLOY_V2_EXIT_CODE=$?
+set -e
 
-if [ -z "$TX_HASH_V2" ] || [ "$TX_HASH_V2" = "null" ]; then
-    print_error "Failed to deploy BoxV2"
+TX_HASH_V2=$(echo "$DEPLOY_V2_RESULT" | jq -r '.transactionHash' 2>/dev/null)
+
+if [ "$DEPLOY_V2_EXIT_CODE" -ne 0 ] || [ -z "$TX_HASH_V2" ] || [ "$TX_HASH_V2" = "null" ]; then
+    print_error "Failed to deploy BoxV2 (exit code: $DEPLOY_V2_EXIT_CODE)"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$DEPLOY_V2_RESULT" | head -20
     exit 1
 fi
 
@@ -554,13 +603,20 @@ print_info "Old implementation: $IMPL_V1_ADDR"
 print_info "New implementation: $IMPL_V2_ADDR"
 
 # UUPS upgrade - call upgradeTo on the proxy
-TX_HASH_UPGRADE=$(cast send "$PROXY_ADDR" "upgradeToAndCall(address,bytes)" "$IMPL_V2_ADDR" "0x" \
+set +e
+UPGRADE_RESULT=$(cast send "$PROXY_ADDR" "upgradeToAndCall(address,bytes)" "$IMPL_V2_ADDR" "0x" \
     --private-key "$DEPLOYER_PRIVATE_KEY" \
     --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+    --json 2>&1)
+UPGRADE_EXIT_CODE=$?
+set -e
 
-if [ -z "$TX_HASH_UPGRADE" ] || [ "$TX_HASH_UPGRADE" = "null" ]; then
-    print_error "Failed to upgrade proxy"
+TX_HASH_UPGRADE=$(echo "$UPGRADE_RESULT" | jq -r '.transactionHash' 2>/dev/null)
+
+if [ "$UPGRADE_EXIT_CODE" -ne 0 ] || [ -z "$TX_HASH_UPGRADE" ] || [ "$TX_HASH_UPGRADE" = "null" ]; then
+    print_error "Failed to upgrade proxy (exit code: $UPGRADE_EXIT_CODE)"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$UPGRADE_RESULT" | head -20
     exit 1
 fi
 
