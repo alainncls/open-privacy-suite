@@ -67,11 +67,10 @@ func (v *DeploymentValidator) ValidateDeployment(
 	bytecodeHex string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode using the analysis-safe parser that strips CBOR metadata.
-	// This is important because Solidity's CBOR metadata at the end of contracts
-	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2)
-	// but are actually just data, not executable code.
-	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
+	// Parse bytecode twice:
+	// 1. Original (for trusted factory hash check - hash includes CBOR metadata)
+	// 2. CBOR-stripped (for opcode analysis - CBOR metadata can look like opcodes)
+	bcOriginal, err := bytecode.ParseHex(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
 			Allowed: false,
@@ -80,14 +79,26 @@ func (v *DeploymentValidator) ValidateDeployment(
 	}
 
 	// Handle empty bytecode
-	if bc.IsEmpty() {
+	if bcOriginal.IsEmpty() {
 		return &ValidationResult{
 			Allowed: true,
 			Reason:  "",
 		}, nil
 	}
 
-	// Analyze bytecode for call targets
+	// Parse again with CBOR stripping for security analysis.
+	// This is important because Solidity's CBOR metadata at the end of contracts
+	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2,
+	// 0x73 = PUSH20 which is 's' in "solc") but are actually just data, not executable code.
+	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
+	if err != nil {
+		return &ValidationResult{
+			Allowed: false,
+			Reason:  "invalid bytecode: " + err.Error(),
+		}, nil
+	}
+
+	// Analyze CBOR-stripped bytecode for call targets
 	analysis := bytecode.ExtractCallTargets(bc)
 
 	// Detect if this is a proxy contract
@@ -110,7 +121,9 @@ func (v *DeploymentValidator) ValidateDeployment(
 	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
 		// Check if this is a trusted factory contract
-		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
+		// Use the ORIGINAL bytecode (with CBOR) for hash checking since the
+		// trusted factory hash was computed from the original bytecode.
+		trustedFactory := create3.IsTrustedFactoryBytecode(bcOriginal.Raw)
 		if trustedFactory != nil {
 			// This is a whitelisted factory - allow it (admin check happens in access.go)
 			result.IsTrustedFactory = true
@@ -196,11 +209,10 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	constructorABI string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode using the analysis-safe parser that strips CBOR metadata.
-	// This is important because Solidity's CBOR metadata at the end of contracts
-	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2)
-	// but are actually just data, not executable code.
-	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
+	// Parse bytecode twice:
+	// 1. Original (for trusted factory hash check - hash includes CBOR metadata)
+	// 2. CBOR-stripped (for opcode analysis - CBOR metadata can look like opcodes)
+	bcOriginal, err := bytecode.ParseHex(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
 			Allowed: false,
@@ -209,14 +221,26 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	}
 
 	// Handle empty bytecode
-	if bc.IsEmpty() {
+	if bcOriginal.IsEmpty() {
 		return &ValidationResult{
 			Allowed: true,
 			Reason:  "",
 		}, nil
 	}
 
-	// Analyze bytecode for call targets
+	// Parse again with CBOR stripping for security analysis.
+	// This is important because Solidity's CBOR metadata at the end of contracts
+	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2,
+	// 0x73 = PUSH20 which is 's' in "solc") but are actually just data, not executable code.
+	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
+	if err != nil {
+		return &ValidationResult{
+			Allowed: false,
+			Reason:  "invalid bytecode: " + err.Error(),
+		}, nil
+	}
+
+	// Analyze CBOR-stripped bytecode for call targets
 	analysis := bytecode.ExtractCallTargets(bc)
 
 	// Detect if this is a proxy contract
@@ -240,7 +264,9 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
 		// Check if this is a trusted factory contract
-		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
+		// Use the ORIGINAL bytecode (with CBOR) for hash checking since the
+		// trusted factory hash was computed from the original bytecode.
+		trustedFactory := create3.IsTrustedFactoryBytecode(bcOriginal.Raw)
 		if trustedFactory != nil {
 			// This is a whitelisted factory - allow it (admin check happens in access.go)
 			result.IsTrustedFactory = true

@@ -109,16 +109,39 @@ func ParseHexForAnalysis(hexStr string) (*Bytecode, error) {
 	return ParseForAnalysis(bytes)
 }
 
-// StripCBORMetadata removes Solidity's CBOR-encoded metadata from the end of bytecode.
+// StripCBORMetadata removes Solidity's CBOR-encoded metadata from bytecode.
 // Solidity appends metadata containing compiler info, source hash, etc.
 // The metadata format is:
 //   - CBOR-encoded data (starts with 0xa2 for map with 2 elements)
 //   - 2-byte length indicator at the very end (big-endian)
 //
+// This function handles two cases:
+// 1. Standard case: CBOR metadata at the end of bytecode
+// 2. Constructor args case: CBOR metadata followed by constructor arguments
+//    (e.g., when deploying proxies with initialization data)
+//
 // This is important for bytecode analysis because the metadata is data, not code,
-// and may contain bytes that coincidentally match opcode values (like 0xf0 = CREATE
-// or 0xf5 = CREATE2) but are not actual instructions.
+// and may contain bytes that coincidentally match opcode values (like 0x73 = PUSH20
+// which is also 's' in "solc").
 func StripCBORMetadata(bytecode []byte) []byte {
+	if len(bytecode) < 2 {
+		return bytecode
+	}
+
+	// First, try the standard case: CBOR at the end
+	if result := stripCBORFromEnd(bytecode); len(result) < len(bytecode) {
+		return result
+	}
+
+	// If CBOR wasn't at the end, scan for it in the bytecode.
+	// This handles the case where constructor arguments are appended after CBOR.
+	// We look for the pattern: [CBOR map marker][...content with "solc"/"ipfs"...][2-byte length]
+	return stripEmbeddedCBOR(bytecode)
+}
+
+// stripCBORFromEnd attempts to strip CBOR metadata from the end of bytecode.
+// Returns the original bytecode if no valid CBOR metadata is found at the end.
+func stripCBORFromEnd(bytecode []byte) []byte {
 	if len(bytecode) < 2 {
 		return bytecode
 	}
@@ -133,49 +156,96 @@ func StripCBORMetadata(bytecode []byte) []byte {
 	}
 
 	// Check if the metadata starts with a CBOR map marker
-	// 0xa2 = map with 2 elements (common for Solidity >= 0.6.0)
-	// 0xa1 = map with 1 element (older format)
 	metadataStart := len(bytecode) - metadataLen - 2
 	if metadataStart < 0 {
 		return bytecode
 	}
 
-	cborMarker := bytecode[metadataStart]
-	if cborMarker != 0xa2 && cborMarker != 0xa1 && cborMarker != 0xa3 {
-		return bytecode
-	}
-
-	// Additional validation: check for "ipfs" or "bzzr" or "solc" in metadata
-	// These are common CBOR keys in Solidity metadata
-	metadataSection := bytecode[metadataStart : len(bytecode)-2]
-	hasKnownKey := false
-	for i := 0; i < len(metadataSection)-4; i++ {
-		// Check for "ipfs" (0x69706673)
-		if metadataSection[i] == 0x69 && metadataSection[i+1] == 0x70 &&
-			metadataSection[i+2] == 0x66 && metadataSection[i+3] == 0x73 {
-			hasKnownKey = true
-			break
-		}
-		// Check for "solc" (0x736f6c63)
-		if metadataSection[i] == 0x73 && metadataSection[i+1] == 0x6f &&
-			metadataSection[i+2] == 0x6c && metadataSection[i+3] == 0x63 {
-			hasKnownKey = true
-			break
-		}
-		// Check for "bzzr" (0x627a7a72)
-		if metadataSection[i] == 0x62 && metadataSection[i+1] == 0x7a &&
-			metadataSection[i+2] == 0x7a && metadataSection[i+3] == 0x72 {
-			hasKnownKey = true
-			break
-		}
-	}
-
-	if !hasKnownKey {
+	if !isValidCBORMetadata(bytecode, metadataStart, len(bytecode)-2) {
 		return bytecode
 	}
 
 	// Strip the metadata and return just the executable code
 	return bytecode[:metadataStart]
+}
+
+// stripEmbeddedCBOR finds and removes CBOR metadata that's embedded in the bytecode
+// (i.e., when constructor arguments are appended after the CBOR metadata).
+func stripEmbeddedCBOR(bytecode []byte) []byte {
+	// Scan for CBOR map markers followed by valid CBOR metadata
+	// We scan backwards since CBOR is typically near the end, before any constructor args
+	minCBORSize := 30 // Minimum reasonable CBOR metadata size
+
+	for i := len(bytecode) - minCBORSize; i >= 0; i-- {
+		// Look for CBOR map markers
+		if bytecode[i] != 0xa1 && bytecode[i] != 0xa2 && bytecode[i] != 0xa3 {
+			continue
+		}
+
+		// Try to find the end of this CBOR section by looking for the length indicator
+		// The length indicator is 2 bytes at the end of the CBOR section
+		// We scan forward from the marker to find valid CBOR content
+		for j := i + minCBORSize; j < len(bytecode)-1; j++ {
+			// Check if bytes at j and j+1 could be a valid length indicator
+			potentialLen := int(bytecode[j])<<8 | int(bytecode[j+1])
+
+			// Check if this length would point back to our marker
+			if potentialLen > 0 && potentialLen < 1000 {
+				expectedStart := j - potentialLen
+				if expectedStart == i {
+					// Validate this is actually CBOR metadata
+					if isValidCBORMetadata(bytecode, i, j) {
+						// Found valid CBOR metadata - remove it
+						// Keep bytes before CBOR and bytes after CBOR+length
+						result := make([]byte, 0, len(bytecode)-(j+2-i))
+						result = append(result, bytecode[:i]...)
+						result = append(result, bytecode[j+2:]...)
+						return result
+					}
+				}
+			}
+		}
+	}
+
+	return bytecode
+}
+
+// isValidCBORMetadata checks if the section from start to end looks like valid CBOR metadata.
+func isValidCBORMetadata(bytecode []byte, start, end int) bool {
+	if start < 0 || end > len(bytecode) || start >= end {
+		return false
+	}
+
+	cborMarker := bytecode[start]
+	if cborMarker != 0xa2 && cborMarker != 0xa1 && cborMarker != 0xa3 {
+		return false
+	}
+
+	// Check for known CBOR keys in Solidity metadata
+	section := bytecode[start:end]
+	if len(section) < 4 {
+		return false
+	}
+
+	for i := 0; i < len(section)-4; i++ {
+		// Check for "ipfs" (0x69706673)
+		if section[i] == 0x69 && section[i+1] == 0x70 &&
+			section[i+2] == 0x66 && section[i+3] == 0x73 {
+			return true
+		}
+		// Check for "solc" (0x736f6c63)
+		if section[i] == 0x73 && section[i+1] == 0x6f &&
+			section[i+2] == 0x6c && section[i+3] == 0x63 {
+			return true
+		}
+		// Check for "bzzr" (0x627a7a72)
+		if section[i] == 0x62 && section[i+1] == 0x7a &&
+			section[i+2] == 0x7a && section[i+3] == 0x72 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // HasOpcode returns true if the bytecode contains the given opcode.
