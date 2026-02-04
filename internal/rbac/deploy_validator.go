@@ -67,8 +67,11 @@ func (v *DeploymentValidator) ValidateDeployment(
 	bytecodeHex string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode
-	bc, err := bytecode.ParseHex(bytecodeHex)
+	// Parse bytecode using the analysis-safe parser that strips CBOR metadata.
+	// This is important because Solidity's CBOR metadata at the end of contracts
+	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2)
+	// but are actually just data, not executable code.
+	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
 			Allowed: false,
@@ -193,8 +196,11 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	constructorABI string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode
-	bc, err := bytecode.ParseHex(bytecodeHex)
+	// Parse bytecode using the analysis-safe parser that strips CBOR metadata.
+	// This is important because Solidity's CBOR metadata at the end of contracts
+	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2)
+	// but are actually just data, not executable code.
+	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
 			Allowed: false,
