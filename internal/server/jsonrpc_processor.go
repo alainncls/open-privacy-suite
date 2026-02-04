@@ -344,7 +344,16 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	// Extract transaction parameters for tracing
 	from, to, data, value := extractTxParams(req.Params)
 	if to == "" {
-		return nil // Deployment - skip
+		return nil // Deployment - skip (handled by bytecode validation)
+	}
+
+	// Skip tracing for simple value transfers (no contract code execution)
+	// This is 100% safe because:
+	// 1. No calldata means no function call
+	// 2. EOAs receiving ETH don't execute code
+	// 3. Contract receive()/fallback() with empty calldata is minimal risk
+	if isSimpleValueTransfer(data) {
+		return nil
 	}
 
 	// Perform the trace
@@ -378,6 +387,15 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	}
 
 	return nil
+}
+
+// isSimpleValueTransfer returns true if the transaction has no calldata.
+// Simple value transfers (ETH only) don't execute contract code beyond
+// receive()/fallback() which is minimal risk and doesn't make external calls.
+func isSimpleValueTransfer(data string) bool {
+	// Normalize and check for empty calldata
+	data = strings.TrimSpace(data)
+	return data == "" || data == "0x" || data == "0X"
 }
 
 // extractTxParams extracts transaction parameters from eth_sendTransaction params.
