@@ -283,9 +283,7 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
         -H "Content-Type: application/json" \
         -d '{
             "slug": "demo-deployers",
-            "name": "Demo Deployers",
-            "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
-            "default_claims": ["read", "write", "deploy"]
+            "name": "Demo Deployers"
         }')
     DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
 fi
@@ -294,6 +292,16 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     print_error "Failed to create or find deployers group"
     exit 1
 fi
+
+# Always configure group access (in case group was created earlier without proper config)
+curl -s -X PUT "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $AUTH_TOKEN" \
+    -d '{
+        "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
+        "default_claims": ["read", "write", "deploy"]
+    }' > /dev/null
+
 print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
 
 # Add user to group
@@ -650,13 +658,19 @@ print_contract_call "$POOL_PROXY_ADDR" "version()" "$POOL_VERSION"
 print_contract_call "$ROUTER_PROXY_ADDR" "version()" "$ROUTER_VERSION"
 
 print_substep "Verifying circular references (CREATE3 determinism)..."
-TOKEN_POOL=$(cast call "$TOKEN_PROXY_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
-POOL_TOKEN=$(cast call "$POOL_PROXY_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+TOKEN_POOL=$(cast call "$TOKEN_PROXY_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+POOL_TOKEN=$(cast call "$POOL_PROXY_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+TOKEN_PROXY_ADDR_LOWER=$(echo "$TOKEN_PROXY_ADDR" | tr '[:upper:]' '[:lower:]')
+POOL_PROXY_ADDR_LOWER=$(echo "$POOL_PROXY_ADDR" | tr '[:upper:]' '[:lower:]')
 
-if [ "$TOKEN_POOL" = "$POOL_PROXY_ADDR" ] && [ "$POOL_TOKEN" = "$TOKEN_PROXY_ADDR" ]; then
+if [ "$TOKEN_POOL" = "$POOL_PROXY_ADDR_LOWER" ] && [ "$POOL_TOKEN" = "$TOKEN_PROXY_ADDR_LOWER" ]; then
     print_success "Circular references verified!"
 else
     print_error "Reference mismatch"
+    print_value "Token.pool()" "$TOKEN_POOL"
+    print_value "Expected" "$POOL_PROXY_ADDR_LOWER"
+    print_value "Pool.token()" "$POOL_TOKEN"
+    print_value "Expected" "$TOKEN_PROXY_ADDR_LOWER"
 fi
 
 # =============================================================================
@@ -759,7 +773,8 @@ UNAUTH_RESULT=$(curl -s -X POST "$PROXY_RPC_URL" \
         "id": 1
     }')
 
-UNAUTH_ERROR=$(echo "$UNAUTH_RESULT" | jq -r '.error.message // empty')
+# Server returns {"error":"..."} for auth failures (not JSON-RPC format)
+UNAUTH_ERROR=$(echo "$UNAUTH_RESULT" | jq -r '.error // .error.message // empty')
 if [ -n "$UNAUTH_ERROR" ]; then
     print_success "Unauthorized request correctly rejected"
     print_value "Error" "$UNAUTH_ERROR"
