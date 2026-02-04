@@ -23,7 +23,8 @@ export ORG_SLUG="your-org-slug"
 
 # Optional (defaults shown)
 export ADMIN_API_URL="http://localhost:8080/api"
-export RPC_URL="http://localhost:8545"
+export PROXY_RPC_URL="http://localhost:8080"   # Privacy proxy (RBAC-enforced)
+export ANVIL_RPC_URL="http://localhost:8545"   # Direct to node (read-only)
 export CREATE3_FACTORY="<fetched from org config if not set>"
 
 # Deployer key - defaults to Anvil's first account
@@ -32,6 +33,12 @@ export DEPLOYER_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efca
 ```
 
 **Note:** The script will automatically look up the organization ID from the slug via the API.
+
+**Important:** All transactions go through the privacy proxy (`PROXY_RPC_URL`) which enforces RBAC. The script automatically:
+1. Creates a user with DID `did:demo:deployer-<timestamp>`
+2. Authenticates via mock token (requires `ALLOW_MOCK_LOGIN=true` in dev mode)
+3. Sets up KYC and deploy permissions
+4. Sends transactions through the proxy with JWT authentication
 
 ## Security Model
 
