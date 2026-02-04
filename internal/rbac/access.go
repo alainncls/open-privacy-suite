@@ -282,9 +282,12 @@ func (c *AccessController) Store() Store {
 // SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
 // When runtime tracing is enabled, contracts with dynamic calls are allowed at deploy time
 // because those calls will be validated at runtime via debug_traceCall.
+// Additionally, the managed proxy check is skipped for upgrade validation because
+// runtime tracing validates that upgrade targets are org-owned.
 // This must be called after NewAccessController to configure the behavior.
 func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
 	c.deployValidator.SetRuntimeTracingEnabled(enabled)
+	c.upgradeValidator.SetRuntimeTracingEnabled(enabled)
 }
 
 // NewAccessController creates a new access controller.

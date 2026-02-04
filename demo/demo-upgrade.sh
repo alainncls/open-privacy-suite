@@ -437,33 +437,9 @@ ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER
 ROUTER_PROXY_INITCODE="${PROXY_BYTECODE}${ROUTER_PROXY_CONSTRUCTOR:2}"
 deploy_create3 "$ROUTER_PROXY_SALT" "$ROUTER_PROXY_INITCODE" "Router Proxy"
 
-# Register proxies as managed proxies for upgrade validation
-print_substep "Registering proxies for upgrade management..."
-
-register_managed_proxy() {
-    local proxy_addr="$1"
-    local impl_addr="$2"
-    local name="$3"
-
-    RESULT=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/proxies" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"proxy_address\": \"$proxy_addr\",
-            \"proxy_type\": \"erc1967\",
-            \"current_impl\": \"$impl_addr\"
-        }")
-
-    if echo "$RESULT" | jq -e '.proxy_address' > /dev/null 2>&1; then
-        print_success "$name registered as managed proxy"
-    else
-        ERROR=$(echo "$RESULT" | jq -r '.error // "Unknown error"' 2>/dev/null)
-        print_info "$name: $ERROR"
-    fi
-}
-
-register_managed_proxy "$TOKEN_PROXY" "$TOKEN_V1_IMPL" "Token Proxy"
-register_managed_proxy "$POOL_PROXY" "$POOL_V1_IMPL" "Pool Proxy"
-register_managed_proxy "$ROUTER_PROXY" "$ROUTER_V1_IMPL" "Router Proxy"
+# Note: With runtime tracing enabled (ENABLE_RUNTIME_TRACING=true in docker-compose.yml),
+# managed proxy registration is not required. Runtime tracing validates that upgrade
+# targets are org-owned at transaction time.
 
 # =============================================================================
 # Step 8: Interact with V1
