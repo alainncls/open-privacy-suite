@@ -469,6 +469,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.Method, req.Params)
 
+	// Track factory deploy info for auto-registration after successful tx
+	var factoryDeployInfo *FactoryDeployInfo
+
 	// Check contract access if target address is specified
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
@@ -479,7 +482,25 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
-		// If no access to this contract (not registered and no default claims), deny
+		// If no access from explicit registration or default_claims, check if it's a preregistered address
+		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them
+		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables
+		if access == nil {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
+				// Address is owned (registered or preregistered) by one of user's orgs - grant full access
+				access = &ContractAccess{
+					Claims:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+					Functions: nil, // All functions allowed
+				}
+				hasExplicitAccess = true // Treat as explicit access for cross-org check
+			}
+		}
+
+		// If still no access, deny
 		if access == nil {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -544,6 +565,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						Allowed: false,
 						Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
 					}, nil
+				}
+				// If this is an allowed factory deploy, capture info for auto-registration
+				if factoryResult != nil && factoryResult.IsFactoryCall && factoryResult.IsDeployCall && factoryResult.Allowed {
+					factoryDeployInfo = &FactoryDeployInfo{
+						OrgID:         org.ID,
+						TargetAddress: factoryResult.TargetAddress,
+						FactoryAddr:   addr,
+						Salt:          factoryResult.Salt,
+					}
 				}
 			}
 		}
@@ -631,10 +661,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	allClaims := collectAllClaims(perms)
 
 	return &AccessCheckResult{
-		Allowed:        true,
-		RateLimitRPS:   perms.RateLimitRPS,
-		RateLimitDaily: perms.RateLimitDaily,
-		Claims:         allClaims,
+		Allowed:           true,
+		RateLimitRPS:      perms.RateLimitRPS,
+		RateLimitDaily:    perms.RateLimitDaily,
+		Claims:            allClaims,
+		FactoryDeployInfo: factoryDeployInfo, // Set if this was a factory deploy
 	}, nil
 }
 

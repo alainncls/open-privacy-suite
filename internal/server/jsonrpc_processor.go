@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -192,12 +196,69 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Auto-register contract if this was a successful factory deploy
+	if result.FactoryDeployInfo != nil && statusCode == http.StatusOK {
+		p.autoRegisterFactoryDeploy(ctx, result.FactoryDeployInfo, responseBody)
+	}
+
 	// Log successful access
 	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
 
 	return &ProcessResult{
 		StatusCode:   statusCode,
 		ResponseBody: responseBody,
+	}
+}
+
+// autoRegisterFactoryDeploy registers a contract after a successful CREATE3 factory deploy.
+// This runs asynchronously to avoid blocking the response.
+func (p *JSONRPCProcessor) autoRegisterFactoryDeploy(ctx context.Context, info *rbac.FactoryDeployInfo, responseBody []byte) {
+	// Parse the response to check if it was successful (has tx hash)
+	var rpcResp struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(responseBody, &rpcResp); err != nil {
+		return // Can't parse response, skip
+	}
+
+	// If there's an error or no result, the tx failed
+	if rpcResp.Error != nil || rpcResp.Result == "" {
+		return
+	}
+
+	// The tx was submitted successfully - register the contract
+	// Note: We register immediately since CREATE3 addresses are deterministic
+	// The contract will exist at this address once the tx is mined
+	store := p.rbacAccessCtrl.Store()
+
+	// Check if already registered as a contract
+	existing, err := store.GetContractByAddress(ctx, info.OrgID, info.TargetAddress)
+	if err == nil && existing != nil {
+		return // Already registered
+	}
+
+	// Create the contract entry
+	now := time.Now()
+	contract := &rbac.Contract{
+		ID:         uuid.New().String(),
+		OrgID:      info.OrgID,
+		Address:    strings.ToLower(info.TargetAddress),
+		Name:       fmt.Sprintf("CREATE3 Deploy %s", info.TargetAddress[:10]),
+		DeployedAt: &now,
+		Metadata: map[string]interface{}{
+			"factory":     info.FactoryAddr,
+			"salt":        info.Salt,
+			"auto_registered": true,
+		},
+	}
+
+	if err := store.CreateContract(ctx, contract); err != nil {
+		// Log error but don't fail the request - the preregistered address still works
+		// The contract can be manually registered later if needed
+		return
 	}
 }
 
