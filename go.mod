@@ -3,6 +3,7 @@ module privacy-proxy
 go 1.24.2
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/ethereum/go-ethereum v1.16.7
 	github.com/gin-gonic/gin v1.9.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
@@ -13,6 +14,7 @@ require (
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/jackc/tern/v2 v2.3.4
 	github.com/lib/pq v1.10.9
+	github.com/pelletier/go-toml/v2 v2.0.8
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.31.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.31.0
@@ -109,7 +111,6 @@ require (
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.0.8 // indirect
 	github.com/piprate/json-gold v0.5.1-0.20241210232033-19254b3ec65b // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

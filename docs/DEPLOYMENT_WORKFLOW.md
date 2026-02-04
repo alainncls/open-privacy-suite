@@ -18,13 +18,15 @@ This document describes the recommended approach for deploying smart contracts t
 │                    Developer Workflow                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  1. Write contracts (unchanged from public chain)           │
-│  2. npx hardhat privacy:prepare  ──────────────────────┐    │
-│  3. npx hardhat deploy (unchanged)                     │    │
-│                                                        │    │
-└────────────────────────────────────────────────────────│────┘
-                                                         │
-                                                         ▼
+│  Hardhat:                        Foundry:                   │
+│  1. Write contracts              1. Write contracts         │
+│  2. npx hardhat privacy:prepare  2. privacy-cli prepare     │
+│  3. npx hardhat deploy           3. forge script --broadcast│
+│         │                               │                   │
+└─────────│───────────────────────────────│───────────────────┘
+          │                               │
+          └───────────────┬───────────────┘
+                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Privacy Proxy                             │
 ├─────────────────────────────────────────────────────────────┤
@@ -47,7 +49,9 @@ This document describes the recommended approach for deploying smart contracts t
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Deployment Flow
+---
+
+## Option A: Hardhat Workflow
 
 ### Step 1: One-Time Setup
 
@@ -117,7 +121,9 @@ The existing deployment script works without modification. The plugin:
 - Routes through CREATE3 factory
 - Uses preregistered addresses
 
-## API Endpoint
+---
+
+## Common: API Endpoint
 
 ### POST /api/v1/orgs/{org_id}/deployments/prepare
 
@@ -166,7 +172,7 @@ Registers a deployment plan with computed addresses and constructor validation.
 2. Bytecode hashes recorded for deploy-time verification
 3. All addresses preregistered atomically
 
-## Runtime Validation
+## Common: Runtime Validation
 
 Every transaction is validated before forwarding to the chain:
 
@@ -202,7 +208,7 @@ Transaction arrives
     Forward or Reject
 ```
 
-## Handling Special Cases
+## Common: Handling Special Cases
 
 ### Circular Dependencies
 
@@ -254,7 +260,7 @@ privacyProxy: {
 
 These must be pre-approved by org admin via the admin API.
 
-## Security Model
+## Common: Security Model
 
 | Layer | Check | Timing |
 |-------|-------|--------|
@@ -276,7 +282,7 @@ These must be pre-approved by org admin via the admin API.
 - **Shared infrastructure**: Approved shared contracts accessible to all orgs
 - **Precompiles**: Standard EVM precompiles (0x01-0x09) always allowed
 
-## Performance Considerations
+## Common: Performance Considerations
 
 ### Overhead
 
@@ -293,7 +299,7 @@ These must be pre-approved by org admin via the admin API.
 3. **Trusted mode**: Skip tracing for contracts marked as "audited"
 4. **Batch optimization**: Group multiple calls in single trace
 
-## Example: Complete DeFi Deployment
+## Example: Complete DeFi Deployment (Hardhat)
 
 ```javascript
 // scripts/deploy.js - UNCHANGED from public chain!
@@ -328,9 +334,300 @@ npx hardhat privacy:prepare --network privacy
 npx hardhat run scripts/deploy.js --network privacy
 ```
 
+---
+
+## Option B: Foundry Workflow
+
+Foundry doesn't have a plugin system like Hardhat, so we provide two approaches:
+1. **CLI Tool** (recommended) - Works with standard Foundry scripts
+2. **Solidity Library** - For advanced users who want in-script control
+
+### Approach 1: CLI Tool (Recommended)
+
+#### Step 1: Install CLI
+
+```bash
+# Install the privacy-proxy CLI
+go install github.com/privacy-proxy/cli@latest
+
+# Or download binary
+curl -L https://github.com/privacy-proxy/cli/releases/latest/download/privacy-cli-$(uname -s)-$(uname -m) -o /usr/local/bin/privacy-cli
+chmod +x /usr/local/bin/privacy-cli
+```
+
+#### Step 2: Configure
+
+Create `privacy.toml` in your project root:
+
+```toml
+[proxy]
+api_url = "http://localhost:8080/api/v1"
+rpc_url = "http://localhost:8080/rpc"
+org_id = "org_abc123"
+
+[factory]
+# CREATE3 factory address (auto-discovered if not set)
+address = "0x..."
+
+[auth]
+# JWT token or path to token file
+token = "${PRIVACY_PROXY_TOKEN}"
+```
+
+#### Step 3: Write Standard Forge Script
+
+```solidity
+// script/Deploy.s.sol - UNCHANGED from public chain!
+pragma solidity ^0.8.19;
+
+import "forge-std/Script.sol";
+import "../src/MyToken.sol";
+import "../src/Pool.sol";
+import "../src/Router.sol";
+
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+
+        MyToken token = new MyToken("MyToken", "MTK");
+        console.log("Token:", address(token));
+
+        Pool pool = new Pool(address(token), 100);
+        console.log("Pool:", address(pool));
+
+        Router router = new Router(address(pool), address(token));
+        console.log("Router:", address(router));
+
+        vm.stopBroadcast();
+    }
+}
+```
+
+#### Step 4: Dry-Run and Prepare
+
+```bash
+# Run forge script in dry-run mode to capture deployments
+forge script script/Deploy.s.sol --rpc-url $RPC_URL --dry-run
+
+# Analyze dry-run output and register with privacy proxy
+privacy-cli prepare --broadcast-file broadcast/Deploy.s.sol/31337/dry-run/run-latest.json
+```
+
+Output:
+```
+🔍 Analyzing Foundry broadcast file...
+
+Found 3 contract deployments:
+  ├── MyToken (no address dependencies)
+  ├── Pool (depends on: MyToken)
+  └── Router (depends on: Pool, MyToken)
+
+📝 Computed CREATE3 addresses:
+  ├── MyToken: 0x1234...
+  ├── Pool:    0x5678...
+  └── Router:  0x9abc...
+
+📋 Extracted constructor ABIs:
+  ├── MyToken: constructor(string,string)
+  ├── Pool:    constructor(address,uint256)
+  └── Router:  constructor(address,address)
+
+✅ Registered with Privacy Proxy
+   Deployment ID: dep_xyz789
+   Valid for: 24 hours
+```
+
+#### Step 5: Deploy
+
+```bash
+# Deploy through privacy proxy (uses CREATE3 factory)
+forge script script/Deploy.s.sol --rpc-url $PRIVACY_RPC --broadcast
+```
+
+The CLI modifies the broadcast to route through the CREATE3 factory, ensuring addresses match the preregistered values.
+
+### Approach 2: Solidity Library
+
+For users who want programmatic control within their Forge scripts:
+
+#### Install Library
+
+```bash
+forge install privacy-proxy/foundry-lib
+```
+
+#### Use in Script
+
+```solidity
+// script/Deploy.s.sol
+pragma solidity ^0.8.19;
+
+import "forge-std/Script.sol";
+import "privacy-proxy/PrivacyDeploy.sol";
+import "../src/MyToken.sol";
+import "../src/Pool.sol";
+
+contract DeployScript is Script, PrivacyDeploy {
+    function run() external {
+        // Initialize with proxy API (reads from env or config)
+        initPrivacy(vm.envString("PRIVACY_API_URL"), vm.envString("ORG_ID"));
+
+        vm.startBroadcast();
+
+        // Compute addresses first (deterministic)
+        address tokenAddr = computeAddress("token-v1");
+        address poolAddr = computeAddress("pool-v1");
+
+        // Register with privacy proxy (includes constructor ABI)
+        registerDeployment("MyToken", tokenAddr, type(MyToken).creationCode,
+            abi.encode("MyToken", "MTK"));
+        registerDeployment("Pool", poolAddr, type(Pool).creationCode,
+            abi.encode(tokenAddr, 100));
+
+        // Deploy via CREATE3
+        MyToken token = MyToken(deployCreate3("token-v1",
+            type(MyToken).creationCode, abi.encode("MyToken", "MTK")));
+
+        Pool pool = Pool(deployCreate3("pool-v1",
+            type(Pool).creationCode, abi.encode(address(token), 100)));
+
+        vm.stopBroadcast();
+
+        console.log("Token:", address(token));
+        console.log("Pool:", address(pool));
+    }
+}
+```
+
+### CLI Command Reference
+
+```bash
+# Prepare deployment from Foundry broadcast
+privacy-cli prepare --broadcast-file <path>
+
+# Prepare with custom config
+privacy-cli prepare --broadcast-file <path> --config privacy.toml
+
+# Prepare with explicit parameters
+privacy-cli prepare --broadcast-file <path> \
+  --api-url http://localhost:8080/api/v1 \
+  --org-id org_abc123 \
+  --token $JWT_TOKEN
+
+# Dry-run (show what would be registered without calling API)
+privacy-cli prepare --broadcast-file <path> --dry-run
+
+# Verify deployment matches registration
+privacy-cli verify --deployment-id dep_xyz789
+
+# List pending deployments
+privacy-cli list --org-id org_abc123
+```
+
+### Foundry Configuration
+
+Add to `foundry.toml`:
+
+```toml
+[profile.privacy]
+# Use privacy proxy RPC
+eth_rpc_url = "http://localhost:8080/rpc"
+
+# Increase timeout for tracing overhead
+timeout = 60000
+
+# Optional: custom sender for testing
+sender = "0x..."
+```
+
+Deploy with privacy profile:
+
+```bash
+forge script script/Deploy.s.sol --profile privacy --broadcast
+```
+
+---
+
+## Example: Complete DeFi Deployment (Foundry)
+
+```solidity
+// script/DeployDeFi.s.sol
+pragma solidity ^0.8.19;
+
+import "forge-std/Script.sol";
+import "../src/Token.sol";
+import "../src/Pool.sol";
+import "../src/Router.sol";
+import "../src/Staking.sol";
+
+contract DeployDeFi is Script {
+    function run() external {
+        vm.startBroadcast();
+
+        // Deploy token
+        Token token = new Token("DeFi Token", "DFT", 1_000_000 ether);
+
+        // Deploy pool with token reference
+        Pool pool = new Pool(address(token), 30); // 0.3% fee
+
+        // Deploy router with both references
+        Router router = new Router(address(pool), address(token));
+
+        // Deploy staking with token reference
+        Staking staking = new Staking(address(token), 7 days);
+
+        // Setup permissions
+        token.setMinter(address(staking));
+        pool.setRouter(address(router));
+
+        vm.stopBroadcast();
+
+        console.log("Token:", address(token));
+        console.log("Pool:", address(pool));
+        console.log("Router:", address(router));
+        console.log("Staking:", address(staking));
+    }
+}
+```
+
+**Commands:**
+```bash
+# 1. Compile
+forge build
+
+# 2. Dry-run to capture deployment plan
+forge script script/DeployDeFi.s.sol --rpc-url $RPC_URL --dry-run
+
+# 3. Register with privacy proxy
+privacy-cli prepare --broadcast-file broadcast/DeployDeFi.s.sol/31337/dry-run/run-latest.json
+
+# 4. Deploy for real
+forge script script/DeployDeFi.s.sol --rpc-url $PRIVACY_RPC --broadcast
+
+# 5. Verify deployment
+privacy-cli verify --deployment-id dep_xyz789
+```
+
+---
+
+## Comparison: Hardhat vs Foundry
+
+| Aspect | Hardhat | Foundry |
+|--------|---------|---------|
+| Integration | Native plugin | CLI tool + optional library |
+| Setup | `npm install` + config | `go install` or binary download |
+| Prepare step | `npx hardhat privacy:prepare` | `privacy-cli prepare --broadcast-file` |
+| Script changes | None (plugin intercepts) | None (CLI analyzes broadcast) |
+| CREATE3 routing | Automatic via plugin | Automatic via CLI |
+| Advanced control | Plugin options | Solidity library |
+
+Both approaches achieve the same result: deterministic addresses, preregistration, and runtime validation.
+
+---
+
 ## Future Enhancements
 
-1. **Foundry support**: `forge privacy:prepare` equivalent
-2. **VS Code extension**: Visual deployment planning
-3. **Gas estimation**: Account for proxy overhead in estimates
-4. **Deployment versioning**: Track contract versions across upgrades
+1. **VS Code extension**: Visual deployment planning
+2. **Gas estimation**: Account for proxy overhead in estimates
+3. **Deployment versioning**: Track contract versions across upgrades
+4. **Truffle support**: Legacy tooling compatibility

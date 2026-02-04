@@ -111,6 +111,13 @@ type Store interface {
 	GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error)
 	UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error
 	IsManagedProxy(ctx context.Context, address string) (bool, error)
+
+	// Shared infrastructure operations (for runtime tracing)
+	// These contracts are globally accessible (e.g., Uniswap router) and do not require org ownership.
+	IsSharedInfrastructure(ctx context.Context, address string) (bool, error)
+	CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error
+	ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error)
+	DeleteSharedInfrastructure(ctx context.Context, address string) error
 }
 
 // AuditAction constants for audit logging.

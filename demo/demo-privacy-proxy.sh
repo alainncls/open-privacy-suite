@@ -1,0 +1,737 @@
+#!/bin/bash
+
+# =============================================================================
+# Privacy Proxy - Full Privacy Proxy Workflow Demo
+# =============================================================================
+# This script demonstrates the full privacy proxy workflow:
+# 1. Start services (anvil + privacy-proxy via docker-compose)
+# 2. Authenticate and get JWT
+# 3. Set up organization and user permissions
+# 4. Preregister CREATE3 addresses
+# 5. Deploy contracts through proxy
+# 6. Interact with contracts (showing RBAC enforcement)
+# 7. Clean up
+# =============================================================================
+
+set -e
+
+# Colors for pretty output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+# Box drawing characters
+BOX_TL="╔"
+BOX_TR="╗"
+BOX_BL="╚"
+BOX_BR="╝"
+BOX_H="═"
+BOX_V="║"
+
+# Print functions
+print_header() {
+    local text="$1"
+    local width=70
+    local padding=$(( (width - ${#text} - 2) / 2 ))
+    echo ""
+    echo -e "${CYAN}${BOX_TL}$(printf '%*s' $width | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+    echo -e "${CYAN}${BOX_V}${NC}$(printf '%*s' $padding)${BOLD}${WHITE}$text${NC}$(printf '%*s' $((width - padding - ${#text})))${CYAN}${BOX_V}${NC}"
+    echo -e "${CYAN}${BOX_BL}$(printf '%*s' $width | tr ' ' "$BOX_H")${BOX_BR}${NC}"
+    echo ""
+}
+
+print_step() {
+    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}▶${NC} ${BOLD}$1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+}
+
+print_substep() {
+    echo -e "  ${CYAN}→${NC} $1"
+}
+
+print_success() {
+    echo -e "  ${GREEN}✓${NC} $1"
+}
+
+print_error() {
+    echo -e "  ${RED}✗${NC} $1"
+}
+
+print_info() {
+    echo -e "  ${MAGENTA}ℹ${NC} $1"
+}
+
+print_value() {
+    echo -e "  ${WHITE}│${NC} $1: ${GREEN}$2${NC}"
+}
+
+print_json() {
+    echo -e "${WHITE}$1${NC}" | jq '.' 2>/dev/null || echo -e "${WHITE}$1${NC}"
+}
+
+print_contract_call() {
+    local contract="$1"
+    local method="$2"
+    local result="$3"
+    echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "  ${CYAN}│${NC} Contract: ${YELLOW}$contract${NC}"
+    echo -e "  ${CYAN}│${NC} Method:   ${YELLOW}$method${NC}"
+    echo -e "  ${CYAN}│${NC} Result:   ${GREEN}$result${NC}"
+    echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+}
+
+# =============================================================================
+# Helper function for RPC calls through the proxy
+# =============================================================================
+rpc_call() {
+    local method="$1"
+    local params="$2"
+
+    curl -s -X POST "$PROXY_RPC_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":1}"
+}
+
+# =============================================================================
+# Helper function for API calls
+# =============================================================================
+api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="$3"
+
+    if [ -n "$data" ]; then
+        curl -s -X "$method" "${PROXY_API_URL}${endpoint}" \
+            -H "Content-Type: application/json" \
+            -d "$data"
+    else
+        curl -s -X "$method" "${PROXY_API_URL}${endpoint}"
+    fi
+}
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+print_header "Privacy Proxy Full Workflow Demo"
+
+print_step "Step 1: Checking Configuration"
+
+# Environment variables with defaults
+: "${PROXY_API_URL:=http://localhost:8080/api}"
+: "${PROXY_RPC_URL:=http://localhost:8080}"
+: "${ANVIL_URL:=http://localhost:8545}"
+: "${PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+
+print_value "Proxy API URL" "$PROXY_API_URL"
+print_value "Proxy RPC URL" "$PROXY_RPC_URL"
+print_value "Anvil URL" "$ANVIL_URL"
+print_value "Private Key" "${PRIVATE_KEY:0:10}..."
+
+# Get deployer address from private key
+DEPLOYER_ADDRESS=$(cast wallet address "$PRIVATE_KEY" 2>/dev/null)
+print_value "Deployer Address" "$DEPLOYER_ADDRESS"
+
+# Check if services are running
+print_substep "Checking if privacy proxy is running..."
+HEALTH_CHECK=$(curl -s "$PROXY_RPC_URL/health" 2>/dev/null || echo "")
+if [ -z "$HEALTH_CHECK" ]; then
+    print_error "Privacy proxy is not running at $PROXY_RPC_URL"
+    echo ""
+    echo -e "  ${WHITE}Start the services with:${NC}"
+    echo -e "  ${GREEN}docker-compose up -d${NC}"
+    echo ""
+    exit 1
+fi
+print_success "Privacy proxy is running"
+
+# Check Anvil connection through proxy
+print_substep "Checking Anvil connection..."
+CHAIN_ID=$(curl -s -X POST "$ANVIL_URL" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' 2>/dev/null | jq -r '.result // empty')
+if [ -z "$CHAIN_ID" ]; then
+    print_error "Could not connect to Anvil at $ANVIL_URL"
+    exit 1
+fi
+print_success "Anvil connected (chainId: $CHAIN_ID)"
+
+# =============================================================================
+# Step 2: Authentication
+# =============================================================================
+
+print_step "Step 2: Authentication"
+
+# Create a unique user DID for this demo
+USER_EXTERNAL_ID="did:demo:deployer-$(date +%s)"
+print_substep "User DID: $USER_EXTERNAL_ID"
+
+# Start auth session
+print_substep "Starting auth session..."
+AUTH_REQUEST_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/request" \
+    -H "Content-Type: application/json" \
+    -d '{"reason": "Privacy Proxy Demo"}')
+
+SESSION_ID=$(echo "$AUTH_REQUEST_RESP" | jq -r '.session_id // .sessionId // empty')
+if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
+    print_error "Failed to create auth session: $AUTH_REQUEST_RESP"
+    exit 1
+fi
+print_success "Auth session created: ${SESSION_ID:0:20}..."
+
+# Complete auth with mock token (requires AllowMockLogin=true)
+print_substep "Authenticating with mock token..."
+MOCK_TOKEN="mock.${USER_EXTERNAL_ID}"
+AUTH_CALLBACK_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/callback?session=$SESSION_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"token\": \"$MOCK_TOKEN\"}")
+
+AUTH_TOKEN=$(echo "$AUTH_CALLBACK_RESP" | jq -r '.access_token // .accessToken // empty')
+if [ -z "$AUTH_TOKEN" ] || [ "$AUTH_TOKEN" = "null" ]; then
+    print_error "Failed to authenticate: $AUTH_CALLBACK_RESP"
+    print_info "Make sure the proxy is running with ALLOW_MOCK_LOGIN=true"
+    exit 1
+fi
+print_success "Got JWT access token"
+print_value "Token (first 50 chars)" "${AUTH_TOKEN:0:50}..."
+
+# =============================================================================
+# Step 3: Organization Setup
+# =============================================================================
+
+print_step "Step 3: Organization Setup"
+
+# Check if org already exists or get/create one
+if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
+    print_substep "Looking for existing organizations..."
+    ORGS_RESPONSE=$(api_call "GET" "/orgs")
+    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq 'length' 2>/dev/null || echo "0")
+
+    if [ "$ORG_COUNT" -gt 0 ]; then
+        # Use first org
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.[0].id')
+        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.[0].slug')
+        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r '.[0].name')
+        print_success "Using existing organization: $ORG_NAME ($ORG_SLUG)"
+    else
+        # Create a demo org
+        print_substep "Creating demo organization..."
+        ORG_CREATE_RESP=$(api_call "POST" "/orgs" '{
+            "slug": "demo-org",
+            "name": "Demo Organization",
+            "description": "Organization for demo purposes"
+        }')
+        ORG_ID=$(echo "$ORG_CREATE_RESP" | jq -r '.id')
+        ORG_SLUG="demo-org"
+        ORG_NAME="Demo Organization"
+        print_success "Created organization: $ORG_NAME"
+    fi
+else
+    # Use provided org
+    if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
+        ORGS_RESPONSE=$(api_call "GET" "/orgs")
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
+        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .name")
+    fi
+fi
+
+print_value "Organization ID" "$ORG_ID"
+print_value "Organization Slug" "$ORG_SLUG"
+
+# =============================================================================
+# Step 4: User and Group Setup
+# =============================================================================
+
+print_step "Step 4: User and Group Setup"
+
+# Get user info
+print_substep "Getting user info..."
+USERS_RESP=$(api_call "GET" "/v1/users")
+USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    print_error "Could not find user ID after authentication"
+    exit 1
+fi
+print_success "User ID: $USER_ID"
+
+# Set KYC status
+print_substep "Setting KYC status (required for RPC access)..."
+KYC_RESP=$(curl -s -X PUT "${PROXY_API_URL}/v1/users/${USER_ID}" \
+    -H "Content-Type: application/json" \
+    -d '{"kyc": true}')
+print_success "KYC status set to true"
+
+# Set up deployers group with deploy claim
+print_substep "Setting up deployers group..."
+GROUPS_RESP=$(api_call "GET" "/v1/orgs/$ORG_ID/groups")
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    GROUP_CREATE_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "slug": "demo-deployers",
+            "name": "Demo Deployers",
+            "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
+            "default_claims": ["read", "write", "deploy"]
+        }')
+    DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
+fi
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    print_error "Failed to create or find deployers group"
+    exit 1
+fi
+print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
+
+# Add user to group
+print_substep "Adding user to deployers group..."
+MEMBERSHIP_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/users/${USER_ID}/memberships" \
+    -H "Content-Type: application/json" \
+    -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}")
+print_success "User added to deployers group"
+
+# Verify auth works
+print_substep "Verifying authentication..."
+AUTH_TEST=$(rpc_call "eth_chainId" "[]")
+AUTH_ERROR=$(echo "$AUTH_TEST" | jq -r 'if .error then .error.message else empty end')
+if [ -n "$AUTH_ERROR" ]; then
+    print_error "Authentication verification failed: $AUTH_ERROR"
+    exit 1
+fi
+print_success "Authentication verified"
+
+# =============================================================================
+# Step 5: CREATE3 Factory Setup
+# =============================================================================
+
+print_step "Step 5: CREATE3 Factory Setup"
+
+# Check if factory is already configured
+print_substep "Checking CREATE3 factory configuration..."
+FACTORY_RESPONSE=$(api_call "GET" "/orgs/$ORG_ID/config/create3")
+CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
+
+if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+    print_info "No factory configured, deploying one..."
+
+    # Deploy CREATE3 factory directly to Anvil
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Build factory contract
+    BUILD_DIR=$(mktemp -d)
+    cp -r "$SCRIPT_DIR/contracts"/* "$BUILD_DIR/"
+    cd "$BUILD_DIR"
+
+    git init --quiet
+    git config user.email "demo@example.com"
+    git config user.name "Demo"
+    git add -A
+    git commit -m "Initial" --quiet
+
+    mkdir -p lib
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+
+    forge build --quiet
+
+    print_substep "Deploying CREATE3 factory..."
+    FACTORY_RESULT=$(forge create src/CREATE3Factory.sol:CREATE3Factory \
+        --rpc-url "$ANVIL_URL" \
+        --private-key "$PRIVATE_KEY" \
+        --json 2>/dev/null)
+    CREATE3_FACTORY=$(echo "$FACTORY_RESULT" | jq -r '.deployedTo')
+    print_success "Factory deployed: $CREATE3_FACTORY"
+
+    # Configure factory for org
+    print_substep "Configuring factory for organization..."
+    curl -s -X PUT "${PROXY_API_URL}/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for organization"
+
+    # Cleanup
+    rm -rf "$BUILD_DIR"
+    cd "$SCRIPT_DIR"
+else
+    print_success "Factory already configured: $CREATE3_FACTORY"
+
+    # Verify factory has code
+    FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0")
+    if [ "$FACTORY_CODE_SIZE" = "0" ]; then
+        print_error "Factory has no code (chain may have been reset)"
+        exit 1
+    fi
+    print_value "Factory code size" "$FACTORY_CODE_SIZE bytes"
+fi
+
+# =============================================================================
+# Step 6: Preregister Addresses
+# =============================================================================
+
+print_step "Step 6: Preregister Addresses"
+
+# We need 6 addresses: 3 implementations + 3 proxies
+ADDRESSES_NEEDED=6
+SALT_PREFIX="demo-defi-$(date +%s)"
+
+print_substep "Preregistering $ADDRESSES_NEEDED addresses..."
+PREREGISTER_RESPONSE=$(curl -s -X POST "${PROXY_API_URL}/orgs/$ORG_ID/addresses/preregister" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"factory\": \"$CREATE3_FACTORY\",
+        \"salt_prefix\": \"$SALT_PREFIX\",
+        \"count\": $ADDRESSES_NEEDED,
+        \"note\": \"Demo DeFi deployment addresses\"
+    }")
+
+if ! echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+    print_error "Failed to preregister addresses"
+    echo "$PREREGISTER_RESPONSE" | jq '.' 2>/dev/null || echo "$PREREGISTER_RESPONSE"
+    exit 1
+fi
+
+# Extract addresses and salts
+TOKEN_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
+TOKEN_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
+POOL_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
+POOL_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
+ROUTER_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
+ROUTER_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
+TOKEN_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].address')
+TOKEN_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].salt')
+POOL_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].address')
+POOL_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].salt')
+ROUTER_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].address')
+ROUTER_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].salt')
+
+print_success "Addresses preregistered"
+echo ""
+echo -e "  ${WHITE}Preregistered Addresses:${NC}"
+echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Token Implementation:${NC}  $TOKEN_IMPL_ADDR"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Pool Implementation:${NC}   $POOL_IMPL_ADDR"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Router Implementation:${NC} $ROUTER_IMPL_ADDR"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Token Proxy:${NC}           $TOKEN_PROXY_ADDR"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Pool Proxy:${NC}            $POOL_PROXY_ADDR"
+echo -e "  ${CYAN}│${NC} ${YELLOW}Router Proxy:${NC}          $ROUTER_PROXY_ADDR"
+echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+
+# =============================================================================
+# Step 7: Build Contracts
+# =============================================================================
+
+print_step "Step 7: Building Contracts"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTRACTS_SRC_DIR="$SCRIPT_DIR/contracts"
+
+BUILD_DIR=$(mktemp -d)
+print_substep "Using temp build directory: $BUILD_DIR"
+
+cp -r "$CONTRACTS_SRC_DIR"/* "$BUILD_DIR/"
+cd "$BUILD_DIR"
+
+cleanup() {
+    if [ -n "$BUILD_DIR" ] && [ -d "$BUILD_DIR" ]; then
+        rm -rf "$BUILD_DIR"
+    fi
+}
+trap cleanup EXIT
+
+git init --quiet
+git config user.email "demo@example.com"
+git config user.name "Demo"
+git add -A
+git commit -m "Initial" --quiet
+
+print_substep "Installing OpenZeppelin contracts..."
+mkdir -p lib
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null
+print_success "OpenZeppelin contracts installed"
+
+print_substep "Compiling contracts..."
+forge build --quiet
+print_success "Contracts compiled"
+
+# Get bytecode
+DEMOTOKEN_BYTECODE=$(forge inspect DemoToken bytecode)
+LIQUIDITYPOOL_BYTECODE=$(forge inspect LiquidityPool bytecode)
+SWAPROUTER_BYTECODE=$(forge inspect SwapRouter bytecode)
+
+# Create proxy contract
+cat > "$BUILD_DIR/src/DeployProxy.sol" << 'EOF'
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+contract DeployableProxy is ERC1967Proxy {
+    constructor(address implementation, bytes memory data) ERC1967Proxy(implementation, data) {}
+}
+EOF
+
+forge build --quiet
+PROXY_BYTECODE=$(forge inspect DeployableProxy bytecode)
+
+print_value "DemoToken bytecode" "$(echo -n "$DEMOTOKEN_BYTECODE" | wc -c | tr -d ' ') chars"
+print_value "LiquidityPool bytecode" "$(echo -n "$LIQUIDITYPOOL_BYTECODE" | wc -c | tr -d ' ') chars"
+print_value "SwapRouter bytecode" "$(echo -n "$SWAPROUTER_BYTECODE" | wc -c | tr -d ' ') chars"
+
+# =============================================================================
+# Step 8: Deploy Through Privacy Proxy
+# =============================================================================
+
+print_step "Step 8: Deploying Contracts Through Privacy Proxy"
+
+print_info "All deployments go through the privacy proxy with RBAC enforcement"
+print_info "Deploying to preregistered CREATE3 addresses"
+echo ""
+
+# Helper function to deploy via CREATE3 through proxy
+deploy_via_create3() {
+    local salt="$1"
+    local bytecode="$2"
+    local name="$3"
+    local expected_addr="$4"
+
+    print_substep "Deploying $name..."
+
+    DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$salt" "$bytecode")
+
+    NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+    NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+
+    TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$CREATE3_FACTORY",
+    "data": "$DEPLOY_CALLDATA",
+    "gas": "0x500000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+
+    DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+    TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty')
+    DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r 'if .error then .error.message else empty end')
+
+    if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ] || [ -n "$DEPLOY_ERROR" ]; then
+        print_error "Failed to deploy $name: $DEPLOY_ERROR"
+        echo "$DEPLOY_RESULT" | jq '.' 2>/dev/null || echo "$DEPLOY_RESULT"
+        return 1
+    fi
+
+    # Verify deployment
+    CODE_SIZE=$(cast codesize "$expected_addr" --rpc-url "$ANVIL_URL" 2>/dev/null || echo "0")
+    if [ "$CODE_SIZE" = "0" ]; then
+        print_error "$name deployment failed - no code at $expected_addr"
+        return 1
+    fi
+
+    print_success "$name deployed to $expected_addr"
+}
+
+# Deploy implementations
+deploy_via_create3 "$TOKEN_IMPL_SALT" "$DEMOTOKEN_BYTECODE" "DemoToken Implementation" "$TOKEN_IMPL_ADDR"
+deploy_via_create3 "$POOL_IMPL_SALT" "$LIQUIDITYPOOL_BYTECODE" "LiquidityPool Implementation" "$POOL_IMPL_ADDR"
+deploy_via_create3 "$ROUTER_IMPL_SALT" "$SWAPROUTER_BYTECODE" "SwapRouter Implementation" "$ROUTER_IMPL_ADDR"
+
+# Deploy proxies with initialization
+# Token: initialize(owner, pool)
+TOKEN_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR")
+TOKEN_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$TOKEN_IMPL_ADDR" "$TOKEN_INIT_DATA")
+TOKEN_PROXY_INITCODE="${PROXY_BYTECODE}${TOKEN_PROXY_CONSTRUCTOR:2}"
+deploy_via_create3 "$TOKEN_PROXY_SALT" "$TOKEN_PROXY_INITCODE" "DemoToken Proxy" "$TOKEN_PROXY_ADDR"
+
+# Pool: initialize(owner, token)
+POOL_INIT_DATA=$(cast calldata "initialize(address,address)" "$DEPLOYER_ADDRESS" "$TOKEN_PROXY_ADDR")
+POOL_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$POOL_IMPL_ADDR" "$POOL_INIT_DATA")
+POOL_PROXY_INITCODE="${PROXY_BYTECODE}${POOL_PROXY_CONSTRUCTOR:2}"
+deploy_via_create3 "$POOL_PROXY_SALT" "$POOL_PROXY_INITCODE" "LiquidityPool Proxy" "$POOL_PROXY_ADDR"
+
+# Router: initialize(owner, pool, token)
+ROUTER_INIT_DATA=$(cast calldata "initialize(address,address,address)" "$DEPLOYER_ADDRESS" "$POOL_PROXY_ADDR" "$TOKEN_PROXY_ADDR")
+ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER_IMPL_ADDR" "$ROUTER_INIT_DATA")
+ROUTER_PROXY_INITCODE="${PROXY_BYTECODE}${ROUTER_PROXY_CONSTRUCTOR:2}"
+deploy_via_create3 "$ROUTER_PROXY_SALT" "$ROUTER_PROXY_INITCODE" "SwapRouter Proxy" "$ROUTER_PROXY_ADDR"
+
+# =============================================================================
+# Step 9: Verify Deployment
+# =============================================================================
+
+print_step "Step 9: Verifying Deployment"
+
+print_substep "Checking contract versions..."
+TOKEN_VERSION=$(cast call "$TOKEN_PROXY_ADDR" "version()(string)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+POOL_VERSION=$(cast call "$POOL_PROXY_ADDR" "version()(string)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+ROUTER_VERSION=$(cast call "$ROUTER_PROXY_ADDR" "version()(string)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+
+print_contract_call "$TOKEN_PROXY_ADDR" "version()" "$TOKEN_VERSION"
+print_contract_call "$POOL_PROXY_ADDR" "version()" "$POOL_VERSION"
+print_contract_call "$ROUTER_PROXY_ADDR" "version()" "$ROUTER_VERSION"
+
+print_substep "Verifying circular references (CREATE3 determinism)..."
+TOKEN_POOL=$(cast call "$TOKEN_PROXY_ADDR" "pool()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+POOL_TOKEN=$(cast call "$POOL_PROXY_ADDR" "token()(address)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+
+if [ "$TOKEN_POOL" = "$POOL_PROXY_ADDR" ] && [ "$POOL_TOKEN" = "$TOKEN_PROXY_ADDR" ]; then
+    print_success "Circular references verified!"
+else
+    print_error "Reference mismatch"
+fi
+
+# =============================================================================
+# Step 10: Interact Through Proxy
+# =============================================================================
+
+print_step "Step 10: Interacting Through Privacy Proxy"
+
+print_info "All interactions go through RBAC-enforced proxy"
+echo ""
+
+# Mint tokens
+MINT_AMOUNT="1000000000000000000000"
+print_substep "Minting 1000 DEMO tokens through proxy..."
+MINT_CALLDATA=$(cast calldata "mint(address,uint256)" "$DEPLOYER_ADDRESS" "$MINT_AMOUNT")
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$TOKEN_PROXY_ADDR",
+    "data": "$MINT_CALLDATA",
+    "gas": "0x100000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+MINT_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+MINT_TX=$(echo "$MINT_RESULT" | jq -r '.result // empty')
+if [ -n "$MINT_TX" ] && [ "$MINT_TX" != "null" ]; then
+    print_success "Minted 1000 DEMO tokens"
+else
+    print_error "Mint failed: $(echo "$MINT_RESULT" | jq -r '.error.message // .error // .')"
+fi
+
+# Approve pool
+print_substep "Approving pool to spend tokens..."
+APPROVE_CALLDATA=$(cast calldata "approve(address,uint256)" "$POOL_PROXY_ADDR" "$MINT_AMOUNT")
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$TOKEN_PROXY_ADDR",
+    "data": "$APPROVE_CALLDATA",
+    "gas": "0x100000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+APPROVE_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+print_success "Pool approved"
+
+# Add liquidity
+LIQUIDITY_TOKENS="500000000000000000000"
+LIQUIDITY_ETH="1000000000000000000"
+print_substep "Adding liquidity (500 DEMO + 1 ETH)..."
+ADD_LIQ_CALLDATA=$(cast calldata "addLiquidity(uint256)" "$LIQUIDITY_TOKENS")
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$POOL_PROXY_ADDR",
+    "data": "$ADD_LIQ_CALLDATA",
+    "value": "0xde0b6b3a7640000",
+    "gas": "0x200000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+LIQ_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+print_success "Liquidity added"
+
+# Check reserves
+TOKEN_RESERVE=$(cast call "$POOL_PROXY_ADDR" "tokenReserve()(uint256)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+ETH_RESERVE=$(cast call "$POOL_PROXY_ADDR" "ethReserve()(uint256)" --rpc-url "$ANVIL_URL" 2>/dev/null)
+print_value "Token Reserve" "$TOKEN_RESERVE"
+print_value "ETH Reserve" "$ETH_RESERVE"
+
+# =============================================================================
+# Step 11: Demonstrate RBAC (Optional)
+# =============================================================================
+
+print_step "Step 11: RBAC Demonstration"
+
+print_info "Attempting unauthorized operation (should fail)..."
+
+# Try to send transaction without auth
+UNAUTH_RESULT=$(curl -s -X POST "$PROXY_RPC_URL" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "eth_sendTransaction",
+        "params": [{
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002",
+            "value": "0x1"
+        }],
+        "id": 1
+    }')
+
+UNAUTH_ERROR=$(echo "$UNAUTH_RESULT" | jq -r '.error.message // empty')
+if [ -n "$UNAUTH_ERROR" ]; then
+    print_success "Unauthorized request correctly rejected"
+    print_value "Error" "$UNAUTH_ERROR"
+else
+    print_info "Request may have been allowed (check proxy config)"
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+
+print_header "Demo Complete!"
+
+echo -e "${WHITE}Deployed Contracts (Through Privacy Proxy):${NC}"
+echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────┐${NC}"
+echo -e "${CYAN}│${NC}  ${YELLOW}CREATE3 Factory:${NC}       $CREATE3_FACTORY"
+echo -e "${CYAN}├─────────────────────────────────────────────────────────────────────┤${NC}"
+echo -e "${CYAN}│${NC}  ${YELLOW}DemoToken Proxy:${NC}       $TOKEN_PROXY_ADDR"
+echo -e "${CYAN}│${NC}  ${YELLOW}LiquidityPool Proxy:${NC}   $POOL_PROXY_ADDR"
+echo -e "${CYAN}│${NC}  ${YELLOW}SwapRouter Proxy:${NC}      $ROUTER_PROXY_ADDR"
+echo -e "${CYAN}├─────────────────────────────────────────────────────────────────────┤${NC}"
+echo -e "${CYAN}│${NC}  ${YELLOW}Token Version:${NC}         $TOKEN_VERSION"
+echo -e "${CYAN}│${NC}  ${YELLOW}Pool Version:${NC}          $POOL_VERSION"
+echo -e "${CYAN}│${NC}  ${YELLOW}Router Version:${NC}        $ROUTER_VERSION"
+echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────┘${NC}"
+
+echo ""
+echo -e "${GREEN}All operations completed successfully!${NC}"
+echo ""
+echo -e "${WHITE}Key Points Demonstrated:${NC}"
+echo -e "  ${CYAN}1.${NC} Authentication via mock provider (JWT tokens)"
+echo -e "  ${CYAN}2.${NC} Organization and user setup via Admin API"
+echo -e "  ${CYAN}3.${NC} Group-based permissions with deploy claim"
+echo -e "  ${CYAN}4.${NC} Address preregistration before deployment"
+echo -e "  ${CYAN}5.${NC} CREATE3 deterministic deployment through proxy"
+echo -e "  ${CYAN}6.${NC} RBAC enforcement on all transactions"
+echo -e "  ${CYAN}7.${NC} Circular dependency resolution via CREATE3"
+echo ""
+echo -e "${WHITE}Compare with:${NC}"
+echo -e "  ${GREEN}./demo-anvil-direct.sh${NC}      - Same flow without privacy proxy"
+echo -e "  ${GREEN}./demo-defi-deployment.sh${NC}   - Focus on CREATE3 patterns"
+echo ""

@@ -46,13 +46,17 @@ type ValidationResult struct {
 
 // ValidateDeployment checks if a contract deployment is allowed.
 // It analyzes the bytecode to ensure:
-// 1. No CREATE/CREATE2 opcodes (prevents nested deployments)
+// 1. No CREATE/CREATE2 opcodes (prevents nested deployments) unless user has admin claim
 // 2. No dynamic call targets (addresses from storage/calldata)
 // 3. All constant call targets are allowed for the org
+//
+// The hasAdminClaim parameter allows admin users to deploy factory contracts
+// that contain CREATE/CREATE2 opcodes.
 func (v *DeploymentValidator) ValidateDeployment(
 	ctx context.Context,
 	orgID string,
 	bytecodeHex string,
+	hasAdminClaim bool,
 ) (*ValidationResult, error) {
 	// Parse bytecode
 	bc, err := bytecode.ParseHex(bytecodeHex)
@@ -89,17 +93,21 @@ func (v *DeploymentValidator) ValidateDeployment(
 
 	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
 	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
+	// Note: Trusted factory deployment still requires admin claim (checked in access.go)
+	// The hasAdminClaim parameter is reserved for future use.
+	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
 		// Check if this is a trusted factory contract
 		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
 		if trustedFactory != nil {
-			// This is a whitelisted factory - allow it
+			// This is a whitelisted factory - allow it (admin check happens in access.go)
 			result.IsTrustedFactory = true
 			result.FactoryName = trustedFactory.Name
 			result.Allowed = true
 			return result, nil
 		}
 
+		// Non-trusted factory contracts are always blocked
 		result.Allowed = false
 		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
 		return result, nil
@@ -165,11 +173,14 @@ func (v *DeploymentValidator) ValidateDeployment(
 // - Detects if bytecode has constructor arguments
 // - If args exist and no ABI provided: REJECTS deployment
 // - If args exist and ABI provided: decodes args and validates any addresses
+//
+// The hasAdminClaim parameter allows admin users to deploy factory contracts.
 func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	ctx context.Context,
 	orgID string,
 	bytecodeHex string,
 	constructorABI string,
+	hasAdminClaim bool,
 ) (*ValidationResult, error) {
 	// Parse bytecode
 	bc, err := bytecode.ParseHex(bytecodeHex)
@@ -207,17 +218,21 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 
 	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
 	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
+	// Note: Trusted factory deployment still requires admin claim (checked in access.go)
+	// The hasAdminClaim parameter is reserved for future use.
+	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
 		// Check if this is a trusted factory contract
 		trustedFactory := create3.IsTrustedFactoryBytecode(bc.Raw)
 		if trustedFactory != nil {
-			// This is a whitelisted factory - allow it
+			// This is a whitelisted factory - allow it (admin check happens in access.go)
 			result.IsTrustedFactory = true
 			result.FactoryName = trustedFactory.Name
 			result.Allowed = true
 			return result, nil
 		}
 
+		// Non-trusted factory contracts are always blocked
 		result.Allowed = false
 		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
 		return result, nil

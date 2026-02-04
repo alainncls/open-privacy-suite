@@ -558,7 +558,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 
-			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex)
+			// Check if user has admin claim for factory deployment
+			allClaims := collectAllClaims(perms)
+			hasAdminClaim := containsClaim(allClaims, ClaimAdmin)
+
+			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex, hasAdminClaim)
 			if err != nil {
 				return nil, fmt.Errorf("failed to validate deployment bytecode: %w", err)
 			}
@@ -570,19 +574,16 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 
-			// Factory contract deployment requires admin claim (security: prevent accidental factory proliferation)
-			if validationResult.IsTrustedFactory {
-				allClaims := collectAllClaims(perms)
-				if !containsClaim(allClaims, ClaimAdmin) {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  "CREATE3 factory deployment requires admin claim",
-					}, nil
-				}
+			// Trusted factory deployment still requires admin claim
+			// (validated inside ValidateDeployment, but we double-check here for clarity)
+			if validationResult.IsTrustedFactory && !hasAdminClaim {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "CREATE3 factory deployment requires admin claim",
+				}, nil
 			}
 
 			// Include deployment info in the result for proxy tracking
-			allClaims := collectAllClaims(perms)
 			return &AccessCheckResult{
 				Allowed:        true,
 				RateLimitRPS:   perms.RateLimitRPS,

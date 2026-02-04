@@ -195,6 +195,12 @@ func (m *MockCrossOrgStore) IsManagedProxy(ctx context.Context, address string) 
 func (m *MockCrossOrgStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
 func (m *MockCrossOrgStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
 
+// Shared infrastructure stubs
+func (m *MockCrossOrgStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }
+func (m *MockCrossOrgStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error { return nil }
+func (m *MockCrossOrgStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) { return nil, nil }
+func (m *MockCrossOrgStore) DeleteSharedInfrastructure(ctx context.Context, address string) error { return nil }
+
 // Helper to normalize address
 func normalizeAddress(addr string) string {
 	if len(addr) >= 2 && addr[:2] == "0x" {

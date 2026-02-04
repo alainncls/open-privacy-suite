@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 	"strings"
 	"time"
 
@@ -60,6 +61,7 @@ type Server struct {
 	ensResolver       *ens.Resolver
 	jsonrpcProcessor  *JSONRPCProcessor
 	zkRoleExtractor   *auth.ZKRoleExtractor
+	runtimeTracer     *tracer.RuntimeTracer
 }
 
 // DB returns the database instance (for testing)
@@ -87,6 +89,9 @@ func (s *Server) Stop() {
 	}
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.Stop()
+	}
+	if s.runtimeTracer != nil {
+		s.runtimeTracer.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -194,6 +199,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize OAuth session store
 	oauthSessionStore := NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
 
+	// Initialize runtime tracer (optional - only when enabled)
+	var runtimeTracer *tracer.RuntimeTracer
+	var traceValidator *rbac.TraceValidator
+	if cfg.EnableRuntimeTracing {
+		runtimeTracer = tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{
+			NodeURL:       cfg.NodeURL,
+			Enabled:       true,
+			CacheTTL:      cfg.TraceCacheTTL,
+			Timeout:       cfg.TraceTimeout,
+			TieredEnabled: cfg.TraceTieredValidation,
+		})
+		traceValidator = rbac.NewTraceValidator(database)
+		fmt.Printf("Runtime tracing enabled (cache TTL: %v, timeout: %v, tiered: %v)\n",
+			cfg.TraceCacheTTL, cfg.TraceTimeout, cfg.TraceTieredValidation)
+	}
+
 	s := &Server{
 		db:                database,
 		rbacAccessCtrl:    rbacAccessCtrl,
@@ -209,10 +230,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		config:            cfg,
 		ensResolver:       ensResolver,
 		zkRoleExtractor:   zkRoleExtractor,
+		runtimeTracer:     runtimeTracer,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
-	s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+	if runtimeTracer != nil {
+		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, database, runtimeTracer, traceValidator)
+	} else {
+		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+	}
 
 	return s, nil
 }

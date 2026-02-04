@@ -323,6 +323,20 @@ func (m *MockStore) IsManagedProxy(ctx context.Context, address string) (bool, e
 	return false, nil
 }
 
+// Shared infrastructure stubs
+func (m *MockStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
+	return false, nil
+}
+func (m *MockStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error {
+	return nil
+}
+func (m *MockStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address string) error {
+	return nil
+}
+
 // Tests
 
 func TestResolverRestrictiveInheritance(t *testing.T) {

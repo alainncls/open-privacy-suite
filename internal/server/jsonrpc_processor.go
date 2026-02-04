@@ -6,16 +6,19 @@ import (
 	"net/http"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 )
 
 // JSONRPCProcessor handles the business logic for JSON-RPC requests.
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
-	rbacAccessCtrl *rbac.AccessController
-	rateLimiter    RateLimiterInterface
-	proxy          *proxy.Proxy
-	accessLogger   AccessLogger
+	rbacAccessCtrl  *rbac.AccessController
+	rateLimiter     RateLimiterInterface
+	proxy           *proxy.Proxy
+	accessLogger    AccessLogger
+	runtimeTracer   *tracer.RuntimeTracer
+	traceValidator  *rbac.TraceValidator
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -64,6 +67,25 @@ func NewJSONRPCProcessor(
 	}
 }
 
+// NewJSONRPCProcessorWithTracing creates a new processor with runtime tracing support.
+func NewJSONRPCProcessorWithTracing(
+	rbacCtrl *rbac.AccessController,
+	rateLimiter RateLimiterInterface,
+	proxyClient *proxy.Proxy,
+	logger AccessLogger,
+	runtimeTracer *tracer.RuntimeTracer,
+	traceValidator *rbac.TraceValidator,
+) *JSONRPCProcessor {
+	return &JSONRPCProcessor{
+		rbacAccessCtrl: rbacCtrl,
+		rateLimiter:    rateLimiter,
+		proxy:          proxyClient,
+		accessLogger:   logger,
+		runtimeTracer:  runtimeTracer,
+		traceValidator: traceValidator,
+	}
+}
+
 // ParseAndValidateBody parses and validates the JSON-RPC request body.
 // Returns the method, params, and any validation error.
 func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
@@ -93,8 +115,9 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 
 // Process handles the core business logic for a JSON-RPC request:
 // 1. RBAC access check
-// 2. Rate limiting
-// 3. Forwarding to the target node
+// 2. Runtime tracing (if enabled, for eth_sendTransaction)
+// 3. Rate limiting
+// 4. Forwarding to the target node
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	// Build RBAC access check request
 	var requiredClaims []rbac.Claim
@@ -102,11 +125,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		requiredClaims = []rbac.Claim{claim}
 	}
 
+	targetAddr := rbac.GetTargetAddress(req.Method, req.Params)
+
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
 		Method:           req.Method,
 		Params:           req.Params,
-		TargetAddress:    rbac.GetTargetAddress(req.Method, req.Params),
+		TargetAddress:    targetAddr,
 		FunctionSelector: rbac.GetFunctionSelector(req.Method, req.Params),
 		RequiredClaims:   requiredClaims,
 	}
@@ -130,6 +155,14 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 				StatusCode: http.StatusForbidden,
 				Message:    "access denied: " + result.Reason,
 			},
+		}
+	}
+
+	// Runtime tracing: validate all call targets for eth_sendTransaction
+	if traceErr := p.validateWithTracing(ctx, req, targetAddr); traceErr != nil {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		return &ProcessResult{
+			Error: traceErr,
 		}
 	}
 
@@ -164,4 +197,125 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		StatusCode:   statusCode,
 		ResponseBody: responseBody,
 	}
+}
+
+// validateWithTracing performs runtime trace validation for eth_sendTransaction.
+// Returns nil if tracing is disabled, not applicable, or validation passes.
+// Returns a ProcessError if validation fails.
+func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
+	// Skip if tracing is not configured
+	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
+		return nil
+	}
+
+	// Only trace eth_sendTransaction (state-changing calls)
+	if req.Method != "eth_sendTransaction" {
+		return nil
+	}
+
+	// Skip contract deployments (no target address) - deployment validation is separate
+	if targetAddr == "" {
+		return nil
+	}
+
+	// Tiered validation: skip tracing if target is known to be org-owned
+	// This optimization avoids expensive tracing for simple intra-org calls
+	if p.runtimeTracer.IsTieredEnabled() {
+		// Check if target is already known to be owned by user's org
+		// (This would require getting user's org context, which CheckAccess already validated)
+		// For now, we trace all transactions when tracing is enabled
+		// A future optimization can cache org-owned addresses
+	}
+
+	// Extract transaction parameters for tracing
+	from, to, data, value := extractTxParams(req.Params)
+	if to == "" {
+		return nil // Deployment - skip
+	}
+
+	// Perform the trace
+	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	if err != nil {
+		// Trace failed - log and deny for safety
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("runtime trace failed: %v", err),
+		}
+	}
+
+	if traceResult == nil {
+		return nil // Tracing not applicable
+	}
+
+	// Get user's organization IDs for validation
+	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
+	if err != nil || user == nil {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "failed to get user for trace validation",
+		}
+	}
+
+	// Get user's org memberships
+	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "failed to get user memberships for trace validation",
+		}
+	}
+
+	userOrgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			userOrgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	// Validate the trace against org isolation rules
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult)
+	if err != nil {
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    fmt.Sprintf("trace validation error: %v", err),
+		}
+	}
+
+	if !validationResult.Allowed {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("cross-org call denied: %s", validationResult.Reason),
+		}
+	}
+
+	return nil
+}
+
+// extractTxParams extracts transaction parameters from eth_sendTransaction params.
+func extractTxParams(params []any) (from, to, data, value string) {
+	if len(params) == 0 {
+		return
+	}
+
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		return
+	}
+
+	if f, ok := txObj["from"].(string); ok {
+		from = f
+	}
+	if t, ok := txObj["to"].(string); ok {
+		to = t
+	}
+	if d, ok := txObj["data"].(string); ok {
+		data = d
+	} else if d, ok := txObj["input"].(string); ok {
+		data = d
+	}
+	if v, ok := txObj["value"].(string); ok {
+		value = v
+	}
+
+	return
 }

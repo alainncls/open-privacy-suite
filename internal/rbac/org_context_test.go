@@ -137,6 +137,12 @@ func (m *MockOrgContextStore) IsManagedProxy(ctx context.Context, address string
 func (m *MockOrgContextStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
 func (m *MockOrgContextStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
 
+// Shared infrastructure stubs
+func (m *MockOrgContextStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }
+func (m *MockOrgContextStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error { return nil }
+func (m *MockOrgContextStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) { return nil, nil }
+func (m *MockOrgContextStore) DeleteSharedInfrastructure(ctx context.Context, address string) error { return nil }
+
 func TestNewOrgContext(t *testing.T) {
 	ctx := context.Background()
 
