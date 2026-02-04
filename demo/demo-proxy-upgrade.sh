@@ -241,32 +241,77 @@ if [ "$PREREGISTERED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
     done
 
     if [ "$UNUSED_COUNT" -lt "$ADDRESSES_NEEDED" ]; then
-        print_error "Not enough unused addresses available"
-        print_info "Found $UNUSED_COUNT unused address(es), need $ADDRESSES_NEEDED"
-        print_info "Please preregister more addresses or use ALLOW_PREREGISTER=true"
-        exit 1
+        # Check if ALLOW_PREREGISTER is set (admin mode) - allows preregistering for new factory
+        if [ "${ALLOW_PREREGISTER:-false}" = "true" ]; then
+            print_info "Found $UNUSED_COUNT unused address(es) for current factory, need $ADDRESSES_NEEDED"
+            print_info "ALLOW_PREREGISTER=true - will preregister new addresses for the configured factory"
+
+            SALT_PREFIX="demo-$(date +%s)"
+            print_substep "Using salt prefix: $SALT_PREFIX"
+            print_substep "Preregistering $ADDRESSES_NEEDED addresses..."
+
+            PREREGISTER_RESPONSE=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"factory\": \"$CREATE3_FACTORY\",
+                    \"salt_prefix\": \"$SALT_PREFIX\",
+                    \"count\": $ADDRESSES_NEEDED,
+                    \"note\": \"Demo proxy upgrade addresses\"
+                }")
+
+            if echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+                print_success "Addresses preregistered successfully!"
+
+                PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
+                IMPL_V1_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
+                IMPL_V2_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
+
+                PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
+                IMPL_V1_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
+                IMPL_V2_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
+
+                echo ""
+                echo -e "  ${WHITE}Newly preregistered addresses:${NC}"
+                echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
+                echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+            else
+                print_error "Failed to preregister addresses"
+                echo "$PREREGISTER_RESPONSE" | jq '.' 2>/dev/null || echo "$PREREGISTER_RESPONSE"
+                exit 1
+            fi
+        else
+            print_error "Not enough unused addresses available for the current factory"
+            print_info "Found $UNUSED_COUNT unused address(es), need $ADDRESSES_NEEDED"
+            print_info "The preregistered addresses may be for a different factory"
+            print_info "Run with ALLOW_PREREGISTER=true to preregister new addresses"
+            exit 1
+        fi
+    else
+        # Enough unused addresses found - use them
+        # Convert space-separated lists to arrays and extract addresses
+        UNUSED_ADDRESSES_ARR=($UNUSED_ADDRESSES)
+        UNUSED_SALTS_ARR=($UNUSED_SALTS)
+
+        PROXY_ADDR="${UNUSED_ADDRESSES_ARR[0]}"
+        IMPL_V1_ADDR="${UNUSED_ADDRESSES_ARR[1]}"
+        IMPL_V2_ADDR="${UNUSED_ADDRESSES_ARR[2]}"
+
+        PROXY_SALT="${UNUSED_SALTS_ARR[0]}"
+        IMPL_V1_SALT="${UNUSED_SALTS_ARR[1]}"
+        IMPL_V2_SALT="${UNUSED_SALTS_ARR[2]}"
+
+        print_success "Found $UNUSED_COUNT unused address(es)"
+        echo ""
+        echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
+        echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
+        echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
     fi
-
-    # Convert space-separated lists to arrays and extract addresses
-    UNUSED_ADDRESSES_ARR=($UNUSED_ADDRESSES)
-    UNUSED_SALTS_ARR=($UNUSED_SALTS)
-
-    PROXY_ADDR="${UNUSED_ADDRESSES_ARR[0]}"
-    IMPL_V1_ADDR="${UNUSED_ADDRESSES_ARR[1]}"
-    IMPL_V2_ADDR="${UNUSED_ADDRESSES_ARR[2]}"
-
-    PROXY_SALT="${UNUSED_SALTS_ARR[0]}"
-    IMPL_V1_SALT="${UNUSED_SALTS_ARR[1]}"
-    IMPL_V2_SALT="${UNUSED_SALTS_ARR[2]}"
-
-    print_success "Found $UNUSED_COUNT unused address(es)"
-    echo ""
-    echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
-    echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
-    echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 
     if [ "$UNUSED_COUNT" -gt "$ADDRESSES_NEEDED" ]; then
         REMAINING=$((UNUSED_COUNT - ADDRESSES_NEEDED))
