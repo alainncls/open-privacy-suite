@@ -157,7 +157,7 @@ git add -A
 git commit -m "Initial" --quiet
 
 # Install dependencies using git clone directly
-print_substep "Installing OpenZeppelin contracts..."
+print_substep "Installing dependencies..."
 mkdir -p lib
 git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || {
     print_error "Failed to clone openzeppelin-contracts-upgradeable"
@@ -167,7 +167,11 @@ git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contrac
     print_error "Failed to clone openzeppelin-contracts"
     exit 1
 }
-print_success "OpenZeppelin contracts installed"
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std 2>/dev/null || {
+    print_error "Failed to clone forge-std"
+    exit 1
+}
+print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."
 forge build --quiet

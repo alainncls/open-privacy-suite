@@ -40,42 +40,39 @@ contract DeployDeFi is Script {
         console.log("=== Deploying Proxy Contracts ===");
 
         // Deploy Token proxy first (needs pool address - we'll set it to zero initially)
+        // DemoToken.initialize(address initialOwner, address poolAddress)
         bytes memory tokenInitData = abi.encodeCall(
             DemoToken.initialize,
-            ("Demo Token", "DEMO", deployer, address(0))
+            (deployer, address(0))
         );
         ERC1967Proxy tokenProxy = new ERC1967Proxy(address(tokenImpl), tokenInitData);
         address tokenAddress = address(tokenProxy);
         console.log("DemoToken proxy:", tokenAddress);
 
         // Deploy Pool proxy (needs token address)
+        // LiquidityPool.initialize(address initialOwner, address tokenAddress)
         bytes memory poolInitData = abi.encodeCall(
             LiquidityPool.initialize,
-            (tokenAddress, deployer)
+            (deployer, tokenAddress)
         );
         ERC1967Proxy poolProxy = new ERC1967Proxy(address(poolImpl), poolInitData);
         address poolAddress = address(poolProxy);
         console.log("LiquidityPool proxy:", poolAddress);
 
         // Deploy Router proxy (needs both addresses)
+        // SwapRouter.initialize(address initialOwner, address poolAddress, address tokenAddress)
         bytes memory routerInitData = abi.encodeCall(
             SwapRouter.initialize,
-            (tokenAddress, poolAddress, deployer)
+            (deployer, poolAddress, tokenAddress)
         );
         ERC1967Proxy routerProxy = new ERC1967Proxy(address(routerImpl), routerInitData);
         address routerAddress = address(routerProxy);
         console.log("SwapRouter proxy:", routerAddress);
         console.log("");
 
-        // Step 3: Setup permissions
-        console.log("=== Setting Up Permissions ===");
-
-        // Set router in pool
-        LiquidityPool(poolAddress).setRouter(routerAddress);
-        console.log("Set router address in pool");
-
-        // Update pool address in token (if we had added a setter)
-        // DemoToken(tokenAddress).setPool(poolAddress);
+        // Step 3: Setup complete
+        console.log("=== Setup Complete ===");
+        console.log("Note: Pool address in Token is set to zero (would need setter for circular ref)");
 
         console.log("");
         console.log("=== Deployment Complete ===");
@@ -87,15 +84,15 @@ contract DeployDeFi is Script {
     }
 }
 
+/// @dev CREATE3 Factory interface for deterministic deployments
+interface ICREATE3Factory {
+    function deploy(bytes32 salt, bytes memory creationCode) external payable returns (address deployed);
+    function getDeployed(address deployer, bytes32 salt) external view returns (address deployed);
+}
+
 /// @title DeployDeFiWithCREATE3 - Deploy using CREATE3 factory
 /// @notice This demonstrates the CREATE3 deployment flow with precomputed addresses
 contract DeployDeFiWithCREATE3 is Script {
-    // CREATE3 Factory interface
-    interface ICREATE3Factory {
-        function deploy(bytes32 salt, bytes memory creationCode) external payable returns (address deployed);
-        function getDeployed(address deployer, bytes32 salt) external view returns (address deployed);
-    }
-
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
@@ -137,42 +134,40 @@ contract DeployDeFiWithCREATE3 is Script {
         console.log("=== Deploying Proxies via CREATE3 ===");
 
         // Token proxy - can now reference pool address that doesn't exist yet!
+        // DemoToken.initialize(address initialOwner, address poolAddress)
         bytes memory tokenCreationCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
             abi.encode(
                 address(tokenImpl),
-                abi.encodeCall(DemoToken.initialize, ("Demo Token", "DEMO", deployer, poolAddress))
+                abi.encodeCall(DemoToken.initialize, (deployer, poolAddress))
             )
         );
         ICREATE3Factory(factory).deploy(tokenSalt, tokenCreationCode);
         console.log("Deployed Token at:", tokenAddress);
 
         // Pool proxy - references token that was just deployed
+        // LiquidityPool.initialize(address initialOwner, address tokenAddress)
         bytes memory poolCreationCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
             abi.encode(
                 address(poolImpl),
-                abi.encodeCall(LiquidityPool.initialize, (tokenAddress, deployer))
+                abi.encodeCall(LiquidityPool.initialize, (deployer, tokenAddress))
             )
         );
         ICREATE3Factory(factory).deploy(poolSalt, poolCreationCode);
         console.log("Deployed Pool at:", poolAddress);
 
         // Router proxy - references both
+        // SwapRouter.initialize(address initialOwner, address poolAddress, address tokenAddress)
         bytes memory routerCreationCode = abi.encodePacked(
             type(ERC1967Proxy).creationCode,
             abi.encode(
                 address(routerImpl),
-                abi.encodeCall(SwapRouter.initialize, (tokenAddress, poolAddress, deployer))
+                abi.encodeCall(SwapRouter.initialize, (deployer, poolAddress, tokenAddress))
             )
         );
         ICREATE3Factory(factory).deploy(routerSalt, routerCreationCode);
         console.log("Deployed Router at:", routerAddress);
-
-        // Step 4: Setup permissions
-        console.log("");
-        console.log("=== Setting Up Permissions ===");
-        LiquidityPool(poolAddress).setRouter(routerAddress);
 
         vm.stopBroadcast();
 

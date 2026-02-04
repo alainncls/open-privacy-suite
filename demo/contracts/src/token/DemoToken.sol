@@ -24,7 +24,6 @@ contract DemoToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, OwnableU
     function initialize(address initialOwner, address poolAddress) public initializer {
         __ERC20_init("Demo Token", "DEMO");
         __Ownable_init(initialOwner);
-        __UUPSUpgradeable_init();
         pool = poolAddress;
     }
 

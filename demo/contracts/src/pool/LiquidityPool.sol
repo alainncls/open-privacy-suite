@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title LiquidityPool - A simple AMM pool with constant product formula
 /// @notice Demonstrates CREATE3 circular dependency: needs token address, token needs pool address
@@ -44,7 +44,6 @@ contract LiquidityPool is Initializable, UUPSUpgradeable, OwnableUpgradeable {
     /// @param tokenAddress The token address (computed via CREATE3 before deployment)
     function initialize(address initialOwner, address tokenAddress) public initializer {
         __Ownable_init(initialOwner);
-        __UUPSUpgradeable_init();
         token = IERC20(tokenAddress);
     }
 
