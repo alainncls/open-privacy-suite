@@ -119,3 +119,6 @@ TODO_*.md
 
 # Root level Solidity (use demo/contracts/ instead)
 /src/*.sol
+
+# Loadtest binary (not the cmd/loadtest/ source)
+/loadtest
