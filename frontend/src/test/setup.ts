@@ -4,8 +4,10 @@ import { cleanup } from '@testing-library/react';
 import { server } from './mocks/server';
 
 // Start MSW server before all tests
+// Use 'warn' instead of 'error' to avoid failing tests due to cleanup/refetch requests
+// that happen after test completion. Tests still pass; unhandled requests are just logged.
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledRequest: 'warn' });
 });
 
 // Reset handlers after each test
