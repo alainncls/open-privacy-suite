@@ -320,6 +320,20 @@ curl -X POST http://localhost:8080/ \
   }'
 ```
 
+### Using with Foundry/Hardhat
+
+For deploying contracts with standard Ethereum development tools, set the `ETH_RPC_HEADERS` environment variable:
+
+```bash
+# Set auth header for Foundry
+export ETH_RPC_HEADERS="Authorization: Bearer <access_token>"
+
+# Deploy with forge
+forge script script/Deploy.s.sol --rpc-url http://localhost:8080/rpc --broadcast
+```
+
+See [Contract Deployment Workflow](docs/DEPLOYMENT_WORKFLOW.md) for complete instructions.
+
 ### 3. Refresh Token
 
 ```bash

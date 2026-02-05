@@ -2,7 +2,168 @@
 
 ## Overview
 
-This document describes the recommended approach for deploying smart contracts to a privacy-protected blockchain while maintaining cross-org isolation and maximum compatibility with existing development tools.
+This document describes how to deploy smart contracts through the privacy proxy. There are two modes:
+
+1. **Runtime Tracing Mode** (default, recommended) - Simple workflow, no special tooling needed
+2. **Preregistration Mode** - Advanced workflow with deterministic CREATE3 addresses
+
+## Quick Start: Runtime Tracing Mode
+
+When `ENABLE_RUNTIME_TRACING=true` (the default), deploying contracts is nearly identical to deploying on any public chain. The proxy validates all transactions at runtime using `debug_traceCall`.
+
+### Prerequisites
+
+1. User account with `deploy` permission in an organization
+2. JWT access token (obtained from web UI after ZK proof authentication)
+3. Foundry or Hardhat installed
+
+### Step 1: Get Your Access Token
+
+1. Open the Privacy Proxy web UI (e.g., `http://localhost:5173`)
+2. Authenticate with your Privado ID wallet (scan QR code)
+3. Go to **Settings** → **Developer** → **Copy Access Token**
+
+### Step 2: Configure Your Environment
+
+```bash
+# Set the authorization header for all RPC requests
+export ETH_RPC_HEADERS="Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+# Set the RPC URL
+export ETH_RPC_URL="http://localhost:8080/rpc"
+```
+
+### Step 3: Deploy with Foundry
+
+```bash
+# Standard Foundry deployment - no changes needed!
+forge script script/Deploy.s.sol \
+  --rpc-url $ETH_RPC_URL \
+  --broadcast \
+  --private-key $PRIVATE_KEY
+```
+
+Or with a keystore:
+
+```bash
+forge script script/Deploy.s.sol \
+  --rpc-url $ETH_RPC_URL \
+  --broadcast \
+  --account myKeystore \
+  --sender 0xYourAddress
+```
+
+### Step 3 (Alternative): Deploy with Hardhat
+
+```javascript
+// hardhat.config.js
+module.exports = {
+  networks: {
+    privacy: {
+      url: process.env.ETH_RPC_URL,
+      httpHeaders: {
+        "Authorization": `Bearer ${process.env.PRIVACY_TOKEN}`
+      },
+      accounts: [process.env.PRIVATE_KEY]
+    }
+  }
+};
+```
+
+```bash
+export PRIVACY_TOKEN="YOUR_JWT_TOKEN_HERE"
+npx hardhat run scripts/deploy.js --network privacy
+```
+
+### Step 3 (Alternative): Deploy with Cast
+
+```bash
+# Single contract deployment
+cast send --create \
+  --rpc-url $ETH_RPC_URL \
+  --private-key $PRIVATE_KEY \
+  $(cat out/MyContract.sol/MyContract.bin)
+```
+
+### How It Works
+
+When you send a transaction through the proxy:
+
+```
+Your Transaction
+       │
+       ▼
+┌─────────────────────────────────────┐
+│         Privacy Proxy               │
+├─────────────────────────────────────┤
+│ 1. Validate JWT token               │
+│ 2. Check user has 'deploy' claim    │
+│ 3. Run debug_traceCall simulation   │
+│ 4. Verify all call targets:         │
+│    ├── Your org's contracts? ✓      │
+│    ├── Precompiles (0x01-09)? ✓     │
+│    ├── Shared infrastructure? ✓     │
+│    └── Other org's contracts? ✗     │
+│ 5. Forward to node if all pass      │
+└─────────────────────────────────────┘
+       │
+       ▼
+   EVM Node
+```
+
+### Token Refresh
+
+Access tokens expire after 30 minutes. To refresh:
+
+```bash
+# Get a new token from the web UI, or use the refresh endpoint:
+curl -X POST http://localhost:8080/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "YOUR_REFRESH_TOKEN"}'
+
+# Update your environment
+export ETH_RPC_HEADERS="Authorization: Bearer NEW_ACCESS_TOKEN"
+```
+
+### Troubleshooting
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `401 Unauthorized` | Invalid or expired token | Get a new token from web UI |
+| `403 Forbidden: deploy claim required` | User lacks deploy permission | Ask org admin to grant `deploy` claim |
+| `403 Forbidden: cross-org access denied` | Contract calls another org's contract | Only interact with your org's contracts |
+| `403 Forbidden: method not allowed` | Method not in user's allowlist | Check group permissions |
+
+### Example: Full Deployment Session
+
+```bash
+# 1. Set up environment
+export ETH_RPC_HEADERS="Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+export ETH_RPC_URL="http://localhost:8080/rpc"
+
+# 2. Check connection
+cast chain-id --rpc-url $ETH_RPC_URL
+# Returns: 31337 (or your chain ID)
+
+# 3. Check your balance
+cast balance 0xYourAddress --rpc-url $ETH_RPC_URL
+
+# 4. Deploy contracts
+forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
+
+# 5. Verify deployment
+cast code 0xDeployedContractAddress --rpc-url $ETH_RPC_URL
+```
+
+---
+
+## Preregistration Mode (Advanced)
+
+When `ENABLE_RUNTIME_TRACING=false`, you must preregister contract addresses before deployment. This mode provides deterministic CREATE3 addresses but requires additional setup.
+
+> **Note**: Preregistration mode is disabled when runtime tracing is enabled. Use the simpler workflow above for most use cases.
+
+---
 
 ## Goals
 
