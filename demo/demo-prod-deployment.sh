@@ -17,7 +17,7 @@
 #   - Private key with funded account
 #
 # Usage:
-#   export PRIVACY_TOKEN="eyJ..."  # From web UI "Copy for Foundry" button
+#   export ETH_RPC_HEADERS="Authorization: Bearer eyJ..."  # From web UI "Copy for Foundry" button
 #   export PRIVATE_KEY="0x..."     # Your deployer private key
 #   ./demo-prod-deployment.sh
 # =============================================================================
@@ -69,8 +69,8 @@ print_value() {
 print_header "Production-Style Contract Deployment"
 
 # Required environment variables
-if [ -z "$PRIVACY_TOKEN" ]; then
-    echo -e "${RED}Error: PRIVACY_TOKEN not set${NC}"
+if [ -z "$ETH_RPC_HEADERS" ]; then
+    echo -e "${RED}Error: ETH_RPC_HEADERS not set${NC}"
     echo ""
     echo "To get your token:"
     echo "  1. Go to http://localhost:5173"
@@ -100,13 +100,15 @@ print_step "Step 1: Checking Configuration"
 
 print_value "Proxy RPC URL" "$PROXY_RPC_URL"
 print_value "Chain ID" "$CHAIN_ID"
-print_value "Token" "${PRIVACY_TOKEN:0:20}...${PRIVACY_TOKEN: -10}"
+
+# Extract token from ETH_RPC_HEADERS for display
+TOKEN_PREVIEW=$(echo "$ETH_RPC_HEADERS" | sed 's/Authorization: Bearer //' | head -c 20)
+print_value "Auth Header" "${TOKEN_PREVIEW}..."
 
 DEPLOYER_ADDRESS=$(cast wallet address "$PRIVATE_KEY" 2>/dev/null)
 print_value "Deployer Address" "$DEPLOYER_ADDRESS"
 
-# Set up Foundry to use auth header
-export ETH_RPC_HEADERS="Authorization: Bearer $PRIVACY_TOKEN"
+# Set ETH_RPC_URL for Foundry
 export ETH_RPC_URL="$PROXY_RPC_URL"
 
 # =============================================================================
