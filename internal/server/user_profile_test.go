@@ -76,7 +76,7 @@ func TestGetMyOrganizations_Unauthenticated(t *testing.T) {
 	_, router := setupTestServerForUserProfile(t)
 
 	// Request without Authorization header
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -87,7 +87,7 @@ func TestGetMyOrganizations_InvalidToken(t *testing.T) {
 	_, router := setupTestServerForUserProfile(t)
 
 	// Request with invalid token
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -102,7 +102,7 @@ func TestGetMyOrganizations_UserNotFound(t *testing.T) {
 	token, err := srv.jwtService.IssueAccessToken("did:test:nonexistent", true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -129,7 +129,7 @@ func TestGetMyOrganizations_NoMemberships(t *testing.T) {
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -190,7 +190,7 @@ func TestGetMyOrganizations_SingleOrg(t *testing.T) {
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -278,7 +278,7 @@ func TestGetMyOrganizations_MultipleOrgs(t *testing.T) {
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -357,7 +357,7 @@ func TestGetMyOrganizations_UserCannotSeeOtherUsersOrgs(t *testing.T) {
 	tokenA, err := srv.jwtService.IssueAccessToken(userADID, true)
 	require.NoError(t, err)
 
-	reqA := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	reqA := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	reqA.Header.Set("Authorization", "Bearer "+tokenA)
 	wA := httptest.NewRecorder()
 	router.ServeHTTP(wA, reqA)
@@ -373,7 +373,7 @@ func TestGetMyOrganizations_UserCannotSeeOtherUsersOrgs(t *testing.T) {
 	tokenB, err := srv.jwtService.IssueAccessToken(userBDID, true)
 	require.NoError(t, err)
 
-	reqB := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	reqB := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	reqB.Header.Set("Authorization", "Bearer "+tokenB)
 	wB := httptest.NewRecorder()
 	router.ServeHTTP(wB, reqB)
@@ -450,7 +450,7 @@ func TestGetMyOrganizations_DeduplicatesOrgs(t *testing.T) {
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/me/orgs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me/orgs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

@@ -48,7 +48,7 @@ func (s *Server) registerDisclosureRoutes(api *gin.RouterGroup) {
 // registerUserDisclosureRoutes registers user-facing disclosure endpoints (public with JWT auth).
 func (s *Server) registerUserDisclosureRoutes(router *gin.Engine) {
 	// User-facing endpoints (require JWT auth, accessible from external IPs)
-	meDisclosure := router.Group("/api/me/disclosure")
+	meDisclosure := router.Group("/api/v1/me/disclosure")
 	meDisclosure.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
 	meDisclosure.Use(s.disclosureUserMiddleware())
 	{

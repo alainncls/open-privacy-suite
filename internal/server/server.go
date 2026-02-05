@@ -877,7 +877,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 // registerUserProfileRoutes registers user profile endpoints (JWT-authenticated, accessible from external IPs).
 func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
-	me := router.Group("/api/me")
+	me := router.Group("/api/v1/me")
 	me.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
 	{
 		me.GET("/orgs", s.getMyOrganizations)
