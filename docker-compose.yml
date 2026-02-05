@@ -41,7 +41,7 @@ services:
     ports:
       - "${BACKEND_HOST_PORT:-8080}:8080"
     environment:
-      - NODE_URL=http://anvil:8545
+      - NODE_URL=${NODE_URL:-http://anvil:8545}
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
       - PORT=8080
       - ENVIRONMENT=development
