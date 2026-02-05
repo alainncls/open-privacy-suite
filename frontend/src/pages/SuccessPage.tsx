@@ -156,6 +156,8 @@ export function SuccessPage() {
                     variant="outline"
                     size="icon"
                     className="flex-shrink-0"
+                    title="Copy token"
+                    data-testid="copy-token-btn"
                   >
                     {copied === 'token' ? (
                       <Check className="w-4 h-4 text-[#166534]" />
@@ -164,6 +166,26 @@ export function SuccessPage() {
                     )}
                   </Button>
                 </div>
+                {/* Foundry/Hardhat export command */}
+                <div className="flex items-center gap-2 mt-2">
+                  <Button
+                    onClick={() => copyToClipboard(`export ETH_RPC_HEADERS="Authorization: Bearer ${accessToken}"`, 'foundry')}
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 text-xs"
+                    data-testid="copy-foundry-btn"
+                  >
+                    {copied === 'foundry' ? (
+                      <Check className="w-3 h-3 mr-2 text-[#166534]" />
+                    ) : (
+                      <Copy className="w-3 h-3 mr-2" />
+                    )}
+                    Copy for Foundry/Hardhat
+                  </Button>
+                </div>
+                <p className="text-xs text-[#94A3B8]">
+                  Token expires in 30 minutes. Use with <code className="bg-[#F1F5F9] px-1 rounded">forge script --rpc-url {rpcEndpoint}</code>
+                </p>
               </div>
             )}
 
@@ -292,6 +314,18 @@ export function SuccessPage() {
             <CardTitle className="text-sm">Quick Start</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div>
+              <p className="text-xs text-[#94A3B8] mb-1">Foundry (forge/cast)</p>
+              <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
+{`# Set auth header (use "Copy for Foundry" button above)
+export ETH_RPC_HEADERS="Authorization: Bearer <token>"
+
+# Deploy contracts
+forge script script/Deploy.s.sol \\
+  --rpc-url ${rpcEndpoint} --broadcast`}
+              </pre>
+            </div>
+
             <div>
               <p className="text-xs text-[#94A3B8] mb-1">cURL</p>
               <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
