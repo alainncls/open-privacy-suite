@@ -149,6 +149,15 @@ func (s *deployValidatorTestStore) getManagedProxies() []*ManagedProxy {
 	return s.managedProxies
 }
 
+// Constructor ABI stubs (use parent MockStore implementation)
+func (s *deployValidatorTestStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
+	return "", nil
+}
+
+func (s *deployValidatorTestStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
+	return nil
+}
+
 // normalizeHexAddress normalizes a hex address for comparison.
 func normalizeHexAddress(addr string) string {
 	addr = strings.ToLower(addr)
@@ -162,7 +171,7 @@ func TestDeploymentValidator_NoExternalCalls(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +185,7 @@ func TestDeploymentValidator_CreateOpcode(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,7 +205,7 @@ func TestDeploymentValidator_Create2Opcode(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate2)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate2, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,7 +225,7 @@ func TestDeploymentValidator_DynamicCall(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,6 +241,28 @@ func TestDeploymentValidator_DynamicCall(t *testing.T) {
 	}
 }
 
+func TestDeploymentValidator_DynamicCallWithRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Enable runtime tracing - this should allow dynamic calls
+	validator.SetRuntimeTracingEnabled(true)
+
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With runtime tracing enabled, dynamic calls should be ALLOWED
+	// because they will be validated at execution time via debug_traceCall
+	if !result.Allowed {
+		t.Errorf("expected deployment to be ALLOWED when runtime tracing is enabled, got denied: %s", result.Reason)
+	}
+	if !result.HasDynamicCalls {
+		t.Error("expected HasDynamicCalls to be true")
+	}
+}
+
 func TestDeploymentValidator_CallingOrgOwnedAddress(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	// Register the address as owned by org1
@@ -239,7 +270,7 @@ func TestDeploymentValidator_CallingOrgOwnedAddress(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOrgOwned)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOrgOwned, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,7 +288,7 @@ func TestDeploymentValidator_CallingOtherOrgsAddress(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOtherOrg)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOtherOrg, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +308,7 @@ func TestDeploymentValidator_CallingUnregisteredAddress(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPublic)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPublic, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,7 +328,7 @@ func TestDeploymentValidator_CallingPreregisteredAddress(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPublic)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPublic, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +349,7 @@ func TestDeploymentValidator_RealMaliciousBoxBytecode(t *testing.T) {
 	// Address 0xDeaDbeeF is NOT preregistered
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", maliciousBoxBytecode)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", maliciousBoxBytecode, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,7 +374,7 @@ func TestDeploymentValidator_CallingPrecompile(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPrecompile)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingPrecompile, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -360,7 +391,7 @@ func TestDeploymentValidator_DelegatecallOrgOwnedLibrary(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeDelegatecallOrgOwned)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeDelegatecallOrgOwned, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,7 +409,7 @@ func TestDeploymentValidator_DelegatecallOtherOrgsLibrary(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeDelegatecallOtherOrg)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeDelegatecallOtherOrg, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -398,7 +429,7 @@ func TestDeploymentValidator_InvalidBytecode(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeInvalid)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeInvalid, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -415,7 +446,7 @@ func TestDeploymentValidator_EmptyBytecode(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", "0x")
+	result, err := validator.ValidateDeployment(context.Background(), "org1", "0x", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -435,7 +466,7 @@ func TestDeploymentValidator_DelegatecallToPublicLibrary(t *testing.T) {
 	// Use a public address for delegatecall
 	bytecodePublicDelegatecall := "0x73" + "cccccccccccccccccccccccccccccccccccccccc" + "60006000600060006000f400"
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodePublicDelegatecall)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodePublicDelegatecall, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -453,7 +484,7 @@ func TestDeploymentValidator_ValidationResultFields(t *testing.T) {
 
 	validator := NewDeploymentValidator(store)
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOrgOwned)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeCallingOrgOwned, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -488,7 +519,7 @@ func TestDeploymentValidator_MultipleCallTargets(t *testing.T) {
 	bytecodeMultipleCalls := "0x73" + "1111111111111111111111111111111111111111" + "600060006000600060006000f1" +
 		"73" + "2222222222222222222222222222222222222222" + "600060006000600060006000f100"
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeMultipleCalls)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeMultipleCalls, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -516,7 +547,7 @@ func TestDeploymentValidator_MixedCallTargets(t *testing.T) {
 	bytecodeMixedCalls := "0x73" + "1111111111111111111111111111111111111111" + "600060006000600060006000f1" +
 		"73" + "3333333333333333333333333333333333333333" + "600060006000600060006000f100"
 
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeMixedCalls)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeMixedCalls, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -559,7 +590,7 @@ func TestDeploymentValidator_ProxyDetection_ERC1967(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -590,7 +621,7 @@ func TestDeploymentValidator_ProxyDetection_TransparentProxy(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	bytecodeHex := buildTransparentProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -624,7 +655,7 @@ func TestDeploymentValidator_NonProxyWithDynamicCall(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	// Non-proxy contract with dynamic call (SLOAD then CALL, not matching proxy patterns)
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -646,7 +677,7 @@ func TestDeploymentValidator_ProxyResultFieldsPopulated(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	// Test non-proxy bytecode - proxy fields should be empty/false
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -673,7 +704,7 @@ func TestDeploymentValidator_RegisterDeployedProxy(t *testing.T) {
 
 	// First, validate a proxy deployment to get ProxyInfo
 	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -718,7 +749,7 @@ func TestDeploymentValidator_RegisterDeployedProxy_NormalizesAddresses(t *testin
 	validator := NewDeploymentValidator(store)
 
 	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -753,7 +784,7 @@ func TestDeploymentValidator_RegisterDeployedProxy_EmptyImpl(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -782,7 +813,7 @@ func TestDeploymentValidator_RegisterDeployedProxy_RejectsNonProxy(t *testing.T)
 	validator := NewDeploymentValidator(store)
 
 	// Get ProxyInfo for a non-proxy contract
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -815,7 +846,7 @@ func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
 	validator := NewDeploymentValidator(store)
 
 	// First, verify that a contract with CREATE is normally blocked
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate)
+	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -829,5 +860,416 @@ func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
 	// Verify the result indicates it's not a trusted factory
 	if result.IsTrustedFactory {
 		t.Error("expected IsTrustedFactory to be false for non-whitelisted contract")
+	}
+}
+
+// ============================================================================
+// Constructor Argument Validation Tests (ValidateDeploymentWithABI)
+// ============================================================================
+
+// Helper function to build bytecode with constructor arguments
+func buildBytecodeWithConstructorArgs(initCode []byte, constructorArgs []byte) string {
+	bytecode := append(initCode, constructorArgs...)
+	return "0x" + encodeHex(bytecode)
+}
+
+// encodeHex encodes bytes to hex string
+func encodeHex(b []byte) string {
+	const hexChars = "0123456789abcdef"
+	result := make([]byte, len(b)*2)
+	for i, v := range b {
+		result[i*2] = hexChars[v>>4]
+		result[i*2+1] = hexChars[v&0x0f]
+	}
+	return string(result)
+}
+
+// decodeHex decodes hex string to bytes
+func decodeHex(s string) []byte {
+	if len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+		s = s[2:]
+	}
+	if len(s)%2 != 0 {
+		s = "0" + s
+	}
+	result := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		high := hexDigit(s[i])
+		low := hexDigit(s[i+1])
+		result[i/2] = (high << 4) | low
+	}
+	return result
+}
+
+func hexDigit(c byte) byte {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0'
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10
+	case 'A' <= c && c <= 'F':
+		return c - 'A' + 10
+	}
+	return 0
+}
+
+// packAddress packs an address for ABI encoding (left-padded to 32 bytes)
+func packAddress(addr string) []byte {
+	addrBytes := decodeHex(addr)
+	result := make([]byte, 32)
+	copy(result[32-len(addrBytes):], addrBytes)
+	return result
+}
+
+// Simple init code: PUSH1 0x00 STOP
+var simpleInitCode = []byte{0x60, 0x00, 0x00}
+
+// TestValidateDeploymentWithABI_NoConstructorInputs tests ABI with no constructor inputs.
+func TestValidateDeploymentWithABI_NoConstructorInputs(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// ABI with no constructor
+	abiJSON := `[{"type":"function","name":"foo","inputs":[]}]`
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+	if result.HasConstructorArgs {
+		t.Error("expected HasConstructorArgs to be false when ABI has no constructor inputs")
+	}
+	if !result.ConstructorValidated {
+		t.Error("expected ConstructorValidated to be true")
+	}
+}
+
+// TestValidateDeploymentWithABI_EmptyConstructorInputs tests ABI with empty constructor inputs.
+func TestValidateDeploymentWithABI_EmptyConstructorInputs(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// ABI with constructor but no inputs
+	abiJSON := `[{"type":"constructor","inputs":[]}]`
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_OrgOwnedAddress tests constructor with org-owned address.
+func TestValidateDeploymentWithABI_OrgOwnedAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	store.setOrgOwnsAddress("org1", "0x1234567890123456789012345678901234567890", true)
+	validator := NewDeploymentValidator(store)
+
+	// ABI with address constructor argument
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]`
+
+	// Build bytecode with constructor args
+	constructorArgs := packAddress("1234567890123456789012345678901234567890")
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed for org-owned address, got denied: %s", result.Reason)
+	}
+	if !result.HasConstructorArgs {
+		t.Error("expected HasConstructorArgs to be true")
+	}
+	if len(result.ConstructorAddresses) != 1 {
+		t.Errorf("expected 1 constructor address, got %d", len(result.ConstructorAddresses))
+	}
+}
+
+// TestValidateDeploymentWithABI_PreregisteredAddress tests constructor with preregistered address.
+func TestValidateDeploymentWithABI_PreregisteredAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	store.setAddressPreregistered("org1", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true)
+	validator := NewDeploymentValidator(store)
+
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]`
+	constructorArgs := packAddress("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed for preregistered address, got denied: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_OtherOrgAddress tests constructor with another org's address.
+func TestValidateDeploymentWithABI_OtherOrgAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	// Address belongs to org2, not org1
+	store.setOrgOwnsAddress("org2", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true)
+	validator := NewDeploymentValidator(store)
+
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]`
+	constructorArgs := packAddress("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for other org's address")
+	}
+	if !strings.Contains(result.Reason, "constructor argument") {
+		t.Errorf("expected reason to mention constructor argument, got: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_UnknownAddress tests constructor with unknown address.
+func TestValidateDeploymentWithABI_UnknownAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Address not registered anywhere
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]`
+	constructorArgs := packAddress("cccccccccccccccccccccccccccccccccccccccc")
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for unknown address")
+	}
+	if !strings.Contains(result.Reason, "constructor argument") {
+		t.Errorf("expected reason to mention constructor argument, got: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_PrecompileAddress tests constructor with precompile address.
+func TestValidateDeploymentWithABI_PrecompileAddress(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Precompile address 0x01 (ecrecover) - should be allowed
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"precompile","type":"address"}]}]`
+	constructorArgs := packAddress("0000000000000000000000000000000000000001")
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed for precompile address, got denied: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_MultipleAddresses tests constructor with multiple addresses.
+func TestValidateDeploymentWithABI_MultipleAddresses(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	store.setOrgOwnsAddress("org1", "0x1111111111111111111111111111111111111111", true)
+	store.setOrgOwnsAddress("org1", "0x2222222222222222222222222222222222222222", true)
+	validator := NewDeploymentValidator(store)
+
+	abiJSON := `[{"type":"constructor","inputs":[
+		{"name":"addr1","type":"address"},
+		{"name":"addr2","type":"address"}
+	]}]`
+	constructorArgs := append(
+		packAddress("1111111111111111111111111111111111111111"),
+		packAddress("2222222222222222222222222222222222222222")...,
+	)
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed for all org-owned addresses, got denied: %s", result.Reason)
+	}
+	if len(result.ConstructorAddresses) != 2 {
+		t.Errorf("expected 2 constructor addresses, got %d", len(result.ConstructorAddresses))
+	}
+}
+
+// TestValidateDeploymentWithABI_MixedAddresses tests constructor with one allowed and one disallowed address.
+func TestValidateDeploymentWithABI_MixedAddresses(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	store.setOrgOwnsAddress("org1", "0x1111111111111111111111111111111111111111", true)
+	// Second address not registered
+	validator := NewDeploymentValidator(store)
+
+	abiJSON := `[{"type":"constructor","inputs":[
+		{"name":"addr1","type":"address"},
+		{"name":"addr2","type":"address"}
+	]}]`
+	constructorArgs := append(
+		packAddress("1111111111111111111111111111111111111111"),
+		packAddress("dddddddddddddddddddddddddddddddddddddddd")..., // Not allowed
+	)
+	bytecodeHex := buildBytecodeWithConstructorArgs(simpleInitCode, constructorArgs)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied when one address is not allowed")
+	}
+}
+
+// TestValidateDeploymentWithABI_DynamicTypeRejected tests that dynamic types are rejected.
+func TestValidateDeploymentWithABI_DynamicTypeRejected(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// ABI with dynamic address array - should be rejected
+	abiJSON := `[{"type":"constructor","inputs":[{"name":"signers","type":"address[]"}]}]`
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for dynamic type in constructor")
+	}
+	if !strings.Contains(result.Reason, "dynamic type") {
+		t.Errorf("expected reason to mention dynamic type, got: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_NoABIProvided tests that deployment is rejected when no ABI is provided.
+func TestValidateDeploymentWithABI_NoABIProvided(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// No ABI provided
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied when no ABI provided")
+	}
+	if !strings.Contains(result.Reason, "ABI is required") {
+		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_InvalidABI tests that invalid ABI is rejected.
+func TestValidateDeploymentWithABI_InvalidABI(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "not valid json", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for invalid ABI")
+	}
+	if !strings.Contains(result.Reason, "invalid ABI") {
+		t.Errorf("expected reason to mention invalid ABI, got: %s", result.Reason)
+	}
+}
+
+// TestValidateDeploymentWithABI_StillValidatesOtherRules tests that other validation rules still apply.
+func TestValidateDeploymentWithABI_StillValidatesOtherRules(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Bytecode with CREATE opcode + valid constructor ABI
+	abiJSON := `[{"type":"constructor","inputs":[]}]`
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeWithCreate, abiJSON, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should still be denied for CREATE opcode
+	if result.Allowed {
+		t.Error("expected CREATE to still be blocked")
+	}
+	if !result.HasCreate {
+		t.Error("expected HasCreate to be true")
+	}
+}
+
+// TestValidateDeploymentWithABI_NoABIWithRuntimeTracing tests that ABI is optional when runtime tracing is enabled.
+func TestValidateDeploymentWithABI_NoABIWithRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Enable runtime tracing
+	validator.SetRuntimeTracingEnabled(true)
+
+	// No ABI provided - should be allowed when runtime tracing is enabled
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be allowed - runtime tracing will catch any cross-org calls at execution time
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed when runtime tracing is enabled, got reason: %s", result.Reason)
+	}
+	if result.ConstructorValidated {
+		t.Error("expected ConstructorValidated to be false when ABI is skipped")
+	}
+}
+
+// TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing tests that ABI is required when runtime tracing is disabled.
+func TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Runtime tracing is disabled by default
+	// No ABI provided - should be denied
+	bytecodeHex := "0x" + encodeHex(simpleInitCode)
+
+	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be denied - ABI is required without runtime tracing
+	if result.Allowed {
+		t.Error("expected deployment to be denied when ABI is required but not provided")
+	}
+	if !strings.Contains(result.Reason, "ABI is required") {
+		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
 	}
 }

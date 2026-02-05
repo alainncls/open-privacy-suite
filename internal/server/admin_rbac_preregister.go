@@ -32,10 +32,11 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	}
 
 	var input struct {
-		Factory    string `json:"factory" binding:"required"`
-		SaltPrefix string `json:"salt_prefix" binding:"required"`
-		Count      int    `json:"count" binding:"required,min=1,max=100"`
-		Note       string `json:"note"`
+		Factory        string `json:"factory" binding:"required"`
+		SaltPrefix     string `json:"salt_prefix" binding:"required"`
+		Count          int    `json:"count" binding:"required,min=1,max=100"`
+		Note           string `json:"note"`
+		ConstructorABI string `json:"constructor_abi"` // Contract ABI JSON for constructor arg validation
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -45,6 +46,12 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	// Validate factory address format
 	if !auth.IsValidAddress(input.Factory) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid factory address format"})
+		return
+	}
+
+	// Validate constructor ABI format if provided
+	if input.ConstructorABI != "" && !strings.HasPrefix(strings.TrimSpace(input.ConstructorABI), "[") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "constructor_abi must be a valid JSON array"})
 		return
 	}
 
@@ -73,8 +80,9 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 		}
 	}
 
-	// Generate CREATE3 addresses
-	generated, err := create3.GenerateAddressPoolFromHex(input.Factory, input.SaltPrefix, input.Count)
+	// Generate CREATE3 addresses with org-scoped salts for cross-org isolation
+	// This ensures different orgs get different addresses even with the same salt prefix
+	generated, err := create3.GenerateAddressPoolFromHexForOrg(input.Factory, orgID, input.SaltPrefix, input.Count)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -84,12 +92,13 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	addresses := make([]*rbac.PreregisteredAddress, len(generated))
 	for i, gen := range generated {
 		addresses[i] = &rbac.PreregisteredAddress{
-			ID:      uuid.New().String(),
-			OrgID:   orgID,
-			Address: strings.ToLower(gen.Address.Hex()),
-			Factory: strings.ToLower(input.Factory),
-			Salt:    gen.Salt[:],
-			Note:    input.Note,
+			ID:             uuid.New().String(),
+			OrgID:          orgID,
+			Address:        strings.ToLower(gen.Address.Hex()),
+			Factory:        strings.ToLower(input.Factory),
+			Salt:           gen.Salt[:],
+			Note:           input.Note,
+			ConstructorABI: input.ConstructorABI,
 		}
 	}
 
@@ -108,13 +117,14 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	response := make([]preregisteredAddressResponse, len(addresses))
 	for i, addr := range addresses {
 		response[i] = preregisteredAddressResponse{
-			ID:        addr.ID,
-			OrgID:     addr.OrgID,
-			Address:   addr.Address,
-			Factory:   addr.Factory,
-			Salt:      "0x" + hex.EncodeToString(addr.Salt),
-			Note:      addr.Note,
-			CreatedAt: addr.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:             addr.ID,
+			OrgID:          addr.OrgID,
+			Address:        addr.Address,
+			Factory:        addr.Factory,
+			Salt:           "0x" + hex.EncodeToString(addr.Salt),
+			Note:           addr.Note,
+			ConstructorABI: addr.ConstructorABI,
+			CreatedAt:      addr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		}
 	}
 
@@ -146,13 +156,14 @@ func (s *Server) listPreregisteredAddresses(c *gin.Context) {
 	response := make([]preregisteredAddressResponse, len(addresses))
 	for i, addr := range addresses {
 		resp := preregisteredAddressResponse{
-			ID:        addr.ID,
-			OrgID:     addr.OrgID,
-			Address:   addr.Address,
-			Factory:   addr.Factory,
-			Salt:      "0x" + hex.EncodeToString(addr.Salt),
-			Note:      addr.Note,
-			CreatedAt: addr.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:             addr.ID,
+			OrgID:          addr.OrgID,
+			Address:        addr.Address,
+			Factory:        addr.Factory,
+			Salt:           "0x" + hex.EncodeToString(addr.Salt),
+			Note:           addr.Note,
+			ConstructorABI: addr.ConstructorABI,
+			CreatedAt:      addr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		}
 		if addr.UsedAt != nil {
 			usedAt := addr.UsedAt.Format("2006-01-02T15:04:05Z")
@@ -204,14 +215,66 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 
 // preregisteredAddressResponse is the JSON response format for preregistered addresses.
 type preregisteredAddressResponse struct {
-	ID        string  `json:"id"`
-	OrgID     string  `json:"org_id"`
-	Address   string  `json:"address"`
-	Factory   string  `json:"factory"`
-	Salt      string  `json:"salt"` // Hex-encoded
-	Note      string  `json:"note,omitempty"`
-	CreatedAt string  `json:"created_at"`
-	UsedAt    *string `json:"used_at,omitempty"`
+	ID             string  `json:"id"`
+	OrgID          string  `json:"org_id"`
+	Address        string  `json:"address"`
+	Factory        string  `json:"factory"`
+	Salt           string  `json:"salt"` // Hex-encoded
+	Note           string  `json:"note,omitempty"`
+	ConstructorABI string  `json:"constructor_abi,omitempty"` // Contract ABI JSON
+	CreatedAt      string  `json:"created_at"`
+	UsedAt         *string `json:"used_at,omitempty"`
+}
+
+// updatePreregisteredAddressABI handles PUT /orgs/:org_id/addresses/preregistered/:address/abi
+// It updates the constructor ABI for an existing preregistered address.
+func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	// Verify the organization exists
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
+	// Validate address format
+	address = strings.TrimSpace(address)
+	if !auth.IsValidAddress(address) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address format"})
+		return
+	}
+
+	var input struct {
+		ConstructorABI string `json:"constructor_abi" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate the ABI is valid JSON (basic check)
+	if input.ConstructorABI != "" && !strings.HasPrefix(strings.TrimSpace(input.ConstructorABI), "[") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "constructor_abi must be a valid JSON array"})
+		return
+	}
+
+	err = s.db.UpdateConstructorABI(c.Request.Context(), orgID, address, input.ConstructorABI)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "preregistered address not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "constructor ABI updated"})
 }
 
 // getOrgCreate3Config handles GET /orgs/:org_id/config/create3

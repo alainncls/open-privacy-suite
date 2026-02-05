@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/tracer"
 	"strings"
 	"time"
 
@@ -60,6 +61,7 @@ type Server struct {
 	ensResolver       *ens.Resolver
 	jsonrpcProcessor  *JSONRPCProcessor
 	zkRoleExtractor   *auth.ZKRoleExtractor
+	runtimeTracer     *tracer.RuntimeTracer
 }
 
 // DB returns the database instance (for testing)
@@ -87,6 +89,9 @@ func (s *Server) Stop() {
 	}
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.Stop()
+	}
+	if s.runtimeTracer != nil {
+		s.runtimeTracer.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -144,6 +149,13 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
 
+	// Configure runtime tracing mode for deployment validation
+	// When enabled, contracts with dynamic calls are allowed at deploy time
+	// because those calls will be validated at runtime via debug_traceCall
+	if cfg.EnableRuntimeTracing {
+		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
+	}
+
 	// Load additional trusted factory hashes from config
 	if len(cfg.TrustedFactoryHashes) > 0 {
 		for _, hash := range cfg.TrustedFactoryHashes {
@@ -194,6 +206,22 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize OAuth session store
 	oauthSessionStore := NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
 
+	// Initialize runtime tracer (optional - only when enabled)
+	var runtimeTracer *tracer.RuntimeTracer
+	var traceValidator *rbac.TraceValidator
+	if cfg.EnableRuntimeTracing {
+		runtimeTracer = tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{
+			NodeURL:       cfg.NodeURL,
+			Enabled:       true,
+			CacheTTL:      cfg.TraceCacheTTL,
+			Timeout:       cfg.TraceTimeout,
+			TieredEnabled: cfg.TraceTieredValidation,
+		})
+		traceValidator = rbac.NewTraceValidator(database)
+		fmt.Printf("Runtime tracing enabled (cache TTL: %v, timeout: %v, tiered: %v)\n",
+			cfg.TraceCacheTTL, cfg.TraceTimeout, cfg.TraceTieredValidation)
+	}
+
 	s := &Server{
 		db:                database,
 		rbacAccessCtrl:    rbacAccessCtrl,
@@ -209,10 +237,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		config:            cfg,
 		ensResolver:       ensResolver,
 		zkRoleExtractor:   zkRoleExtractor,
+		runtimeTracer:     runtimeTracer,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
-	s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+	if runtimeTracer != nil {
+		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, database, runtimeTracer, traceValidator)
+	} else {
+		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+	}
 
 	return s, nil
 }
@@ -557,14 +590,20 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 
 // StatusResponse represents the system status
 type StatusResponse struct {
-	Proxy ProxyStatus `json:"proxy"`
-	Node  NodeStatus  `json:"node"`
+	Proxy    ProxyStatus    `json:"proxy"`
+	Node     NodeStatus     `json:"node"`
+	Security SecurityStatus `json:"security"`
 }
 
 // ProxyStatus represents the proxy status
 type ProxyStatus struct {
 	Status string `json:"status"`
 	Port   string `json:"port"`
+}
+
+// SecurityStatus represents the security configuration status
+type SecurityStatus struct {
+	RuntimeTracingEnabled bool `json:"runtime_tracing_enabled"`
 }
 
 // NodeStatus represents the node status
@@ -579,6 +618,9 @@ func (s *Server) getStatus(c *gin.Context) {
 	// Check node health
 	nodeHealth := s.proxy.CheckHealth()
 
+	// Check if runtime tracing is enabled
+	runtimeTracingEnabled := s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
+
 	status := StatusResponse{
 		Proxy: ProxyStatus{
 			Status: "running",
@@ -589,6 +631,9 @@ func (s *Server) getStatus(c *gin.Context) {
 			URL:       nodeHealth.URL,
 			LatencyMs: nodeHealth.LatencyMs,
 			Error:     nodeHealth.Error,
+		},
+		Security: SecurityStatus{
+			RuntimeTracingEnabled: runtimeTracingEnabled,
 		},
 	}
 

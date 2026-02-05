@@ -8,6 +8,21 @@ const generateOrgSlug = () => `factory-test-${Date.now()}`;
 // Salt prefix must be unique per test run to avoid "address already registered" errors
 const generateSaltPrefix = (base: string) => `0x${base}${Date.now().toString(16).slice(-8)}`;
 
+// Helper to check if runtime tracing is enabled (ABI column is hidden when enabled)
+async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
+  const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+  try {
+    const response = await request.get(`${ADMIN_URL}/api/v1/status`);
+    if (response.ok()) {
+      const data = await response.json();
+      return data?.security?.runtime_tracing_enabled === true;
+    }
+  } catch {
+    // If we can't check, assume it's disabled
+  }
+  return false;
+}
+
 test.describe('Pre-registered Addresses and Factory Config', () => {
   test.beforeEach(async ({ page }) => {
     await mockLoginViaAPI(page);
@@ -460,5 +475,368 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     // Address should no longer be in the list
     await page.waitForTimeout(500);
     await expect(page.getByText(truncatedAddr)).not.toBeVisible();
+  });
+
+  test('ABI column visible in table', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-column-test-${Date.now()}`;
+    const factory = '0x' + 'aa'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Column Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abicol'),
+        count: 1,
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // ABI column header should be visible
+    await expect(page.getByRole('columnheader', { name: /abi/i })).toBeVisible({ timeout: 5000 });
+  });
+
+  test('shows "Not set" badge when no ABI configured', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-notset-test-${Date.now()}`;
+    const factory = '0x' + 'ab'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Badge Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address WITHOUT ABI
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('noabi'),
+        count: 1,
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // "Not set" badge should be visible in the table (use exact match to avoid matching org name)
+    const table = page.getByRole('table');
+    await expect(table.getByText('Not set', { exact: true })).toBeVisible({ timeout: 5000 });
+  });
+
+  test('can open ABI editor modal', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-editor-open-test-${Date.now()}`;
+    const factory = '0x' + 'ac'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Editor Open Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address
+    const preregResponse = await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abieditor'),
+        count: 1,
+      },
+    });
+    expect(preregResponse.ok()).toBe(true);
+    const preregData = await preregResponse.json();
+    const address = preregData.addresses[0].address;
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // Click the pencil button to edit ABI
+    await page.getByTitle('Edit contract ABI').click();
+
+    // Dialog should appear
+    const dialog = page.locator(selectors.common.dialog);
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+
+    // Dialog should show correct title
+    await expect(dialog.getByText('Edit Constructor ABI')).toBeVisible();
+
+    // Dialog should show the address
+    await expect(dialog.getByText(address)).toBeVisible();
+
+    // Textarea should be visible
+    await expect(dialog.locator('textarea')).toBeVisible();
+
+    // Save and Cancel buttons should be visible
+    await expect(dialog.getByRole('button', { name: /save abi/i })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /cancel/i })).toBeVisible();
+  });
+
+  test('can save ABI successfully', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-save-test-${Date.now()}`;
+    const factory = '0x' + 'ad'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Save Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abisave'),
+        count: 1,
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table and verify "Not set" badge is shown initially
+    await page.waitForTimeout(1000);
+    const table = page.getByRole('table');
+    await expect(table.getByText('Not set', { exact: true })).toBeVisible({ timeout: 5000 });
+
+    // Click the pencil button to edit ABI
+    await page.getByTitle('Edit contract ABI').click();
+
+    // Dialog should appear
+    const dialog = page.locator(selectors.common.dialog);
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+
+    // Enter valid ABI JSON
+    const validABI = '[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]';
+    await dialog.locator('textarea').fill(validABI);
+
+    // Click Save ABI
+    await dialog.getByRole('button', { name: /save abi/i }).click();
+
+    // Dialog should close (give more time for API call)
+    await expect(dialog).not.toBeVisible({ timeout: 10000 });
+
+    // Badge should now show "Set" instead of "Not set" in the table
+    await page.waitForTimeout(500); // Allow UI to refresh
+    await expect(table.getByText('Set', { exact: true })).toBeVisible({ timeout: 5000 });
+    // "Not set" should no longer be visible for this address
+    await expect(table.getByText('Not set', { exact: true })).not.toBeVisible();
+  });
+
+  test('shows JSON validation error for invalid ABI', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-validation-test-${Date.now()}`;
+    const factory = '0x' + 'ae'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Validation Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abivalidate'),
+        count: 1,
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // Click the pencil button to edit ABI
+    await page.getByTitle('Edit contract ABI').click();
+
+    // Dialog should appear
+    const dialog = page.locator(selectors.common.dialog);
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+
+    // Enter invalid JSON
+    await dialog.locator('textarea').fill('not valid json');
+
+    // Click Save ABI
+    await dialog.getByRole('button', { name: /save abi/i }).click();
+
+    // Should show validation error
+    await expect(dialog.getByText('Invalid JSON format')).toBeVisible({ timeout: 5000 });
+
+    // Dialog should still be open
+    await expect(dialog).toBeVisible();
+  });
+
+  test('can close ABI editor with cancel', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-cancel-test-${Date.now()}`;
+    const factory = '0x' + 'af'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Cancel Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abicancel'),
+        count: 1,
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // Click the pencil button to edit ABI
+    await page.getByTitle('Edit contract ABI').click();
+
+    // Dialog should appear
+    const dialog = page.locator(selectors.common.dialog);
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+
+    // Click Cancel
+    await dialog.getByRole('button', { name: /cancel/i }).click();
+
+    // Dialog should close
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+
+    // "Not set" should still be shown in the table (ABI not changed)
+    const table = page.getByRole('table');
+    await expect(table.getByText('Not set', { exact: true })).toBeVisible();
+  });
+
+  test('shows "Set" badge for address with ABI pre-configured', async ({ page, request }) => {
+    // Skip this test if runtime tracing is enabled (ABI column is hidden)
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
+
+    const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+
+    const orgSlug = `abi-preset-test-${Date.now()}`;
+    const factory = '0x' + 'ba'.repeat(20);
+
+    // Create org via API
+    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { slug: orgSlug, name: `ABI Preset Test ${Date.now()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json();
+
+    // Preregister an address WITH ABI
+    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        factory,
+        salt_prefix: generateSaltPrefix('abipreset'),
+        count: 1,
+        constructor_abi: '[{"type":"constructor","inputs":[{"name":"admin","type":"address"}]}]',
+      },
+    });
+
+    // Navigate to preregistered tab
+    await page.goto(`/admin/rbac/preregistered?org=${org.id}`);
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    // Wait for table to load
+    await page.waitForTimeout(1000);
+
+    // "Set" badge should be visible in the table (not "Not set")
+    const table = page.getByRole('table');
+    await expect(table.getByText('Set', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(table.getByText('Not set', { exact: true })).not.toBeVisible();
   });
 });

@@ -124,6 +124,10 @@ export const rbacApi = {
       api.post<PreregisterResponse>(`/orgs/${orgId}/addresses/preregister`, input),
     delete: (orgId: string, address: string) =>
       api.delete(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}`),
+    updateABI: (orgId: string, address: string, constructorABI: string) =>
+      api.put(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}/abi`, {
+        constructor_abi: constructorABI,
+      }),
   },
 
   // Utilities
@@ -131,6 +135,16 @@ export const rbacApi = {
     checkAccess: (request: AccessCheckRequest) =>
       api.post<AccessCheckResult>('/access/check', request),
     getCacheStats: () => api.get<CacheStats>('/cache/stats'),
+  },
+
+  // System status
+  status: {
+    get: () =>
+      api.get<{
+        proxy: { status: string; port: string };
+        node: { status: string; url: string; latency_ms: number; error?: string };
+        security: { runtime_tracing_enabled: boolean };
+      }>('/status'),
   },
 
   // Org config endpoints

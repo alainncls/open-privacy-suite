@@ -84,7 +84,54 @@ type GeneratedAddress struct {
 	Salt    [32]byte       `json:"salt"`
 }
 
+// GenerateAddressPoolForOrg generates a batch of CREATE3 addresses using org-scoped salts.
+//
+// IMPORTANT: This function includes the orgID in the salt computation to ensure
+// cross-organization isolation. Even if two orgs use the same factory and salt prefix,
+// they will get different addresses.
+//
+// Parameters:
+//   - factory: The address of the CREATE3 factory contract
+//   - orgID: The organization ID (included in salt for isolation)
+//   - saltPrefix: A prefix for the salt (will be padded and combined with counter)
+//   - count: Number of addresses to generate (max 100)
+//
+// The salt for each address is: keccak256(orgID || saltPrefix || counter)
+// This ensures unique, deterministic salts for each address in the pool,
+// with guaranteed isolation between organizations.
+func GenerateAddressPoolForOrg(factory common.Address, orgID string, saltPrefix []byte, count int) ([]GeneratedAddress, error) {
+	if count < 1 || count > 100 {
+		return nil, fmt.Errorf("count must be between 1 and 100, got %d", count)
+	}
+
+	if orgID == "" {
+		return nil, fmt.Errorf("orgID is required for address generation")
+	}
+
+	addresses := make([]GeneratedAddress, count)
+
+	for i := 0; i < count; i++ {
+		// Generate salt: keccak256(orgID || saltPrefix || counter)
+		// Including orgID ensures different orgs get different addresses even with same salt prefix
+		counterBytes := big.NewInt(int64(i)).Bytes()
+		saltInput := append([]byte(orgID), saltPrefix...)
+		saltInput = append(saltInput, counterBytes...)
+		saltHash := crypto.Keccak256(saltInput)
+
+		var salt [32]byte
+		copy(salt[:], saltHash)
+
+		addresses[i] = GeneratedAddress{
+			Address: CalculateCREATE3Address(factory, salt),
+			Salt:    salt,
+		}
+	}
+
+	return addresses, nil
+}
+
 // GenerateAddressPool generates a batch of CREATE3 addresses using sequential salts.
+// DEPRECATED: Use GenerateAddressPoolForOrg instead to ensure cross-org isolation.
 //
 // Parameters:
 //   - factory: The address of the CREATE3 factory contract
@@ -118,7 +165,21 @@ func GenerateAddressPool(factory common.Address, saltPrefix []byte, count int) (
 	return addresses, nil
 }
 
+// GenerateAddressPoolFromHexForOrg is a convenience wrapper that accepts hex or text strings,
+// with org-scoped salt computation for cross-organization isolation.
+func GenerateAddressPoolFromHexForOrg(factory string, orgID string, saltPrefixInput string, count int) ([]GeneratedAddress, error) {
+	if !common.IsHexAddress(factory) {
+		return nil, fmt.Errorf("invalid factory address: %s", factory)
+	}
+
+	factoryAddr := common.HexToAddress(factory)
+	saltPrefix := parseSaltPrefix(saltPrefixInput)
+
+	return GenerateAddressPoolForOrg(factoryAddr, orgID, saltPrefix, count)
+}
+
 // GenerateAddressPoolFromHex is a convenience wrapper that accepts hex or text strings.
+// DEPRECATED: Use GenerateAddressPoolFromHexForOrg instead to ensure cross-org isolation.
 // If the input starts with 0x and is valid hex, it's decoded as hex.
 // Otherwise, it's treated as raw text bytes.
 func GenerateAddressPoolFromHex(factory string, saltPrefixInput string, count int) ([]GeneratedAddress, error) {
@@ -127,7 +188,13 @@ func GenerateAddressPoolFromHex(factory string, saltPrefixInput string, count in
 	}
 
 	factoryAddr := common.HexToAddress(factory)
+	saltPrefix := parseSaltPrefix(saltPrefixInput)
 
+	return GenerateAddressPool(factoryAddr, saltPrefix, count)
+}
+
+// parseSaltPrefix parses a salt prefix from hex or text input.
+func parseSaltPrefix(saltPrefixInput string) []byte {
 	var saltPrefix []byte
 	if saltPrefixInput != "" {
 		// Check if it looks like hex (starts with 0x)
@@ -147,6 +214,5 @@ func GenerateAddressPoolFromHex(factory string, saltPrefixInput string, count in
 			saltPrefix = []byte(saltPrefixInput)
 		}
 	}
-
-	return GenerateAddressPool(factoryAddr, saltPrefix, count)
+	return saltPrefix
 }

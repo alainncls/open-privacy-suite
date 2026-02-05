@@ -13,6 +13,10 @@
 
 set -e
 
+# Default to allowing preregistration in demo mode
+# In production, only org admins would have this capability
+ALLOW_PREREGISTER="${ALLOW_PREREGISTER:-true}"
+
 # Colors for pretty output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -86,6 +90,19 @@ print_contract_call() {
 }
 
 # =============================================================================
+# Helper function for RPC calls through the proxy
+# =============================================================================
+rpc_call() {
+    local method="$1"
+    local params="$2"
+
+    curl -s -X POST "$PROXY_RPC_URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"params\":$params,\"id\":1}"
+}
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
@@ -94,10 +111,14 @@ print_header "CREATE3 Proxy Upgrade Demo"
 print_step "Checking Configuration"
 
 # Environment variables with defaults
-# Default private key is Anvil's first account (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
+# IMPORTANT: PROXY_RPC_URL is the privacy proxy (for RBAC), ANVIL_RPC_URL is direct to node (for read-only)
 : "${ADMIN_API_URL:=http://localhost:8080/api}"
-: "${RPC_URL:=http://localhost:8545}"
+: "${PROXY_RPC_URL:=http://localhost:8080}"
+: "${ANVIL_RPC_URL:=http://localhost:8545}"
 : "${DEPLOYER_PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+
+# For read-only operations (checking code size, etc.), we can use Anvil directly
+RPC_URL="$ANVIL_RPC_URL"
 
 # Organization: can specify either ORG_SLUG (preferred) or ORG_ID
 # ORG_SLUG is what you see in the UI, ORG_ID is the internal UUID
@@ -118,7 +139,8 @@ fi
 CREATE3_FACTORY="${CREATE3_FACTORY:-}"
 
 print_value "Admin API URL" "$ADMIN_API_URL"
-print_value "RPC URL" "$RPC_URL"
+print_value "Proxy RPC URL" "$PROXY_RPC_URL"
+print_value "Anvil RPC URL" "$ANVIL_RPC_URL"
 
 # If ORG_SLUG is provided, fetch ORG_ID from the API
 if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
@@ -148,6 +170,131 @@ DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_PRIVATE_KEY" 2>/dev/null)
 print_value "Deployer Address" "$DEPLOYER_ADDRESS"
 
 # =============================================================================
+# Step 0: Authenticate and set up RBAC user with deploy permissions
+# =============================================================================
+
+print_step "Step 0: Authentication & RBAC Setup"
+
+# Create a unique user DID for this demo
+USER_EXTERNAL_ID="did:demo:deployer-$(date +%s)"
+print_substep "User DID: $USER_EXTERNAL_ID"
+
+# Step 0a: Start auth session to get session ID
+print_substep "Starting auth session..."
+AUTH_REQUEST_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/request" \
+    -H "Content-Type: application/json" \
+    -d '{"reason": "Demo deployment test"}')
+
+SESSION_ID=$(echo "$AUTH_REQUEST_RESP" | jq -r '.session_id // .sessionId // empty')
+if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
+    print_error "Failed to create auth session: $AUTH_REQUEST_RESP"
+    exit 1
+fi
+print_success "Auth session created: ${SESSION_ID:0:20}..."
+
+# Step 0b: Complete auth with mock token (requires AllowMockLogin=true)
+# Mock token format: mock.{userDID}
+print_substep "Authenticating with mock token..."
+MOCK_TOKEN="mock.${USER_EXTERNAL_ID}"
+AUTH_CALLBACK_RESP=$(curl -s -X POST "$PROXY_RPC_URL/auth/callback?session=$SESSION_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"token\": \"$MOCK_TOKEN\"}")
+
+AUTH_TOKEN=$(echo "$AUTH_CALLBACK_RESP" | jq -r '.access_token // .accessToken // empty')
+if [ -z "$AUTH_TOKEN" ] || [ "$AUTH_TOKEN" = "null" ]; then
+    print_error "Failed to authenticate: $AUTH_CALLBACK_RESP"
+    print_info "Make sure the proxy is running with ALLOW_MOCK_LOGIN=true (dev mode)"
+    exit 1
+fi
+print_success "Got JWT access token"
+print_value "Token (first 50 chars)" "${AUTH_TOKEN:0:50}..."
+
+# Step 0c: Get the user's internal ID (created during auth)
+print_substep "Getting user info..."
+# The user was created during auth via EnsureUserExists
+# We need to find the user by external ID to get the internal UUID
+USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users?search=${USER_EXTERNAL_ID}")
+USER_ID=$(echo "$USERS_RESP" | jq -r '.[0].id // empty')
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    # Try without the search param - list all and filter
+    USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
+    USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+fi
+
+if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+    print_error "Could not find user ID after authentication"
+    print_info "User response: $USERS_RESP"
+    exit 1
+fi
+print_success "User ID: $USER_ID"
+
+# Step 0d: Set KYC status FIRST (required before any RPC calls)
+print_substep "Setting KYC status (required for RPC access)..."
+KYC_RESP=$(curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
+    -H "Content-Type: application/json" \
+    -d '{"kyc": true}')
+KYC_ERROR=$(echo "$KYC_RESP" | jq -r '.error // empty')
+if [ -n "$KYC_ERROR" ] && [ "$KYC_ERROR" != "null" ]; then
+    print_error "Failed to set KYC: $KYC_ERROR"
+    exit 1
+fi
+print_success "KYC status set to true"
+
+# Step 0e: Verify auth works by calling eth_chainId
+print_substep "Verifying authentication..."
+AUTH_TEST=$(rpc_call "eth_chainId" "[]")
+CHAIN_ID=$(echo "$AUTH_TEST" | jq -r '.result // empty')
+AUTH_ERROR=$(echo "$AUTH_TEST" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+if [ -z "$CHAIN_ID" ] || [ -n "$AUTH_ERROR" ]; then
+    print_error "Authentication verification failed: $AUTH_TEST"
+    exit 1
+fi
+print_success "Authentication verified (chainId: $CHAIN_ID)"
+
+# Step 0f: Set up deployers group with deploy claim
+print_substep "Setting up group with deploy permissions..."
+GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "deployers" or .slug == "demo-deployers") | .id' | head -1)
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    # Create a deployers group
+    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "slug": "demo-deployers",
+            "name": "Demo Deployers",
+            "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
+            "default_claims": ["read", "write", "deploy"]
+        }')
+    DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
+
+    if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+        # Group might already exist, try to find it
+        GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+        DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id')
+    fi
+fi
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    print_error "Failed to create or find deployers group"
+    exit 1
+fi
+print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
+
+# Step 0g: Add user to the deployers group
+print_substep "Adding user to deployers group..."
+MEMBERSHIP_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+    -H "Content-Type: application/json" \
+    -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}")
+MEMBERSHIP_ERROR=$(echo "$MEMBERSHIP_RESP" | jq -r '.error // empty')
+if [ -n "$MEMBERSHIP_ERROR" ] && [ "$MEMBERSHIP_ERROR" != "null" ] && ! echo "$MEMBERSHIP_ERROR" | grep -qi "already"; then
+    print_error "Failed to add user to group: $MEMBERSHIP_ERROR"
+    exit 1
+fi
+print_success "User added to deployers group"
+
+# =============================================================================
 # Step 1: Get or verify CREATE3 factory
 # =============================================================================
 
@@ -157,33 +304,42 @@ if [ -z "$CREATE3_FACTORY" ]; then
     print_substep "Fetching factory address from org config..."
     FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
     CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
+fi
 
-    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
-        print_error "No CREATE3 factory configured for this organization"
-        print_info "Please configure a factory first via the admin UI or API"
-        exit 1
+# Check if we need to deploy a factory
+NEED_FACTORY=false
+if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+    NEED_FACTORY=true
+else
+    # Verify factory has code
+    FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+    if [ "$FACTORY_CODE_SIZE" = "0" ]; then
+        print_info "Factory at $CREATE3_FACTORY has no code, deploying new factory..."
+        NEED_FACTORY=true
     fi
 fi
 
-print_success "CREATE3 Factory: $CREATE3_FACTORY"
+if [ "$NEED_FACTORY" = true ]; then
+    print_substep "Deploying CREATE3 factory..."
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
-# Verify factory has code deployed
-print_substep "Verifying factory contract is deployed..."
-FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
-if [ "$FACTORY_CODE_SIZE" = "0" ]; then
-    print_error "No contract found at factory address: $CREATE3_FACTORY"
-    echo ""
-    echo -e "  ${WHITE}The CREATE3 factory contract needs to be deployed first.${NC}"
-    echo -e "  ${WHITE}This typically happens when:${NC}"
-    echo -e "  ${CYAN}1.${NC} The chain was reset (Anvil restarted without persistence)"
-    echo -e "  ${CYAN}2.${NC} The factory was never deployed to this network"
-    echo ""
-    echo -e "  ${WHITE}To deploy a CREATE3 factory, you can use:${NC}"
-    echo -e "  ${GREEN}forge create --rpc-url $RPC_URL --private-key \$DEPLOYER_PRIVATE_KEY \\"
-    echo -e "    path/to/CREATE3Factory.sol:CREATE3Factory${NC}"
-    echo ""
-    exit 1
+    if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
+        print_error "Failed to deploy CREATE3 factory"
+        echo "Response: $DEPLOY_RESP"
+        exit 1
+    fi
+    print_success "Deployed factory: $CREATE3_FACTORY"
+
+    # Configure the org with the new factory
+    curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
+        -H "Content-Type: application/json" \
+        -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
+    print_success "Factory configured for org"
 fi
+
+print_success "CREATE3 Factory: $CREATE3_FACTORY"
+FACTORY_CODE_SIZE=$(cast codesize "$CREATE3_FACTORY" --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
 print_success "Factory contract verified (code size: $FACTORY_CODE_SIZE bytes)"
 
 # =============================================================================
@@ -241,32 +397,77 @@ if [ "$PREREGISTERED_COUNT" -ge "$ADDRESSES_NEEDED" ]; then
     done
 
     if [ "$UNUSED_COUNT" -lt "$ADDRESSES_NEEDED" ]; then
-        print_error "Not enough unused addresses available"
-        print_info "Found $UNUSED_COUNT unused address(es), need $ADDRESSES_NEEDED"
-        print_info "Please preregister more addresses or use ALLOW_PREREGISTER=true"
-        exit 1
+        # Check if ALLOW_PREREGISTER is set (admin mode) - allows preregistering for new factory
+        if [ "${ALLOW_PREREGISTER:-false}" = "true" ]; then
+            print_info "Found $UNUSED_COUNT unused address(es) for current factory, need $ADDRESSES_NEEDED"
+            print_info "ALLOW_PREREGISTER=true - will preregister new addresses for the configured factory"
+
+            SALT_PREFIX="demo-$(date +%s)"
+            print_substep "Using salt prefix: $SALT_PREFIX"
+            print_substep "Preregistering $ADDRESSES_NEEDED addresses..."
+
+            PREREGISTER_RESPONSE=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"factory\": \"$CREATE3_FACTORY\",
+                    \"salt_prefix\": \"$SALT_PREFIX\",
+                    \"count\": $ADDRESSES_NEEDED,
+                    \"note\": \"Demo proxy upgrade addresses\"
+                }")
+
+            if echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+                print_success "Addresses preregistered successfully!"
+
+                PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
+                IMPL_V1_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
+                IMPL_V2_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
+
+                PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
+                IMPL_V1_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
+                IMPL_V2_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
+
+                echo ""
+                echo -e "  ${WHITE}Newly preregistered addresses:${NC}"
+                echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
+                echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
+                echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
+            else
+                print_error "Failed to preregister addresses"
+                echo "$PREREGISTER_RESPONSE" | jq '.' 2>/dev/null || echo "$PREREGISTER_RESPONSE"
+                exit 1
+            fi
+        else
+            print_error "Not enough unused addresses available for the current factory"
+            print_info "Found $UNUSED_COUNT unused address(es), need $ADDRESSES_NEEDED"
+            print_info "The preregistered addresses may be for a different factory"
+            print_info "Run with ALLOW_PREREGISTER=true to preregister new addresses"
+            exit 1
+        fi
+    else
+        # Enough unused addresses found - use them
+        # Convert space-separated lists to arrays and extract addresses
+        UNUSED_ADDRESSES_ARR=($UNUSED_ADDRESSES)
+        UNUSED_SALTS_ARR=($UNUSED_SALTS)
+
+        PROXY_ADDR="${UNUSED_ADDRESSES_ARR[0]}"
+        IMPL_V1_ADDR="${UNUSED_ADDRESSES_ARR[1]}"
+        IMPL_V2_ADDR="${UNUSED_ADDRESSES_ARR[2]}"
+
+        PROXY_SALT="${UNUSED_SALTS_ARR[0]}"
+        IMPL_V1_SALT="${UNUSED_SALTS_ARR[1]}"
+        IMPL_V2_SALT="${UNUSED_SALTS_ARR[2]}"
+
+        print_success "Found $UNUSED_COUNT unused address(es)"
+        echo ""
+        echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
+        echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
+        echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
+        echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
     fi
-
-    # Convert space-separated lists to arrays and extract addresses
-    UNUSED_ADDRESSES_ARR=($UNUSED_ADDRESSES)
-    UNUSED_SALTS_ARR=($UNUSED_SALTS)
-
-    PROXY_ADDR="${UNUSED_ADDRESSES_ARR[0]}"
-    IMPL_V1_ADDR="${UNUSED_ADDRESSES_ARR[1]}"
-    IMPL_V2_ADDR="${UNUSED_ADDRESSES_ARR[2]}"
-
-    PROXY_SALT="${UNUSED_SALTS_ARR[0]}"
-    IMPL_V1_SALT="${UNUSED_SALTS_ARR[1]}"
-    IMPL_V2_SALT="${UNUSED_SALTS_ARR[2]}"
-
-    print_success "Found $UNUSED_COUNT unused address(es)"
-    echo ""
-    echo -e "  ${WHITE}Selected addresses for deployment:${NC}"
-    echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Proxy:${NC}              $PROXY_ADDR"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V1:${NC}  $IMPL_V1_ADDR"
-    echo -e "  ${CYAN}│${NC} ${YELLOW}Implementation V2:${NC}  $IMPL_V2_ADDR"
-    echo -e "  ${CYAN}└─────────────────────────────────────────────────────────────────┘${NC}"
 
     if [ "$UNUSED_COUNT" -gt "$ADDRESSES_NEEDED" ]; then
         REMAINING=$((UNUSED_COUNT - ADDRESSES_NEEDED))
@@ -376,17 +577,23 @@ git add -A
 git commit -m "Initial" --quiet
 
 # Install dependencies using git clone directly (forge install has interactive prompts)
-print_substep "Installing OpenZeppelin contracts..."
+print_substep "Installing dependencies..."
+# Remove any copied local artifacts (these are gitignored but cp -r copies them)
+rm -rf lib out cache
 mkdir -p lib
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable 2>/dev/null || {
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || {
     print_error "Failed to clone openzeppelin-contracts-upgradeable"
     exit 1
 }
-git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts 2>/dev/null || {
+git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || {
     print_error "Failed to clone openzeppelin-contracts"
     exit 1
 }
-print_success "OpenZeppelin contracts installed"
+git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std || {
+    print_error "Failed to clone forge-std"
+    exit 1
+}
+print_success "Dependencies installed"
 
 print_substep "Compiling contracts..."
 forge build --quiet
@@ -409,22 +616,70 @@ print_step "Step 4: Deploying Implementation V1"
 print_substep "Deploying BoxV1 to preregistered address via CREATE3..."
 print_info "Target address: $IMPL_V1_ADDR"
 print_info "Salt: ${IMPL_V1_SALT:0:20}..."
+print_info "Factory: $CREATE3_FACTORY"
+print_info "Bytecode length: ${#BOXV1_BYTECODE} chars"
+
+# Verify variables are set
+if [ -z "$IMPL_V1_SALT" ]; then
+    print_error "IMPL_V1_SALT is empty!"
+    exit 1
+fi
+if [ -z "$BOXV1_BYTECODE" ]; then
+    print_error "BOXV1_BYTECODE is empty!"
+    exit 1
+fi
 
 # Deploy via CREATE3 factory
 # The factory.deploy(bytes32 salt, bytes creationCode) function
-DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V1_SALT" "$BOXV1_BYTECODE")
+print_substep "Building deployment calldata..."
+set +e
+DEPLOY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V1_SALT" "$BOXV1_BYTECODE" 2>&1)
+CALLDATA_EXIT_CODE=$?
+set -e
 
-DEPLOY_RESULT=$(cast send "$CREATE3_FACTORY" "$DEPLOY_CALLDATA" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --json 2>&1)
+if [ "$CALLDATA_EXIT_CODE" -ne 0 ] || [ -z "$DEPLOY_CALLDATA" ]; then
+    print_error "Failed to build deployment calldata (exit code: $CALLDATA_EXIT_CODE)"
+    echo -e "  ${WHITE}Salt:${NC} $IMPL_V1_SALT"
+    echo -e "  ${WHITE}Bytecode length:${NC} ${#BOXV1_BYTECODE}"
+    echo -e "  ${WHITE}Error:${NC} $DEPLOY_CALLDATA"
+    exit 1
+fi
 
-TX_HASH_V1=$(echo "$DEPLOY_RESULT" | jq -r '.transactionHash' 2>/dev/null)
+print_substep "Sending deployment transaction through privacy proxy..."
 
-if [ -z "$TX_HASH_V1" ] || [ "$TX_HASH_V1" = "null" ]; then
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+
+# Build the transaction parameters
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$CREATE3_FACTORY",
+    "data": "$DEPLOY_CALLDATA",
+    "gas": "0x300000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+
+# Send transaction through the proxy (this goes through RBAC!)
+DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+
+TX_HASH_V1=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty')
+DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+
+if [ -z "$TX_HASH_V1" ] || [ "$TX_HASH_V1" = "null" ] || [ -n "$DEPLOY_ERROR" ]; then
     print_error "Failed to deploy BoxV1"
     echo -e "  ${WHITE}Error details:${NC}"
-    echo "$DEPLOY_RESULT" | head -10
+    echo "$DEPLOY_RESULT" | jq . 2>/dev/null || echo "$DEPLOY_RESULT"
+    echo ""
+    echo -e "  ${WHITE}Possible causes:${NC}"
+    echo -e "  ${CYAN}1.${NC} CREATE3 factory not deployed (chain was reset?)"
+    echo -e "  ${CYAN}2.${NC} Salt already used (address already has code)"
+    echo -e "  ${CYAN}3.${NC} Missing deploy claim for target address"
+    echo -e "  ${CYAN}4.${NC} Address not preregistered for this org"
+    echo -e "  ${CYAN}5.${NC} RPC connection issue"
     exit 1
 fi
 
@@ -479,17 +734,36 @@ CONSTRUCTOR_ARGS=$(cast abi-encode "constructor(address,bytes)" "$IMPL_V1_ADDR" 
 CONSTRUCTOR_ARGS_NO_PREFIX="${CONSTRUCTOR_ARGS:2}"
 PROXY_INIT_CODE="${PROXY_BYTECODE}${CONSTRUCTOR_ARGS_NO_PREFIX}"
 
-print_substep "Deploying proxy via CREATE3..."
+print_substep "Deploying proxy via CREATE3 through privacy proxy..."
 
 DEPLOY_PROXY_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$PROXY_SALT" "$PROXY_INIT_CODE")
 
-TX_HASH_PROXY=$(cast send "$CREATE3_FACTORY" "$DEPLOY_PROXY_CALLDATA" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
 
-if [ -z "$TX_HASH_PROXY" ] || [ "$TX_HASH_PROXY" = "null" ]; then
+# Build the transaction parameters
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$CREATE3_FACTORY",
+    "data": "$DEPLOY_PROXY_CALLDATA",
+    "gas": "0x300000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+
+# Send transaction through the proxy (this goes through RBAC!)
+DEPLOY_PROXY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+
+TX_HASH_PROXY=$(echo "$DEPLOY_PROXY_RESULT" | jq -r '.result // empty')
+DEPLOY_PROXY_ERROR=$(echo "$DEPLOY_PROXY_RESULT" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+
+if [ -z "$TX_HASH_PROXY" ] || [ "$TX_HASH_PROXY" = "null" ] || [ -n "$DEPLOY_PROXY_ERROR" ]; then
     print_error "Failed to deploy proxy"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$DEPLOY_PROXY_RESULT" | jq . 2>/dev/null || echo "$DEPLOY_PROXY_RESULT"
     exit 1
 fi
 
@@ -507,11 +781,29 @@ print_substep "Calling version()..."
 VERSION_V1=$(cast call "$PROXY_ADDR" "version()(string)" --rpc-url "$RPC_URL" 2>/dev/null || echo "error")
 print_contract_call "$PROXY_ADDR" "version()" "$VERSION_V1"
 
-print_substep "Calling store(42)..."
-cast send "$PROXY_ADDR" "store(uint256)" 42 \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --quiet 2>/dev/null
+print_substep "Calling store(42) through privacy proxy..."
+STORE_CALLDATA=$(cast calldata "store(uint256)" 42)
+
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$PROXY_ADDR",
+    "data": "$STORE_CALLDATA",
+    "gas": "0x100000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+STORE_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+STORE_TX=$(echo "$STORE_RESULT" | jq -r '.result // empty')
+if [ -z "$STORE_TX" ] || [ "$STORE_TX" = "null" ]; then
+    print_error "Failed to call store(42): $(echo "$STORE_RESULT" | jq -r '.error // .')"
+    exit 1
+fi
 print_success "Stored value: 42"
 
 print_substep "Calling retrieve()..."
@@ -524,18 +816,37 @@ print_contract_call "$PROXY_ADDR" "retrieve()" "$STORED_VALUE"
 
 print_step "Step 7: Deploying Implementation V2"
 
-print_substep "Deploying BoxV2 to preregistered address via CREATE3..."
+print_substep "Deploying BoxV2 to preregistered address via CREATE3 through privacy proxy..."
 print_info "Target address: $IMPL_V2_ADDR"
 
 DEPLOY_V2_CALLDATA=$(cast calldata "deploy(bytes32,bytes)" "$IMPL_V2_SALT" "$BOXV2_BYTECODE")
 
-TX_HASH_V2=$(cast send "$CREATE3_FACTORY" "$DEPLOY_V2_CALLDATA" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
 
-if [ -z "$TX_HASH_V2" ] || [ "$TX_HASH_V2" = "null" ]; then
+# Build the transaction parameters
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$CREATE3_FACTORY",
+    "data": "$DEPLOY_V2_CALLDATA",
+    "gas": "0x300000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+
+# Send transaction through the proxy (this goes through RBAC!)
+DEPLOY_V2_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+
+TX_HASH_V2=$(echo "$DEPLOY_V2_RESULT" | jq -r '.result // empty')
+DEPLOY_V2_ERROR=$(echo "$DEPLOY_V2_RESULT" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+
+if [ -z "$TX_HASH_V2" ] || [ "$TX_HASH_V2" = "null" ] || [ -n "$DEPLOY_V2_ERROR" ]; then
     print_error "Failed to deploy BoxV2"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$DEPLOY_V2_RESULT" | jq . 2>/dev/null || echo "$DEPLOY_V2_RESULT"
     exit 1
 fi
 
@@ -549,18 +860,37 @@ print_value "Address" "$IMPL_V2_ADDR"
 
 print_step "Step 8: Upgrading Proxy to V2"
 
-print_substep "Calling upgradeToAndCall()..."
+print_substep "Calling upgradeToAndCall() through privacy proxy..."
 print_info "Old implementation: $IMPL_V1_ADDR"
 print_info "New implementation: $IMPL_V2_ADDR"
 
-# UUPS upgrade - call upgradeTo on the proxy
-TX_HASH_UPGRADE=$(cast send "$PROXY_ADDR" "upgradeToAndCall(address,bytes)" "$IMPL_V2_ADDR" "0x" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --json 2>/dev/null | jq -r '.transactionHash')
+# UUPS upgrade - call upgradeToAndCall on the proxy
+UPGRADE_CALLDATA=$(cast calldata "upgradeToAndCall(address,bytes)" "$IMPL_V2_ADDR" "0x")
 
-if [ -z "$TX_HASH_UPGRADE" ] || [ "$TX_HASH_UPGRADE" = "null" ]; then
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$PROXY_ADDR",
+    "data": "$UPGRADE_CALLDATA",
+    "gas": "0x100000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+
+UPGRADE_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+
+TX_HASH_UPGRADE=$(echo "$UPGRADE_RESULT" | jq -r '.result // empty')
+UPGRADE_ERROR=$(echo "$UPGRADE_RESULT" | jq -r 'if .error then (if .error | type == "object" then .error.message else .error end) else empty end')
+
+if [ -z "$TX_HASH_UPGRADE" ] || [ "$TX_HASH_UPGRADE" = "null" ] || [ -n "$UPGRADE_ERROR" ]; then
     print_error "Failed to upgrade proxy"
+    echo -e "  ${WHITE}Error details:${NC}"
+    echo "$UPGRADE_RESULT" | jq . 2>/dev/null || echo "$UPGRADE_RESULT"
     exit 1
 fi
 
@@ -581,11 +911,29 @@ print_substep "Calling retrieve() - value should be preserved..."
 STORED_VALUE_V2=$(cast call "$PROXY_ADDR" "retrieve()(uint256)" --rpc-url "$RPC_URL" 2>/dev/null)
 print_contract_call "$PROXY_ADDR" "retrieve()" "$STORED_VALUE_V2"
 
-print_substep "Calling increment() - new V2 function..."
-cast send "$PROXY_ADDR" "increment()" \
-    --private-key "$DEPLOYER_PRIVATE_KEY" \
-    --rpc-url "$RPC_URL" \
-    --quiet 2>/dev/null
+print_substep "Calling increment() - new V2 function through privacy proxy..."
+INCREMENT_CALLDATA=$(cast calldata "increment()")
+
+# Get the nonce for the deployer
+NONCE_RESP=$(rpc_call "eth_getTransactionCount" "[\"$DEPLOYER_ADDRESS\", \"latest\"]")
+NONCE=$(echo "$NONCE_RESP" | jq -r '.result // "0x0"')
+
+TX_PARAMS=$(cat <<EOF
+[{
+    "from": "$DEPLOYER_ADDRESS",
+    "to": "$PROXY_ADDR",
+    "data": "$INCREMENT_CALLDATA",
+    "gas": "0x100000",
+    "nonce": "$NONCE"
+}]
+EOF
+)
+INCREMENT_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
+INCREMENT_TX=$(echo "$INCREMENT_RESULT" | jq -r '.result // empty')
+if [ -z "$INCREMENT_TX" ] || [ "$INCREMENT_TX" = "null" ]; then
+    print_error "Failed to call increment(): $(echo "$INCREMENT_RESULT" | jq -r '.error // .')"
+    exit 1
+fi
 print_success "Called increment()"
 
 print_substep "Calling retrieve() after increment..."

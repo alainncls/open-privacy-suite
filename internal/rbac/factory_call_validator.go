@@ -150,7 +150,8 @@ func (v *FactoryCallValidator) ValidateFactoryCall(
 	// Validate the creation bytecode
 	if len(creationBytecode) > 0 {
 		bytecodeHex := "0x" + hex.EncodeToString(creationBytecode)
-		validationResult, err := v.deployValidator.ValidateDeployment(ctx, orgID, bytecodeHex)
+		// Pass false for hasAdminClaim - factory call validation has its own CREATE/CREATE2 handling
+		validationResult, err := v.deployValidator.ValidateDeployment(ctx, orgID, bytecodeHex, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to validate creation bytecode: %w", err)
 		}

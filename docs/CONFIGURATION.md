@@ -38,6 +38,30 @@
 | `BILLIONS_ISSUER_DID` | (none) | Billions issuer DID for PoH verification |
 | `REQUIRE_PROOF_OF_HUMANITY` | `false` (dev) / `true` (prod) | Require PoH credential |
 
+### Runtime Tracing (Cross-Org Isolation)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_RUNTIME_TRACING` | `true` (docker) | Enable runtime transaction tracing for cross-org isolation |
+
+**Runtime Tracing Details:**
+
+When enabled, the proxy uses `debug_traceCall` to validate all addresses touched by transactions before forwarding them to the node. This provides comprehensive cross-organization isolation:
+
+- **All internal CALL/DELEGATECALL/STATICCALL targets are validated** against RBAC permissions
+- **Custom Multicall contracts are detected** - any contract batching calls will have all targets validated
+- **CREATE/CREATE2 in runtime is blocked** - prevents unauthorized contract deployment
+- **Precompiles (0x01-0x09) are always allowed**
+
+**Node Requirements:**
+- Upstream node must support `debug_traceCall` (Geth, Anvil, Erigon, Nethermind)
+- For Geth: `--http.api debug` flag required
+
+**Performance Impact:**
+- Adds ~50-200ms latency per transaction
+- Tiered validation skips tracing for calls to known org-owned addresses
+- Caching reduces overhead for repeated patterns
+
 ### Token TTLs
 
 | Token | TTL | Notes |
@@ -157,6 +181,9 @@ PRIVADO_RPC_URL=https://rpc-mainnet.privado.id
 # ProofOfHumanity (optional)
 BILLIONS_ISSUER_DID=did:polygonid:polygon:main:billions-issuer-did
 REQUIRE_PROOF_OF_HUMANITY=true
+
+# Runtime Tracing (recommended for production)
+ENABLE_RUNTIME_TRACING=true
 
 # Public URL
 BASE_URL=https://your-domain.com

@@ -234,6 +234,86 @@ func TestValidateUpgrade(t *testing.T) {
 	}
 }
 
+func TestValidateUpgradeWithRuntimeTracing(t *testing.T) {
+	ctx := context.Background()
+
+	// Build test calldata for upgradeTo(0x1234567890123456789012345678901234567890)
+	newImplAddr := "0x1234567890123456789012345678901234567890"
+	upgradeToCalldata := buildUpgradeToCalldata(newImplAddr)
+
+	tests := []struct {
+		name                  string
+		setupStore            func(*MockUpgradeStore)
+		runtimeTracingEnabled bool
+		proxyAddress          string
+		calldata              []byte
+		orgID                 string
+		expectAllowed         bool
+		expectReason          string
+	}{
+		{
+			name: "Without runtime tracing - unmanaged proxy is denied",
+			setupStore: func(s *MockUpgradeStore) {
+				// No managed proxy registered, but impl is owned
+				s.AddOwnedAddress("org1", newImplAddr)
+			},
+			runtimeTracingEnabled: false,
+			proxyAddress:          "0xproxy",
+			calldata:              upgradeToCalldata,
+			orgID:                 "org1",
+			expectAllowed:         false,
+			expectReason:          "proxy is not registered as a managed proxy",
+		},
+		{
+			name: "With runtime tracing - unmanaged proxy is allowed (tracing validates targets)",
+			setupStore: func(s *MockUpgradeStore) {
+				// No managed proxy registered, but impl is owned
+				s.AddOwnedAddress("org1", newImplAddr)
+			},
+			runtimeTracingEnabled: true,
+			proxyAddress:          "0xproxy",
+			calldata:              upgradeToCalldata,
+			orgID:                 "org1",
+			expectAllowed:         true,
+		},
+		{
+			name: "With runtime tracing - still validates impl ownership",
+			setupStore: func(s *MockUpgradeStore) {
+				// No managed proxy, no impl ownership
+			},
+			runtimeTracingEnabled: true,
+			proxyAddress:          "0xproxy",
+			calldata:              upgradeToCalldata,
+			orgID:                 "org1",
+			expectAllowed:         false,
+			expectReason:          "not owned by the organization",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewMockUpgradeStore()
+			tt.setupStore(store)
+
+			validator := NewUpgradeValidator(store)
+			validator.SetRuntimeTracingEnabled(tt.runtimeTracingEnabled)
+
+			result, err := validator.ValidateUpgrade(ctx, tt.orgID, tt.proxyAddress, tt.calldata)
+			if err != nil {
+				t.Fatalf("ValidateUpgrade failed: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				t.Errorf("Allowed = %v, want %v (reason: %s)", result.Allowed, tt.expectAllowed, result.Reason)
+			}
+
+			if tt.expectReason != "" && !strings.Contains(result.Reason, tt.expectReason) {
+				t.Errorf("Reason = %q, want to contain %q", result.Reason, tt.expectReason)
+			}
+		})
+	}
+}
+
 func TestExtractImplementationAddress(t *testing.T) {
 	tests := []struct {
 		name           string

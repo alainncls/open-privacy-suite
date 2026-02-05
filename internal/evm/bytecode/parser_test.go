@@ -415,3 +415,158 @@ func TestParse_UnknownOpcodes(t *testing.T) {
 		t.Errorf("expected UNKNOWN, got %q", bc.Opcodes[0].Name)
 	}
 }
+
+func TestStripCBORMetadata_AtEnd(t *testing.T) {
+	// Test standard case: CBOR metadata at the end of bytecode
+	code := []byte{PUSH1, 0x80, PUSH1, 0x40, STOP}
+
+	// Build CBOR metadata with "solc" key
+	cborContent := []byte{
+		0xa2, // Map with 2 elements
+		0x65, // Text string of length 5
+		0x69, 0x70, 0x66, 0x73, 0x58, // "ipfs" + bytes type marker
+		0x22, // 34 bytes follow
+	}
+	// Add 34 bytes of dummy IPFS hash
+	for i := 0; i < 34; i++ {
+		cborContent = append(cborContent, byte(i))
+	}
+	cborContent = append(cborContent,
+		0x64,                   // Text string of length 4
+		0x73, 0x6f, 0x6c, 0x63, // "solc"
+		0x43,             // bytes(3)
+		0x00, 0x08, 0x18, // Version bytes
+	)
+
+	// Add length indicator
+	cborLen := len(cborContent)
+	bytecodeWithCBOR := append(code, cborContent...)
+	bytecodeWithCBOR = append(bytecodeWithCBOR, byte(cborLen>>8), byte(cborLen&0xff))
+
+	// Strip CBOR
+	stripped := StripCBORMetadata(bytecodeWithCBOR)
+
+	// Should have removed CBOR + length indicator
+	if len(stripped) != len(code) {
+		t.Errorf("expected length %d, got %d", len(code), len(stripped))
+	}
+
+	// Verify the code content is preserved
+	for i, b := range code {
+		if stripped[i] != b {
+			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+func TestStripCBORMetadata_WithConstructorArgs(t *testing.T) {
+	// Test case: CBOR metadata followed by constructor arguments
+	// This happens when deploying proxies with initialization data
+	code := []byte{PUSH1, 0x80, PUSH1, 0x40, STOP}
+
+	// Build CBOR metadata with "solc" key (which starts with 0x73 = PUSH20!)
+	cborContent := []byte{
+		0xa2, // Map with 2 elements
+		0x65, // Text string of length 5
+		0x69, 0x70, 0x66, 0x73, 0x58, // "ipfs" + bytes type marker
+		0x22, // 34 bytes follow
+	}
+	// Add 34 bytes of dummy IPFS hash
+	for i := 0; i < 34; i++ {
+		cborContent = append(cborContent, byte(i))
+	}
+	cborContent = append(cborContent,
+		0x64,                   // Text string of length 4
+		0x73, 0x6f, 0x6c, 0x63, // "solc" - note: 0x73 is PUSH20 opcode!
+		0x43,             // bytes(3)
+		0x00, 0x08, 0x18, // Version bytes
+	)
+
+	// Add length indicator
+	cborLen := len(cborContent)
+	bytecodeWithCBOR := append(code, cborContent...)
+	bytecodeWithCBOR = append(bytecodeWithCBOR, byte(cborLen>>8), byte(cborLen&0xff))
+
+	// Constructor arguments (simulating proxy deployment with address args)
+	constructorArgs := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8,
+		0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66, // Address
+	}
+
+	// Combine: code + CBOR + length + constructor args
+	bytecodeWithCBORAndArgs := append(bytecodeWithCBOR, constructorArgs...)
+
+	// Verify that "solc" is present before stripping
+	hasSolcBefore := containsBytes(bytecodeWithCBORAndArgs, []byte{0x73, 0x6f, 0x6c, 0x63})
+	if !hasSolcBefore {
+		t.Fatal("test setup error: 'solc' bytes should be present before stripping")
+	}
+
+	// Strip CBOR
+	stripped := StripCBORMetadata(bytecodeWithCBORAndArgs)
+
+	// Should have removed CBOR metadata (including "solc" which looks like PUSH20)
+	expectedLen := len(code) + len(constructorArgs)
+	if len(stripped) != expectedLen {
+		t.Errorf("expected length %d, got %d (removed %d bytes)",
+			expectedLen, len(stripped), len(bytecodeWithCBORAndArgs)-len(stripped))
+	}
+
+	// Verify "solc" is no longer present
+	hasSolcAfter := containsBytes(stripped, []byte{0x73, 0x6f, 0x6c, 0x63})
+	if hasSolcAfter {
+		t.Error("'solc' bytes should be removed after stripping CBOR")
+	}
+
+	// Verify the code content is preserved at the beginning
+	for i, b := range code {
+		if stripped[i] != b {
+			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+
+	// Verify constructor args are preserved at the end
+	for i, b := range constructorArgs {
+		if stripped[len(code)+i] != b {
+			t.Errorf("constructor arg byte %d: expected %#x, got %#x", i, b, stripped[len(code)+i])
+		}
+	}
+}
+
+func TestStripCBORMetadata_NoCBOR(t *testing.T) {
+	// Test that bytecode without CBOR is unchanged
+	code := []byte{PUSH1, 0x80, PUSH1, 0x40, STOP}
+
+	stripped := StripCBORMetadata(code)
+
+	if len(stripped) != len(code) {
+		t.Errorf("expected unchanged length %d, got %d", len(code), len(stripped))
+	}
+
+	for i, b := range code {
+		if stripped[i] != b {
+			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// containsBytes checks if data contains the given sequence
+func containsBytes(data, seq []byte) bool {
+	if len(seq) > len(data) {
+		return false
+	}
+	for i := 0; i <= len(data)-len(seq); i++ {
+		match := true
+		for j := 0; j < len(seq); j++ {
+			if data[i+j] != seq[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}

@@ -242,6 +242,7 @@ export interface PreregisteredAddress {
   factory: string;
   salt: string; // Hex-encoded
   note?: string;
+  constructor_abi?: string; // Contract ABI JSON for constructor arg validation
   created_at: string;
   used_at?: string | null;
 }

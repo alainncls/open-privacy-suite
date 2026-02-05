@@ -28,6 +28,12 @@ type Config struct {
 	AllowMockLogin             bool          // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
 	DemoAutoAuthDelay          time.Duration // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
 	TrustedFactoryHashes       []string      // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
+
+	// Runtime tracing configuration
+	EnableRuntimeTracing  bool          // If true, enable debug_traceCall validation (default: false)
+	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
+	TraceTimeout          time.Duration // Timeout for debug_traceCall requests (default: 30s)
+	TraceTieredValidation bool          // If true, skip trace for known org addresses (default: true)
 }
 
 func Load() *Config {
@@ -99,6 +105,22 @@ func Load() *Config {
 		}
 	}
 
+	// Runtime tracing configuration
+	enableTracing := getEnv("ENABLE_RUNTIME_TRACING", "false") == "true"
+	traceCacheTTL := 10 * time.Second
+	if ttlStr := getEnv("TRACE_CACHE_TTL", ""); ttlStr != "" {
+		if d, err := time.ParseDuration(ttlStr); err == nil {
+			traceCacheTTL = d
+		}
+	}
+	traceTimeout := 30 * time.Second
+	if timeoutStr := getEnv("TRACE_TIMEOUT", ""); timeoutStr != "" {
+		if d, err := time.ParseDuration(timeoutStr); err == nil {
+			traceTimeout = d
+		}
+	}
+	traceTiered := getEnv("TRACE_TIERED_VALIDATION", "true") != "false"
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -119,6 +141,10 @@ func Load() *Config {
 		AllowMockLogin:             allowMockLogin,
 		DemoAutoAuthDelay:          demoDelay,
 		TrustedFactoryHashes:       trustedFactoryHashes,
+		EnableRuntimeTracing:       enableTracing,
+		TraceCacheTTL:              traceCacheTTL,
+		TraceTimeout:               traceTimeout,
+		TraceTieredValidation:      traceTiered,
 	}
 }
 

@@ -102,12 +102,22 @@ type Store interface {
 	DeletePreregisteredAddress(ctx context.Context, orgID, address string) error
 	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
 	MarkAddressUsed(ctx context.Context, address string) error
+	// Constructor ABI operations (for immutable address validation)
+	GetConstructorABI(ctx context.Context, orgID, address string) (string, error)
+	UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error
 
 	// Managed Proxy operations (for upgrade validation)
 	CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error
 	GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error)
 	UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error
 	IsManagedProxy(ctx context.Context, address string) (bool, error)
+
+	// Shared infrastructure operations (for runtime tracing)
+	// These contracts are globally accessible (e.g., Uniswap router) and do not require org ownership.
+	IsSharedInfrastructure(ctx context.Context, address string) (bool, error)
+	CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error
+	ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error)
+	DeleteSharedInfrastructure(ctx context.Context, address string) error
 }
 
 // AuditAction constants for audit logging.

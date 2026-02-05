@@ -20,7 +20,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
-import { Hash, Plus, Trash2, Loader2, Check, Clock, Copy, Factory } from 'lucide-react';
+import { Hash, Plus, Trash2, Loader2, Check, Clock, Copy, Factory, FileCode, Pencil } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 
 export default function PreregisteredAddressList() {
   const { selectedOrg } = useOrgContext();
@@ -33,12 +34,33 @@ export default function PreregisteredAddressList() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [factoryAddress, setFactoryAddress] = useState<string | null>(null);
   const [factoryCopied, setFactoryCopied] = useState(false);
+  // ABI editor state
+  const [abiTarget, setAbiTarget] = useState<PreregisteredAddress | null>(null);
+  const [abiValue, setAbiValue] = useState('');
+  const [abiSaving, setAbiSaving] = useState(false);
+  const [abiError, setAbiError] = useState<string | null>(null);
+  // Runtime tracing status
+  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(false);
 
   useEffect(() => {
     if (orgId) {
       loadAddresses();
     }
   }, [orgId]);
+
+  // Load runtime tracing status
+  useEffect(() => {
+    const loadStatus = async () => {
+      try {
+        const response = await rbacApi.status.get();
+        setRuntimeTracingEnabled(response.data?.security?.runtime_tracing_enabled ?? false);
+      } catch {
+        // Default to false if we can't fetch status
+        setRuntimeTracingEnabled(false);
+      }
+    };
+    loadStatus();
+  }, []);
 
   // Load factory address from org config only (per-org isolation)
   useEffect(() => {
@@ -111,6 +133,40 @@ export default function PreregisteredAddressList() {
   const handleSave = async () => {
     setShowForm(false);
     await loadAddresses();
+  };
+
+  const openAbiEditor = (addr: PreregisteredAddress) => {
+    setAbiTarget(addr);
+    setAbiValue(addr.constructor_abi || '');
+    setAbiError(null);
+  };
+
+  const handleAbiSave = async () => {
+    if (!abiTarget) return;
+
+    // Validate JSON if not empty
+    if (abiValue.trim()) {
+      try {
+        JSON.parse(abiValue);
+      } catch {
+        setAbiError('Invalid JSON format');
+        return;
+      }
+    }
+
+    setAbiSaving(true);
+    setAbiError(null);
+
+    try {
+      await rbacApi.preregisteredAddresses.updateABI(orgId, abiTarget.address, abiValue.trim());
+      setAbiTarget(null);
+      await loadAddresses();
+    } catch (error) {
+      console.error('Failed to update ABI:', error);
+      setAbiError('Failed to save ABI. Please try again.');
+    } finally {
+      setAbiSaving(false);
+    }
   };
 
   const truncateAddress = (address: string | undefined) => {
@@ -208,6 +264,7 @@ export default function PreregisteredAddressList() {
               <TableHead>Factory</TableHead>
               <TableHead>Salt</TableHead>
               <TableHead>Note</TableHead>
+              {!runtimeTracingEnabled && <TableHead>ABI</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -289,6 +346,21 @@ export default function PreregisteredAddressList() {
                     {addr.note || '-'}
                   </span>
                 </TableCell>
+                {!runtimeTracingEnabled && (
+                  <TableCell>
+                    {addr.constructor_abi ? (
+                      <Badge variant="default" className="gap-1 bg-[#8950FA] hover:bg-[#7C3AED]">
+                        <FileCode className="w-3 h-3" />
+                        Set
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="gap-1 text-[#D97706] border-[#FDE68A]">
+                        <FileCode className="w-3 h-3" />
+                        Not set
+                      </Badge>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   {addr.used_at ? (
                     <Badge variant="default" className="gap-1 bg-[#10B981] hover:bg-[#059669]">
@@ -309,6 +381,17 @@ export default function PreregisteredAddressList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
+                    {!runtimeTracingEnabled && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openAbiEditor(addr)}
+                        className="text-[#6B7280] hover:text-[#374151] hover:bg-[#F1F5F9]"
+                        title="Edit contract ABI"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -362,6 +445,73 @@ export default function PreregisteredAddressList() {
         buttonLabel="OK"
         variant="error"
       />
+
+      {/* ABI Editor Dialog */}
+      <Dialog open={!!abiTarget} onOpenChange={(open) => !open && setAbiTarget(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileCode className="w-5 h-5 text-[#8950FA]" />
+              Edit Constructor ABI
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+              <p className="text-xs font-medium text-[#64748B] mb-1">Address</p>
+              <p className="font-mono text-sm text-[#334155]">{abiTarget?.address}</p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="constructor-abi" className="text-sm font-medium text-[#374151]">
+                Contract ABI (JSON)
+              </label>
+              <p className="text-xs text-[#6B7280]">
+                Paste the contract ABI JSON. This is used to validate constructor arguments
+                containing addresses (e.g., immutable address variables).
+              </p>
+              <Textarea
+                id="constructor-abi"
+                value={abiValue}
+                onChange={(e) => {
+                  setAbiValue(e.target.value);
+                  setAbiError(null);
+                }}
+                placeholder='[{"type":"constructor","inputs":[{"name":"oracle","type":"address"}]}]'
+                className="font-mono text-sm min-h-[200px] resize-y"
+              />
+              {abiError && (
+                <p className="text-sm text-[#DC2626]">{abiError}</p>
+              )}
+            </div>
+
+            <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
+              <p className="text-xs text-[#92400E]">
+                <strong>Note:</strong> The ABI is required when deploying contracts with constructor
+                arguments that contain addresses. If the ABI is not set, deployments with constructor
+                args will be rejected.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setAbiTarget(null)}
+              disabled={abiSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAbiSave}
+              disabled={abiSaving}
+              className="gap-2"
+            >
+              {abiSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save ABI
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

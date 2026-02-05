@@ -55,6 +55,7 @@ services:
       - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
+      - ENABLE_RUNTIME_TRACING=true
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,6 +106,7 @@ services:
       - ADMIN_URL=http://proxy-backend:8080
       - FRONTEND_URL=http://proxy-frontend:5173
       - CI=${CI:-false}
+      - ENABLE_RUNTIME_TRACING=true
     depends_on:
       proxy-backend:
         condition: service_healthy

@@ -301,6 +301,14 @@ func (m *MockStore) MarkAddressUsed(ctx context.Context, address string) error {
 	return nil
 }
 
+// Constructor ABI stubs
+func (m *MockStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
+	return "", nil
+}
+func (m *MockStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
+	return nil
+}
+
 // Managed proxy stubs
 func (m *MockStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
 	return nil
@@ -313,6 +321,20 @@ func (m *MockStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl
 }
 func (m *MockStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
 	return false, nil
+}
+
+// Shared infrastructure stubs
+func (m *MockStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
+	return false, nil
+}
+func (m *MockStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error {
+	return nil
+}
+func (m *MockStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) {
+	return nil, nil
+}
+func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address string) error {
+	return nil
 }
 
 // Tests

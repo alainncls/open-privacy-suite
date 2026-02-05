@@ -279,6 +279,17 @@ func (c *AccessController) Store() Store {
 	return c.store
 }
 
+// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
+// When runtime tracing is enabled, contracts with dynamic calls are allowed at deploy time
+// because those calls will be validated at runtime via debug_traceCall.
+// Additionally, the managed proxy check is skipped for upgrade validation because
+// runtime tracing validates that upgrade targets are org-owned.
+// This must be called after NewAccessController to configure the behavior.
+func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
+	c.deployValidator.SetRuntimeTracingEnabled(enabled)
+	c.upgradeValidator.SetRuntimeTracingEnabled(enabled)
+}
+
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
@@ -458,6 +469,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.Method, req.Params)
 
+	// Track factory deploy info for auto-registration after successful tx
+	var factoryDeployInfo *FactoryDeployInfo
+
 	// Check contract access if target address is specified
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
@@ -468,7 +482,25 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
-		// If no access to this contract (not registered and no default claims), deny
+		// If no access from explicit registration or default_claims, check if it's a preregistered address
+		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them
+		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables
+		if access == nil {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
+				// Address is owned (registered or preregistered) by one of user's orgs - grant full access
+				access = &ContractAccess{
+					Claims:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+					Functions: nil, // All functions allowed
+				}
+				hasExplicitAccess = true // Treat as explicit access for cross-org check
+			}
+		}
+
+		// If still no access, deny
 		if access == nil {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -534,6 +566,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
 					}, nil
 				}
+				// If this is an allowed factory deploy, capture info for auto-registration
+				if factoryResult != nil && factoryResult.IsFactoryCall && factoryResult.IsDeployCall && factoryResult.Allowed {
+					factoryDeployInfo = &FactoryDeployInfo{
+						OrgID:         org.ID,
+						TargetAddress: factoryResult.TargetAddress,
+						FactoryAddr:   addr,
+						Salt:          factoryResult.Salt,
+					}
+				}
 			}
 		}
 	} else if requiredClaim == ClaimDeploy {
@@ -558,7 +599,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 
-			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex)
+			// Check if user has admin claim for factory deployment
+			allClaims := collectAllClaims(perms)
+			hasAdminClaim := containsClaim(allClaims, ClaimAdmin)
+
+			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex, hasAdminClaim)
 			if err != nil {
 				return nil, fmt.Errorf("failed to validate deployment bytecode: %w", err)
 			}
@@ -570,19 +615,16 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}, nil
 			}
 
-			// Factory contract deployment requires admin claim (security: prevent accidental factory proliferation)
-			if validationResult.IsTrustedFactory {
-				allClaims := collectAllClaims(perms)
-				if !containsClaim(allClaims, ClaimAdmin) {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  "CREATE3 factory deployment requires admin claim",
-					}, nil
-				}
+			// Trusted factory deployment still requires admin claim
+			// (validated inside ValidateDeployment, but we double-check here for clarity)
+			if validationResult.IsTrustedFactory && !hasAdminClaim {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  "CREATE3 factory deployment requires admin claim",
+				}, nil
 			}
 
 			// Include deployment info in the result for proxy tracking
-			allClaims := collectAllClaims(perms)
 			return &AccessCheckResult{
 				Allowed:        true,
 				RateLimitRPS:   perms.RateLimitRPS,
@@ -619,10 +661,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	allClaims := collectAllClaims(perms)
 
 	return &AccessCheckResult{
-		Allowed:        true,
-		RateLimitRPS:   perms.RateLimitRPS,
-		RateLimitDaily: perms.RateLimitDaily,
-		Claims:         allClaims,
+		Allowed:           true,
+		RateLimitRPS:      perms.RateLimitRPS,
+		RateLimitDaily:    perms.RateLimitDaily,
+		Claims:            allClaims,
+		FactoryDeployInfo: factoryDeployInfo, // Set if this was a factory deploy
 	}, nil
 }
 

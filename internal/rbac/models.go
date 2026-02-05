@@ -175,12 +175,13 @@ type AccessCheckRequest struct {
 
 // AccessCheckResult represents the result of an access check.
 type AccessCheckResult struct {
-	Allowed        bool            `json:"allowed"`
-	Reason         string          `json:"reason,omitempty"`
-	RateLimitRPS   *int            `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int            `json:"rate_limit_daily,omitempty"`
-	Claims         []Claim         `json:"claims,omitempty"`
-	DeploymentInfo *DeploymentInfo `json:"deployment_info,omitempty"` // Set for allowed deployments
+	Allowed           bool               `json:"allowed"`
+	Reason            string             `json:"reason,omitempty"`
+	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`
+	Claims            []Claim            `json:"claims,omitempty"`
+	DeploymentInfo    *DeploymentInfo    `json:"deployment_info,omitempty"`     // Set for allowed deployments
+	FactoryDeployInfo *FactoryDeployInfo `json:"factory_deploy_info,omitempty"` // Set for CREATE3 factory deploys
 }
 
 // DeploymentInfo contains information about an allowed deployment.
@@ -189,6 +190,15 @@ type DeploymentInfo struct {
 	OrgID     string `json:"org_id"`
 	IsProxy   bool   `json:"is_proxy"`
 	ProxyType string `json:"proxy_type,omitempty"`
+}
+
+// FactoryDeployInfo contains information about a CREATE3 factory deployment.
+// This is used to auto-register contracts after successful factory deploys.
+type FactoryDeployInfo struct {
+	OrgID         string `json:"org_id"`          // Organization that owns the deployment
+	TargetAddress string `json:"target_address"`  // Computed CREATE3 address
+	FactoryAddr   string `json:"factory_address"` // Factory contract address
+	Salt          string `json:"salt"`            // Salt used for deployment
 }
 
 // GroupWithAccess combines a Group with its access settings.
@@ -308,14 +318,15 @@ func (ca ContractAccess) HasClaim(claim Claim) bool {
 // These addresses can be whitelisted before the actual contract is deployed,
 // enabling upgradeable proxy patterns where implementation addresses need pre-approval.
 type PreregisteredAddress struct {
-	ID        string     `json:"id"`
-	OrgID     string     `json:"org_id"`
-	Address   string     `json:"address"` // The pre-computed CREATE3 address (lowercase 0x-prefixed)
-	Factory   string     `json:"factory"` // The CREATE3 factory contract address
-	Salt      []byte     `json:"salt"`    // The 32-byte salt used for address derivation
-	Note      string     `json:"note,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UsedAt    *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
+	ID             string     `json:"id"`
+	OrgID          string     `json:"org_id"`
+	Address        string     `json:"address"`         // The pre-computed CREATE3 address (lowercase 0x-prefixed)
+	Factory        string     `json:"factory"`         // The CREATE3 factory contract address
+	Salt           []byte     `json:"salt"`            // The 32-byte salt used for address derivation
+	Note           string     `json:"note,omitempty"`
+	ConstructorABI string     `json:"constructor_abi,omitempty"` // Contract ABI JSON for constructor arg validation
+	CreatedAt      time.Time  `json:"created_at"`
+	UsedAt         *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
 }
 
 // ManagedProxy represents a proxy contract that is tracked for upgrade validation.

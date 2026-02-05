@@ -40,12 +40,20 @@ var UpgradeSelectors = map[string]string{
 
 // UpgradeValidator validates proxy upgrade transactions.
 type UpgradeValidator struct {
-	store Store
+	store                 Store
+	runtimeTracingEnabled bool // When true, skip managed proxy check (runtime tracing validates targets)
 }
 
 // NewUpgradeValidator creates a new upgrade validator.
 func NewUpgradeValidator(store Store) *UpgradeValidator {
 	return &UpgradeValidator{store: store}
+}
+
+// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
+// When enabled, the managed proxy check is skipped because runtime tracing
+// will validate that the upgrade target is org-owned.
+func (v *UpgradeValidator) SetRuntimeTracingEnabled(enabled bool) {
+	v.runtimeTracingEnabled = enabled
 }
 
 // UpgradeValidationResult contains the result of upgrade validation.
@@ -89,18 +97,26 @@ func (v *UpgradeValidator) ValidateUpgrade(
 	result.IsUpgradeCall = true
 	result.FunctionName = funcName
 
-	// Check if target is a managed proxy
-	isManaged, err := v.store.IsManagedProxy(ctx, proxyAddress)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check managed proxy: %w", err)
-	}
-	result.IsManagedProxy = isManaged
+	// Check if target is a managed proxy (skip if runtime tracing is enabled)
+	if !v.runtimeTracingEnabled {
+		isManaged, err := v.store.IsManagedProxy(ctx, proxyAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check managed proxy: %w", err)
+		}
+		result.IsManagedProxy = isManaged
 
-	if !isManaged {
-		// Not a managed proxy - deny the upgrade for security
-		result.Allowed = false
-		result.Reason = "proxy is not registered as a managed proxy"
-		return result, nil
+		if !isManaged {
+			// Not a managed proxy - deny the upgrade for security
+			// When runtime tracing is enabled, this check is skipped because
+			// the runtime trace will validate that the upgrade target is org-owned
+			result.Allowed = false
+			result.Reason = "proxy is not registered as a managed proxy"
+			return result, nil
+		}
+	} else {
+		// With runtime tracing, we don't require managed proxy registration
+		// The runtime trace will validate the upgrade target
+		result.IsManagedProxy = true // Treat as managed for result consistency
 	}
 
 	// Extract new implementation address from calldata

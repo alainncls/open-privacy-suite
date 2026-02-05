@@ -495,14 +495,22 @@ The RBAC system includes bytecode analysis to sandbox deployed contracts, preven
 
 When a user with the `deploy` claim deploys a contract, the bytecode is analyzed to ensure:
 
-1. **No dynamic external calls**: All CALL/DELEGATECALL/STATICCALL targets must be constant addresses
-2. **Org ownership**: All call targets must be owned by the deploying user's organization
-3. **No nested deployments**: CREATE/CREATE2 opcodes are blocked (prevents deploying child contracts that bypass validation)
-4. **Precompile whitelist**: Standard EVM precompiles (0x01-0x09) are always allowed
+1. **Org ownership**: All static call targets must be owned by the deploying user's organization
+2. **No nested deployments**: CREATE/CREATE2 opcodes are blocked (prevents deploying child contracts that bypass validation)
+3. **Precompile whitelist**: Standard EVM precompiles (0x01-0x09) are always allowed
 
-**Rejected bytecode patterns:**
-- Dynamic call targets (address from storage, calldata, or computation)
+**With Runtime Tracing Enabled (`ENABLE_RUNTIME_TRACING=true`, default):**
+
+Dynamic calls (address from storage, calldata, or computation) are **allowed** at deployment because they are validated at runtime via `debug_traceCall`. This enables compatibility with:
+- OpenZeppelin upgradeable contracts
+- UUPS proxies with dynamic DELEGATECALL
+- Contracts with configurable dependencies
+
+**Rejected bytecode patterns (always):**
 - CREATE/CREATE2 opcodes (nested deployment)
+
+**Rejected bytecode patterns (only when runtime tracing disabled):**
+- Dynamic call targets (address from storage, calldata, or computation)
 - DELEGATECALL to non-org-owned addresses
 
 ### Proxy Pattern Support
@@ -540,6 +548,20 @@ For upgradeable proxies that will deploy future implementations at deterministic
 #### Per-Organization Factory Configuration
 
 **CRITICAL SECURITY**: Each organization has its own CREATE3 factory contract. This ensures complete isolation between organizations - Org A cannot deploy contracts that could interact with Org B's addresses.
+
+#### Org-Scoped Salt Computation
+
+**CRITICAL SECURITY**: Address generation includes the organization ID in the salt computation to ensure cross-org isolation. Even if two organizations use the same factory address and salt prefix, they will get different addresses.
+
+**Salt computation formula:**
+```
+For each i in 0..count:
+  saltInput = orgID || saltPrefix || i
+  salt = keccak256(saltInput)
+  address = CREATE3(factory, salt)
+```
+
+This prevents address collision attacks where one org could pre-register addresses that another org might deploy to.
 
 **Factory Address Storage:**
 - Stored in `organization.settings["factory_address"]`
@@ -612,7 +634,7 @@ This prevents accidental or malicious use of a different factory that could brea
 │       │ addresses using CREATE3 formula:        │                               │
 │       │                                         │                               │
 │       │ For each i in 0..count:                 │                               │
-│       │   salt = keccak256(salt_prefix + i)     │                               │
+│       │   salt = keccak256(orgID + prefix + i)  │  ← Org ID included!          │
 │       │   proxy = CREATE2(factory, salt, PROXY) │                               │
 │       │   addr = CREATE(proxy, nonce=1)         │                               │
 │       └─────────────────────────────────────────┘                               │
@@ -626,7 +648,7 @@ This prevents accidental or malicious use of a different factory that could brea
 │                                                                                  │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │                    PHASE 2: DEPLOYMENT                                   │    │
-│  │                    (External - via CREATE3 factory)                      │    │
+│  │                    (Via CREATE3 factory through proxy)                   │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                  │
 │       Developer deploys contract via CREATE3 factory                            │
@@ -637,19 +659,27 @@ This prevents accidental or malicious use of a different factory that could brea
 │       │ Contract deployed at                    │                               │
 │       │ 0x1234... (pre-registered address)      │                               │
 │       └─────────────────────────────────────────┘                               │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │                    PHASE 3: CONTRACT REGISTRATION                        │    │
-│  │                    (Link to RBAC system)                                 │    │
-│  └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                  │
-│       Admin registers contract via UI or API                                    │
-│       UI shows dropdown of pre-registered addresses                             │
 │                          │                                                       │
 │                          ▼                                                       │
 │       ┌─────────────────────────────────────────┐                               │
-│       │ Contract created in contracts table     │                               │
-│       │ Pre-registered address marked as USED   │                               │
+│       │ AUTO-REGISTRATION (automatic)           │                               │
+│       │ Privacy Proxy detects successful        │                               │
+│       │ factory deploy and creates contract     │                               │
+│       │ entry in contracts table                │                               │
+│       └─────────────────────────────────────────┘                               │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                    PHASE 3: GRANT ASSIGNMENT                             │    │
+│  │                    (Optional - fine-grained permissions)                 │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│       Admin optionally assigns grants via UI or API                             │
+│       (Contracts are accessible with default claims immediately)                │
+│                          │                                                       │
+│                          ▼                                                       │
+│       ┌─────────────────────────────────────────┐                               │
+│       │ Contract already in contracts table     │                               │
+│       │ (auto-registered after deployment)      │                               │
 │       └─────────────────────────────────────────┘                               │
 │                          │                                                       │
 │                          ▼                                                       │
@@ -722,7 +752,32 @@ IsAddressOwnedByOrg(orgID, address):
 This enables:
 - Proxy upgrades to pre-registered addresses BEFORE deployment
 - Deployment validation to accept pre-registered targets
-- Gradual migration from pre-registered → fully registered
+- Immediate access after deployment (no manual registration needed)
+
+#### Immediate Access to Preregistered Addresses
+
+**Key behavior**: Users can interact with preregistered addresses immediately after deployment, without waiting for explicit contract registration. The system grants `read`, `write`, and `deploy` claims to users in the owning organization when:
+
+1. The target address is in the `preregistered_addresses` table for the user's org
+2. OR the target address is in the `contracts` table for the user's org
+
+This means:
+- Deploy via CREATE3 factory → Contract auto-registered → Immediate access
+- Even if auto-registration fails, preregistered addresses still grant access
+
+#### Auto-Registration After Factory Deploy
+
+When a transaction to a CREATE3 factory succeeds:
+
+1. The privacy proxy detects it was a factory deploy call (by matching factory address and `deploy` function selector)
+2. Extracts the target address from the transaction data (computed CREATE3 address)
+3. Automatically creates a contract entry in the `contracts` table with:
+   - `org_id`: The organization that owns the preregistered address
+   - `address`: The deployed contract address
+   - `name`: Auto-generated (e.g., "CREATE3 Deploy 0x1234...")
+   - `metadata`: Factory address, salt, and `auto_registered: true` flag
+
+This eliminates the need for a manual "register contract" step after deployment.
 
 #### Admin UI Workflow
 
@@ -982,6 +1037,7 @@ The deployment validator detects Diamond patterns but does not implement:
 - ZK-attested memberships require valid Privado ID credentials
 - Permission cache is invalidated when permissions change
 - Audit logging tracks all RBAC changes
-- Deployment bytecode validation prevents cross-org calls via internal EVM execution
+- **Runtime transaction tracing** validates all addresses touched by transactions (when `ENABLE_RUNTIME_TRACING=true`)
+- Deployment bytecode validation prevents nested deployments via CREATE/CREATE2
 - Proxy upgrade interception prevents upgrading to non-org-owned implementations
 - All precompile addresses (0x01-0x09) are whitelisted for standard cryptographic operations

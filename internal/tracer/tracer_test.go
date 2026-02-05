@@ -1,0 +1,199 @@
+package tracer
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+func TestNewTracer(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", 0)
+	if tracer == nil {
+		t.Fatal("NewTracer returned nil")
+	}
+	if tracer.timeout != DefaultTimeout {
+		t.Errorf("expected default timeout %v, got %v", DefaultTimeout, tracer.timeout)
+	}
+
+	tracer = NewTracer("http://localhost:8545", 10*time.Second)
+	if tracer.timeout != 10*time.Second {
+		t.Errorf("expected timeout 10s, got %v", tracer.timeout)
+	}
+}
+
+func TestParseHexUint64(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected uint64
+	}{
+		{"0x0", 0},
+		{"0x1", 1},
+		{"0xa", 10},
+		{"0xf", 15},
+		{"0x10", 16},
+		{"0xff", 255},
+		{"0x100", 256},
+		{"0xdeadbeef", 3735928559},
+		{"deadbeef", 3735928559}, // Without 0x prefix
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		result := parseHexUint64(tt.input)
+		if result != tt.expected {
+			t.Errorf("parseHexUint64(%q) = %d, want %d", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestExtractCallTargets(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
+
+	// Test nested call structure
+	frame := &callFrame{
+		Type: "CALL",
+		From: "0xsender",
+		To:   "0xcontract1",
+		Calls: []callFrame{
+			{
+				Type: "STATICCALL",
+				From: "0xcontract1",
+				To:   "0xcontract2",
+				Calls: []callFrame{
+					{
+						Type: "CALL",
+						From: "0xcontract2",
+						To:   "0xcontract3",
+					},
+				},
+			},
+			{
+				Type: "DELEGATECALL",
+				From: "0xcontract1",
+				To:   "0xlibrary",
+			},
+		},
+	}
+
+	result := &TraceResult{CallTargets: make([]CallTarget, 0)}
+	tracer.extractCallTargets(frame, result, 0)
+
+	if len(result.CallTargets) != 4 {
+		t.Errorf("expected 4 call targets, got %d", len(result.CallTargets))
+	}
+
+	// Verify depths
+	expectedDepths := []int{0, 1, 2, 1}
+	for i, depth := range expectedDepths {
+		if i < len(result.CallTargets) && result.CallTargets[i].Depth != depth {
+			t.Errorf("target %d: expected depth %d, got %d", i, depth, result.CallTargets[i].Depth)
+		}
+	}
+}
+
+func TestExtractCallTargets_CreateOperations(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
+
+	frame := &callFrame{
+		Type: "CALL",
+		From: "0xsender",
+		To:   "0xfactory",
+		Calls: []callFrame{
+			{
+				Type: "CREATE",
+				From: "0xfactory",
+				To:   "0xnewcontract1",
+			},
+			{
+				Type: "CREATE2",
+				From: "0xfactory",
+				To:   "0xnewcontract2",
+			},
+		},
+	}
+
+	result := &TraceResult{CallTargets: make([]CallTarget, 0)}
+	tracer.extractCallTargets(frame, result, 0)
+
+	if !result.HasCreate {
+		t.Error("expected HasCreate to be true")
+	}
+	if !result.HasCreate2 {
+		t.Error("expected HasCreate2 to be true")
+	}
+	if len(result.CallTargets) != 3 {
+		t.Errorf("expected 3 call targets, got %d", len(result.CallTargets))
+	}
+}
+
+func TestTraceCall_MockServer(t *testing.T) {
+	// Create a mock server that returns a valid trace result
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"type":    "CALL",
+			"from":    "0xsender",
+			"to":      "0xcontract",
+			"gasUsed": "0x5208",
+			"calls": []map[string]any{
+				{
+					"type": "STATICCALL",
+					"from": "0xcontract",
+					"to":   "0x0000000000000000000000000000000000000001",
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tracer := NewTracer(server.URL, 5*time.Second)
+	result, err := tracer.TraceCall(context.Background(), "0xsender", "0xcontract", "0x", "", "latest")
+	if err != nil {
+		t.Fatalf("TraceCall failed: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if len(result.CallTargets) != 2 {
+		t.Errorf("expected 2 call targets, got %d", len(result.CallTargets))
+	}
+
+	if result.GasUsed != 21000 { // 0x5208 = 21000
+		t.Errorf("expected gasUsed 21000, got %d", result.GasUsed)
+	}
+}
+
+func TestTraceCall_RPCError(t *testing.T) {
+	// Create a mock server that returns an RPC error
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"error": map[string]any{
+			"code":    -32000,
+			"message": "execution reverted",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tracer := NewTracer(server.URL, 5*time.Second)
+	_, err := tracer.TraceCall(context.Background(), "0xsender", "0xcontract", "0x", "", "latest")
+	if err == nil {
+		t.Fatal("expected error for RPC error response")
+	}
+}
