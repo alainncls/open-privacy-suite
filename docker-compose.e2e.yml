@@ -53,6 +53,8 @@ services:
       - PORT=8080
       - ENVIRONMENT=test
       - VERIFIER_ID=did:privado:verifier:e2e-test-verifier-0000000000000000
+      - JWT_SECRET=e2e-test-jwt-secret-not-for-production
+      - JWT_REFRESH_SECRET=e2e-test-refresh-secret-not-for-production
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
       - ENABLE_RUNTIME_TRACING=true
