@@ -24,7 +24,14 @@ async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRe
 }
 
 test.describe('Pre-registered Addresses and Factory Config', () => {
-  test.beforeEach(async ({ page }) => {
+  // Skip this entire test suite when runtime tracing is enabled
+  // (preregistration is disabled when runtime tracing is enabled)
+  test.beforeEach(async ({ page, request }) => {
+    // Check if runtime tracing is enabled - if so, skip all tests in this suite
+    if (await isRuntimeTracingEnabled(request)) {
+      test.skip();
+      return;
+    }
     await mockLoginViaAPI(page);
   });
 

@@ -15,6 +15,20 @@ import { getJWTToken } from '../../helpers/auth.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
+// Helper to check if runtime tracing is enabled (preregistration is disabled when enabled)
+async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
+  try {
+    const response = await request.get(`${API_URL}/api/v1/status`);
+    if (response.ok()) {
+      const data = await response.json();
+      return data?.security?.runtime_tracing_enabled === true;
+    }
+  } catch {
+    // If we can't check, assume it's disabled
+  }
+  return false;
+}
+
 // Helper to make authenticated RPC call
 async function rpcCall(request: any, token: string, method: string, params: any[] = []) {
   const resp = await request.post(`${API_URL}/`, {
@@ -109,6 +123,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
   let userToken: string;
   let testRunId: string;
   let factoryAddress: string;
+  let skipAllTests = false;
 
   // Preregistered addresses for the DeFi stack
   let tokenAddress: string;
@@ -116,6 +131,11 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
   let routerAddress: string;
 
   test.beforeAll(async ({ request }) => {
+    // Skip entire suite if runtime tracing is enabled (preregistration is disabled)
+    if (await isRuntimeTracingEnabled(request)) {
+      skipAllTests = true;
+      return;
+    }
     // Generate unique test run ID
     testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     orgSlug = `defi-test-${testRunId}`;
@@ -181,6 +201,13 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     await apiCall(request, 'PUT', `/api/v1/orgs/${orgId}/config/create3`, {
       factory: factoryAddress
     });
+  });
+
+  // Skip all tests in this suite if runtime tracing is enabled
+  test.beforeEach(async () => {
+    if (skipAllTests) {
+      test.skip();
+    }
   });
 
   test.describe('Address Preregistration', () => {
@@ -640,8 +667,15 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
 
 test.describe('DeFi Deployment Error Handling', () => {
   let testOrgId: string;
+  let skipAllTests = false;
 
   test.beforeAll(async ({ request }) => {
+    // Skip entire suite if runtime tracing is enabled (preregistration is disabled)
+    if (await isRuntimeTracingEnabled(request)) {
+      skipAllTests = true;
+      return;
+    }
+
     const testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     const orgResp = await apiCall(request, 'POST', '/api/v1/orgs', {
@@ -652,6 +686,13 @@ test.describe('DeFi Deployment Error Handling', () => {
       throw new Error(`Failed to create org: ${JSON.stringify(orgResp.body)}`);
     }
     testOrgId = orgResp.body.id;
+  });
+
+  // Skip all tests in this suite if runtime tracing is enabled
+  test.beforeEach(async () => {
+    if (skipAllTests) {
+      test.skip();
+    }
   });
 
   test('DEFI-021: Invalid factory address rejected', async ({ request }) => {
