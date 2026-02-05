@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey } from 'lucide-react';
+import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey, Building2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/contexts/AuthContext';
-import { ethLinkApiMethods, EthAddressResponse } from '@/api/auth';
+import { ethLinkApiMethods, EthAddressResponse, userApiMethods, UserOrg } from '@/api/auth';
 import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
 
 export function SuccessPage() {
@@ -13,6 +13,7 @@ export function SuccessPage() {
   const { isAuthenticated, accessToken, userDID, logout, isLoading } = useAuth();
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
+  const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
   const [showMetaMaskError, setShowMetaMaskError] = useState(false);
 
@@ -39,6 +40,22 @@ export function SuccessPage() {
     };
 
     loadAddresses();
+  }, [accessToken]);
+
+  // Load user organizations
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const loadOrgs = async () => {
+      try {
+        const response = await userApiMethods.getMyOrganizations(accessToken);
+        setUserOrgs(response.organizations);
+      } catch {
+        // No orgs or error
+      }
+    };
+
+    loadOrgs();
   }, [accessToken]);
 
   // Copy to clipboard with fallback for mobile
@@ -156,6 +173,8 @@ export function SuccessPage() {
                     variant="outline"
                     size="icon"
                     className="flex-shrink-0"
+                    title="Copy token"
+                    data-testid="copy-token-btn"
                   >
                     {copied === 'token' ? (
                       <Check className="w-4 h-4 text-[#166534]" />
@@ -164,6 +183,26 @@ export function SuccessPage() {
                     )}
                   </Button>
                 </div>
+                {/* Foundry/Hardhat export command */}
+                <div className="flex items-center gap-2 mt-2">
+                  <Button
+                    onClick={() => copyToClipboard(`export ETH_RPC_HEADERS="Authorization: Bearer ${accessToken}"`, 'foundry')}
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 text-xs"
+                    data-testid="copy-foundry-btn"
+                  >
+                    {copied === 'foundry' ? (
+                      <Check className="w-3 h-3 mr-2 text-[#166534]" />
+                    ) : (
+                      <Copy className="w-3 h-3 mr-2" />
+                    )}
+                    Copy for Foundry/Hardhat
+                  </Button>
+                </div>
+                <p className="text-xs text-[#94A3B8]">
+                  Token expires in 30 minutes. Use with <code className="bg-[#F1F5F9] px-1 rounded">forge script --rpc-url {rpcEndpoint}</code>
+                </p>
               </div>
             )}
 
@@ -283,6 +322,48 @@ export function SuccessPage() {
                 </div>
               </div>
             )}
+
+            {/* Organizations */}
+            {userOrgs.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
+                <p className="text-xs text-[#94A3B8] mb-2">
+                  Organizations {userOrgs.length > 1 && <span className="text-[#F59E0B]">(multi-org: use org ID in RPC URL)</span>}
+                </p>
+                <div className="space-y-2">
+                  {userOrgs.map((org) => (
+                    <div
+                      key={org.id}
+                      className="flex items-center gap-2 p-2 bg-[#F1F5F9] rounded-lg"
+                    >
+                      <Building2 className="w-3 h-3 text-[#8950FA] flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[#374151] text-xs font-medium block">{org.name}</span>
+                        <span className="text-[#94A3B8] font-mono text-xs truncate block" title={org.id}>
+                          {org.id}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(org.id, `org-${org.id}`)}
+                        className="text-[#94A3B8] hover:text-[#374151] p-1 flex-shrink-0"
+                        title="Copy org ID for RPC URL"
+                        data-testid={`copy-org-${org.slug}`}
+                      >
+                        {copied === `org-${org.id}` ? (
+                          <Check className="w-3 h-3 text-[#166534]" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {userOrgs.length > 1 && (
+                  <p className="text-xs text-[#94A3B8] mt-2">
+                    Use <code className="bg-[#F1F5F9] px-1 rounded">{rpcEndpoint}/{'<org-id>'}</code> to deploy to a specific org
+                  </p>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -292,6 +373,18 @@ export function SuccessPage() {
             <CardTitle className="text-sm">Quick Start</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div>
+              <p className="text-xs text-[#94A3B8] mb-1">Foundry (forge/cast)</p>
+              <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
+{`# Set auth header (use "Copy for Foundry" button above)
+export ETH_RPC_HEADERS="Authorization: Bearer <token>"
+
+# Deploy contracts
+forge script script/Deploy.s.sol \\
+  --rpc-url ${rpcEndpoint} --broadcast`}
+              </pre>
+            </div>
+
             <div>
               <p className="text-xs text-[#94A3B8] mb-1">cURL</p>
               <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">

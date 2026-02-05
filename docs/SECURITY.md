@@ -16,12 +16,24 @@ clique_*             - Consensus manipulation
 les_*                - Light client protocol
 eth_sign             - Arbitrary message signing
 eth_signTransaction  - Transaction signing
-eth_sendRawTransaction - Pre-signed transactions (bypasses ALL validation)
 eth_subscribe        - WebSocket subscriptions (bypasses filtering)
 eth_unsubscribe      - WebSocket subscriptions
 ```
 
-**Note on eth_sendRawTransaction:** This method is **always blocked** because raw transactions are pre-signed and cannot be inspected for RBAC validation. The proxy cannot determine the sender, target contract, or method being called without RLP decoding the signed transaction, which would bypass all security controls.
+### eth_sendRawTransaction Support
+
+**Conditional Support:** `eth_sendRawTransaction` is supported **only when runtime tracing is enabled** (`ENABLE_RUNTIME_TRACING=true`).
+
+When runtime tracing is enabled, the proxy:
+1. **Decodes the RLP transaction** to extract `from`, `to`, `data`, and `value` fields
+2. **Recovers the sender address** from the transaction signature using the chain ID
+3. **Runs full RBAC access checks** using the extracted transaction fields
+4. **Executes runtime trace validation** via `debug_traceCall` to validate all call targets
+5. **Forwards the raw transaction** to the node only if all checks pass
+
+When runtime tracing is **disabled**, `eth_sendRawTransaction` is blocked with a 403 error explaining that the method requires runtime tracing.
+
+**Location:** `internal/server/jsonrpc_processor.go` (processRawTransaction, decodeRawTransaction)
 
 **Location:** `internal/rbac/access.go`
 

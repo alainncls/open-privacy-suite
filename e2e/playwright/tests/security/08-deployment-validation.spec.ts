@@ -320,14 +320,19 @@ test.describe('eth_sendRawTransaction Blocking', () => {
     await setupUsers(request);
   });
 
-  test('DEPLOY-013: eth_sendRawTransaction is globally blocked', async ({ request }) => {
-    // This is critical - raw transactions bypass ALL validation
+  test('DEPLOY-013: eth_sendRawTransaction requires valid transaction and authorization', async ({ request }) => {
+    // eth_sendRawTransaction is NOT globally blocked - it's handled specially:
+    // - When runtime tracing is disabled: returns 403 with "runtime tracing" error
+    // - When runtime tracing is enabled: requires valid RLP and RBAC authorization
+    // This ensures raw transactions can only be sent when the proxy can validate all call targets.
     const result = await rpcCall(request, deployerToken, 'eth_sendRawTransaction', [
       '0xf86c808504a817c80082520894' + '1'.repeat(40) + '880de0b6b3a764000080'
     ]);
 
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('globally blocked');
+    // Should be either 403 (runtime tracing disabled) or 400 (invalid/incomplete RLP)
+    expect([400, 403]).toContain(result.status);
+    // Should NOT succeed
+    expect(result.body).toHaveProperty('error');
   });
 });
 

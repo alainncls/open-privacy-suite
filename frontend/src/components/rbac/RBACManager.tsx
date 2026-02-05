@@ -54,6 +54,7 @@ export default function RBACManager() {
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(false);
 
   // Derive active tab from URL
   const getActiveTab = (): RBACTab => {
@@ -66,6 +67,13 @@ export default function RBACManager() {
   };
 
   const activeTab = getActiveTab();
+
+  // Redirect away from preregistered tab if runtime tracing is enabled
+  useEffect(() => {
+    if (runtimeTracingEnabled && activeTab === 'preregistered') {
+      navigate('/admin/rbac/contracts' + (selectedOrg ? `?org=${selectedOrg.id}` : ''));
+    }
+  }, [runtimeTracingEnabled, activeTab, navigate, selectedOrg]);
 
   const loadOrganizations = async () => {
     try {
@@ -108,6 +116,17 @@ export default function RBACManager() {
 
   useEffect(() => {
     loadOrganizations();
+    // Load runtime tracing status to determine if preregistration tab should be shown
+    const loadStatus = async () => {
+      try {
+        const response = await rbacApi.status.get();
+        setRuntimeTracingEnabled(response.data?.security?.runtime_tracing_enabled ?? false);
+      } catch {
+        // If we can't check, assume runtime tracing is disabled (show preregistration)
+        setRuntimeTracingEnabled(false);
+      }
+    };
+    loadStatus();
   }, []);
 
   // Sync org from URL when search params change
@@ -292,10 +311,13 @@ export default function RBACManager() {
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
               </TabsTrigger>
-              <TabsTrigger value="preregistered" className="gap-2" data-testid="tab-preregistered">
-                <Hash className="w-4 h-4" />
-                <span>Pre-registered</span>
-              </TabsTrigger>
+              {/* Pre-registered tab is hidden when runtime tracing is enabled */}
+              {!runtimeTracingEnabled && (
+                <TabsTrigger value="preregistered" className="gap-2" data-testid="tab-preregistered">
+                  <Hash className="w-4 h-4" />
+                  <span>Pre-registered</span>
+                </TabsTrigger>
+              )}
             </TabsList>
           </Tabs>
 

@@ -254,21 +254,35 @@ if IsMulticallData(data) {
 
 ### HIGH-003: eth_sendRawTransaction Validation Gap
 
-**Location**: `internal/rbac/access.go`
-**Severity**: HIGH
-**Confirmed**: YES (code review)
+**Location**: `internal/server/jsonrpc_processor.go`
+**Severity**: HIGH → **MITIGATED** (when `ENABLE_RUNTIME_TRACING=true`)
+**Confirmed**: YES (code review + load testing)
 
 **Description**:
-`eth_sendRawTransaction` is globally blocked, but if an attacker finds a way to bypass the block (e.g., via case sensitivity), raw transactions completely bypass:
-- Deployment validation
-- Contract ownership checks
-- All RBAC controls
+Previously, `eth_sendRawTransaction` was globally blocked because raw transactions are pre-signed and couldn't be inspected for RBAC validation.
 
-The raw transaction is pre-signed and cannot be inspected for RBAC validation.
+**MITIGATION STATUS**: When runtime tracing is enabled (`ENABLE_RUNTIME_TRACING=true`), this vulnerability is **fully mitigated**. The proxy now:
 
-**Current Mitigation**: Method is blocked globally.
+1. **Decodes the RLP transaction** using `types.Transaction.UnmarshalBinary()`
+2. **Recovers the sender address** from the signature via `types.Sender(signer, tx)`
+3. **Extracts transaction fields**: `from`, `to`, `data`, `value`
+4. **Runs full RBAC access checks** with the extracted fields
+5. **Executes runtime trace validation** via `debug_traceCall` before forwarding
+6. **Forwards the raw transaction** only if all validation passes
 
-**Recommendation**: Ensure case-insensitive blocking (see HIGH-001).
+**Security Guarantees**:
+- All RBAC controls enforced (method allowlist, contract allowlist, rate limits)
+- Cross-org isolation validated via runtime tracing
+- Deployment validation applied if `to` is empty
+- Same security level as `eth_sendTransaction` with runtime tracing
+
+**When Runtime Tracing is Disabled**:
+- `eth_sendRawTransaction` is blocked with HTTP 403
+- Error message: "eth_sendRawTransaction requires runtime tracing to be enabled"
+
+**Implementation**: `internal/server/jsonrpc_processor.go:processRawTransaction()`
+
+**Remaining Concern**: Case-sensitivity (see HIGH-001) - ensure method name matching is case-insensitive.
 
 ---
 
@@ -519,12 +533,14 @@ The following security controls were tested and confirmed working:
 ## RUNTIME TRACING SECURITY IMPROVEMENTS
 
 **Added: 2026-02-04**
+**Updated: 2026-02-05**
 
 The introduction of runtime transaction tracing (`ENABLE_RUNTIME_TRACING=true`) addresses several security findings:
 
 | Finding | Previous Status | New Status | Notes |
 |---------|----------------|------------|-------|
 | HIGH-002 | Vulnerable | **MITIGATED** | All internal calls traced and validated |
+| HIGH-003 | Blocked | **MITIGATED** | eth_sendRawTransaction now supported with full validation |
 | Cross-org DELEGATECALL | Partial | **FULL** | Complete call tree validation |
 | Custom Multicall | Vulnerable | **MITIGATED** | Any batched calls detected via trace |
 | Dynamic call targets | Blocked at deploy | **Validated at runtime** | Better compatibility + security |
@@ -534,6 +550,7 @@ The introduction of runtime transaction tracing (`ENABLE_RUNTIME_TRACING=true`) 
 2. Validation of ALL CALL/DELEGATECALL/STATICCALL targets in the call tree
 3. Detection of CREATE/CREATE2 operations in runtime
 4. Comprehensive cross-organization isolation
+5. **eth_sendRawTransaction support** - RLP decoding extracts transaction fields for full RBAC validation
 
 **Trade-offs:**
 - Performance: ~50-200ms additional latency per transaction

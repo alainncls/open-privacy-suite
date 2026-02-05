@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
 
 	"privacy-proxy/internal/proxy"
@@ -35,6 +37,7 @@ type AccessLogger interface {
 // ProcessRequest represents a validated JSON-RPC request ready for processing.
 type ProcessRequest struct {
 	UserID   string
+	OrgID    string // Optional: specify which org to use (for users with multiple memberships)
 	Method   string
 	Params   []any
 	Body     []byte
@@ -121,10 +124,15 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 
 // Process handles the core business logic for a JSON-RPC request:
 // 1. RBAC access check
-// 2. Runtime tracing (if enabled, for eth_sendTransaction)
+// 2. Runtime tracing (if enabled, for eth_sendTransaction and eth_sendRawTransaction)
 // 3. Rate limiting
 // 4. Forwarding to the target node
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
+	// Handle eth_sendRawTransaction specially - requires runtime tracing
+	if req.Method == "eth_sendRawTransaction" {
+		return p.processRawTransaction(ctx, req)
+	}
+
 	// Build RBAC access check request
 	var requiredClaims []rbac.Claim
 	if claim := rbac.ClassifyOperation(req.Method, req.Params); claim != "" {
@@ -135,6 +143,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
+		OrgID:            req.OrgID,
 		Method:           req.Method,
 		Params:           req.Params,
 		TargetAddress:    targetAddr,
@@ -389,6 +398,274 @@ func isSimpleValueTransfer(data string) bool {
 	// Normalize and check for empty calldata
 	data = strings.TrimSpace(data)
 	return data == "" || data == "0x" || data == "0X"
+}
+
+// processRawTransaction handles eth_sendRawTransaction with RLP decoding.
+// This method is ONLY allowed when runtime tracing is enabled, because we need
+// to trace all call targets to validate cross-org isolation.
+func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *ProcessRequest) *ProcessResult {
+	// eth_sendRawTransaction requires runtime tracing for security
+	if p.runtimeTracer == nil || !p.runtimeTracer.IsEnabled() {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "eth_sendRawTransaction requires runtime tracing to be enabled for security validation",
+			},
+		}
+	}
+
+	// Extract and decode the raw transaction
+	rawTxHex, err := extractRawTxHex(req.Params)
+	if err != nil {
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusBadRequest,
+				Message:    "invalid raw transaction: " + err.Error(),
+			},
+		}
+	}
+
+	// Decode RLP to get transaction details
+	from, to, data, value, err := decodeRawTransaction(rawTxHex)
+	if err != nil {
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusBadRequest,
+				Message:    "failed to decode raw transaction: " + err.Error(),
+			},
+		}
+	}
+
+	// Determine the operation type and required claims
+	var requiredClaims []rbac.Claim
+	isDeployment := to == ""
+	if isDeployment {
+		requiredClaims = []rbac.Claim{rbac.ClaimDeploy}
+	} else {
+		requiredClaims = []rbac.Claim{rbac.ClaimWrite}
+	}
+
+	// Build RBAC access check request
+	// For raw transactions, we use eth_sendTransaction for classification
+	// since the operation is equivalent
+	accessReq := &rbac.AccessCheckRequest{
+		UserExternalID:   req.UserID,
+		OrgID:            req.OrgID,
+		Method:           "eth_sendTransaction", // Use sendTransaction for RBAC classification
+		Params:           buildTxParams(from, to, data, value),
+		TargetAddress:    to,
+		FunctionSelector: extractSelector(data),
+		RequiredClaims:   requiredClaims,
+	}
+
+	// Check RBAC access
+	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
+	if err != nil {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "access check failed: " + err.Error(),
+			},
+		}
+	}
+
+	if !result.Allowed {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "access denied: " + result.Reason,
+			},
+		}
+	}
+
+	// Runtime tracing validation (always runs for raw transactions)
+	if to != "" && !isSimpleValueTransfer(data) {
+		traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
+		if traceErr != nil {
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+			return &ProcessResult{
+				Error: traceErr,
+			}
+		}
+	}
+
+	// Check rate limits
+	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
+	if !allowed {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusTooManyRequests, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusTooManyRequests,
+				Message:    rateLimitReason,
+			},
+		}
+	}
+
+	// Forward the original raw transaction to node
+	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	if err != nil {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusBadGateway, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusBadGateway,
+				Message:    fmt.Sprintf("failed to forward request: %v", err),
+			},
+		}
+	}
+
+	// Log successful access
+	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+
+	return &ProcessResult{
+		StatusCode:   statusCode,
+		ResponseBody: responseBody,
+	}
+}
+
+// validateRawTxWithTracing performs runtime trace validation for raw transactions.
+func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *ProcessRequest, from, to, data, value string) *ProcessError {
+	// Get user info for trace validation
+	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
+	if err != nil || user == nil {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "failed to get user for trace validation",
+		}
+	}
+
+	// Get user's org memberships
+	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "failed to get user memberships for trace validation",
+		}
+	}
+
+	userOrgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			userOrgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	// Perform the trace
+	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	if err != nil {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("runtime trace failed: %v", err),
+		}
+	}
+
+	if traceResult == nil {
+		return nil // Tracing not applicable
+	}
+
+	// Validate the trace against org isolation rules
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult)
+	if err != nil {
+		return &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    fmt.Sprintf("trace validation error: %v", err),
+		}
+	}
+
+	if !validationResult.Allowed {
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("cross-org call denied: %s", validationResult.Reason),
+		}
+	}
+
+	return nil
+}
+
+// extractRawTxHex extracts the raw transaction hex from eth_sendRawTransaction params.
+func extractRawTxHex(params []any) (string, error) {
+	if len(params) == 0 {
+		return "", fmt.Errorf("missing transaction parameter")
+	}
+
+	rawTxHex, ok := params[0].(string)
+	if !ok {
+		return "", fmt.Errorf("transaction parameter must be a string")
+	}
+
+	return rawTxHex, nil
+}
+
+// decodeRawTransaction decodes an RLP-encoded transaction and extracts its fields.
+// Returns from (recovered from signature), to, data, value as hex strings.
+func decodeRawTransaction(rawTxHex string) (from, to, data, value string, err error) {
+	// Remove 0x prefix
+	rawTxHex = strings.TrimPrefix(rawTxHex, "0x")
+	rawTxHex = strings.TrimPrefix(rawTxHex, "0X")
+
+	// Decode hex to bytes
+	rawTxBytes, err := hex.DecodeString(rawTxHex)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("invalid hex: %w", err)
+	}
+
+	// Decode RLP transaction
+	tx := new(types.Transaction)
+	if err := tx.UnmarshalBinary(rawTxBytes); err != nil {
+		return "", "", "", "", fmt.Errorf("failed to decode transaction: %w", err)
+	}
+
+	// Extract 'to' address (nil for contract creation)
+	if tx.To() != nil {
+		to = tx.To().Hex()
+	}
+
+	// Extract data
+	if len(tx.Data()) > 0 {
+		data = "0x" + hex.EncodeToString(tx.Data())
+	}
+
+	// Extract value
+	if tx.Value() != nil && tx.Value().Sign() > 0 {
+		value = "0x" + tx.Value().Text(16)
+	}
+
+	// Recover 'from' address from signature
+	signer := types.LatestSignerForChainID(tx.ChainId())
+	fromAddr, err := types.Sender(signer, tx)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to recover sender: %w", err)
+	}
+	from = fromAddr.Hex()
+
+	return from, to, data, value, nil
+}
+
+// buildTxParams builds transaction params for RBAC checking.
+func buildTxParams(from, to, data, value string) []any {
+	txObj := map[string]any{
+		"from": from,
+	}
+	if to != "" {
+		txObj["to"] = to
+	}
+	if data != "" {
+		txObj["data"] = data
+	}
+	if value != "" {
+		txObj["value"] = value
+	}
+	return []any{txObj}
+}
+
+// extractSelector extracts the function selector from calldata.
+func extractSelector(data string) string {
+	if len(data) < 10 {
+		return ""
+	}
+	return strings.ToLower(data[:10])
 }
 
 // extractTxParams extracts transaction parameters from eth_sendTransaction params.

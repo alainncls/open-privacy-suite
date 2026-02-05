@@ -13,11 +13,35 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
+// isRuntimeTracingEnabled returns true if runtime tracing is enabled.
+// When runtime tracing is enabled, preregistration is unnecessary because
+// all calls are validated at runtime via debug_traceCall.
+func (s *Server) isRuntimeTracingEnabled() bool {
+	return s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
+}
+
+// requirePreregistrationEnabled returns true if the request should proceed.
+// Returns false (and sends 404 response) if preregistration is disabled due to runtime tracing.
+func (s *Server) requirePreregistrationEnabled(c *gin.Context) bool {
+	if s.isRuntimeTracingEnabled() {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "preregistration is disabled when runtime tracing is enabled",
+			"details": "With runtime tracing, all contract calls are validated at execution time. Preregistration is not needed.",
+		})
+		return false
+	}
+	return true
+}
+
 // Preregistered Address handlers
 
 // preregisterAddresses handles POST /orgs/:org_id/addresses/preregister
 // It generates CREATE3 addresses and preregisters them for the organization.
 func (s *Server) preregisterAddresses(c *gin.Context) {
+	// Preregistration is disabled when runtime tracing is enabled
+	if !s.requirePreregistrationEnabled(c) {
+		return
+	}
 	orgID := c.Param("org_id")
 
 	// Verify the organization exists
@@ -133,6 +157,11 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 
 // listPreregisteredAddresses handles GET /orgs/:org_id/addresses/preregistered
 func (s *Server) listPreregisteredAddresses(c *gin.Context) {
+	// Preregistration is disabled when runtime tracing is enabled
+	if !s.requirePreregistrationEnabled(c) {
+		return
+	}
+
 	orgID := c.Param("org_id")
 
 	// Verify the organization exists
@@ -177,6 +206,11 @@ func (s *Server) listPreregisteredAddresses(c *gin.Context) {
 
 // deletePreregisteredAddress handles DELETE /orgs/:org_id/addresses/preregistered/:address
 func (s *Server) deletePreregisteredAddress(c *gin.Context) {
+	// Preregistration is disabled when runtime tracing is enabled
+	if !s.requirePreregistrationEnabled(c) {
+		return
+	}
+
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 
@@ -229,6 +263,11 @@ type preregisteredAddressResponse struct {
 // updatePreregisteredAddressABI handles PUT /orgs/:org_id/addresses/preregistered/:address/abi
 // It updates the constructor ABI for an existing preregistered address.
 func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
+	// Preregistration is disabled when runtime tracing is enabled
+	if !s.requirePreregistrationEnabled(c) {
+		return
+	}
+
 	orgID := c.Param("org_id")
 	address := c.Param("address")
 

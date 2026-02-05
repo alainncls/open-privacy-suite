@@ -184,3 +184,23 @@ export function isMobileDevice(): boolean {
     navigator.userAgent
   );
 }
+
+// User organization info
+export interface UserOrg {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface UserOrgsResponse {
+  organizations: UserOrg[];
+}
+
+export const userApiMethods = {
+  // Get user's organizations
+  getMyOrganizations: async (accessToken: string): Promise<UserOrgsResponse> => {
+    const client = createAuthenticatedClient(accessToken);
+    const response = await client.get<UserOrgsResponse>('/me/orgs');
+    return response.data;
+  },
+};

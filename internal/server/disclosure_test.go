@@ -397,7 +397,7 @@ func TestGetMyDisclosureRequests(t *testing.T) {
 	}
 	database.CreateRequest(ctx, approvedReq)
 
-	req := httptest.NewRequest("GET", "/api/me/disclosure/requests", nil)
+	req := httptest.NewRequest("GET", "/api/v1/me/disclosure/requests", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
 
@@ -550,7 +550,7 @@ func TestApproveDisclosureRequest(t *testing.T) {
 			requestID := tt.setupRequest()
 
 			jsonBody, _ := json.Marshal(tt.body)
-			req := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+requestID+"/approve", bytes.NewReader(jsonBody))
+			req := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+requestID+"/approve", bytes.NewReader(jsonBody))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -594,7 +594,7 @@ func TestRejectDisclosureRequest(t *testing.T) {
 		}
 		jsonBody, _ := json.Marshal(body)
 
-		httpReq := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+req.ID+"/reject", bytes.NewReader(jsonBody))
+		httpReq := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+req.ID+"/reject", bytes.NewReader(jsonBody))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+token)
 		httpReq.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -629,7 +629,7 @@ func TestRejectDisclosureRequest(t *testing.T) {
 		body := map[string]any{} // Missing reason - reason is optional
 		jsonBody, _ := json.Marshal(body)
 
-		httpReq := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+req.ID+"/reject", bytes.NewReader(jsonBody))
+		httpReq := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+req.ID+"/reject", bytes.NewReader(jsonBody))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+token)
 		httpReq.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -684,7 +684,7 @@ func TestRevokeDisclosureRequest(t *testing.T) {
 		}
 		jsonBody, _ := json.Marshal(body)
 
-		httpReq := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+req.ID+"/revoke", bytes.NewReader(jsonBody))
+		httpReq := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+req.ID+"/revoke", bytes.NewReader(jsonBody))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+token)
 		httpReq.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -733,7 +733,7 @@ func TestGetMyActiveGrants(t *testing.T) {
 	}
 	database.CreateGrant(ctx, grant)
 
-	httpReq := httptest.NewRequest("GET", "/api/me/disclosure/grants", nil)
+	httpReq := httptest.NewRequest("GET", "/api/v1/me/disclosure/grants", nil)
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("X-Forwarded-For", "127.0.0.1")
 
@@ -1241,7 +1241,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	json.Unmarshal(w1.Body.Bytes(), &createdRequest)
 
 	// 4. Target user views pending requests
-	viewReq := httptest.NewRequest("GET", "/api/me/disclosure/requests", nil)
+	viewReq := httptest.NewRequest("GET", "/api/v1/me/disclosure/requests", nil)
 	viewReq.Header.Set("Authorization", "Bearer "+targetToken)
 	viewReq.Header.Set("X-Forwarded-For", "127.0.0.1")
 
@@ -1260,7 +1260,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	}
 	approveJSON, _ := json.Marshal(approveBody)
 
-	approveReq := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+createdRequest.ID+"/approve", bytes.NewReader(approveJSON))
+	approveReq := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+createdRequest.ID+"/approve", bytes.NewReader(approveJSON))
 	approveReq.Header.Set("Content-Type", "application/json")
 	approveReq.Header.Set("Authorization", "Bearer "+targetToken)
 	approveReq.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -1343,7 +1343,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	}
 
 	// 10. Target user views active grants
-	grantsReq := httptest.NewRequest("GET", "/api/me/disclosure/grants", nil)
+	grantsReq := httptest.NewRequest("GET", "/api/v1/me/disclosure/grants", nil)
 	grantsReq.Header.Set("Authorization", "Bearer "+targetToken)
 	grantsReq.Header.Set("X-Forwarded-For", "127.0.0.1")
 
@@ -1361,7 +1361,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	}
 	revokeJSON, _ := json.Marshal(revokeBody)
 
-	revokeReq := httptest.NewRequest("POST", "/api/me/disclosure/requests/"+createdRequest.ID+"/revoke", bytes.NewReader(revokeJSON))
+	revokeReq := httptest.NewRequest("POST", "/api/v1/me/disclosure/requests/"+createdRequest.ID+"/revoke", bytes.NewReader(revokeJSON))
 	revokeReq.Header.Set("Content-Type", "application/json")
 	revokeReq.Header.Set("Authorization", "Bearer "+targetToken)
 	revokeReq.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -1380,7 +1380,7 @@ func TestDisclosure_FullWorkflow(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w10.Code)
 
 	// 13. Verify no more active grants
-	grantsReq2 := httptest.NewRequest("GET", "/api/me/disclosure/grants", nil)
+	grantsReq2 := httptest.NewRequest("GET", "/api/v1/me/disclosure/grants", nil)
 	grantsReq2.Header.Set("Authorization", "Bearer "+targetToken)
 	grantsReq2.Header.Set("X-Forwarded-For", "127.0.0.1")
 

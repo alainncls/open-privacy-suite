@@ -478,8 +478,10 @@ func TestIsMethodBlocked(t *testing.T) {
 		// Should NOT be blocked - normal write operations
 		{"eth_sendTransaction", "eth_sendTransaction", false},
 
-		// Should be blocked - raw transaction (bypasses RBAC validation)
-		{"eth_sendRawTransaction", "eth_sendRawTransaction", true},
+		// Should NOT be blocked by IsMethodBlocked - eth_sendRawTransaction is handled
+		// specially by CheckAccess (allowed only when runtime tracing is enabled).
+		// See access.go GlobalBlockedMethods comment for details.
+		{"eth_sendRawTransaction", "eth_sendRawTransaction", false},
 
 		// Should NOT be blocked - other namespaces
 		{"net_version", "net_version", false},
