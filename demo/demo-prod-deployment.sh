@@ -19,6 +19,7 @@
 # Usage:
 #   export ETH_RPC_HEADERS="Authorization: Bearer eyJ..."  # From web UI "Copy for Foundry" button
 #   export PRIVATE_KEY="0x..."     # Your deployer private key
+#   export ORG_ID="174601bb-..."   # Optional: org ID (required if user has multiple orgs)
 #   ./demo-prod-deployment.sh
 # =============================================================================
 
@@ -93,13 +94,25 @@ if [ -z "$PRIVATE_KEY" ]; then
 fi
 
 # Configuration with defaults
-: "${PROXY_RPC_URL:=http://localhost:8080/rpc}"
+: "${PROXY_BASE_URL:=http://localhost:8080}"
 : "${CHAIN_ID:=31337}"
+
+# Build RPC URL - append org_id if specified (required for multi-org users)
+if [ -n "$ORG_ID" ]; then
+    PROXY_RPC_URL="${PROXY_BASE_URL}/rpc/${ORG_ID}"
+else
+    PROXY_RPC_URL="${PROXY_BASE_URL}/rpc"
+fi
 
 print_step "Step 1: Checking Configuration"
 
 print_value "Proxy RPC URL" "$PROXY_RPC_URL"
 print_value "Chain ID" "$CHAIN_ID"
+if [ -n "$ORG_ID" ]; then
+    print_value "Organization ID" "$ORG_ID"
+else
+    print_info "No ORG_ID set (using default org)"
+fi
 
 # Extract token from ETH_RPC_HEADERS for display
 TOKEN_PREVIEW=$(echo "$ETH_RPC_HEADERS" | sed 's/Authorization: Bearer //' | head -c 20)

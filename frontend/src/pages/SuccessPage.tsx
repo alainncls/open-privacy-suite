@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey } from 'lucide-react';
+import { Shield, Copy, Check, Wallet, Key, RefreshCw, FileKey, Building2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AlertDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/contexts/AuthContext';
-import { ethLinkApiMethods, EthAddressResponse } from '@/api/auth';
+import { ethLinkApiMethods, EthAddressResponse, userApiMethods, UserOrg } from '@/api/auth';
 import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
 
 export function SuccessPage() {
@@ -13,6 +13,7 @@ export function SuccessPage() {
   const { isAuthenticated, accessToken, userDID, logout, isLoading } = useAuth();
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
+  const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [isAddingNetwork, setIsAddingNetwork] = useState(false);
   const [showMetaMaskError, setShowMetaMaskError] = useState(false);
 
@@ -39,6 +40,22 @@ export function SuccessPage() {
     };
 
     loadAddresses();
+  }, [accessToken]);
+
+  // Load user organizations
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const loadOrgs = async () => {
+      try {
+        const response = await userApiMethods.getMyOrganizations(accessToken);
+        setUserOrgs(response.organizations);
+      } catch {
+        // No orgs or error
+      }
+    };
+
+    loadOrgs();
   }, [accessToken]);
 
   // Copy to clipboard with fallback for mobile
@@ -303,6 +320,48 @@ export function SuccessPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Organizations */}
+            {userOrgs.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
+                <p className="text-xs text-[#94A3B8] mb-2">
+                  Organizations {userOrgs.length > 1 && <span className="text-[#F59E0B]">(multi-org: use org ID in RPC URL)</span>}
+                </p>
+                <div className="space-y-2">
+                  {userOrgs.map((org) => (
+                    <div
+                      key={org.id}
+                      className="flex items-center gap-2 p-2 bg-[#F1F5F9] rounded-lg"
+                    >
+                      <Building2 className="w-3 h-3 text-[#8950FA] flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[#374151] text-xs font-medium block">{org.name}</span>
+                        <span className="text-[#94A3B8] font-mono text-xs truncate block" title={org.id}>
+                          {org.id}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(org.id, `org-${org.id}`)}
+                        className="text-[#94A3B8] hover:text-[#374151] p-1 flex-shrink-0"
+                        title="Copy org ID for RPC URL"
+                        data-testid={`copy-org-${org.slug}`}
+                      >
+                        {copied === `org-${org.id}` ? (
+                          <Check className="w-3 h-3 text-[#166534]" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {userOrgs.length > 1 && (
+                  <p className="text-xs text-[#94A3B8] mt-2">
+                    Use <code className="bg-[#F1F5F9] px-1 rounded">{rpcEndpoint}/{'<org-id>'}</code> to deploy to a specific org
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

@@ -165,7 +165,8 @@ type AuditLogEntry struct {
 // AccessCheckRequest represents a request to check access permissions.
 type AccessCheckRequest struct {
 	UserExternalID   string  `json:"user_external_id"`
-	OrgSlug          string  `json:"org_slug,omitempty"` // Optional, defaults to "default"
+	OrgSlug          string  `json:"org_slug,omitempty"` // Optional org slug (deprecated, use OrgID)
+	OrgID            string  `json:"org_id,omitempty"`   // Optional org ID for explicit org selection
 	Method           string  `json:"method"`
 	Params           []any   `json:"params,omitempty"`            // JSON-RPC params for Multicall detection
 	TargetAddress    string  `json:"target_address,omitempty"`    // Target address (contract or EOA)

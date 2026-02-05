@@ -383,10 +383,29 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 
 	// Determine which org to use for permissions
-	// Priority: 1) explicit OrgSlug from request, 2) target-based org context, 3) user's default org
+	// Priority: 1) explicit OrgID, 2) explicit OrgSlug, 3) target-based org context, 4) user's default org
 	var org *Organization
-	if req.OrgSlug != "" && req.OrgSlug != "default" {
-		// Explicit org requested - look it up and verify membership
+	if req.OrgID != "" {
+		// Explicit org ID requested - look it up and verify membership
+		org, err = c.store.GetOrganization(ctx, req.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get organization by ID: %w", err)
+		}
+		if org == nil {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("organization not found: %s", req.OrgID),
+			}, nil
+		}
+		// Verify user is a member of this org
+		if !orgCtx.UserOrgIDs()[org.ID] {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  fmt.Sprintf("user is not a member of organization: %s", req.OrgID),
+			}, nil
+		}
+	} else if req.OrgSlug != "" && req.OrgSlug != "default" {
+		// Explicit org slug requested - look it up and verify membership
 		org, err = c.store.GetOrganizationBySlug(ctx, req.OrgSlug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get organization by slug: %w", err)

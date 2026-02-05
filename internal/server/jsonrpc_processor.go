@@ -37,6 +37,7 @@ type AccessLogger interface {
 // ProcessRequest represents a validated JSON-RPC request ready for processing.
 type ProcessRequest struct {
 	UserID   string
+	OrgID    string // Optional: specify which org to use (for users with multiple memberships)
 	Method   string
 	Params   []any
 	Body     []byte
@@ -142,6 +143,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
+		OrgID:            req.OrgID,
 		Method:           req.Method,
 		Params:           req.Params,
 		TargetAddress:    targetAddr,
@@ -449,6 +451,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// since the operation is equivalent
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
+		OrgID:            req.OrgID,
 		Method:           "eth_sendTransaction", // Use sendTransaction for RBAC classification
 		Params:           buildTxParams(from, to, data, value),
 		TargetAddress:    to,

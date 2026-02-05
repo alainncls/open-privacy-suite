@@ -369,11 +369,16 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// JSON-RPC proxy endpoint - protected by JWT
 	// Support both "/" (direct access) and "/rpc" (frontend proxy)
+	// For users with multiple org memberships, use "/rpc/:org_id" to specify org
 	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 	router.POST("/rpc", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
+	router.POST("/rpc/:org_id", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
 	// User disclosure endpoints - protected by JWT but accessible from external IPs
 	s.registerUserDisclosureRoutes(router)
+
+	// User profile endpoints - protected by JWT but accessible from external IPs
+	s.registerUserProfileRoutes(router)
 
 	// Explorer API endpoints - internal APIs for block explorer integration
 	// Protected by localhost-only middleware (called by explorer backend)
@@ -458,9 +463,13 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		return
 	}
 
+	// Extract optional org_id from path (for /rpc/:org_id route)
+	orgID := c.Param("org_id")
+
 	// Process the request through the business logic layer
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
 		UserID:   subjectStr,
+		OrgID:    orgID,
 		Method:   method,
 		Params:   params,
 		Body:     body,
@@ -864,4 +873,68 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		LatencyMs: latency,
 		Identity:  testIdentity,
 	})
+}
+
+// registerUserProfileRoutes registers user profile endpoints (JWT-authenticated, accessible from external IPs).
+func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
+	me := router.Group("/api/me")
+	me.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
+	{
+		me.GET("/orgs", s.getMyOrganizations)
+	}
+}
+
+// UserOrgResponse represents an organization the user belongs to.
+type UserOrgResponse struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// getMyOrganizations returns the organizations the authenticated user belongs to.
+func (s *Server) getMyOrganizations(c *gin.Context) {
+	subject, exists := c.Get("subject")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing subject in context"})
+		return
+	}
+
+	// Get user from database
+	user, err := s.db.GetUserByExternalID(c.Request.Context(), subject.(string))
+	if err != nil || user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+
+	// Get user's memberships
+	memberships, err := s.db.ListUserMembershipsWithDetails(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get memberships"})
+		return
+	}
+
+	// Collect unique orgs
+	orgMap := make(map[string]*UserOrgResponse)
+	for _, m := range memberships {
+		if m.Group != nil && m.Group.OrgID != "" {
+			if _, exists := orgMap[m.Group.OrgID]; !exists {
+				org, err := s.db.GetOrganization(c.Request.Context(), m.Group.OrgID)
+				if err == nil && org != nil {
+					orgMap[org.ID] = &UserOrgResponse{
+						ID:   org.ID,
+						Slug: org.Slug,
+						Name: org.Name,
+					}
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	orgs := make([]*UserOrgResponse, 0, len(orgMap))
+	for _, org := range orgMap {
+		orgs = append(orgs, org)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"organizations": orgs})
 }
