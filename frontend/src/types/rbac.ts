@@ -234,6 +234,80 @@ export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
   deploy: 'Can deploy new contracts (contract creation transactions)',
 };
 
+// RPC methods classified by required claim
+// This must match the backend classification in internal/rbac/method_claim.go
+export const RPC_METHODS_BY_CLAIM: Record<'read' | 'write', readonly string[]> = {
+  read: [
+    // Chain/Network info
+    'eth_chainId',
+    'eth_blockNumber',
+    'net_version',
+    'net_listening',
+    'net_peerCount',
+    'web3_clientVersion',
+    'web3_sha3',
+    'eth_syncing',
+    'eth_accounts',
+    // Account/Balance queries
+    'eth_getBalance',
+    'eth_getCode',
+    'eth_getStorageAt',
+    'eth_getTransactionCount',
+    // Block queries
+    'eth_getBlockByHash',
+    'eth_getBlockByNumber',
+    'eth_getBlockTransactionCountByHash',
+    'eth_getBlockTransactionCountByNumber',
+    // Transaction queries
+    'eth_getTransactionByHash',
+    'eth_getTransactionReceipt',
+    'eth_getTransactionByBlockHashAndIndex',
+    'eth_getTransactionByBlockNumberAndIndex',
+    // Contract calls (read-only)
+    'eth_call',
+    'eth_estimateGas',
+    // Gas price queries
+    'eth_gasPrice',
+    'eth_maxPriorityFeePerGas',
+    'eth_feeHistory',
+    // Logs
+    'eth_getLogs',
+    // Filter methods
+    'eth_newFilter',
+    'eth_newBlockFilter',
+    'eth_newPendingTransactionFilter',
+    'eth_getFilterChanges',
+    'eth_getFilterLogs',
+    'eth_uninstallFilter',
+  ] as const,
+  write: [
+    'eth_sendTransaction',
+    'eth_sendRawTransaction',
+    'eth_sign',
+    'eth_signTransaction',
+    'personal_sign',
+    'eth_signTypedData',
+    'eth_signTypedData_v4',
+  ] as const,
+};
+
+// All RPC methods (flattened list)
+export const ALL_RPC_METHODS = [
+  ...RPC_METHODS_BY_CLAIM.read,
+  ...RPC_METHODS_BY_CLAIM.write,
+] as const;
+
+// Helper to get required claim for a method
+export function getClaimForMethod(method: string): 'read' | 'write' | null {
+  if ((RPC_METHODS_BY_CLAIM.read as readonly string[]).includes(method)) {
+    return 'read';
+  }
+  if ((RPC_METHODS_BY_CLAIM.write as readonly string[]).includes(method)) {
+    return 'write';
+  }
+  return null;
+}
+
 // Preregistered Address - for CREATE3 address pre-registration
 export interface PreregisteredAddress {
   id: string;

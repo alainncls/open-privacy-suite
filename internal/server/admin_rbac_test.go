@@ -411,6 +411,125 @@ func TestGroupAccessAPI(t *testing.T) {
 	})
 }
 
+func TestGroupAccessValidation(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "access-validation-org")
+	group := createTestGroup(t, server, org.ID, "validation-group")
+
+	t.Run("RejectsWriteMethodsWithoutWriteClaim", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
+			"default_claims":  []string{"read"}, // Missing "write" claim!
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Contains(t, response["error"], "eth_sendTransaction")
+		assert.Contains(t, response["error"], "write claim")
+	})
+
+	t.Run("RejectsReadMethodsWithoutReadClaim", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{"eth_call", "eth_getBalance"},
+			"default_claims":  []string{"write"}, // Missing "read" claim!
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		assert.Contains(t, response["error"], "read claim")
+	})
+
+	t.Run("AcceptsMatchingMethodsAndClaims", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
+			"default_claims":  []string{"read", "write"},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("AcceptsEmptyMethodsList", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{},
+			"default_claims":  []string{},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("AcceptsUnknownMethodsWithoutClaims", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
+			"default_claims":  []string{}, // No claims needed for unknown methods
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("AcceptsAllClaimsWithAnyMethods", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods": []string{
+				"eth_call", "eth_getBalance", "eth_chainId",
+				"eth_sendTransaction", "eth_sendRawTransaction",
+			},
+			"default_claims": []string{"read", "write", "admin", "upgrade", "deploy"},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
 func TestUserAPI(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 

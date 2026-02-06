@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { Claim, SetGroupAccessInput } from '@/types/rbac';
-import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS } from '@/types/rbac';
+import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS, RPC_METHODS_BY_CLAIM } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { AlertCircle, Save, X, Loader2, Check } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Check, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface GroupAccessFormProps {
   orgId: string;
@@ -21,16 +20,37 @@ export default function GroupAccessForm({
   onSave,
 }: GroupAccessFormProps) {
   const [loading, setLoading] = useState(true);
-  const [allowedMethods, setAllowedMethods] = useState('');
+  const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
   const [defaultClaims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    read: true,
+    write: true,
+  });
 
   useEffect(() => {
     loadAccess();
   }, [groupId]);
+
+  // When claims change, remove methods that no longer have their required claim
+  useEffect(() => {
+    const validMethods = allowedMethods.filter(method => {
+      if ((RPC_METHODS_BY_CLAIM.read as readonly string[]).includes(method)) {
+        return defaultClaims.includes('read');
+      }
+      if ((RPC_METHODS_BY_CLAIM.write as readonly string[]).includes(method)) {
+        return defaultClaims.includes('write');
+      }
+      return true; // Unknown methods stay selected
+    });
+
+    if (validMethods.length !== allowedMethods.length) {
+      setAllowedMethods(validMethods);
+    }
+  }, [defaultClaims]);
 
   const loadAccess = async () => {
     try {
@@ -38,7 +58,7 @@ export default function GroupAccessForm({
       const response = await rbacApi.groups.getAccess(orgId, groupId);
       const access = response.data;
       if (access) {
-        setAllowedMethods((access.allowed_methods || []).join('\n'));
+        setAllowedMethods(access.allowed_methods || []);
         setDefaultClaims(access.default_claims || []);
         setRateLimitRPS(access.rate_limit_rps?.toString() || '');
         setRateLimitDaily(access.rate_limit_daily?.toString() || '');
@@ -50,11 +70,12 @@ export default function GroupAccessForm({
     }
   };
 
-  const parseList = (value: string) => {
-    return value
-      .split(/[\s\n,]+/)
-      .map(v => v.trim())
-      .filter(v => v.length > 0);
+  const toggleMethod = (method: string) => {
+    setAllowedMethods(prev =>
+      prev.includes(method)
+        ? prev.filter(m => m !== method)
+        : [...prev, method]
+    );
   };
 
   const toggleClaim = (claim: Claim) => {
@@ -65,6 +86,33 @@ export default function GroupAccessForm({
     );
   };
 
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  };
+
+  const selectAllInSection = (claimType: 'read' | 'write') => {
+    const sectionMethods = RPC_METHODS_BY_CLAIM[claimType];
+    setAllowedMethods(prev => {
+      const others = prev.filter(m => !(sectionMethods as readonly string[]).includes(m));
+      return [...others, ...sectionMethods];
+    });
+  };
+
+  const clearAllInSection = (claimType: 'read' | 'write') => {
+    const sectionMethods = RPC_METHODS_BY_CLAIM[claimType];
+    setAllowedMethods(prev =>
+      prev.filter(m => !(sectionMethods as readonly string[]).includes(m))
+    );
+  };
+
+  const getMethodsSelectedCount = (claimType: 'read' | 'write') => {
+    const sectionMethods = RPC_METHODS_BY_CLAIM[claimType];
+    return allowedMethods.filter(m => (sectionMethods as readonly string[]).includes(m)).length;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -72,7 +120,7 @@ export default function GroupAccessForm({
 
     try {
       const input: SetGroupAccessInput = {
-        allowed_methods: parseList(allowedMethods),
+        allowed_methods: allowedMethods,
         default_claims: defaultClaims,
         rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
         rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
@@ -103,6 +151,98 @@ export default function GroupAccessForm({
     );
   }
 
+  const renderMethodSection = (claimType: 'read' | 'write', title: string) => {
+    const methods = RPC_METHODS_BY_CLAIM[claimType];
+    const isExpanded = expandedSections[claimType];
+    const hasClaim = defaultClaims.includes(claimType);
+    const selectedCount = getMethodsSelectedCount(claimType);
+    const totalCount = methods.length;
+
+    return (
+      <div className={`border rounded-lg ${hasClaim ? 'border-[#E5E7EB]' : 'border-[#F3F4F6] bg-[#F9FAFB]'}`}>
+        {/* Section header */}
+        <div
+          className={`flex items-center justify-between p-3 cursor-pointer ${hasClaim ? 'hover:bg-[#F5F3FF]' : ''}`}
+          onClick={() => hasClaim && toggleSection(claimType)}
+        >
+          <div className="flex items-center gap-2">
+            {hasClaim ? (
+              isExpanded ? (
+                <ChevronDown className="w-4 h-4 text-[#6B7280]" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-[#6B7280]" />
+              )
+            ) : (
+              <ChevronRight className="w-4 h-4 text-[#D1D5DB]" />
+            )}
+            <span className={`text-sm font-medium ${hasClaim ? 'text-[#374151]' : 'text-[#9CA3AF]'}`}>
+              {title}
+            </span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              hasClaim
+                ? 'bg-[#F5F3FF] text-[#8950FA]'
+                : 'bg-[#F3F4F6] text-[#9CA3AF]'
+            }`}>
+              {selectedCount} / {totalCount}
+            </span>
+          </div>
+          {hasClaim && (
+            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                className="text-xs text-[#8950FA] hover:text-[#7040E0] font-medium"
+                onClick={() => selectAllInSection(claimType)}
+              >
+                Select All
+              </button>
+              <span className="text-[#E5E7EB]">|</span>
+              <button
+                type="button"
+                className="text-xs text-[#6B7280] hover:text-[#374151] font-medium"
+                onClick={() => clearAllInSection(claimType)}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Disabled message */}
+        {!hasClaim && (
+          <div className="px-3 pb-3">
+            <p className="text-xs text-[#9CA3AF] italic">
+              Enable "{CLAIM_LABELS[claimType]}" claim to configure these methods
+            </p>
+          </div>
+        )}
+
+        {/* Methods grid */}
+        {hasClaim && isExpanded && (
+          <div className="border-t border-[#E5E7EB] p-2 max-h-48 overflow-y-auto">
+            <div className="grid grid-cols-2 gap-1">
+              {methods.map(method => (
+                <label
+                  key={method}
+                  className="flex items-center gap-2 p-1.5 rounded hover:bg-[#F5F3FF] cursor-pointer"
+                  onClick={() => toggleMethod(method)}
+                >
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                    allowedMethods.includes(method)
+                      ? 'bg-[#8950FA] border-[#8950FA]'
+                      : 'border-[#CBD5E1] bg-white'
+                  }`}>
+                    {allowedMethods.includes(method) && <Check className="w-2.5 h-2.5 text-white" />}
+                  </div>
+                  <span className="text-xs font-mono text-[#374151] truncate">{method}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
@@ -112,27 +252,13 @@ export default function GroupAccessForm({
         </div>
       )}
 
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
-          Allowed RPC Methods
-        </label>
-        <Textarea
-          value={allowedMethods}
-          onChange={e => setAllowedMethods(e.target.value)}
-          placeholder="eth_call&#10;eth_getBalance&#10;eth_sendTransaction"
-          className="h-24 font-mono text-sm"
-        />
-        <p className="text-xs text-[#94A3B8]">
-          RPC methods this group can call (one per line). Leave empty for all methods.
-        </p>
-      </div>
-
+      {/* Claims section - moved to top */}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-[#374151]">
           Default Claims
         </label>
         <p className="text-xs text-[#94A3B8] mb-2">
-          Claims applied to unregistered contracts (not in the Contracts list)
+          Claims applied to unregistered contracts. Read/Write claims also control which RPC methods are available.
         </p>
         <div className="space-y-2">
           {ALL_CLAIMS.map(claim => (
@@ -157,6 +283,21 @@ export default function GroupAccessForm({
         </div>
       </div>
 
+      {/* RPC Methods section - now grouped by claim */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-[#374151]">
+          Allowed RPC Methods
+        </label>
+        <p className="text-xs text-[#94A3B8] mb-2">
+          Methods are grouped by required claim. Enable a claim above to configure its methods.
+        </p>
+        <div className="space-y-2">
+          {renderMethodSection('read', 'Read Methods')}
+          {renderMethodSection('write', 'Write Methods')}
+        </div>
+      </div>
+
+      {/* Rate limits */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <label className="block text-sm font-medium text-[#374151]">

@@ -7,6 +7,7 @@ const getContractAddress = (contract: Contract): string => {
   return contract.address || contract.contract_address || '';
 };
 import ContractForm from './ContractForm';
+import ContractGrantsManager from './ContractGrantsManager';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,7 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
-import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle } from 'lucide-react';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield } from 'lucide-react';
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
@@ -36,6 +37,7 @@ export default function ContractList() {
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [managingGrants, setManagingGrants] = useState<Contract | null>(null);
 
   // Sync with chain state
   const [syncing, setSyncing] = useState(false);
@@ -245,6 +247,15 @@ export default function ContractList() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      onClick={() => setManagingGrants(contract)}
+                      title="Manage permissions"
+                      className="text-[#8950FA] hover:text-[#7040E0] hover:bg-[#F5F3FF]"
+                    >
+                      <Shield className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => setEditing(contract)}
                       title="Edit contract"
                     >
@@ -330,6 +341,23 @@ export default function ContractList() {
         buttonLabel="OK"
         variant="error"
       />
+
+      {/* Grants Manager Dialog */}
+      <Dialog open={!!managingGrants} onOpenChange={open => !open && setManagingGrants(null)}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Contract Permissions</DialogTitle>
+          </DialogHeader>
+          {managingGrants && (
+            <ContractGrantsManager
+              key={managingGrants.id}
+              orgId={orgId}
+              contract={managingGrants}
+              onClose={() => setManagingGrants(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Sync Results Dialog */}
       <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>

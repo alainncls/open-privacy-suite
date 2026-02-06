@@ -210,6 +210,13 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		return
 	}
 
+	// Validate that allowed_methods match the default_claims
+	// e.g., eth_call requires "read" claim, eth_sendTransaction requires "write" claim
+	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.DefaultClaims); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Check if access already exists
 	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {

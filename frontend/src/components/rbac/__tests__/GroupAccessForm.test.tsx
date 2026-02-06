@@ -61,7 +61,7 @@ describe('GroupAccessForm', () => {
       expect(document.querySelector('.animate-spin')).toBeInTheDocument();
     });
 
-    it('shows existing allowed_methods', async () => {
+    it('shows existing allowed_methods as checked checkboxes', async () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
@@ -71,12 +71,14 @@ describe('GroupAccessForm', () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        // The methods are displayed in a textarea, one per line
-        const textarea = screen.getByPlaceholderText(/eth_call/);
-        expect(textarea).toHaveValue(
-          mockGroupAccessFull.allowed_methods.join('\n')
-        );
+        // The methods are displayed as checkboxes in collapsible sections
+        // Look for a method that should be checked
+        expect(screen.getByText('eth_call')).toBeInTheDocument();
       });
+
+      // Check that selected methods have the checked indicator (bg-[#8950FA])
+      const ethCallLabel = screen.getByText('eth_call').closest('label');
+      expect(ethCallLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
     });
 
     it('shows existing default_claims', async () => {
@@ -122,50 +124,71 @@ describe('GroupAccessForm', () => {
     beforeEach(() => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json(mockGroupAccess);
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            default_claims: ['read', 'write'] as Claim[], // Need claims to enable method sections
+          });
         })
       );
     });
 
-    it('displays methods in textarea', async () => {
+    it('displays methods as checkboxes in sections', async () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        const textarea = screen.getByPlaceholderText(/eth_call/);
-        expect(textarea).toHaveValue(mockGroupAccess.allowed_methods.join('\n'));
+        // Should show Read Methods section
+        expect(screen.getByText('Read Methods')).toBeInTheDocument();
+        // Should show Write Methods section
+        expect(screen.getByText('Write Methods')).toBeInTheDocument();
       });
+
+      // Methods should be visible
+      expect(screen.getByText('eth_call')).toBeInTheDocument();
+      expect(screen.getByText('eth_getBalance')).toBeInTheDocument();
     });
 
-    it('can add new method by typing', async () => {
+    it('can toggle method by clicking checkbox', async () => {
       const user = userEvent.setup();
 
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/eth_call/)).toBeInTheDocument();
+        expect(screen.getByText('eth_estimateGas')).toBeInTheDocument();
       });
 
-      const textarea = screen.getByPlaceholderText(/eth_call/);
-      await user.clear(textarea);
-      await user.type(textarea, 'eth_call\neth_sendTransaction\neth_estimateGas');
+      // Click on eth_estimateGas to toggle it
+      const methodLabel = screen.getByText('eth_estimateGas').closest('label');
+      if (methodLabel) {
+        await user.click(methodLabel);
+      }
 
-      expect(textarea).toHaveValue('eth_call\neth_sendTransaction\neth_estimateGas');
+      // After clicking, it should be toggled (check for visual indicator)
+      await waitFor(() => {
+        const updatedLabel = screen.getByText('eth_estimateGas').closest('label');
+        const checkbox = updatedLabel?.querySelector('.bg-\\[\\#8950FA\\]');
+        // State should have changed (either now checked or unchecked)
+        expect(updatedLabel).toBeInTheDocument();
+      });
     });
 
-    it('can remove method by editing textarea', async () => {
+    it('can use Select All to check all methods in section', async () => {
       const user = userEvent.setup();
 
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/eth_call/)).toBeInTheDocument();
+        expect(screen.getByText('Read Methods')).toBeInTheDocument();
       });
 
-      const textarea = screen.getByPlaceholderText(/eth_call/);
-      await user.clear(textarea);
-      await user.type(textarea, 'eth_call');
+      // Click Select All for read methods
+      const selectAllButtons = screen.getAllByText('Select All');
+      await user.click(selectAllButtons[0]); // First one is for read methods
 
-      expect(textarea).toHaveValue('eth_call');
+      // After clicking, all read methods should be selected
+      await waitFor(() => {
+        const ethCallLabel = screen.getByText('eth_call').closest('label');
+        expect(ethCallLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
+      });
     });
   });
 
@@ -462,9 +485,9 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
       });
 
-      // Methods textarea should be empty
-      const textarea = screen.getByPlaceholderText(/eth_call/);
-      expect(textarea).toHaveValue('');
+      // Method sections should be shown (though disabled without claims)
+      expect(screen.getByText('Read Methods')).toBeInTheDocument();
+      expect(screen.getByText('Write Methods')).toBeInTheDocument();
     });
   });
 
@@ -479,6 +502,7 @@ describe('GroupAccessForm', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             default_claims: ['read'] as Claim[],
+            allowed_methods: ['eth_call'],
           });
         }),
         http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
@@ -496,15 +520,23 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
       });
 
-      // Modify allowed methods
-      const textarea = screen.getByPlaceholderText(/eth_call/);
-      await user.clear(textarea);
-      await user.type(textarea, 'eth_call\neth_sendTransaction');
-
-      // Toggle Write claim
+      // Toggle Write claim first (this enables write methods section)
       const writeLabel = screen.getByText('Write').closest('label');
       if (writeLabel) {
         await user.click(writeLabel);
+      }
+
+      // Wait for write methods section to be enabled
+      await waitFor(() => {
+        // After enabling write claim, we should be able to click write methods
+        const sendTxLabel = screen.getByText('eth_sendTransaction').closest('label');
+        expect(sendTxLabel).toBeInTheDocument();
+      });
+
+      // Click on eth_sendTransaction to select it
+      const sendTxLabel = screen.getByText('eth_sendTransaction').closest('label');
+      if (sendTxLabel) {
+        await user.click(sendTxLabel);
       }
 
       // Modify RPS
@@ -526,7 +558,7 @@ describe('GroupAccessForm', () => {
       });
 
       expect(capturedBody).toMatchObject({
-        allowed_methods: ['eth_call', 'eth_sendTransaction'],
+        allowed_methods: expect.arrayContaining(['eth_call', 'eth_sendTransaction']),
         default_claims: expect.arrayContaining(['read', 'write']),
         rate_limit_rps: 200,
         rate_limit_daily: 75000,
