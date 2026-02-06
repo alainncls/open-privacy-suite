@@ -20,7 +20,6 @@ import {
   FileCode2,
   Copy,
   Check,
-  X,
   Info,
 } from 'lucide-react';
 
@@ -140,36 +139,31 @@ export default function ContractGrantsManager({
   return (
     <div className="space-y-4">
       {/* Contract header */}
-      <div className="flex items-start justify-between pb-4 border-b border-[#E5E7EB]">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
-            <FileCode2 className="w-5 h-5 text-[#8950FA]" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-[#0F0F0F]">
-              {contract.name || 'Unnamed Contract'}
-            </h3>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="font-mono text-sm text-[#6B7280]" title={contractAddress}>
-                {truncateAddress(contractAddress)}
-              </span>
-              <button
-                onClick={copyToClipboard}
-                className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
-                title="Copy address"
-              >
-                {copiedAddress ? (
-                  <Check className="w-3.5 h-3.5 text-[#22C55E]" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </div>
+      <div className="flex items-start gap-3 pb-4 border-b border-[#E5E7EB]">
+        <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
+          <FileCode2 className="w-5 h-5 text-[#8950FA]" />
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-[#0F0F0F]">
+            {contract.name || 'Unnamed Contract'}
+          </h3>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-mono text-sm text-[#6B7280]" title={contractAddress}>
+              {truncateAddress(contractAddress)}
+            </span>
+            <button
+              onClick={copyToClipboard}
+              className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+              title="Copy address"
+            >
+              {copiedAddress ? (
+                <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose}>
-          <X className="w-4 h-4" />
-        </Button>
       </div>
 
       {/* Info banner */}
