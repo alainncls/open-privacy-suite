@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithRBACContext } from './test-utils';
 import {
@@ -29,20 +29,29 @@ describe('ContractList', () => {
     vi.clearAllMocks();
   });
 
+  // Ensure cleanup happens before handlers are reset to prevent pending state updates
+  afterEach(() => {
+    cleanup();
+  });
+
   describe('Rendering', () => {
-    it('shows loading spinner initially', () => {
-      // Make the request hang to see loading state
+    it('shows loading spinner initially', async () => {
+      // Use MSW's delay to simulate slow response - will be cancelled on cleanup
       server.use(
         http.get('/api/v1/orgs/:orgId/contracts', async () => {
-          await new Promise(() => {}); // Never resolves
+          await delay('infinite');
+          return HttpResponse.json([]);
         })
       );
 
-      renderWithRBACContext(<ContractList />);
+      const { unmount } = renderWithRBACContext(<ContractList />);
 
       // Should show loading spinner (Loader2 icon with animate-spin)
       const spinner = document.querySelector('.animate-spin');
       expect(spinner).toBeInTheDocument();
+
+      // Explicitly unmount to prevent act() warnings from pending state updates
+      unmount();
     });
 
     it('shows "Contracts" heading', async () => {
