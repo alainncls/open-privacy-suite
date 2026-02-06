@@ -296,6 +296,127 @@ curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts \
 
 Note: Permissions are determined by the user's role claims, not by contract-specific abilities.
 
+## Group-Contract Access Workflow
+
+The RBAC system uses a simple two-step workflow for managing contract access:
+
+### Step 1: Configure Groups (Groups Tab)
+
+Groups define what claims users have. Set up group access with:
+- **Allowed RPC Methods**: Which JSON-RPC methods members can call (e.g., `eth_call`, `eth_sendTransaction`)
+- **Default Claims**: The permissions group members have (e.g., `read`, `write`, `admin`)
+
+**Example groups:**
+- **Audit Group**: `allowed_methods: [eth_call, eth_getLogs]`, `claims: [read]`
+- **Trader Group**: `allowed_methods: [eth_call, eth_sendTransaction]`, `claims: [read, write]`
+- **Admin Group**: `allowed_methods: [all]`, `claims: [read, write, admin, upgrade]`
+
+```bash
+# Set up an audit group with read-only access
+curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/access \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allowed_methods": ["eth_call", "eth_getBalance", "eth_getLogs"],
+    "default_claims": ["read"]
+  }'
+
+# Set up a trader group with read/write access
+curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/access \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allowed_methods": ["eth_call", "eth_sendTransaction"],
+    "default_claims": ["read", "write"]
+  }'
+```
+
+**Important**: Methods must match claims. For example, `eth_sendTransaction` requires the `write` claim. The system validates this when saving group access.
+
+### Step 2: Link Groups to Contracts (Contracts Tab)
+
+On the Contracts tab, use the **Shield icon** to manage which groups can access a contract. Simply select the group - the group's claims automatically determine what permissions they have.
+
+```bash
+# Link a group to a contract (group's claims apply automatically)
+curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts/{address}/grants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_id": "{group_id}"
+  }'
+```
+
+**Key points:**
+- You don't specify claims when linking a group to a contract
+- The group's `default_claims` from Step 1 determine what members can do
+- Multiple groups can have access to the same contract with different permission levels
+
+### Visual Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RBAC PERMISSION FLOW                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  STEP 1: Groups Tab - Define Claims                             │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Audit Group                                                │ │
+│  │  ├─ Allowed Methods: [eth_call, eth_getLogs]               │ │
+│  │  └─ Claims: [read]                                          │ │
+│  │                                                              │ │
+│  │  Trader Group                                               │ │
+│  │  ├─ Allowed Methods: [eth_call, eth_sendTransaction]       │ │
+│  │  └─ Claims: [read, write]                                   │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                            │                                     │
+│                            ▼                                     │
+│  STEP 2: Contracts Tab - Link Groups                            │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Token Contract (0x1234...)                                 │ │
+│  │  └─ Groups with Access:                                     │ │
+│  │      ├─ Audit Group → members get read access               │ │
+│  │      └─ Trader Group → members get read + write access      │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                            │                                     │
+│                            ▼                                     │
+│  RESULT: User Access                                             │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Alice (member of Audit Group)                              │ │
+│  │  └─ Token Contract: eth_call ✓, eth_sendTransaction ✗      │ │
+│  │                                                              │ │
+│  │  Bob (member of Trader Group)                               │ │
+│  │  └─ Token Contract: eth_call ✓, eth_sendTransaction ✓      │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Method-Claim Validation
+
+The system enforces consistency between allowed methods and claims:
+
+| RPC Method | Required Claim |
+|------------|----------------|
+| `eth_call`, `eth_getBalance`, `eth_getLogs`, etc. | `read` |
+| `eth_sendTransaction`, `eth_sendRawTransaction`, `eth_sign` | `write` |
+
+When saving group access, the backend validates that all methods have their required claims. For example, if you try to allow `eth_sendTransaction` without the `write` claim, you'll get a 400 Bad Request error.
+
+### UI Workflow
+
+**Groups Tab:**
+1. Select a group
+2. Configure "Allowed Methods" (grouped by Read Methods and Write Methods)
+3. Check the claims checkboxes (Read, Write, Admin, etc.)
+4. Methods are automatically disabled if their required claim is unchecked
+
+**Contracts Tab:**
+1. Click the Shield icon on a contract
+2. Click "Add Group"
+3. Select a group from the dropdown
+4. The group's claims are displayed for reference
+5. Click "Add Group Access"
+
+That's it - no need to re-specify claims when linking groups to contracts.
+
 ## API Reference
 
 ### Organizations

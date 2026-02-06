@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Contract, ContractGrant, Group } from '@/types/rbac';
+import type { Contract, ContractGrant, Group, GroupAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   Loader2,
   Plus,
-  Pencil,
   Trash2,
   Shield,
   Users,
@@ -22,6 +21,7 @@ import {
   Copy,
   Check,
   X,
+  Info,
 } from 'lucide-react';
 
 // Helper to get contract address from either new or legacy format
@@ -35,9 +35,10 @@ interface ContractGrantsManagerProps {
   onClose: () => void;
 }
 
-// Extended grant type that includes the group info
+// Extended grant type that includes the group info and group access
 interface GrantWithGroup extends ContractGrant {
   group?: Group;
+  groupAccess?: GroupAccess;
 }
 
 export default function ContractGrantsManager({
@@ -49,7 +50,6 @@ export default function ContractGrantsManager({
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<ContractGrant | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GrantWithGroup | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
 
@@ -72,11 +72,26 @@ export default function ContractGrantsManager({
       const groupsData = groupsRes.data || [];
       setGroups(groupsData);
 
-      // Map group info to grants
-      const grantsWithGroups: GrantWithGroup[] = grantsData.map(grant => ({
-        ...grant,
-        group: groupsData.find(g => g.id === grant.group_id),
-      }));
+      // Load group access for each group to show their claims
+      const grantsWithGroups: GrantWithGroup[] = await Promise.all(
+        grantsData.map(async grant => {
+          const group = groupsData.find(g => g.id === grant.group_id);
+          let groupAccess: GroupAccess | undefined;
+          if (group) {
+            try {
+              const accessRes = await rbacApi.groups.getAccess(orgId, group.id);
+              groupAccess = accessRes.data;
+            } catch {
+              // Group may not have access configured
+            }
+          }
+          return {
+            ...grant,
+            group,
+            groupAccess,
+          };
+        })
+      );
 
       setGrants(grantsWithGroups);
     } catch (error) {
@@ -89,7 +104,6 @@ export default function ContractGrantsManager({
 
   const handleSave = async () => {
     setShowForm(false);
-    setEditing(null);
     await loadData();
   };
 
@@ -158,16 +172,24 @@ export default function ContractGrantsManager({
         </Button>
       </div>
 
+      {/* Info banner */}
+      <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-start gap-2">
+        <Info className="w-4 h-4 text-[#0284C7] mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-[#0369A1]">
+          Groups define claims (read, write, etc.) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims.
+        </p>
+      </div>
+
       {/* Grants section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-[#8950FA]" />
-            <span className="text-sm font-medium text-[#374151]">Group Permissions</span>
+            <span className="text-sm font-medium text-[#374151]">Groups with Access</span>
           </div>
           <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
             <Plus className="w-4 h-4" />
-            Add Grant
+            Add Group
           </Button>
         </div>
 
@@ -179,11 +201,11 @@ export default function ContractGrantsManager({
           <div className="text-center py-8 border border-dashed border-[#E5E7EB] rounded-lg">
             <Users className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
             <p className="text-sm text-[#6B7280] mb-3">
-              No groups have permissions on this contract
+              No groups have access to this contract yet
             </p>
             <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="gap-2">
               <Plus className="w-4 h-4" />
-              Add a grant
+              Add a group
             </Button>
           </div>
         ) : (
@@ -209,49 +231,32 @@ export default function ContractGrantsManager({
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditing(grant)}
-                      title="Edit grant"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(grant)}
-                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
-                      title="Delete grant"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteTarget(grant)}
+                    className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+                    title="Remove group access"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
 
-                {/* Claims badges */}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="text-xs text-[#6B7280]">Claims:</span>
-                  {grant.claims.map(claim => (
-                    <span
-                      key={claim}
-                      className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
-                    >
-                      {CLAIM_LABELS[claim]}
-                    </span>
-                  ))}
-                </div>
-
-                {/* Functions */}
-                <div className="mt-2 text-xs text-[#6B7280]">
-                  Functions:{' '}
-                  {!grant.functions || grant.functions.length === 0 ? (
-                    <span className="text-[#22C55E]">All allowed</span>
+                {/* Group's claims from GroupAccess */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#6B7280]">Group claims:</span>
+                  {grant.groupAccess?.default_claims && grant.groupAccess.default_claims.length > 0 ? (
+                    grant.groupAccess.default_claims.map(claim => (
+                      <span
+                        key={claim}
+                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
+                      >
+                        {CLAIM_LABELS[claim] || claim}
+                      </span>
+                    ))
                   ) : (
-                    <span className="font-mono">
-                      {grant.functions.slice(0, 3).join(', ')}
-                      {grant.functions.length > 3 && ` +${grant.functions.length - 3} more`}
+                    <span className="text-xs text-[#94A3B8] italic">
+                      No claims configured - set up in Groups tab
                     </span>
                   )}
                 </div>
@@ -261,11 +266,11 @@ export default function ContractGrantsManager({
         )}
       </div>
 
-      {/* Create Grant Dialog */}
+      {/* Add Group Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add Permission Grant</DialogTitle>
+            <DialogTitle>Add Group Access</DialogTitle>
           </DialogHeader>
           <ContractGrantForm
             orgId={orgId}
@@ -278,34 +283,13 @@ export default function ContractGrantsManager({
         </DialogContent>
       </Dialog>
 
-      {/* Edit Grant Dialog */}
-      <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Permission Grant</DialogTitle>
-          </DialogHeader>
-          {editing && (
-            <ContractGrantForm
-              key={editing.id}
-              orgId={orgId}
-              contractAddress={contractAddress}
-              grant={editing}
-              groups={groups}
-              existingGrantGroupIds={existingGrantGroupIds}
-              onClose={() => setEditing(null)}
-              onSave={handleSave}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={open => !open && setDeleteTarget(null)}
-        title="Delete Grant"
-        description={`Are you sure you want to remove "${deleteTarget?.group?.name || 'this group'}" permissions from this contract?`}
-        confirmLabel="Delete"
+        title="Remove Group Access"
+        description={`Are you sure you want to remove "${deleteTarget?.group?.name || 'this group'}" access to this contract?`}
+        confirmLabel="Remove"
         cancelLabel="Cancel"
         onConfirm={handleDeleteConfirm}
         variant="destructive"
