@@ -1,18 +1,27 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Group, ContractGrant, CreateContractGrantInput } from '@/types/rbac';
-import { CLAIM_LABELS } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, Save, X, Loader2, Users, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Users, Plus, FileJson } from 'lucide-react';
 
 interface ContractGrantFormProps {
   orgId: string;
   contractAddress: string;
+  contractAbi?: string; // Contract ABI JSON string
   grant?: ContractGrant | null; // If provided, we're editing
   groups: Group[];
   existingGrantGroupIds: string[]; // Groups that already have grants (for filtering)
   onClose: () => void;
   onSave: () => void;
+}
+
+// Parsed ABI function entry
+interface AbiFunction {
+  selector: string;
+  name: string;
+  signature: string;
+  stateMutability?: string;
 }
 
 // Common function selectors with human-readable names
@@ -36,6 +45,7 @@ const isValidSelector = (selector: string): boolean => {
 export default function ContractGrantForm({
   orgId,
   contractAddress,
+  contractAbi,
   grant,
   groups,
   existingGrantGroupIds,
@@ -53,6 +63,36 @@ export default function ContractGrantForm({
 
   const isEditing = !!grant;
 
+  // Parse ABI to extract function selectors
+  const abiFunctions = useMemo<AbiFunction[]>(() => {
+    if (!contractAbi) return [];
+    try {
+      const parsed = JSON.parse(contractAbi);
+      if (!Array.isArray(parsed)) return [];
+
+      const results: AbiFunction[] = [];
+      for (const item of parsed) {
+        if (item.type !== 'function') continue;
+        const inputTypes = (item.inputs || []).map((input: { type: string }) => input.type).join(',');
+        const signature = `${item.name}(${inputTypes})`;
+        try {
+          const selector = toFunctionSelector(signature);
+          results.push({
+            selector,
+            name: item.name,
+            signature,
+            stateMutability: item.stateMutability,
+          });
+        } catch {
+          // Skip invalid signatures
+        }
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }, [contractAbi]);
+
   // Available groups (exclude ones that already have grants, except current grant's group)
   const availableGroups = groups.filter(
     g => !existingGrantGroupIds.includes(g.id) || g.id === grant?.group_id
@@ -60,7 +100,6 @@ export default function ContractGrantForm({
 
   // Get the selected group's details to show its claims
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
-  const grantGroup = grant ? groups.find(g => g.id === grant.group_id) : null;
 
   const handleAddSelector = () => {
     const selector = newSelector.trim().toLowerCase();
@@ -110,7 +149,7 @@ export default function ContractGrantForm({
     try {
       const input: CreateContractGrantInput = {
         group_id: selectedGroupId,
-        claims: [], // Use group's default claims
+        // claims field is deprecated - permissions come from the group's GroupAccess.claims
         functions: functionMode === 'all' ? null : functions,
       };
 
@@ -139,61 +178,14 @@ export default function ContractGrantForm({
     }
   };
 
-  // Get selector label (name if known, otherwise just the selector)
+  // Get selector label (from ABI if available, then common selectors, then just the selector)
   const getSelectorLabel = (selector: string) => {
+    // First check ABI functions
+    const abiFunc = abiFunctions.find(f => f.selector.toLowerCase() === selector.toLowerCase());
+    if (abiFunc) return abiFunc.signature;
+    // Then check common selectors
     return COMMON_SELECTORS[selector] || selector;
   };
-
-  // If viewing an existing grant in read-only mode (old UI behavior kept for reference)
-  if (isEditing && grantGroup && false) { // Disabled - we now support editing
-    return (
-      <div className="space-y-5">
-        <div className="p-4 rounded-lg bg-[#F5F3FF] border border-[#E9E3FF]">
-          <div className="flex items-center gap-3">
-            <Users className="w-5 h-5 text-[#8950FA]" />
-            <div>
-              <p className="font-medium text-[#0F0F0F]">{grantGroup.name}</p>
-              <p className="text-sm text-[#64748B]">{grantGroup.path}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-[#374151]">Group Claims</p>
-          <p className="text-xs text-[#94A3B8] mb-2">
-            This group's permissions are defined in the Groups tab
-          </p>
-          {grant.claims && grant.claims.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {grant.claims.map(claim => (
-                <span
-                  key={claim}
-                  className="px-2 py-1 text-xs font-medium rounded-full bg-[#F5F3FF] text-[#8950FA]"
-                >
-                  {CLAIM_LABELS[claim] || claim}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-[#64748B] italic">
-              Uses group's default claims from Group Access settings
-            </p>
-          )}
-        </div>
-
-        <p className="text-xs text-[#94A3B8]">
-          To change which group has access, delete this grant and add a new one.
-        </p>
-
-        <div className="flex justify-end pt-2">
-          <Button variant="ghost" onClick={onClose} className="gap-2">
-            <X className="w-4 h-4" />
-            Close
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -295,24 +287,28 @@ export default function ContractGrantForm({
               <div className="space-y-2">
                 <p className="text-xs font-medium text-[#6B7280]">Allowed functions:</p>
                 <div className="flex flex-wrap gap-2">
-                  {functions.map(selector => (
-                    <span
-                      key={selector}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA] border border-[#E9E3FF]"
-                    >
-                      <code className="font-mono">{selector}</code>
-                      {COMMON_SELECTORS[selector] && (
-                        <span className="text-[#A78BFA]">({COMMON_SELECTORS[selector]})</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveSelector(selector)}
-                        className="ml-1 hover:text-[#7C3AED]"
+                  {functions.map(selector => {
+                    const label = getSelectorLabel(selector);
+                    const hasLabel = label !== selector;
+                    return (
+                      <span
+                        key={selector}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA] border border-[#E9E3FF]"
                       >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
+                        <code className="font-mono">{selector}</code>
+                        {hasLabel && (
+                          <span className="text-[#A78BFA]">({label})</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSelector(selector)}
+                          className="ml-1 hover:text-[#7C3AED]"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -344,24 +340,57 @@ export default function ContractGrantForm({
               </Button>
             </div>
 
-            {/* Common selectors */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-[#6B7280]">Common selectors:</p>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(COMMON_SELECTORS).map(([selector, name]) => (
-                  <button
-                    key={selector}
-                    type="button"
-                    onClick={() => handleAddCommonSelector(selector)}
-                    disabled={functions.includes(selector)}
-                    className="px-2 py-1 text-xs rounded border border-[#E5E7EB] hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <code className="font-mono text-[#6B7280]">{selector}</code>
-                    <span className="ml-1 text-[#94A3B8]">{name}</span>
-                  </button>
-                ))}
+            {/* ABI Functions (if available) or Common selectors */}
+            {abiFunctions.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <FileJson className="w-3.5 h-3.5 text-[#22C55E]" />
+                  <p className="text-xs font-medium text-[#166534]">Contract functions ({abiFunctions.length}):</p>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-1 border border-[#E5E7EB] rounded-lg p-2">
+                  {abiFunctions.map(({ selector, name, stateMutability }) => {
+                    const isView = stateMutability === 'view' || stateMutability === 'pure';
+                    return (
+                      <button
+                        key={selector}
+                        type="button"
+                        onClick={() => handleAddCommonSelector(selector)}
+                        disabled={functions.includes(selector)}
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <code className="font-mono text-[#6B7280] truncate">{name}</code>
+                          {isView && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#DCFCE7] text-[#166534] font-medium">
+                              view
+                            </span>
+                          )}
+                        </span>
+                        <code className="font-mono text-[#94A3B8] text-[10px] ml-2 flex-shrink-0">{selector}</code>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-[#6B7280]">Common selectors:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(COMMON_SELECTORS).map(([selector, name]) => (
+                    <button
+                      key={selector}
+                      type="button"
+                      onClick={() => handleAddCommonSelector(selector)}
+                      disabled={functions.includes(selector)}
+                      className="px-2 py-1 text-xs rounded border border-[#E5E7EB] hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <code className="font-mono text-[#6B7280]">{selector}</code>
+                      <span className="ml-1 text-[#94A3B8]">{name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -193,7 +193,8 @@ func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses 
 }
 
 // CheckDefaultClaimsAllowed validates whether default_claims can be used for an address.
-// This prevents using default_claims to access contracts registered to other orgs.
+// This enforces that default_claims only apply to truly unregistered/public contracts.
+// Registered contracts (even in user's own org) require explicit grants.
 //
 // Parameters:
 //   - ctx: Context
@@ -201,29 +202,17 @@ func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses 
 //   - hasExplicitAccess: Whether user has explicit ContractAccess for this address
 //
 // Returns:
-//   - nil if default_claims can be used
-//   - error if the contract is registered to another org
+//   - nil if default_claims can be used (contract is not registered anywhere)
+//   - error if the contract is registered to any org (requires explicit grant)
 func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool) error {
 	if hasExplicitAccess {
-		// User has explicit access - no need to check default_claims
+		// User has explicit access via grant - no need to check default_claims
 		return nil
 	}
 
 	addr := strings.ToLower(strings.TrimSpace(address))
 	if addr == "" {
 		return nil
-	}
-
-	// First check if contract is in current org context
-	if oc.org != nil {
-		isOwnedByCurrentOrg, err := oc.store.IsAddressOwnedByOrg(ctx, addr, oc.org.ID)
-		if err != nil {
-			return fmt.Errorf("failed to check contract ownership: %w", err)
-		}
-		if isOwnedByCurrentOrg {
-			// Contract is in user's current org - allow default_claims
-			return nil
-		}
 	}
 
 	// Check if contract is registered to ANY org
@@ -233,24 +222,9 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 	}
 
 	if isRegisteredToAnyOrg {
-		// Contract is registered to some org but user doesn't have explicit access
-		// This means it's either:
-		// 1. In another org the user doesn't belong to
-		// 2. In user's org but they weren't granted explicit access
-		// For case 1, deny. For case 2, they should have default_claims from their org.
-		// Check if it's in ANY of user's orgs
-		for orgID := range oc.userOrgIDs {
-			isInUserOrg, err := oc.store.IsAddressOwnedByOrg(ctx, addr, orgID)
-			if err != nil {
-				return fmt.Errorf("failed to check contract ownership: %w", err)
-			}
-			if isInUserOrg {
-				// Contract is in one of user's orgs - allow default_claims
-				return nil
-			}
-		}
-		// Contract is registered but not in any of user's orgs
-		return fmt.Errorf("contract %s is registered to another organization", address)
+		// Contract is registered - require explicit grant, don't fall back to default_claims
+		// This applies even if the contract is in user's own org
+		return fmt.Errorf("contract %s requires explicit grant (no access via default claims)", address)
 	}
 
 	// Contract is truly public (not registered anywhere) - allow default_claims

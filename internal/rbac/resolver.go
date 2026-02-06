@@ -145,7 +145,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			OrgID:          orgID,
 			AllowedMethods: []string{},
 			ContractAccess: make(map[string]ContractAccess),
-			DefaultClaims:  []Claim{},
+			Claims:  []Claim{},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(r.cacheTTL),
 		}, nil
@@ -168,7 +168,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	// Track final merged permissions across all memberships
 	var finalMethods []string
 	finalContractAccess := make(map[string]ContractAccess)
-	var finalDefaultClaims []Claim
+	var finalClaims []Claim
 	var finalRateLimitRPS *int
 	var finalRateLimitDaily *int
 	firstMembership := true
@@ -190,7 +190,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			// First membership - use its permissions as baseline
 			finalMethods = membershipPerms.AllowedMethods
 			finalContractAccess = membershipPerms.ContractAccess
-			finalDefaultClaims = membershipPerms.DefaultClaims
+			finalClaims = membershipPerms.Claims
 			finalRateLimitRPS = membershipPerms.RateLimitRPS
 			finalRateLimitDaily = membershipPerms.RateLimitDaily
 			firstMembership = false
@@ -198,7 +198,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			// Subsequent memberships - UNION the permissions (user benefits from all groups)
 			finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
 			finalContractAccess = unionContractAccess(finalContractAccess, membershipPerms.ContractAccess)
-			finalDefaultClaims = unionClaims(finalDefaultClaims, membershipPerms.DefaultClaims)
+			finalClaims = unionClaims(finalClaims, membershipPerms.Claims)
 
 			// For rate limits across memberships, take the MAXIMUM (most permissive)
 			finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
@@ -212,7 +212,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		OrgID:          orgID,
 		AllowedMethods: finalMethods,
 		ContractAccess: finalContractAccess,
-		DefaultClaims:  finalDefaultClaims,
+		Claims:  finalClaims,
 		RateLimitRPS:   finalRateLimitRPS,
 		RateLimitDaily: finalRateLimitDaily,
 		ComputedAt:     time.Now(),
@@ -267,7 +267,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		OrgID:          orgID,
 		AllowedMethods: finalMethods,
 		ContractAccess: contractAccess,
-		DefaultClaims:  allClaims, // Org admins get all default claims too
+		Claims:  allClaims, // Org admins get all default claims too
 		RateLimitRPS:   finalRateLimitRPS,
 		RateLimitDaily: finalRateLimitDaily,
 		ComputedAt:     time.Now(),
@@ -279,7 +279,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 type hierarchyPerms struct {
 	AllowedMethods []string
 	ContractAccess map[string]ContractAccess // address -> access
-	DefaultClaims  []Claim
+	Claims  []Claim
 	RateLimitRPS   *int
 	RateLimitDaily *int
 }
@@ -291,7 +291,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		return &hierarchyPerms{
 			AllowedMethods: []string{},
 			ContractAccess: make(map[string]ContractAccess),
-			DefaultClaims:  []Claim{},
+			Claims:  []Claim{},
 		}, nil
 	}
 
@@ -299,7 +299,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 	result := &hierarchyPerms{
 		AllowedMethods: nil,
 		ContractAccess: nil, // nil means "all allowed" until first group has grants
-		DefaultClaims:  nil,
+		Claims:  nil,
 	}
 
 	// Track contract data for batch loading
@@ -323,10 +323,10 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			}
 
 			// Apply INTERSECTION for default claims
-			if result.DefaultClaims == nil {
-				result.DefaultClaims = access.DefaultClaims
-			} else if len(access.DefaultClaims) > 0 {
-				result.DefaultClaims = intersectClaims(result.DefaultClaims, access.DefaultClaims)
+			if result.Claims == nil {
+				result.Claims = access.Claims
+			} else if len(access.Claims) > 0 {
+				result.Claims = intersectClaims(result.Claims, access.Claims)
 			}
 
 			// Apply MINIMUM for rate limits (most restrictive wins within hierarchy)
@@ -361,7 +361,23 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 	}
 
 	// Now process grants using pre-loaded contract addresses
+	// Claims come from the GROUP (via GroupAccess), not from the grant itself.
+	// The grant just establishes that the group has access to the contract,
+	// with optional function restrictions from the grant.
 	for _, group := range hierarchy {
+		// Get the group's claims from its access settings
+		access, err := r.store.GetGroupAccess(ctx, group.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Get the claims to use for this group's grants
+		// If group has no access settings, use empty claims
+		var groupClaims []Claim
+		if access != nil {
+			groupClaims = access.Claims
+		}
+
 		grants := groupGrants[group.ID]
 		for _, grant := range grants {
 			address, ok := contractAddresses[grant.ContractID]
@@ -375,16 +391,18 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			}
 
 			// Apply contract grant with INTERSECTION logic
+			// Claims come from the group, functions come from the grant
 			if existing, ok := result.ContractAccess[address]; ok {
 				// Child narrows parent - intersect claims and functions
+				// Claims are intersected with group's claims (inherited from GroupAccess)
 				result.ContractAccess[address] = ContractAccess{
-					Claims:    intersectClaims(existing.Claims, grant.Claims),
+					Claims:    intersectClaims(existing.Claims, groupClaims),
 					Functions: intersectFunctions(existing.Functions, grant.Functions),
 				}
 			} else {
-				// First time seeing this contract in hierarchy - use grant as-is
+				// First time seeing this contract in hierarchy - use group's claims
 				result.ContractAccess[address] = ContractAccess{
-					Claims:    grant.Claims,
+					Claims:    groupClaims,
 					Functions: grant.Functions,
 				}
 			}
@@ -398,8 +416,8 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 	if result.ContractAccess == nil {
 		result.ContractAccess = make(map[string]ContractAccess)
 	}
-	if result.DefaultClaims == nil {
-		result.DefaultClaims = []Claim{}
+	if result.Claims == nil {
+		result.Claims = []Claim{}
 	}
 
 	return result, nil

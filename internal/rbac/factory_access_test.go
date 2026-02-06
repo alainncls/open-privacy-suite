@@ -31,10 +31,10 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{},
-			DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+			Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 		}
 
-		hasDeploy := containsClaim(perms.DefaultClaims, ClaimDeploy)
+		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
 		if !hasDeploy {
 			t.Error("User with deploy in default_claims should have deploy claim")
 		}
@@ -47,7 +47,7 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{ClaimRead}},
 				"0xbbbb000000000000000000000000000000000002": {Claims: []Claim{ClaimRead, ClaimDeploy}},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		hasDeployOnAnyContract := false
@@ -68,10 +68,10 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xaaaa": {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{ClaimRead, ClaimWrite},
+			Claims: []Claim{ClaimRead, ClaimWrite},
 		}
 
-		hasDeployInDefault := containsClaim(perms.DefaultClaims, ClaimDeploy)
+		hasDeployInDefault := containsClaim(perms.Claims, ClaimDeploy)
 		hasDeployOnAnyContract := false
 		for _, access := range perms.ContractAccess {
 			if containsClaim(access.Claims, ClaimDeploy) {
@@ -101,7 +101,7 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 				"0xaaaa": {Claims: []Claim{ClaimWrite, ClaimAdmin}},
 				"0xbbbb": {Claims: []Claim{ClaimDeploy}},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		allClaims := collectAllClaims(perms)
@@ -143,10 +143,10 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xaaaa": {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
 			},
-			DefaultClaims: []Claim{ClaimRead, ClaimWrite},
+			Claims: []Claim{ClaimRead, ClaimWrite},
 		}
 
-		hasDeploy := containsClaim(perms.DefaultClaims, ClaimDeploy)
+		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
 		if hasDeploy {
 			t.Error("Should not have deploy in default claims")
 		}
@@ -163,7 +163,7 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 		daily := 10000
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
-			DefaultClaims:  []Claim{ClaimRead, ClaimDeploy},
+			Claims:  []Claim{ClaimRead, ClaimDeploy},
 			RateLimitRPS:   &rps,
 			RateLimitDaily: &daily,
 		}

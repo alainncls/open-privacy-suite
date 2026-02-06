@@ -190,6 +190,7 @@ print_info "Deploying SimpleDemoToken..."
 TOKEN_DEPLOY=$(forge create src/token/SimpleDemoToken.sol:SimpleDemoToken \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Token deployment failed"
     echo "$TOKEN_DEPLOY"
@@ -209,6 +210,7 @@ print_info "Deploying SimpleLiquidityPool..."
 POOL_DEPLOY=$(forge create src/pool/SimpleLiquidityPool.sol:SimpleLiquidityPool \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Pool deployment failed"
     echo "$POOL_DEPLOY"
@@ -228,6 +230,7 @@ print_info "Deploying SimpleSwapRouter..."
 ROUTER_DEPLOY=$(forge create src/router/SimpleSwapRouter.sol:SimpleSwapRouter \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Router deployment failed"
     echo "$ROUTER_DEPLOY"
@@ -243,10 +246,81 @@ fi
 print_success "SimpleSwapRouter deployed at: $ROUTER_ADDR"
 
 # =============================================================================
-# Step 5: Initialize Contracts
+# Step 5: Register Contracts to Organization
 # =============================================================================
 
-print_step "Step 5: Initializing Contracts"
+if [ -n "$ORG_ID" ]; then
+    print_step "Step 5: Registering Contracts to Organization"
+
+    # Extract JWT token from ETH_RPC_HEADERS
+    AUTH_TOKEN=$(echo "$ETH_RPC_HEADERS" | sed 's/Authorization: Bearer //')
+    API_BASE_URL="${PROXY_BASE_URL}/api/orgs/${ORG_ID}/contracts"
+
+    register_contract() {
+        local addr="$1"
+        local name="$2"
+        local response
+        response=$(curl -s -X POST "$API_BASE_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            -d "{\"address\": \"$addr\", \"name\": \"$name\"}" 2>&1)
+
+        if echo "$response" | grep -q '"id"'; then
+            print_success "Registered $name at $addr"
+        elif echo "$response" | grep -q 'already exists'; then
+            print_info "$name already registered"
+        else
+            print_error "Failed to register $name: $response"
+        fi
+    }
+
+    upload_abi() {
+        local addr="$1"
+        local name="$2"
+        local contract_file="$3"
+        local abi_json
+        local response
+
+        # Get ABI from forge output
+        abi_json=$(jq -c '.abi' "out/${contract_file}/${name}.json" 2>/dev/null) || {
+            print_info "No ABI found for $name"
+            return
+        }
+
+        # Upload ABI to API
+        response=$(curl -s -X PUT "${API_BASE_URL}/${addr}/abi" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            -d "{\"abi\": $(echo "$abi_json" | jq -Rs .)}" 2>&1)
+
+        if echo "$response" | grep -q '"id"'; then
+            local func_count=$(echo "$abi_json" | jq '[.[] | select(.type == "function")] | length')
+            print_success "Uploaded ABI for $name ($func_count functions)"
+        else
+            print_error "Failed to upload ABI for $name: $response"
+        fi
+    }
+
+    print_info "Registering contracts to org $ORG_ID..."
+    register_contract "$TOKEN_ADDR" "SimpleDemoToken"
+    register_contract "$POOL_ADDR" "SimpleLiquidityPool"
+    register_contract "$ROUTER_ADDR" "SimpleSwapRouter"
+
+    print_info "Uploading contract ABIs..."
+    upload_abi "$TOKEN_ADDR" "SimpleDemoToken" "SimpleDemoToken.sol"
+    upload_abi "$POOL_ADDR" "SimpleLiquidityPool" "SimpleLiquidityPool.sol"
+    upload_abi "$ROUTER_ADDR" "SimpleSwapRouter" "SimpleSwapRouter.sol"
+else
+    print_step "Step 5: Skipping Contract Registration"
+    print_info "No ORG_ID set - contracts will be public (unregistered)"
+    print_info "Set ORG_ID to register contracts to a specific organization"
+fi
+
+# =============================================================================
+# Step 6: Initialize Contracts
+# =============================================================================
+
+print_step "Step 6: Initializing Contracts"
 
 # Initialize Token
 print_info "Initializing token with pool reference..."
@@ -273,10 +347,10 @@ cast send "$ROUTER_ADDR" "initialize(address,address,address)" "$DEPLOYER_ADDRES
 print_success "Router initialized"
 
 # =============================================================================
-# Step 6: Verify Deployment
+# Step 7: Verify Deployment
 # =============================================================================
 
-print_step "Step 6: Verifying Deployment"
+print_step "Step 7: Verifying Deployment"
 
 # Verify code exists
 TOKEN_CODE=$(cast codesize "$TOKEN_ADDR" --rpc-url "$PROXY_RPC_URL" 2>/dev/null || echo "0")
@@ -305,10 +379,10 @@ else
 fi
 
 # =============================================================================
-# Step 7: Test Interaction
+# Step 8: Test Interaction
 # =============================================================================
 
-print_step "Step 7: Testing Contract Interaction"
+print_step "Step 8: Testing Contract Interaction"
 
 # Mint some tokens
 print_info "Minting 1000 tokens..."

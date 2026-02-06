@@ -81,7 +81,7 @@ describe('GroupAccessForm', () => {
       expect(ethCallLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
     });
 
-    it('shows existing default_claims', async () => {
+    it('shows existing claims', async () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
@@ -126,7 +126,7 @@ describe('GroupAccessForm', () => {
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
-            default_claims: ['read', 'write'] as Claim[], // Need claims to enable method sections
+            claims: ['read', 'write'] as Claim[], // Need claims to enable method sections
           });
         })
       );
@@ -198,7 +198,7 @@ describe('GroupAccessForm', () => {
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
-            default_claims: ['read'],
+            claims: ['read'],
           });
         })
       );
@@ -222,7 +222,7 @@ describe('GroupAccessForm', () => {
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
-            default_claims: ['read', 'write'] as Claim[],
+            claims: ['read', 'write'] as Claim[],
           });
         })
       );
@@ -366,7 +366,7 @@ describe('GroupAccessForm', () => {
 
       expect(capturedBody).toBeDefined();
       expect(capturedBody).toHaveProperty('allowed_methods');
-      expect(capturedBody).toHaveProperty('default_claims');
+      expect(capturedBody).toHaveProperty('claims');
     });
 
     it('success calls onSave callback', async () => {
@@ -501,7 +501,7 @@ describe('GroupAccessForm', () => {
         http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
-            default_claims: ['read'] as Claim[],
+            claims: ['read'] as Claim[],
             allowed_methods: ['eth_call'],
           });
         }),
@@ -559,7 +559,7 @@ describe('GroupAccessForm', () => {
 
       expect(capturedBody).toMatchObject({
         allowed_methods: expect.arrayContaining(['eth_call', 'eth_sendTransaction']),
-        default_claims: expect.arrayContaining(['read', 'write']),
+        claims: expect.arrayContaining(['read', 'write']),
         rate_limit_rps: 200,
         rate_limit_daily: 75000,
       });

@@ -22,13 +22,13 @@ test.describe('RBAC Multiple Memberships', () => {
     // Group A allows eth_call
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Group B allows eth_getBalance
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Create user and add to both groups
@@ -74,21 +74,21 @@ test.describe('RBAC Multiple Memberships', () => {
     // Group A allows contract1
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract1.address, {
       group_id: groupA.id,
-      claims: ['read', 'write'],
+      
     });
 
     // Group B allows contract2
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: groupB.id,
-      claims: ['read', 'write'],
+      
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -115,15 +115,15 @@ test.describe('RBAC Multiple Memberships', () => {
     const groupA = await ctx.fixture.createGroup(org.id, 'groupA');
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
 
-    // Group A has read claim
+    // Group A has read claim with eth_call (read method matches read claim)
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
-      allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read'],
+      allowed_methods: ['eth_call'],
+      claims: ['read'],
     });
-    // Group B has write claim
+    // Group B has write claim with eth_sendTransaction (write method matches write claim)
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['write'],
+      claims: ['write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -132,15 +132,30 @@ test.describe('RBAC Multiple Memberships', () => {
     await ctx.fixture.addMembership(user.id, groupB.id);
 
     // User should have UNION of claims: read + write
-    const result = await ctx.rbac.checkAccess({
+    // Test with eth_call (requires read claim from group A)
+    const resultRead = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      required_claims: ['read'],
+    });
+    expect(resultRead.allowed).toBe(true);
+    expect(resultRead.claims).toContain('read');
+
+    // Test with eth_sendTransaction (requires write claim from group B)
+    const resultWrite = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_sendTransaction',
-      required_claims: ['read', 'write'],
+      required_claims: ['write'],
     });
-    expect(result.allowed).toBe(true);
-    expect(result.claims).toContain('read');
-    expect(result.claims).toContain('write');
+    expect(resultWrite.allowed).toBe(true);
+    expect(resultWrite.claims).toContain('write');
+
+    // Verify both claims are present in effective permissions
+    const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
+    expect(perms.claims).toContain('read');
+    expect(perms.claims).toContain('write');
   });
 
   test('rate limits take MAX across memberships', async ({ request }) => {
@@ -152,7 +167,7 @@ test.describe('RBAC Multiple Memberships', () => {
     // Group A: 50 RPS
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 50,
       rate_limit_daily: 5000,
     });
@@ -160,7 +175,7 @@ test.describe('RBAC Multiple Memberships', () => {
     // Group B: 100 RPS
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
@@ -195,19 +210,19 @@ test.describe('RBAC Multiple Memberships', () => {
     // Root: A, B, C
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Child: A, B (intersection with root)
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Sibling: D, E (completely different)
     await ctx.rbac.setGroupAccess(org.id, sibling.id, {
       allowed_methods: ['eth_chainId', 'eth_gasPrice'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // User in both child and sibling
@@ -247,17 +262,17 @@ test.describe('RBAC Multiple Memberships', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group1.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 30,
     });
     await ctx.rbac.setGroupAccess(org.id, group2.id, {
       allowed_methods: ['eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 60,
     });
     await ctx.rbac.setGroupAccess(org.id, group3.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 90,
     });
 
@@ -296,22 +311,22 @@ test.describe('RBAC Multiple Memberships', () => {
     const group1 = await ctx.fixture.createGroup(org.id, 'group1');
     const group2 = await ctx.fixture.createGroup(org.id, 'group2');
 
+    // Group 1 has admin claim - claims are inherited by contract grants
     await ctx.rbac.setGroupAccess(org.id, group1.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract1.address, {
       group_id: group1.id,
-      claims: ['admin'],
     });
 
+    // Group 2 has admin claim - claims are inherited by contract grants
     await ctx.rbac.setGroupAccess(org.id, group2.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: group2.id,
-      claims: ['admin'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
@@ -319,7 +334,7 @@ test.describe('RBAC Multiple Memberships', () => {
     });
     await ctx.fixture.addMembership(user.id, group2.id);
 
-    // User should have admin on both contracts
+    // User should have admin on both contracts (inherited from group claims)
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     expect(perms.contract_access[contract1.address]?.claims).toContain('admin');
     expect(perms.contract_access[contract2.address]?.claims).toContain('admin');

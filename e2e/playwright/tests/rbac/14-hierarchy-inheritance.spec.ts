@@ -22,13 +22,13 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root allows A, B, C
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Child allows A, B (intersection should be A, B)
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // User in child group
@@ -66,7 +66,6 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Create contracts
     const contract1 = await ctx.fixture.createContract(org.id);
     const contract2 = await ctx.fixture.createContract(org.id);
-    const contract3 = await ctx.fixture.createContract(org.id);
 
     // Create hierarchy: root -> child
     const root = await ctx.fixture.createGroup(org.id, 'root');
@@ -75,30 +74,28 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root has grant for C1 only
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract1.address, {
       group_id: root.id,
-      claims: ['read', 'write'],
     });
 
     // Child has grant for C2 only
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: child.id,
-      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, child.id, {
       kyc: true,
     });
 
-    // User in child should have access to all contracts via default_claims
-    // Plus specific grants for C1 (from parent) and C2 (from child)
-    for (const contract of [contract1, contract2, contract3]) {
+    // User in child should have access to C1 (from parent grant via UNION) and C2 (from child grant)
+    // Registered contracts require explicit grants for group access
+    for (const contract of [contract1, contract2]) {
       const result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
@@ -121,24 +118,22 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     const root = await ctx.fixture.createGroup(org.id, 'root');
     const child = await ctx.fixture.createGroup(org.id, 'child', { parentId: root.id });
 
-    // Root has admin on C1
+    // Root has admin on C1 - needs 'admin' claim for admin on contracts
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract1.address, {
       group_id: root.id,
-      claims: ['admin'],
     });
 
-    // Child has admin on C2
+    // Child has admin on C2 - needs 'admin' claim for admin on contracts
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: child.id,
-      claims: ['admin'],
     });
 
     const { did, user } = await ctx.fixture.createUserWithMembership(request, child.id, {
@@ -161,7 +156,7 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root: 100 RPS
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
@@ -169,7 +164,7 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Child: 50 RPS (more restrictive)
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 50,
       rate_limit_daily: 5000,
     });
@@ -201,21 +196,21 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // L1: allows A, B, C, D
     await ctx.rbac.setGroupAccess(org.id, l1.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
     // L2: allows A, B, C (removes D)
     await ctx.rbac.setGroupAccess(org.id, l2.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 75,
     });
 
     // L3: allows A, B (removes C)
     await ctx.rbac.setGroupAccess(org.id, l3.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 50,
     });
 
@@ -265,14 +260,14 @@ test.describe('RBAC Hierarchy Inheritance', () => {
     // Root has more methods
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
     // Child has fewer
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 50,
     });
 

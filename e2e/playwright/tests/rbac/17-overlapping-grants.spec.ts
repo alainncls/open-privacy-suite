@@ -35,21 +35,21 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     // Group A has ONLY read claim on contract
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read'],
+      
     });
 
     // Group B has ONLY write claim on contract
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['write'],
+      
     });
 
     // Create user and add to both groups
@@ -107,22 +107,22 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     // Group A allows only transfer
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read', 'write'],
+      
       functions: [TRANSFER_SELECTOR],
     });
 
     // Group B allows only approve
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['read', 'write'],
+      
       functions: [APPROVE_SELECTOR],
     });
 
@@ -155,29 +155,29 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     // Group A setup
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract1.address, {
       group_id: groupA.id,
-      claims: ['read', 'write'],
+      
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: groupA.id,
-      claims: ['read'],
+      
     });
 
-    // Group B setup
+    // Group B setup - includes admin claim for contract3
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract2.address, {
       group_id: groupB.id,
-      claims: ['write'],
+
     });
     await ctx.rbac.createContractGrant(org.id, contract3.address, {
       group_id: groupB.id,
-      claims: ['admin'],
+
     });
 
     // Create user in both groups
@@ -216,21 +216,21 @@ test.describe('RBAC Overlapping Contract Grants', () => {
 
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read', 'write'],
+
       functions: [BALANCE_OF_SELECTOR, TRANSFER_SELECTOR],
     });
 
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['read', 'write'],
+
       functions: [BALANCE_OF_SELECTOR, APPROVE_SELECTOR],
     });
 
@@ -263,21 +263,21 @@ test.describe('RBAC Overlapping Contract Grants', () => {
 
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read'],
+
       functions: [BALANCE_OF_SELECTOR], // Only balanceOf
     });
 
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['read'],
+
       // functions not specified = null = all functions allowed
     });
 
@@ -305,21 +305,21 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     // Read-only group
     await ctx.rbac.setGroupAccess(org.id, readGroup.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: readGroup.id,
-      claims: ['read'],
+      
     });
 
     // Write group
     await ctx.rbac.setGroupAccess(org.id, writeGroup.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: writeGroup.id,
-      claims: ['write'],
+      
     });
 
     // Create user in read-only group
@@ -380,20 +380,20 @@ test.describe('RBAC Overlapping Contract Grants', () => {
 
     await ctx.rbac.setGroupAccess(org.id, normalGroup.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: normalGroup.id,
-      claims: ['read', 'write'],
+
     });
 
     await ctx.rbac.setGroupAccess(org.id, adminGroup.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: adminGroup.id,
-      claims: ['admin'],
+
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, normalGroup.id, {
@@ -418,21 +418,21 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     // Group 1: read only
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group1.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group1.id,
-      claims: ['read'],
+      
     });
 
     // Group 2: also read (overlap) - should still work with union
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group2.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group2.id,
-      claims: ['read'],
+      
     });
 
     const { user, token } = await ctx.fixture.createUserWithMembership(request, group1.id, {

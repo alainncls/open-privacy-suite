@@ -179,7 +179,7 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 		access = &rbac.GroupAccess{
 			GroupID:        groupID,
 			AllowedMethods: []string{},
-			DefaultClaims:  []rbac.Claim{},
+			Claims:  []rbac.Claim{},
 		}
 	}
 	c.JSON(http.StatusOK, access)
@@ -201,7 +201,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 
 	var input struct {
 		AllowedMethods []string     `json:"allowed_methods"`
-		DefaultClaims  []rbac.Claim `json:"default_claims"`
+		Claims  []rbac.Claim `json:"claims"`
 		RateLimitRPS   *int         `json:"rate_limit_rps"`
 		RateLimitDaily *int         `json:"rate_limit_daily"`
 	}
@@ -212,7 +212,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 
 	// Validate that allowed_methods match the default_claims
 	// e.g., eth_call requires "read" claim, eth_sendTransaction requires "write" claim
-	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.DefaultClaims); err != nil {
+	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -227,7 +227,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	access := &rbac.GroupAccess{
 		GroupID:        groupID,
 		AllowedMethods: input.AllowedMethods,
-		DefaultClaims:  input.DefaultClaims,
+		Claims:  input.Claims,
 		RateLimitRPS:   input.RateLimitRPS,
 		RateLimitDaily: input.RateLimitDaily,
 	}

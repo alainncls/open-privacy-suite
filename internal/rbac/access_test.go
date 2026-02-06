@@ -389,7 +389,7 @@ func TestEffectivePermissionsMethods(t *testing.T) {
 			"0xaddress2": {Claims: []Claim{ClaimRead}},
 			"0xowned1":   {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
 		},
-		DefaultClaims: []Claim{ClaimRead},
+		Claims: []Claim{ClaimRead},
 	}
 
 	// Test HasMethod
@@ -855,7 +855,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 			"0xcontract2": {Claims: []Claim{ClaimRead}},
 			"0xnoread":    {Claims: []Claim{ClaimWrite}}, // Has write but NOT read
 		},
-		DefaultClaims: []Claim{}, // No default claims
+		Claims: []Claim{}, // No default claims
 	}
 
 	permsWithDefaultRead := &EffectivePermissions{
@@ -863,7 +863,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {Claims: []Claim{ClaimRead}},
 		},
-		DefaultClaims: []Claim{ClaimRead}, // Has default read claim
+		Claims: []Claim{ClaimRead}, // Has default read claim
 	}
 
 	tests := []struct {
@@ -1084,7 +1084,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xmycontract": {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		if !perms.IsContractRegistered("0xmycontract") {
@@ -1104,7 +1104,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xmycontract": {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		// Registered contract should return explicit access
@@ -1126,7 +1126,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xmycontract": {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{}, // No default claims
+			Claims: []Claim{}, // No default claims
 		}
 
 		access := perms.GetContractAccess("0xunregistered")
@@ -1194,7 +1194,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{}, // No default claims - cross-org denied
+			Claims: []Claim{}, // No default claims - cross-org denied
 		}
 
 		// User has access to their own contract
@@ -1228,7 +1228,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{}, // No default claims
+			Claims: []Claim{}, // No default claims
 		}
 
 		// Verify user has no access to other org's contract
@@ -1252,7 +1252,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{},
+			Claims: []Claim{},
 		}
 
 		// User has full access to their own contract
@@ -1285,7 +1285,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{ClaimRead}, // Default read claim for public contracts
+			Claims: []Claim{ClaimRead}, // Default read claim for public contracts
 		}
 
 		// PublicContract is not registered to any org
@@ -1311,7 +1311,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{ClaimRead, ClaimWrite}, // Wide default claims
+			Claims: []Claim{ClaimRead, ClaimWrite}, // Wide default claims
 		}
 
 		// GetContractAccess returns default claims for unknown contracts
@@ -1343,7 +1343,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xabcdef1234567890abcdef1234567890abcdef12": {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{},
+			Claims: []Claim{},
 		}
 
 		// Should match regardless of case
@@ -1369,7 +1369,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{}, // Empty
-			DefaultClaims:  []Claim{ClaimRead},
+			Claims:  []Claim{ClaimRead},
 		}
 
 		// Any contract should get default claims
@@ -1388,7 +1388,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{}, // No default claims
+			Claims: []Claim{}, // No default claims
 		}
 
 		// Registered contract still accessible
@@ -1410,7 +1410,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xaaaa": {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: nil, // nil
+			Claims: nil, // nil
 		}
 
 		// Should behave same as empty
@@ -1460,7 +1460,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				userAddr: {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{}, // No default claims
+			Claims: []Claim{}, // No default claims
 		}
 
 		// User has no access to otherAddr
@@ -1551,7 +1551,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 					Functions: []string{"0xa9059cbb", "0x095ea7b3"},
 				},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		access := perms.GetContractAccess(addr)
@@ -1577,7 +1577,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				userAddr: {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{}, // Empty
+			Claims: []Claim{}, // Empty
 		}
 
 		access := perms.GetContractAccess(otherOrgAddr)
@@ -1594,7 +1594,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				userAddr: {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			DefaultClaims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimRead},
 		}
 
 		access := perms.GetContractAccess(publicAddr)
@@ -1813,7 +1813,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 				addr3: {Claims: []Claim{ClaimRead}},
 				// addr2 not accessible
 			},
-			DefaultClaims: []Claim{}, // No default
+			Claims: []Claim{}, // No default
 		}
 
 		// Should fail because addr2 is not accessible
@@ -1837,7 +1837,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 				addr1: {Claims: []Claim{ClaimRead}},
 				addr2: {Claims: []Claim{ClaimRead}},
 			},
-			DefaultClaims: []Claim{},
+			Claims: []Claim{},
 		}
 
 		params := []any{map[string]any{
@@ -1856,7 +1856,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},
-			DefaultClaims:  []Claim{ClaimRead}, // Has default read
+			Claims:  []Claim{ClaimRead}, // Has default read
 		}
 
 		params := []any{map[string]any{
@@ -1877,7 +1877,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				addr: {Claims: []Claim{ClaimWrite, ClaimAdmin}}, // Has write and admin but NOT read
 			},
-			DefaultClaims: []Claim{},
+			Claims: []Claim{},
 		}
 
 		params := []any{map[string]any{

@@ -121,7 +121,7 @@ curl -s -X PUT "${API_URL}/orgs/${ORG_A_ID}/groups/${GROUP_A_ID}/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance", "eth_getCode", "eth_blockNumber", "eth_chainId", "eth_getTransactionReceipt", "eth_getTransactionByHash", "net_version"],
-        "default_claims": ["read", "write", "deploy"]
+        "claims": ["read", "write", "deploy"]
     }' > /dev/null
 
 echo -e "${GREEN}✓ Created Group A with deploy permissions${NC}"
@@ -138,7 +138,7 @@ curl -s -X PUT "${API_URL}/orgs/${ORG_B_ID}/groups/${GROUP_B_ID}/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance", "eth_getCode", "eth_blockNumber", "eth_chainId", "eth_getTransactionReceipt", "eth_getTransactionByHash", "net_version"],
-        "default_claims": ["read", "write", "deploy"]
+        "claims": ["read", "write", "deploy"]
     }' > /dev/null
 
 echo -e "${GREEN}✓ Created Group B with permissions${NC}"

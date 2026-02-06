@@ -35,13 +35,13 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'readonlygroup');
     const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
+    // Only allow eth_call with read claim (eth_sendTransaction requires write claim)
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
-      allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      allowed_methods: ['eth_call'],
+      claims: ['read'], // Only read claim
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read'], // ONLY read, no write
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -56,13 +56,12 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     ]);
     expect(result.status).toBe(200);
 
-    // eth_sendTransaction should fail (requires write claim)
+    // eth_sendTransaction should fail (method not allowed and write claim not granted)
     result = await makeRPCRequest(request, token, 'eth_sendTransaction', [
       { ...SAMPLE_TX_DATA, to: contract.address },
     ]);
     expect(result.status).toBe(403);
     expect(result.body).toHaveProperty('error');
-    expect((result.body as { error: string }).error).toContain('claim');
   });
 
   test('allows eth_sendTransaction when user has write claim', async ({ request }) => {
@@ -71,11 +70,11 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -97,7 +96,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'], // No eth_sendTransaction
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -112,20 +111,32 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
   });
 
   test('write claim on one contract does not grant write on another', async ({ request }) => {
-    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'onecontractgroup');
+    // Create two groups: one for contract A grants, one for contract B (no grant to this user)
+    const groupA = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'contractAGroup');
+    const groupB = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'contractBGroup');
     const contractA = await ctx.fixture.createContract(DEFAULT_ORG_ID);
-    const contractBAddress = ctx.contractAddress(); // Not registered
+    const contractB = await ctx.fixture.createContract(DEFAULT_ORG_ID); // Registered, but user not granted
 
-    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+    // Group A: has write access to contract A
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, groupA.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [], // No default claims
-    });
-    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contractA.address, {
-      group_id: group.id,
       claims: ['read', 'write'],
     });
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contractA.address, {
+      group_id: groupA.id,
+    });
 
-    const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
+    // Group B: has write access to contract B (but user won't be in this group)
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, groupB.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['read', 'write'],
+    });
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contractB.address, {
+      group_id: groupB.id,
+    });
+
+    // User only in group A
+    const { token } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
       kyc: true,
       keepDefaultMembership: false,
     });
@@ -136,20 +147,20 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     ]);
     expect(result.status).not.toBe(403);
 
-    // Write to contract B should fail (no grant, no default_claims)
+    // Write to contract B should fail (registered contract, but user has no grant for it)
     result = await makeRPCRequest(request, token, 'eth_sendTransaction', [
-      { ...SAMPLE_TX_DATA, to: contractBAddress },
+      { ...SAMPLE_TX_DATA, to: contractB.address },
     ]);
     expect(result.status).toBe(403);
   });
 
-  test('default_claims allows write to unregistered contracts', async ({ request }) => {
+  test('claims allows write to unregistered contracts', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'defaultwritegroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // Default claims allow any contract
+      claims: ['read', 'write'], // Default claims allow any contract
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -157,7 +168,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
       keepDefaultMembership: false,
     });
 
-    // Should be able to write to any contract via default_claims
+    // Should be able to write to any contract via claims
     const result = await makeRPCRequest(request, token, 'eth_sendTransaction', [
       { ...SAMPLE_TX_DATA, to: unknownContract },
     ]);
@@ -171,9 +182,10 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     // Either way, sending incomplete/invalid transaction should fail.
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rawgroup');
 
+    // eth_sendRawTransaction requires write claim (it's a write method)
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_sendRawTransaction'],
-      default_claims: ['read'], // Only read, no write
+      claims: ['write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -195,7 +207,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { user, token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -221,7 +233,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -234,23 +246,25 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     expect((result.body as { error: string }).error).toContain('KYC');
   });
 
-  test('write via two groups: one has method, other has claim', async ({ request }) => {
-    // Scenario: Group A has eth_sendTransaction in methods but no write claim
-    //           Group B has write claim but no eth_sendTransaction method
-    // Expected: User in both groups should have eth_sendTransaction + write claim = success
-    const groupA = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'methodgroup');
-    const groupB = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'claimgroup');
+  test('write via two groups: union of methods and claims', async ({ request }) => {
+    // Scenario: Group A has eth_call with read claim
+    //           Group B has eth_sendTransaction with write claim
+    // Expected: User in both groups should have union of methods and claims = success for both
+    // Note: Backend validates that allowed_methods must have matching claims,
+    // so each group must be internally consistent.
+    const groupA = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'readgroup');
+    const groupB = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'writegroup');
 
-    // Group A: has method, no write claim
+    // Group A: has eth_call with read claim
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, groupA.id, {
-      allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read'],
+      allowed_methods: ['eth_call'],
+      claims: ['read'],
     });
 
-    // Group B: has write claim, different method
+    // Group B: has eth_sendTransaction with write claim
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, groupB.id, {
-      allowed_methods: ['eth_call'],
-      default_claims: ['write'],
+      allowed_methods: ['eth_sendTransaction'],
+      claims: ['write'],
     });
 
     const { user, token } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -259,7 +273,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
     });
     await ctx.fixture.addMembership(user.id, groupB.id);
 
-    // User should have: eth_sendTransaction (from A) + eth_call (from B) + read (from A) + write (from B)
+    // User should have: eth_call (from A) + eth_sendTransaction (from B) + read (from A) + write (from B)
     // Therefore eth_sendTransaction + write should work
     const result = await makeRPCRequest(request, token, 'eth_sendTransaction', [SAMPLE_TX_DATA]);
     expect(result.status).not.toBe(403);
@@ -271,12 +285,12 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     // Only allow transfer, not approve
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
       functions: [TRANSFER_SELECTOR],
     });
 
@@ -306,28 +320,28 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
   });
 
   test('multiple users with different write permissions on same contract', async ({ request }) => {
-    // User A: read-only, User B: read+write
+    // User A: read-only (eth_call only), User B: read+write
     // Ensure isolation
     const readGroup = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'readgroup');
     const writeGroup = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'fullgroup');
     const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
+    // Read group: only eth_call method with read claim (no eth_sendTransaction)
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, readGroup.id, {
-      allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      allowed_methods: ['eth_call'],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: readGroup.id,
-      claims: ['read'],
     });
 
+    // Write group: both methods with both claims
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, writeGroup.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: writeGroup.id,
-      claims: ['read', 'write'],
     });
 
     const { token: tokenA } = await ctx.fixture.createUserWithMembership(request, readGroup.id, {
@@ -341,7 +355,7 @@ test.describe('RBAC Write Operations (eth_sendTransaction)', () => {
 
     const writeTx = { ...SAMPLE_TX_DATA, to: contract.address };
 
-    // User A should be denied
+    // User A should be denied (method not allowed)
     let result = await makeRPCRequest(request, tokenA, 'eth_sendTransaction', [writeTx]);
     expect(result.status).toBe(403);
 
@@ -371,12 +385,12 @@ test.describe('RBAC Write Operations - Hierarchy', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, root.id, {
       allowed_methods: ['eth_call'], // Only eth_call
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, child.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'], // Child tries to add eth_sendTransaction
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, child.id, {
@@ -399,16 +413,16 @@ test.describe('RBAC Write Operations - Hierarchy', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, root.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: root.id,
-      claims: ['read', 'write'],
+
     });
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, child.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, child.id, {

@@ -15,8 +15,8 @@ import (
 // Contract operations
 
 func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error {
-	query := `INSERT INTO contracts (id, org_id, address, name, deployed_by_user_id, deployed_at, metadata)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO contracts (id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          RETURNING created_at, updated_at`
 
 	metadata, err := json.Marshal(contract.Metadata)
@@ -24,21 +24,26 @@ func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 		return fmt.Errorf("failed to marshal contract metadata: %w", err)
 	}
 
+	var abi *string
+	if contract.ABI != "" {
+		abi = &contract.ABI
+	}
+
 	return d.conn.QueryRowContext(ctx, query,
 		contract.ID, contract.OrgID, strings.ToLower(contract.Address), contract.Name,
-		contract.DeployedByUserID, contract.DeployedAt, metadata,
+		abi, contract.DeployedByUserID, contract.DeployedAt, metadata,
 	).Scan(&contract.CreatedAt, &contract.UpdatedAt)
 }
 
 func (d *DB) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
 	          FROM contracts WHERE id = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
@@ -49,7 +54,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		return make(map[string]*rbac.Contract), nil
 	}
 
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(ids))
@@ -61,13 +66,13 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 	result := make(map[string]*rbac.Contract)
 	for rows.Next() {
 		contract := &rbac.Contract{}
-		var name sql.NullString
+		var name, abi sql.NullString
 		var deployedByUserID sql.NullString
 		var deployedAt sql.NullTime
 		var metadata []byte
 
 		err := rows.Scan(
-			&contract.ID, &contract.OrgID, &contract.Address, &name,
+			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 			&deployedByUserID, &deployedAt, &metadata,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		)
@@ -76,6 +81,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		}
 
 		contract.Name = name.String
+		contract.ABI = abi.String
 		if deployedByUserID.Valid {
 			contract.DeployedByUserID = &deployedByUserID.String
 		}
@@ -97,7 +103,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 }
 
 func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error {
-	query := `UPDATE contracts SET name = $2, metadata = $3, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE contracts SET name = $2, abi = $3, metadata = $4, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	metadata, err := json.Marshal(contract.Metadata)
@@ -105,12 +111,17 @@ func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error 
 		return fmt.Errorf("failed to marshal contract metadata: %w", err)
 	}
 
-	_, err = d.conn.ExecContext(ctx, query, contract.ID, contract.Name, metadata)
+	var abi *string
+	if contract.ABI != "" {
+		abi = &contract.ABI
+	}
+
+	_, err = d.conn.ExecContext(ctx, query, contract.ID, contract.Name, abi, metadata)
 	return err
 }
 
 func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -131,7 +142,7 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 	}
 
 	// Get paginated results
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
@@ -150,6 +161,18 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 
 func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
+	return err
+}
+
+// UpdateContractABI updates only the ABI field of a contract.
+func (d *DB) UpdateContractABI(ctx context.Context, id string, abi string) error {
+	var abiValue *string
+	if abi != "" {
+		abiValue = &abi
+	}
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE contracts SET abi = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, abiValue)
 	return err
 }
 
@@ -206,15 +229,34 @@ func (d *DB) GetContractOwnerOrgID(ctx context.Context, address string) (string,
 	return orgID, nil
 }
 
+// GetContractDeployerByAddress returns the user ID that deployed a contract at the given address.
+// Returns nil if the contract is not found or has no deployer recorded.
+// This is used for deployer auto-grant: the user who deployed a contract automatically gets read+write access.
+func (d *DB) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
+	query := `SELECT deployed_by_user_id FROM contracts WHERE LOWER(address) = LOWER($1)`
+	var deployerID sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, address).Scan(&deployerID)
+	if err == sql.ErrNoRows {
+		return nil, nil // Contract not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contract deployer: %w", err)
+	}
+	if !deployerID.Valid {
+		return nil, nil // No deployer recorded
+	}
+	return &deployerID.String, nil
+}
+
 func scanContract(row *sql.Row) (*rbac.Contract, error) {
 	contract := &rbac.Contract{}
-	var name sql.NullString
+	var name, abi sql.NullString
 	var deployedByUserID sql.NullString
 	var deployedAt sql.NullTime
 	var metadata []byte
 
 	err := row.Scan(
-		&contract.ID, &contract.OrgID, &contract.Address, &name,
+		&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 		&deployedByUserID, &deployedAt, &metadata,
 		&contract.CreatedAt, &contract.UpdatedAt,
 	)
@@ -227,6 +269,9 @@ func scanContract(row *sql.Row) (*rbac.Contract, error) {
 
 	if name.Valid {
 		contract.Name = name.String
+	}
+	if abi.Valid {
+		contract.ABI = abi.String
 	}
 	if deployedByUserID.Valid {
 		contract.DeployedByUserID = &deployedByUserID.String
@@ -246,13 +291,13 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 	var contracts []*rbac.Contract
 	for rows.Next() {
 		contract := &rbac.Contract{}
-		var name sql.NullString
+		var name, abi sql.NullString
 		var deployedByUserID sql.NullString
 		var deployedAt sql.NullTime
 		var metadata []byte
 
 		if err := rows.Scan(
-			&contract.ID, &contract.OrgID, &contract.Address, &name,
+			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
 			&deployedByUserID, &deployedAt, &metadata,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		); err != nil {
@@ -261,6 +306,9 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 
 		if name.Valid {
 			contract.Name = name.String
+		}
+		if abi.Valid {
+			contract.ABI = abi.String
 		}
 		if deployedByUserID.Valid {
 			contract.DeployedByUserID = &deployedByUserID.String
@@ -286,14 +334,9 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 // Contract Grant operations
 
 func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `INSERT INTO contract_grants (id, contract_id, group_id, claims, functions)
-	          VALUES ($1, $2, $3, $4, $5)
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
+	          VALUES ($1, $2, $3, $4)
 	          RETURNING created_at, updated_at`
-
-	claims := make([]string, len(grant.Claims))
-	for i, c := range grant.Claims {
-		claims[i] = string(c)
-	}
 
 	var functions any
 	if grant.Functions != nil {
@@ -301,45 +344,39 @@ func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 	}
 
 	return d.conn.QueryRowContext(ctx, query,
-		grant.ID, grant.ContractID, grant.GroupID,
-		pq.Array(claims), functions,
+		grant.ID, grant.ContractID, grant.GroupID, functions,
 	).Scan(&grant.CreatedAt, &grant.UpdatedAt)
 }
 
 func (d *DB) GetContractGrant(ctx context.Context, id string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE id = $1`
 
 	return scanContractGrant(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
 
 	return scanContractGrant(d.conn.QueryRowContext(ctx, query, contractID, groupID))
 }
 
 func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `UPDATE contract_grants SET claims = $2, functions = $3, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE contract_grants SET functions = $2, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
-
-	claims := make([]string, len(grant.Claims))
-	for i, c := range grant.Claims {
-		claims[i] = string(c)
-	}
 
 	var functions any
 	if grant.Functions != nil {
 		functions = pq.Array(grant.Functions)
 	}
 
-	_, err := d.conn.ExecContext(ctx, query, grant.ID, pq.Array(claims), functions)
+	_, err := d.conn.ExecContext(ctx, query, grant.ID, functions)
 	return err
 }
 
 func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, contractID)
@@ -352,7 +389,7 @@ func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string
 }
 
 func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE group_id = $1 ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, groupID)
@@ -365,7 +402,7 @@ func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*
 }
 
 func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
-	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.claims, cg.functions, cg.created_at, cg.updated_at,
+	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.functions, cg.created_at, cg.updated_at,
 	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM contract_grants cg
 	          JOIN groups g ON cg.group_id = g.id
@@ -384,12 +421,12 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			Group: &rbac.Group{},
 		}
 
-		var claims, functions pq.StringArray
+		var functions pq.StringArray
 		var parentID, description sql.NullString
 
 		if err := rows.Scan(
 			&result.Grant.ID, &result.Grant.ContractID, &result.Grant.GroupID,
-			&claims, &functions, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
+			&functions, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
 			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
@@ -397,10 +434,6 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			return nil, fmt.Errorf("failed to scan contract grant with group: %w", err)
 		}
 
-		result.Grant.Claims = make([]rbac.Claim, len(claims))
-		for i, c := range claims {
-			result.Grant.Claims[i] = rbac.Claim(c)
-		}
 		if len(functions) > 0 {
 			result.Grant.Functions = functions
 		}
@@ -428,11 +461,11 @@ func (d *DB) DeleteContractGrant(ctx context.Context, id string) error {
 
 func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var claims, functions pq.StringArray
+	var functions pq.StringArray
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&claims, &functions, &grant.CreatedAt, &grant.UpdatedAt,
+		&functions, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -441,10 +474,6 @@ func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 		return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 	}
 
-	grant.Claims = make([]rbac.Claim, len(claims))
-	for i, c := range claims {
-		grant.Claims[i] = rbac.Claim(c)
-	}
 	if len(functions) > 0 {
 		grant.Functions = functions
 	}
@@ -456,19 +485,15 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 	var grants []*rbac.ContractGrant
 	for rows.Next() {
 		grant := &rbac.ContractGrant{}
-		var claims, functions pq.StringArray
+		var functions pq.StringArray
 
 		if err := rows.Scan(
 			&grant.ID, &grant.ContractID, &grant.GroupID,
-			&claims, &functions, &grant.CreatedAt, &grant.UpdatedAt,
+			&functions, &grant.CreatedAt, &grant.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 		}
 
-		grant.Claims = make([]rbac.Claim, len(claims))
-		for i, c := range claims {
-			grant.Claims[i] = rbac.Claim(c)
-		}
 		if len(functions) > 0 {
 			grant.Functions = functions
 		}

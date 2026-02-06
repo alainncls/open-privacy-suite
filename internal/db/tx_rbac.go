@@ -46,6 +46,24 @@ func (t *Tx) DeleteContract(ctx context.Context, id string) error {
 	return err
 }
 
+// GetContractDeployerByAddress returns the user ID that deployed a contract at the given address.
+// Returns nil if the contract is not found or has no deployer recorded.
+func (t *Tx) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
+	query := `SELECT deployed_by_user_id FROM contracts WHERE LOWER(address) = LOWER($1)`
+	var deployerID sql.NullString
+	err := t.tx.QueryRowContext(ctx, query, address).Scan(&deployerID)
+	if err == sql.ErrNoRows {
+		return nil, nil // Contract not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contract deployer: %w", err)
+	}
+	if !deployerID.Valid {
+		return nil, nil // No deployer recorded
+	}
+	return &deployerID.String, nil
+}
+
 func (t *Tx) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*rbac.Contract, error) {
 	if len(ids) == 0 {
 		return make(map[string]*rbac.Contract), nil
@@ -101,14 +119,9 @@ func (t *Tx) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 // Contract Grant operations on transaction
 
 func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `INSERT INTO contract_grants (id, contract_id, group_id, claims, functions)
-	          VALUES ($1, $2, $3, $4, $5)
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
+	          VALUES ($1, $2, $3, $4)
 	          RETURNING created_at, updated_at`
-
-	claims := make([]string, len(grant.Claims))
-	for i, c := range grant.Claims {
-		claims[i] = string(c)
-	}
 
 	var functions any
 	if grant.Functions != nil {
@@ -116,20 +129,19 @@ func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 	}
 
 	return t.tx.QueryRowContext(ctx, query,
-		grant.ID, grant.ContractID, grant.GroupID,
-		pq.Array(claims), functions,
+		grant.ID, grant.ContractID, grant.GroupID, functions,
 	).Scan(&grant.CreatedAt, &grant.UpdatedAt)
 }
 
 func (t *Tx) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
 
 	return scanContractGrantRow(t.tx.QueryRowContext(ctx, query, contractID, groupID))
 }
 
 func (t *Tx) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, claims, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
 
 	rows, err := t.tx.QueryContext(ctx, query, contractID)
@@ -201,12 +213,12 @@ func (t *Tx) DeleteGroup(ctx context.Context, id string) error {
 // Group Access operations on transaction
 
 func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily)
 	          VALUES ($1, $2, $3, $4, $5, $6)
 	          RETURNING created_at, updated_at`
 
-	claims := make([]string, len(access.DefaultClaims))
-	for i, c := range access.DefaultClaims {
+	claims := make([]string, len(access.Claims))
+	for i, c := range access.Claims {
 		claims[i] = string(c)
 	}
 
@@ -346,11 +358,11 @@ func scanContractRow(row *sql.Row) (*rbac.Contract, error) {
 // Helper to scan a contract grant row (shared between DB and Tx)
 func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var claims, functions pq.StringArray
+	var functions pq.StringArray
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&claims, &functions, &grant.CreatedAt, &grant.UpdatedAt,
+		&functions, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -359,10 +371,6 @@ func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 		return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 	}
 
-	grant.Claims = make([]rbac.Claim, len(claims))
-	for i, c := range claims {
-		grant.Claims[i] = rbac.Claim(c)
-	}
 	if len(functions) > 0 {
 		grant.Functions = functions
 	}

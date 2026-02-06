@@ -201,6 +201,7 @@ export default function ContractList() {
             <TableRow>
               <TableHead>Address</TableHead>
               <TableHead>Name</TableHead>
+              <TableHead className="text-center w-16">ABI</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -236,6 +237,15 @@ export default function ContractList() {
                 </TableCell>
                 <TableCell>
                   <span className="text-sm">{contract.name || '-'}</span>
+                </TableCell>
+                <TableCell className="text-center">
+                  {contract.abi ? (
+                    <span title="ABI loaded">
+                      <Check className="w-4 h-4 text-[#22C55E] mx-auto" />
+                    </span>
+                  ) : (
+                    <span className="text-[#94A3B8]" title="No ABI">-</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className="text-sm text-[#6B7280]">

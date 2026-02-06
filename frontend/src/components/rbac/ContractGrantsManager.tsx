@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Contract, ContractGrant, Group, GroupAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
@@ -58,7 +59,7 @@ interface GrantWithGroup extends ContractGrant {
 export default function ContractGrantsManager({
   orgId,
   contract,
-  onClose,
+  onClose: _onClose,
 }: ContractGrantsManagerProps) {
   const [grants, setGrants] = useState<GrantWithGroup[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -153,9 +154,35 @@ export default function ContractGrantsManager({
 
   const existingGrantGroupIds = grants.map(g => g.group_id);
 
-  // Get selector display name
+  // Parse ABI to extract function selectors
+  const abiFunctions = useMemo(() => {
+    if (!contract.abi) return {};
+    try {
+      const parsed = JSON.parse(contract.abi);
+      if (!Array.isArray(parsed)) return {};
+
+      const map: Record<string, string> = {};
+      for (const item of parsed) {
+        if (item.type !== 'function') continue;
+        const inputTypes = (item.inputs || []).map((input: { type: string }) => input.type).join(',');
+        const signature = `${item.name}(${inputTypes})`;
+        try {
+          const selector = toFunctionSelector(signature).toLowerCase();
+          map[selector] = item.name;
+        } catch {
+          // Skip invalid signatures
+        }
+      }
+      return map;
+    } catch {
+      return {};
+    }
+  }, [contract.abi]);
+
+  // Get selector display name (from ABI first, then common selectors)
   const getSelectorName = (selector: string) => {
-    return COMMON_SELECTORS[selector.toLowerCase()] || null;
+    const normalized = selector.toLowerCase();
+    return abiFunctions[normalized] || COMMON_SELECTORS[normalized] || null;
   };
 
   return (
@@ -271,8 +298,8 @@ export default function ContractGrantsManager({
                 {/* Group's claims from GroupAccess */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-[#6B7280]">Group claims:</span>
-                  {grant.groupAccess?.default_claims && grant.groupAccess.default_claims.length > 0 ? (
-                    grant.groupAccess.default_claims.map(claim => (
+                  {grant.groupAccess?.claims && grant.groupAccess.claims.length > 0 ? (
+                    grant.groupAccess.claims.map(claim => (
                       <span
                         key={claim}
                         className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
@@ -325,6 +352,7 @@ export default function ContractGrantsManager({
           <ContractGrantForm
             orgId={orgId}
             contractAddress={contractAddress}
+            contractAbi={contract.abi}
             groups={groups}
             existingGrantGroupIds={existingGrantGroupIds}
             onClose={() => setShowForm(false)}
@@ -344,6 +372,7 @@ export default function ContractGrantsManager({
               key={editingGrant.id}
               orgId={orgId}
               contractAddress={contractAddress}
+              contractAbi={contract.abi}
               grant={editingGrant}
               groups={groups}
               existingGrantGroupIds={existingGrantGroupIds}

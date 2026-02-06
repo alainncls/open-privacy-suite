@@ -148,6 +148,53 @@ func (s *Server) deleteContract(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "contract deleted"})
 }
 
+// updateContractABI updates the ABI for a contract.
+// PUT /orgs/:org_id/contracts/:address/abi
+func (s *Server) updateContractABI(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input struct {
+		ABI string `json:"abi" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate ABI is a valid JSON array
+	if input.ABI != "" && !strings.HasPrefix(strings.TrimSpace(input.ABI), "[") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "abi must be a valid JSON array"})
+		return
+	}
+
+	// Validate it's valid JSON
+	var abiItems []json.RawMessage
+	if err := json.Unmarshal([]byte(input.ABI), &abiItems); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "abi must be valid JSON: " + err.Error()})
+		return
+	}
+
+	if err := s.db.UpdateContractABI(c.Request.Context(), contract.ID, input.ABI); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Return updated contract
+	contract.ABI = input.ABI
+	c.JSON(http.StatusOK, contract)
+}
+
 // ContractSyncStatus represents the on-chain status of a contract
 type ContractSyncStatus struct {
 	ID      string `json:"id"`
@@ -387,9 +434,8 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID   string       `json:"group_id" binding:"required"`
-		Claims    []rbac.Claim `json:"claims" binding:"required"`
-		Functions []string     `json:"functions"` // nil = all functions
+		GroupID   string   `json:"group_id" binding:"required"`
+		Functions []string `json:"functions"` // nil = all functions
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -411,7 +457,6 @@ func (s *Server) createContractGrant(c *gin.Context) {
 		ID:         uuid.New().String(),
 		ContractID: contract.ID,
 		GroupID:    input.GroupID,
-		Claims:     input.Claims,
 		Functions:  input.Functions,
 	}
 
@@ -452,17 +497,13 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		Claims    *[]rbac.Claim `json:"claims"`
-		Functions *[]string     `json:"functions"`
+		Functions *[]string `json:"functions"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if input.Claims != nil {
-		grant.Claims = *input.Claims
-	}
 	if input.Functions != nil {
 		grant.Functions = *input.Functions
 	}

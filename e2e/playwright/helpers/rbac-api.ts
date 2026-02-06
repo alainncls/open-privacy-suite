@@ -36,7 +36,7 @@ export interface GroupAccess {
   id: string;
   group_id: string;
   allowed_methods: string[];
-  default_claims: Claim[];
+  claims: Claim[];
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
   created_at: string;
@@ -84,6 +84,7 @@ export interface Contract {
   address?: string; // new format
   contract_address?: string; // legacy format - deprecated
   name?: string;
+  abi?: string; // Contract ABI JSON for function-level access control
   deployed_by_user_id?: string | null;
   deployed_at?: string | null;
   owner_group_id?: string; // legacy format - deprecated
@@ -97,12 +98,11 @@ export function getContractAddress(contract: Contract): string {
   return contract.address || contract.contract_address || '';
 }
 
-// ContractGrant - links groups to contracts with claims
+// ContractGrant - links groups to contracts (claims are inherited from GroupAccess)
 export interface ContractGrant {
   id: string;
   contract_id: string;
   group_id: string;
-  claims: Claim[];
   functions?: string[] | null; // null = all functions, or specific selectors
   created_at: string;
   updated_at: string;
@@ -120,7 +120,7 @@ export interface EffectivePermissions {
   org_id: string;
   allowed_methods: string[];
   contract_access: Record<string, ContractAccess>; // address -> access
-  default_claims: Claim[];
+  claims: Claim[];
   rate_limit_rps: number | null;
   rate_limit_daily: number | null;
   computed_at: string;
@@ -178,7 +178,7 @@ export interface UpdateGroupInput {
 
 export interface SetGroupAccessInput {
   allowed_methods?: string[];
-  default_claims?: Claim[];
+  claims?: Claim[];
   rate_limit_rps?: number;
   rate_limit_daily?: number;
 }
@@ -207,12 +207,10 @@ export interface UpdateContractInput {
 
 export interface CreateContractGrantInput {
   group_id: string;
-  claims: Claim[];
   functions?: string[] | null;
 }
 
 export interface UpdateContractGrantInput {
-  claims?: Claim[];
   functions?: string[] | null;
 }
 
@@ -502,6 +500,35 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to delete contract: ${response.status()} - ${body}`);
     }
+  }
+
+  async getContract(orgId: string, address: string): Promise<Contract | null> {
+    const response = await this.request.get(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}`
+    );
+    if (response.status() === 404) {
+      return null;
+    }
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to get contract: ${response.status()} - ${body}`);
+    }
+    return (await response.json()) as Contract;
+  }
+
+  async updateContractABI(orgId: string, address: string, abi: string): Promise<Contract> {
+    const response = await this.request.put(
+      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/abi`,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        data: { abi },
+      }
+    );
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to update contract ABI: ${response.status()} - ${body}`);
+    }
+    return (await response.json()) as Contract;
   }
 
   // === Contract Grants ===

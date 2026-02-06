@@ -21,7 +21,7 @@ export default function GroupAccessForm({
 }: GroupAccessFormProps) {
   const [loading, setLoading] = useState(true);
   const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
-  const [defaultClaims, setDefaultClaims] = useState<Claim[]>([]);
+  const [claims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
   const [saving, setSaving] = useState(false);
@@ -39,10 +39,10 @@ export default function GroupAccessForm({
   useEffect(() => {
     const validMethods = allowedMethods.filter(method => {
       if ((RPC_METHODS_BY_CLAIM.read as readonly string[]).includes(method)) {
-        return defaultClaims.includes('read');
+        return claims.includes('read');
       }
       if ((RPC_METHODS_BY_CLAIM.write as readonly string[]).includes(method)) {
-        return defaultClaims.includes('write');
+        return claims.includes('write');
       }
       return true; // Unknown methods stay selected
     });
@@ -50,7 +50,7 @@ export default function GroupAccessForm({
     if (validMethods.length !== allowedMethods.length) {
       setAllowedMethods(validMethods);
     }
-  }, [defaultClaims]);
+  }, [claims]);
 
   const loadAccess = async () => {
     try {
@@ -59,7 +59,7 @@ export default function GroupAccessForm({
       const access = response.data;
       if (access) {
         setAllowedMethods(access.allowed_methods || []);
-        setDefaultClaims(access.default_claims || []);
+        setDefaultClaims(access.claims || []);
         setRateLimitRPS(access.rate_limit_rps?.toString() || '');
         setRateLimitDaily(access.rate_limit_daily?.toString() || '');
       }
@@ -121,7 +121,7 @@ export default function GroupAccessForm({
     try {
       const input: SetGroupAccessInput = {
         allowed_methods: allowedMethods,
-        default_claims: defaultClaims,
+        claims: claims,
         rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
         rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
       };
@@ -154,7 +154,7 @@ export default function GroupAccessForm({
   const renderMethodSection = (claimType: 'read' | 'write', title: string) => {
     const methods = RPC_METHODS_BY_CLAIM[claimType];
     const isExpanded = expandedSections[claimType];
-    const hasClaim = defaultClaims.includes(claimType);
+    const hasClaim = claims.includes(claimType);
     const selectedCount = getMethodsSelectedCount(claimType);
     const totalCount = methods.length;
 
@@ -268,11 +268,11 @@ export default function GroupAccessForm({
               onClick={() => toggleClaim(claim)}
             >
               <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
-                defaultClaims.includes(claim)
+                claims.includes(claim)
                   ? 'bg-[#8950FA] border-[#8950FA]'
                   : 'border-[#CBD5E1] bg-white'
               }`}>
-                {defaultClaims.includes(claim) && <Check className="w-3 h-3 text-white" />}
+                {claims.includes(claim) && <Check className="w-3 h-3 text-white" />}
               </div>
               <div>
                 <span className="text-sm font-medium text-[#0F0F0F]">{CLAIM_LABELS[claim]}</span>

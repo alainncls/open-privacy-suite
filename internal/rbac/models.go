@@ -72,6 +72,7 @@ type Contract struct {
 	OrgID            string         `json:"org_id"`
 	Address          string         `json:"address"` // lowercase 0x-prefixed
 	Name             string         `json:"name,omitempty"`
+	ABI              string         `json:"abi,omitempty"` // Contract ABI JSON for function-level access control
 	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
 	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
 	Metadata         map[string]any `json:"metadata"`
@@ -79,23 +80,27 @@ type Contract struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// ContractGrant links a group to a contract with specific claims.
+// ContractGrant links a group to a contract, enabling access.
+// The group's claims (from GroupAccess) apply to this contract.
+// Functions can optionally restrict which contract functions are accessible.
+// Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
 	ID         string    `json:"id"`
 	ContractID string    `json:"contract_id"`
 	GroupID    string    `json:"group_id"`
-	Claims     []Claim   `json:"claims"`              // read, write, admin, upgrade
 	Functions  []string  `json:"functions,omitempty"` // nil = all functions, or specific selectors
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // GroupAccess represents RPC method permissions and rate limits for a group.
+// Claims define what capabilities group members have (read, write, deploy, admin, upgrade).
+// These claims apply to public contracts directly, and to registered contracts via grants.
 type GroupAccess struct {
 	ID             string    `json:"id"`
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
-	DefaultClaims  []Claim   `json:"default_claims"` // Claims for unregistered contracts
+	Claims         []Claim   `json:"claims"` // Capabilities: read, write, deploy, admin, upgrade
 	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -134,13 +139,15 @@ type ContractAccess struct {
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
+// Claims are the user's capabilities from their group memberships.
+// ContractAccess maps registered contract addresses to their access settings.
 type EffectivePermissions struct {
 	ID             string                    `json:"id"`
 	UserID         string                    `json:"user_id"`
 	OrgID          string                    `json:"org_id"`
 	AllowedMethods []string                  `json:"allowed_methods"`
 	ContractAccess map[string]ContractAccess `json:"contract_access"` // address -> access
-	DefaultClaims  []Claim                   `json:"default_claims"`  // Claims for unregistered contracts
+	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
 	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
 	ComputedAt     time.Time                 `json:"computed_at"`
@@ -245,9 +252,9 @@ func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess
 		return &access
 	}
 	// Return access based on default claims for unregistered contracts
-	if len(e.DefaultClaims) > 0 {
+	if len(e.Claims) > 0 {
 		return &ContractAccess{
-			Claims:    e.DefaultClaims,
+			Claims:    e.Claims,
 			Functions: nil, // All functions allowed for default
 		}
 	}
@@ -307,7 +314,7 @@ func (e *EffectivePermissions) HasContractAccess(address string) bool {
 
 // HasDefaultClaim checks if the user has a specific default claim.
 func (e *EffectivePermissions) HasDefaultClaim(claim Claim) bool {
-	return slices.Contains(e.DefaultClaims, claim)
+	return slices.Contains(e.Claims, claim)
 }
 
 // HasClaim checks if a ContractAccess includes a specific claim.

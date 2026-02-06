@@ -118,7 +118,7 @@ test.describe('RBAC Users', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const membership = await ctx.rbac.createMembership(user.id, {
@@ -173,7 +173,7 @@ test.describe('RBAC Users', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { user, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {

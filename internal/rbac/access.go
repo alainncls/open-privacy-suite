@@ -520,6 +520,44 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}
 		}
 
+		// Deployer auto-grant: if the user deployed this contract, they get read+write access automatically.
+		// This happens even without explicit grants - the deployer should always be able to interact
+		// with their own contracts. Note: this does NOT grant upgrade/admin claims.
+		if access == nil || !containsClaim(access.Claims, requiredClaim) {
+			deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check contract deployer: %w", err)
+			}
+			if deployerID != nil && *deployerID == user.ID {
+				// User is the deployer - grant read+write access
+				deployerClaims := []Claim{ClaimRead, ClaimWrite}
+				if access == nil {
+					access = &ContractAccess{
+						Claims:    deployerClaims,
+						Functions: nil, // All functions allowed
+					}
+				} else {
+					// Merge deployer claims with existing claims (union)
+					mergedClaims := make(map[Claim]bool)
+					for _, c := range access.Claims {
+						mergedClaims[c] = true
+					}
+					for _, c := range deployerClaims {
+						mergedClaims[c] = true
+					}
+					combined := make([]Claim, 0, len(mergedClaims))
+					for c := range mergedClaims {
+						combined = append(combined, c)
+					}
+					access = &ContractAccess{
+						Claims:    combined,
+						Functions: access.Functions, // Keep existing function restrictions
+					}
+				}
+				hasExplicitAccess = true // Deployer access counts as explicit for cross-org check
+			}
+		}
+
 		// If still no access, deny
 		if access == nil {
 			return &AccessCheckResult{
@@ -602,7 +640,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Check if user has the deploy claim via default claims
 		// Note: read/write claims without target_address are allowed without claim check
 		// because contract-specific claims only apply when targeting a specific contract
-		if !containsClaim(perms.DefaultClaims, ClaimDeploy) {
+		if !containsClaim(perms.Claims, ClaimDeploy) {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  "missing required deploy claim for contract deployment",
@@ -669,7 +707,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				break
 			}
 		}
-		if !hasClaimOnAnyContract && !containsClaim(perms.DefaultClaims, claim) {
+		if !hasClaimOnAnyContract && !containsClaim(perms.Claims, claim) {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  fmt.Sprintf("missing required claim: %s", claim),
@@ -694,7 +732,7 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 	claimSet := make(map[Claim]bool)
 
 	// Add default claims
-	for _, c := range perms.DefaultClaims {
+	for _, c := range perms.Claims {
 		claimSet[c] = true
 	}
 

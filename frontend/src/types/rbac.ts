@@ -36,6 +36,7 @@ export interface Contract {
   address?: string; // lowercase 0x-prefixed (new format)
   contract_address?: string; // legacy format - deprecated
   name?: string;
+  abi?: string; // Contract ABI JSON for function-level access control
   deployed_by_user_id?: string | null;
   deployed_at?: string | null;
   owner_group_id?: string; // legacy format - deprecated
@@ -45,23 +46,25 @@ export interface Contract {
 }
 
 
-// ContractGrant - links groups to contracts with claims
+// ContractGrant - links groups to contracts, enabling access
+// Group's claims (from GroupAccess) apply to this contract.
+// Functions can optionally restrict which contract functions are accessible.
 export interface ContractGrant {
   id: string;
   contract_id: string;
   group_id: string;
-  claims: Claim[];
   functions?: string[] | null; // null = all functions, or specific selectors
   created_at: string;
   updated_at: string;
 }
 
 // GroupAccess - RPC method permissions and rate limits for a group
+// Claims define the capabilities group members have (read, write, deploy, admin, upgrade)
 export interface GroupAccess {
   id: string;
   group_id: string;
   allowed_methods: string[];
-  default_claims: Claim[]; // Claims for unregistered contracts
+  claims: Claim[]; // Group capabilities - applies to public contracts directly, registered via grants
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
   created_at: string;
@@ -104,7 +107,7 @@ export interface EffectivePermissions {
   org_id: string;
   allowed_methods: string[];
   contract_access: Record<string, ContractAccess>; // address -> access
-  default_claims: Claim[]; // Claims for unregistered contracts
+  claims: Claim[]; // User's capabilities from their groups
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
   computed_at: string;
@@ -172,7 +175,7 @@ export interface UpdateGroupInput {
 // Input for setting group access
 export interface SetGroupAccessInput {
   allowed_methods?: string[];
-  default_claims?: Claim[];
+  claims?: Claim[];
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
 }
@@ -202,14 +205,13 @@ export interface UpdateContractInput {
 }
 
 // Input for creating a contract grant
+// Claims are inherited from the group's GroupAccess.claims
 export interface CreateContractGrantInput {
   group_id: string;
-  claims: Claim[];
   functions?: string[] | null;
 }
 
 export interface UpdateContractGrantInput {
-  claims?: Claim[];
   functions?: string[] | null;
 }
 

@@ -28,16 +28,16 @@ test.describe('RBAC Contract Grants', () => {
     // Create grant
     const grant = await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
+      
     });
 
     expect(grant.group_id).toBe(group.id);
-    expect(grant.claims).toContain('read');
+    // Claims are now inherited from group's GroupAccess, not stored on grants
     // Functions is undefined or null when all functions are allowed
     expect(grant.functions == null || grant.functions === undefined).toBe(true);
   });
 
-  test('creates grant with multiple claims', async () => {
+  test('creates grant linking group to contract', async () => {
     const org = await ctx.fixture.createOrg('grant-org2');
     const group = await ctx.fixture.createGroup(org.id, 'grant-group2');
     const contractAddr = ctx.contractAddress();
@@ -49,12 +49,10 @@ test.describe('RBAC Contract Grants', () => {
 
     const grant = await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read', 'write', 'admin'],
     });
 
-    expect(grant.claims).toContain('read');
-    expect(grant.claims).toContain('write');
-    expect(grant.claims).toContain('admin');
+    // Grants link groups to contracts - claims are inherited from group's GroupAccess
+    expect(grant.group_id).toBe(group.id);
   });
 
   test('creates grant with specific function selectors', async () => {
@@ -69,7 +67,7 @@ test.describe('RBAC Contract Grants', () => {
 
     const grant = await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
+      
       functions: ['0x70a08231', '0x18160ddd'], // balanceOf, totalSupply
     });
 
@@ -90,11 +88,11 @@ test.describe('RBAC Contract Grants', () => {
     // Create two grants
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group1.id,
-      claims: ['read'],
+      
     });
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group2.id,
-      claims: ['read', 'write'],
+      
     });
 
     const grants = await ctx.rbac.listContractGrants(org.id, contractAddr);
@@ -105,7 +103,7 @@ test.describe('RBAC Contract Grants', () => {
     expect(groupIds).toContain(group2.id);
   });
 
-  test('updates grant claims', async () => {
+  test('updates grant functions', async () => {
     const org = await ctx.fixture.createOrg('grant-org5');
     const group = await ctx.fixture.createGroup(org.id, 'grant-group5');
     const contractAddr = ctx.contractAddress();
@@ -117,17 +115,15 @@ test.describe('RBAC Contract Grants', () => {
 
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
     });
 
-    // Update grant to add write claim
+    // Update grant to restrict to specific functions
     const updated = await ctx.rbac.updateContractGrant(org.id, contractAddr, group.id, {
-      claims: ['read', 'write', 'admin'],
+      functions: ['0x70a08231', '0x18160ddd'], // balanceOf, totalSupply
     });
 
-    expect(updated.claims).toContain('read');
-    expect(updated.claims).toContain('write');
-    expect(updated.claims).toContain('admin');
+    // Grant now only allows specific functions - claims come from GroupAccess
+    expect(updated.functions).toEqual(['0x70a08231', '0x18160ddd']);
   });
 
   test('updates grant to restrict functions', async () => {
@@ -143,7 +139,7 @@ test.describe('RBAC Contract Grants', () => {
     // Create with all functions
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
+      
       functions: null, // All functions
     });
 
@@ -167,7 +163,7 @@ test.describe('RBAC Contract Grants', () => {
 
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
+      
     });
 
     // Verify grant exists
@@ -189,39 +185,53 @@ test.describe('RBAC Contract Grants', () => {
     const adminsGroup = await ctx.fixture.createGroup(org.id, 'admins');
     const contractAddr = ctx.contractAddress();
 
+    // Set up different claims for each group via GroupAccess
+    await ctx.rbac.setGroupAccess(org.id, readOnlyGroup.id, {
+      allowed_methods: ['eth_call'],
+      claims: ['read'],
+    });
+    await ctx.rbac.setGroupAccess(org.id, writersGroup.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['read', 'write'],
+    });
+    await ctx.rbac.setGroupAccess(org.id, adminsGroup.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['read', 'write', 'admin'],
+    });
+
     await ctx.rbac.createContract(org.id, {
       address: contractAddr,
       name: 'Multi-Permission Contract',
     });
 
-    // Read-only grant
+    // Create grants - grants link groups to contracts, claims come from GroupAccess
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: readOnlyGroup.id,
-      claims: ['read'],
     });
-
-    // Writers grant
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: writersGroup.id,
-      claims: ['read', 'write'],
     });
-
-    // Admins grant
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: adminsGroup.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     const grants = await ctx.rbac.listContractGrants(org.id, contractAddr);
     expect(grants.length).toBe(3);
 
-    const readOnlyGrant = grants.find((g) => g.group_id === readOnlyGroup.id);
-    const writersGrant = grants.find((g) => g.group_id === writersGroup.id);
-    const adminsGrant = grants.find((g) => g.group_id === adminsGroup.id);
+    // Verify all groups have grants
+    const groupIds = grants.map((g) => g.group_id);
+    expect(groupIds).toContain(readOnlyGroup.id);
+    expect(groupIds).toContain(writersGroup.id);
+    expect(groupIds).toContain(adminsGroup.id);
 
-    expect(readOnlyGrant?.claims).toEqual(['read']);
-    expect(writersGrant?.claims).toContain('write');
-    expect(adminsGrant?.claims).toContain('admin');
+    // Verify GroupAccess has the correct claims
+    const readOnlyAccess = await ctx.rbac.getGroupAccess(org.id, readOnlyGroup.id);
+    const writersAccess = await ctx.rbac.getGroupAccess(org.id, writersGroup.id);
+    const adminsAccess = await ctx.rbac.getGroupAccess(org.id, adminsGroup.id);
+
+    expect(readOnlyAccess?.claims).toEqual(['read']);
+    expect(writersAccess?.claims).toContain('write');
+    expect(adminsAccess?.claims).toContain('admin');
   });
 
   test('grant affects effective permissions', async () => {
@@ -234,7 +244,7 @@ test.describe('RBAC Contract Grants', () => {
     // to allow both methods
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Create user and add to group
@@ -249,20 +259,266 @@ test.describe('RBAC Contract Grants', () => {
 
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read', 'write'], // Grant write on this specific contract
+       // Grant write on this specific contract
     });
 
     // Get effective permissions
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
 
     // Should have default read claim
-    expect(perms.default_claims).toContain('read');
+    expect(perms.claims).toContain('read');
 
     // Contract should have write claim from grant
     expect(perms.contract_access).toBeDefined();
     const contractAccess = perms.contract_access[contractAddr.toLowerCase()];
     expect(contractAccess).toBeDefined();
     expect(contractAccess.claims).toContain('write');
+  });
+
+  test.describe('Contract ABI Upload', () => {
+    const sampleABI = JSON.stringify([
+      {
+        type: 'function',
+        name: 'balanceOf',
+        inputs: [{ name: 'account', type: 'address' }],
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+      },
+      {
+        type: 'function',
+        name: 'transfer',
+        inputs: [
+          { name: 'to', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+        ],
+        outputs: [{ name: '', type: 'bool' }],
+        stateMutability: 'nonpayable',
+      },
+      {
+        type: 'function',
+        name: 'approve',
+        inputs: [
+          { name: 'spender', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+        ],
+        outputs: [{ name: '', type: 'bool' }],
+        stateMutability: 'nonpayable',
+      },
+    ]);
+
+    test('uploads valid ABI to contract', async () => {
+      const org = await ctx.fixture.createOrg('abi-org1');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'ABI Test Contract',
+      });
+
+      const updated = await ctx.rbac.updateContractABI(org.id, contractAddr, sampleABI);
+
+      expect(updated.address || updated.contract_address).toBe(contractAddr);
+      expect(updated.abi).toBe(sampleABI);
+    });
+
+    test('ABI persists after upload', async () => {
+      const org = await ctx.fixture.createOrg('abi-org2');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'ABI Persist Test',
+      });
+
+      await ctx.rbac.updateContractABI(org.id, contractAddr, sampleABI);
+
+      // Verify ABI is persisted by getting the contract
+      const contract = await ctx.rbac.getContract(org.id, contractAddr);
+      expect(contract).not.toBeNull();
+      expect(contract!.abi).toBe(sampleABI);
+    });
+
+    test('rejects invalid JSON ABI', async () => {
+      const org = await ctx.fixture.createOrg('abi-org3');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Invalid ABI Test',
+      });
+
+      await expect(
+        ctx.rbac.updateContractABI(org.id, contractAddr, 'not valid json')
+      ).rejects.toThrow(/400/);
+    });
+
+    test('rejects non-array ABI', async () => {
+      const org = await ctx.fixture.createOrg('abi-org4');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Non-Array ABI Test',
+      });
+
+      await expect(
+        ctx.rbac.updateContractABI(org.id, contractAddr, '{"type": "function"}')
+      ).rejects.toThrow(/400/);
+    });
+
+    test('can replace existing ABI', async () => {
+      const org = await ctx.fixture.createOrg('abi-org5');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Replace ABI Test',
+      });
+
+      // Upload initial ABI
+      await ctx.rbac.updateContractABI(org.id, contractAddr, sampleABI);
+
+      // Upload replacement ABI
+      const newABI = JSON.stringify([
+        {
+          type: 'function',
+          name: 'totalSupply',
+          inputs: [],
+          outputs: [{ name: '', type: 'uint256' }],
+          stateMutability: 'view',
+        },
+      ]);
+
+      const updated = await ctx.rbac.updateContractABI(org.id, contractAddr, newABI);
+      expect(updated.abi).toBe(newABI);
+
+      // Verify the new ABI persists
+      const contract = await ctx.rbac.getContract(org.id, contractAddr);
+      expect(contract!.abi).toBe(newABI);
+    });
+
+    test('ABI upload to nonexistent contract fails', async () => {
+      const org = await ctx.fixture.createOrg('abi-org6');
+      const nonexistentAddr = '0x0000000000000000000000000000000000000001';
+
+      await expect(
+        ctx.rbac.updateContractABI(org.id, nonexistentAddr, sampleABI)
+      ).rejects.toThrow(/404/);
+    });
+  });
+
+  test.describe('Explicit Grant Requirement Security', () => {
+    // These tests verify that registered contracts require explicit grants
+    // and cannot be accessed via claims alone (security fix)
+
+    test('registered contract WITHOUT explicit grant is denied', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('grant-security-org1');
+      const group = await ctx.fixture.createGroup(org.id, 'security-group1');
+      const contractAddr = ctx.contractAddress();
+
+      // Set up group access with claims (read) but NO explicit contract grant
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'], // User has read via claims
+      });
+
+      // Create user with membership (removes default membership so only our group applies)
+      const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      // Register contract to org (but NO grant to the group)
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'No-Grant Contract',
+      });
+
+      // Verify effective permissions do NOT include contract in contract_access
+      const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
+      expect(perms.claims).toContain('read');
+      expect(perms.contract_access[contractAddr.toLowerCase()]).toBeUndefined();
+
+      // Access check should DENY because registered contracts require explicit grants
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('requires explicit grant');
+    });
+
+    test('registered contract WITH explicit grant is allowed', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('grant-security-org2');
+      const group = await ctx.fixture.createGroup(org.id, 'security-group2');
+      const contractAddr = ctx.contractAddress();
+
+      // Set up group access
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      // Create user with membership (removes default membership so only our group applies)
+      const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      // Register contract to org
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Granted Contract',
+      });
+
+      // Add explicit grant for the contract to the group
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+      });
+
+      // Verify effective permissions include the contract
+      const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
+      expect(perms.contract_access[contractAddr.toLowerCase()]).toBeDefined();
+      expect(perms.contract_access[contractAddr.toLowerCase()].claims).toContain('read');
+
+      // Access check should ALLOW because user has explicit grant
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+      });
+      expect(result.allowed).toBe(true);
+    });
+
+    test('public contract (not registered) allowed via claims', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('grant-security-org3');
+      const group = await ctx.fixture.createGroup(org.id, 'security-group3');
+      // This address is NOT registered to any org
+      const publicContractAddr = '0x' + 'ab'.repeat(20);
+
+      // Set up group access with claims
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      // Create user with membership (removes default membership so only our group applies)
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      // Do NOT register the contract - it stays public
+
+      // Access check should ALLOW via claims for public contract
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: publicContractAddr,
+      });
+      expect(result.allowed).toBe(true);
+    });
   });
 
   // TODO: This test requires function selector checking to be fully implemented in access check
@@ -274,7 +530,7 @@ test.describe('RBAC Contract Grants', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user } = await ctx.fixture.createUser(request);
@@ -288,7 +544,7 @@ test.describe('RBAC Contract Grants', () => {
     // Grant with specific functions only
     await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      claims: ['read'],
+      
       functions: ['0x70a08231'], // Only balanceOf
     });
 

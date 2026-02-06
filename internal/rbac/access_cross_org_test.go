@@ -18,6 +18,7 @@ type MockCrossOrgStore struct {
 	groupAccess           map[string]*GroupAccess            // groupID -> GroupAccess
 	cachedPermissions     map[string]*EffectivePermissions   // userID:orgID -> perms
 	contractGrants        map[string][]*ContractGrant        // groupID -> grants
+	contractDeployers     map[string]*string                 // lowercase address -> userID (deployer)
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
@@ -31,6 +32,7 @@ func NewMockCrossOrgStore() *MockCrossOrgStore {
 		groupAccess:           make(map[string]*GroupAccess),
 		cachedPermissions:     make(map[string]*EffectivePermissions),
 		contractGrants:        make(map[string][]*ContractGrant),
+		contractDeployers:     make(map[string]*string),
 	}
 }
 
@@ -125,6 +127,9 @@ func (m *MockCrossOrgStore) UpdateContract(ctx context.Context, contract *Contra
 func (m *MockCrossOrgStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) { return nil, nil }
 func (m *MockCrossOrgStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) { return nil, 0, nil }
 func (m *MockCrossOrgStore) DeleteContract(ctx context.Context, id string) error { return nil }
+func (m *MockCrossOrgStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
+	return m.contractDeployers[normalizeAddress(address)], nil
+}
 
 // Group operations
 func (m *MockCrossOrgStore) CreateGroup(ctx context.Context, group *Group) error { return nil }
@@ -242,13 +247,13 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 
 	// Define contract addresses
@@ -269,13 +274,17 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 
 	// Pre-cache permissions (optional, for faster tests)
 	// These represent the computed permissions for users in their respective orgs
+	// NOTE: Registered contracts require EXPLICIT grants (not just default_claims)
+	// So we add explicit ContractAccess for contracts in the user's own org
 	store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 		ID:             "perms-a",
 		UserID:         "user-a",
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		ContractAccess: map[string]ContractAccess{},
-		DefaultClaims:  []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
+		},
+		Claims:  []Claim{ClaimRead},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -284,8 +293,10 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		UserID:         "user-b",
 		OrgID:          "org-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		ContractAccess: map[string]ContractAccess{},
-		DefaultClaims:  []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{
+			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
+		},
+		Claims:  []Claim{ClaimRead},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -497,9 +508,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 	})
 }
 
-// TestCheckAccessCrossOrgWithDefaultClaims tests that default_claims cannot be used
+// TestCheckAccessCrossOrgWithClaims tests that default_claims cannot be used
 // to bypass cross-org isolation for registered contracts.
-func TestCheckAccessCrossOrgWithDefaultClaims(t *testing.T) {
+func TestCheckAccessCrossOrgWithClaims(t *testing.T) {
 	ctx := context.Background()
 	store := NewMockCrossOrgStore()
 	setupCrossOrgTestScenario(store)
@@ -511,7 +522,7 @@ func TestCheckAccessCrossOrgWithDefaultClaims(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimAdmin}, // Very permissive
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimAdmin}, // Very permissive
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -536,6 +547,120 @@ func TestCheckAccessCrossOrgWithDefaultClaims(t *testing.T) {
 		}
 		if !containsString(result.Reason, "belongs to an organization you are not a member of") {
 			t.Errorf("expected cross-org denial message, got: %s", result.Reason)
+		}
+	})
+}
+
+// TestCheckAccessExplicitGrantRequirement tests that registered contracts (even in user's own org)
+// require explicit grants and cannot be accessed via default_claims alone.
+// This is a security feature: registering a contract means you want explicit access control.
+func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+
+	t.Run("SECURITY-011: Registered contract in own org WITHOUT explicit grant is denied", func(t *testing.T) {
+		// Set up user-a with default_claims but NO explicit access to contractA
+		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+			ID:             "perms-a",
+			UserID:         "user-a",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
+			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
+			Claims:  []Claim{ClaimRead},          // Has read claim via default_claims
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be DENIED - registered contracts require explicit grants
+		if result.Allowed {
+			t.Error("expected access to be denied for registered contract without explicit grant")
+		}
+		if !containsString(result.Reason, "requires explicit grant") {
+			t.Errorf("expected 'requires explicit grant' message, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("SECURITY-012: Registered contract in own org WITH explicit grant is allowed", func(t *testing.T) {
+		// Set up user-a WITH explicit grant for contractA
+		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+			ID:             "perms-a",
+			UserID:         "user-a",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
+			ContractAccess: map[string]ContractAccess{
+				contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for contractA
+			},
+			Claims: []Claim{ClaimRead},
+			ComputedAt:    time.Now(),
+			ExpiresAt:     time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be ALLOWED - has explicit grant
+		if !result.Allowed {
+			t.Errorf("expected access to be allowed for registered contract with explicit grant, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("SECURITY-013: Public contract (not registered anywhere) allowed via default_claims", func(t *testing.T) {
+		publicContract := "0x1111111111111111111111111111111111111111"
+		// Public contract is NOT in registeredToAnyOrg - should work with default_claims
+
+		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+			ID:             "perms-a",
+			UserID:         "user-a",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
+			ContractAccess: map[string]ContractAccess{}, // No explicit grants
+			Claims:  []Claim{ClaimRead},          // Has read via default_claims
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": publicContract, "data": "0x"}, "latest"},
+			TargetAddress:  publicContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be ALLOWED - public contract accessible via default_claims
+		if !result.Allowed {
+			t.Errorf("expected access to be allowed for public contract via default_claims, got: %s", result.Reason)
 		}
 	})
 }
@@ -571,13 +696,13 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 
 	// Define contracts
@@ -593,13 +718,16 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 	store.addressOwnedByOrg[contractB] = map[string]bool{"org-b": true}
 
 	// Cache permissions for multi-user in both orgs
+	// NOTE: Registered contracts require EXPLICIT grants (not just default_claims)
 	store.cachedPermissions["multi-user:org-a"] = &EffectivePermissions{
 		ID:             "perms-multi-a",
 		UserID:         "multi-user",
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		ContractAccess: map[string]ContractAccess{},
-		DefaultClaims:  []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-a contract
+		},
+		Claims:  []Claim{ClaimRead},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -608,8 +736,10 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		UserID:         "multi-user",
 		OrgID:          "org-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		ContractAccess: map[string]ContractAccess{},
-		DefaultClaims:  []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{
+			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-b contract
+		},
+		Claims:  []Claim{ClaimRead},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -664,4 +794,240 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestCheckAccessDeployerAutoGrant tests that the deployer of a contract automatically
+// gets read+write access to their deployed contract, even without explicit grants.
+func TestCheckAccessDeployerAutoGrant(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user and non-deployer user
+	deployerUser := &User{ID: "deployer-user", ExternalID: "did:test:deployer", KYC: true, Banned: false}
+	otherUser := &User{ID: "other-user", ExternalID: "did:test:other", KYC: true, Banned: false}
+	store.users["did:test:deployer"] = deployerUser
+	store.users["did:test:other"] = otherUser
+
+	// Create group
+	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+
+	// Both users are members of org-a
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-deployer", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+	}
+	store.memberships["other-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-other", UserID: "other-user", GroupID: "group-a"}, Group: groupA},
+	}
+
+	// Set up group access - NO default claims (users need explicit grants)
+	store.groupAccess["group-a"] = &GroupAccess{
+		ID:             "access-a",
+		GroupID:        "group-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance", "eth_estimateGas"},
+		Claims:         []Claim{}, // No default claims
+	}
+
+	// Define deployed contract - this is a PUBLIC contract (not registered to any org)
+	// This tests that deployer auto-grant works even for public contracts.
+	deployedContract := "0xdddd000000000000000000000000000000000001"
+
+	// Contract is NOT owned by any org (public contract)
+	// store.contractOwners[deployedContract] = "" is the default (empty)
+	store.registeredToAnyOrg[deployedContract] = false
+	// store.addressOwnedByOrg[deployedContract] is empty
+
+	// Set deployer - THIS IS THE KEY: deployer-user deployed this contract
+	deployerID := "deployer-user"
+	store.contractDeployers[deployedContract] = &deployerID
+
+	// Cache permissions - NO explicit contract access for either user, NO default claims
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID:             "perms-deployer",
+		UserID:         "deployer-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance", "eth_estimateGas"},
+		ContractAccess: map[string]ContractAccess{}, // NO explicit grants
+		Claims:         []Claim{},                   // NO default claims
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+	store.cachedPermissions["other-user:org-a"] = &EffectivePermissions{
+		ID:             "perms-other",
+		UserID:         "other-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance", "eth_estimateGas"},
+		ContractAccess: map[string]ContractAccess{}, // NO explicit grants
+		Claims:         []Claim{},                   // NO default claims
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("DEPLOYER-001: Deployer can read their deployed contract", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": deployedContract, "data": "0x"}, "latest"},
+			TargetAddress:  deployedContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to have read access to their deployed contract, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("DEPLOYER-002: Deployer can write to their deployed contract", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": deployedContract, "from": "0x9999999999999999999999999999999999999999", "data": "0xa9059cbb"}},
+			TargetAddress:  deployedContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to have write access to their deployed contract, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("DEPLOYER-003: Non-deployer cannot access deployed contract without grant", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:other",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": deployedContract, "data": "0x"}, "latest"},
+			TargetAddress:  deployedContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected non-deployer to be denied access without explicit grant")
+		}
+	})
+
+	t.Run("DEPLOYER-004: Deployer does NOT get admin claim automatically", func(t *testing.T) {
+		// Even though deployer can read/write, they don't automatically get admin claim
+		// Admin claim must be granted explicitly
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": deployedContract, "data": "0x"}, "latest"},
+			TargetAddress:  deployedContract,
+			RequiredClaims: []Claim{ClaimAdmin}, // Require admin claim
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected deployer to NOT have admin claim automatically")
+		}
+	})
+
+	t.Run("DEPLOYER-005: Deployer does NOT get upgrade claim automatically", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": deployedContract, "data": "0x"}, "latest"},
+			TargetAddress:  deployedContract,
+			RequiredClaims: []Claim{ClaimUpgrade}, // Require upgrade claim
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected deployer to NOT have upgrade claim automatically")
+		}
+	})
+}
+
+// TestCheckAccessDeployerAutoGrantMerge tests that deployer auto-grant properly
+// merges with existing permissions when the user already has some claims.
+func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user
+	deployerUser := &User{ID: "deployer-user", ExternalID: "did:test:deployer", KYC: true, Banned: false}
+	store.users["did:test:deployer"] = deployerUser
+
+	// Create group
+	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-deployer", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+	}
+
+	// Set up group access with read-only default claims
+	store.groupAccess["group-a"] = &GroupAccess{
+		ID:             "access-a",
+		GroupID:        "group-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+		Claims:         []Claim{ClaimRead}, // Only read by default
+	}
+
+	// Define deployed contract
+	deployedContract := "0xdddd000000000000000000000000000000000002"
+
+	// Set up contract - NOT registered to org (public contract) but deployed by user
+	// This tests that deployer grant works even for public contracts
+	store.contractOwners[deployedContract] = "" // Public contract
+	store.registeredToAnyOrg[deployedContract] = false
+
+	// Set deployer
+	deployerID := "deployer-user"
+	store.contractDeployers[deployedContract] = &deployerID
+
+	// Cache permissions with read-only default claims
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID:             "perms-deployer",
+		UserID:         "deployer-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimRead}, // Only read claim
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("DEPLOYER-MERGE-001: Deployer gets write even with read-only defaults", func(t *testing.T) {
+		// User has read via default_claims, but deployer auto-grant should add write
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": deployedContract, "from": "0x9999999999999999999999999999999999999999", "data": "0xa9059cbb"}},
+			TargetAddress:  deployedContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to have write access (merged with read defaults), got: %s", result.Reason)
+		}
+	})
 }

@@ -15,17 +15,17 @@ import (
 // Effective Permissions Cache operations
 
 func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*rbac.EffectivePermissions, error) {
-	query := `SELECT id, user_id, org_id, allowed_methods, contract_access, default_claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at
+	query := `SELECT id, user_id, org_id, allowed_methods, contract_access, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at
 	          FROM effective_permissions_cache WHERE user_id = $1 AND org_id = $2 AND expires_at > $3`
 
 	perms := &rbac.EffectivePermissions{}
-	var allowedMethods, defaultClaims pq.StringArray
+	var allowedMethods, claimsArr pq.StringArray
 	var contractAccess []byte
 	var rateLimitRPS, rateLimitDaily sql.NullInt32
 
 	err := d.conn.QueryRowContext(ctx, query, userID, orgID, time.Now()).Scan(
 		&perms.ID, &perms.UserID, &perms.OrgID,
-		&allowedMethods, &contractAccess, &defaultClaims,
+		&allowedMethods, &contractAccess, &claimsArr,
 		&rateLimitRPS, &rateLimitDaily, &perms.ComputedAt, &perms.ExpiresAt,
 	)
 	if err == sql.ErrNoRows {
@@ -36,9 +36,9 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 	}
 
 	perms.AllowedMethods = allowedMethods
-	perms.DefaultClaims = make([]rbac.Claim, len(defaultClaims))
-	for i, c := range defaultClaims {
-		perms.DefaultClaims[i] = rbac.Claim(c)
+	perms.Claims = make([]rbac.Claim, len(claimsArr))
+	for i, c := range claimsArr {
+		perms.Claims[i] = rbac.Claim(c)
 	}
 
 	if len(contractAccess) > 0 {
@@ -62,27 +62,27 @@ func (d *DB) GetCachedPermissions(ctx context.Context, userID, orgID string) (*r
 }
 
 func (d *DB) SetCachedPermissions(ctx context.Context, perms *rbac.EffectivePermissions) error {
-	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allowed_methods, contract_access, default_claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at)
+	query := `INSERT INTO effective_permissions_cache (id, user_id, org_id, allowed_methods, contract_access, claims, rate_limit_rps, rate_limit_daily, computed_at, expires_at)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	          ON CONFLICT (user_id, org_id) DO UPDATE SET
 	          allowed_methods = EXCLUDED.allowed_methods,
 	          contract_access = EXCLUDED.contract_access,
-	          default_claims = EXCLUDED.default_claims,
+	          claims = EXCLUDED.claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          computed_at = EXCLUDED.computed_at,
 	          expires_at = EXCLUDED.expires_at`
 
-	defaultClaims := make([]string, len(perms.DefaultClaims))
-	for i, c := range perms.DefaultClaims {
-		defaultClaims[i] = string(c)
+	claimsArr := make([]string, len(perms.Claims))
+	for i, c := range perms.Claims {
+		claimsArr[i] = string(c)
 	}
 
 	contractAccess, _ := json.Marshal(perms.ContractAccess)
 
 	_, err := d.conn.ExecContext(ctx, query,
 		perms.ID, perms.UserID, perms.OrgID,
-		pq.Array(perms.AllowedMethods), contractAccess, pq.Array(defaultClaims),
+		pq.Array(perms.AllowedMethods), contractAccess, pq.Array(claimsArr),
 		perms.RateLimitRPS, perms.RateLimitDaily, perms.ComputedAt, perms.ExpiresAt,
 	)
 	return err

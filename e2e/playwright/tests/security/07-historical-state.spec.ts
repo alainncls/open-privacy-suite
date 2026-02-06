@@ -46,7 +46,7 @@ async function setupUser(request: any) {
         slug: 'security-historical-state',
         name: 'Security Historical State Test',
         allowed_methods: ['eth_call', 'eth_getStorageAt', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount'],
-        default_claims: ['read']
+        claims: ['read']
       }
     });
 

@@ -207,7 +207,7 @@ func TestFactoryDeploymentRequiresAdmin(t *testing.T) {
 	store.setGroupAccess("deployers", &GroupAccess{
 		GroupID:        "deployers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 	})
 
 	// Group with admin claim
@@ -216,7 +216,7 @@ func TestFactoryDeploymentRequiresAdmin(t *testing.T) {
 	store.setGroupAccess("admins", &GroupAccess{
 		GroupID:        "admins",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimAdmin},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimAdmin},
 	})
 
 	// Add memberships
@@ -293,7 +293,7 @@ func TestRegularContractDeploymentWithDeployClaim(t *testing.T) {
 	store.setGroupAccess("deployers", &GroupAccess{
 		GroupID:        "deployers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 	})
 
 	store.addMembership("user1", &UserMembership{ID: "mem1", UserID: "user1", GroupID: "deployers"})
@@ -342,7 +342,7 @@ func TestNonTrustedFactoryBlocked(t *testing.T) {
 	store.setGroupAccess("admins", &GroupAccess{
 		GroupID:        "admins",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimAdmin},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimAdmin},
 	})
 
 	store.addMembership("admin1", &UserMembership{ID: "mem1", UserID: "admin1", GroupID: "admins"})
@@ -395,7 +395,7 @@ func TestDeploymentWithoutDeployClaim(t *testing.T) {
 	store.setGroupAccess("readers", &GroupAccess{
 		GroupID:        "readers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite}, // No deploy!
+		Claims:  []Claim{ClaimRead, ClaimWrite}, // No deploy!
 	})
 
 	store.addMembership("user1", &UserMembership{ID: "mem1", UserID: "user1", GroupID: "readers"})
@@ -445,7 +445,7 @@ func TestProxyContractDeployment(t *testing.T) {
 	store.setGroupAccess("deployers", &GroupAccess{
 		GroupID:        "deployers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 	})
 
 	store.addMembership("user1", &UserMembership{ID: "mem1", UserID: "user1", GroupID: "deployers"})
@@ -498,7 +498,7 @@ func TestFactoryClaimInheritance(t *testing.T) {
 	store.setGroupAccess("parent", &GroupAccess{
 		GroupID:        "parent",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimAdmin, ClaimDeploy},
+		Claims:  []Claim{ClaimAdmin, ClaimDeploy},
 	})
 
 	// Child group inherits from parent (intersection of methods and claims)
@@ -507,7 +507,7 @@ func TestFactoryClaimInheritance(t *testing.T) {
 	store.setGroupAccess("child", &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimDeploy, ClaimAdmin},
+		Claims:  []Claim{ClaimDeploy, ClaimAdmin},
 	})
 
 	// User is member of child group
@@ -582,7 +582,7 @@ func TestE2EDeploymentViaCreate3(t *testing.T) {
 	store.setGroupAccess("deployers", &GroupAccess{
 		GroupID:        "deployers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 	})
 
 	store.addMembership("user1", &UserMembership{ID: "mem1", UserID: "user1", GroupID: "deployers"})

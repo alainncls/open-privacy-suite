@@ -21,7 +21,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     try {
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_sendTransaction'],
-        default_claims: ['read'], // Missing 'write'!
+        claims: ['read'], // Missing 'write'!
       });
     } catch (err) {
       errorMessage = (err as Error).message;
@@ -40,7 +40,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     try {
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_getBalance'],
-        default_claims: ['write'], // Missing 'read'!
+        claims: ['write'], // Missing 'read'!
       });
     } catch (err) {
       errorMessage = (err as Error).message;
@@ -56,13 +56,13 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     // Set matching methods and claims - should succeed
     const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     expect(access.allowed_methods).toContain('eth_call');
     expect(access.allowed_methods).toContain('eth_sendTransaction');
-    expect(access.default_claims).toContain('read');
-    expect(access.default_claims).toContain('write');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
   });
 
   test('accepts empty methods list with no claims', async () => {
@@ -72,11 +72,11 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     // Empty methods list with empty claims - should succeed
     const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: [],
-      default_claims: [],
+      claims: [],
     });
 
     expect(access.allowed_methods).toEqual([]);
-    expect(access.default_claims).toEqual([]);
+    expect(access.claims).toEqual([]);
   });
 
   test('accepts unknown methods without claims', async () => {
@@ -86,7 +86,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     // Unknown methods don't require specific claims
     const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['some_unknown_method', 'custom_method'],
-      default_claims: [],
+      claims: [],
     });
 
     expect(access.allowed_methods).toContain('some_unknown_method');
@@ -106,11 +106,11 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
         'eth_sendTransaction',
         'eth_sendRawTransaction',
       ],
-      default_claims: ['read', 'write', 'admin', 'upgrade', 'deploy'],
+      claims: ['read', 'write', 'admin', 'upgrade', 'deploy'],
     });
 
     expect(access.allowed_methods.length).toBe(5);
-    expect(access.default_claims.length).toBe(5);
+    expect(access.claims.length).toBe(5);
   });
 
   test('rejects mixed read/write methods with only read claim', async () => {
@@ -122,7 +122,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     try {
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_chainId', 'eth_sendRawTransaction'],
-        default_claims: ['read'], // Missing 'write'!
+        claims: ['read'], // Missing 'write'!
       });
     } catch (err) {
       errorMessage = (err as Error).message;
@@ -139,7 +139,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     // First, set valid access
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     // Try to update with invalid combination
@@ -147,7 +147,7 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     try {
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_sendTransaction'],
-        default_claims: ['read'], // Still missing 'write'!
+        claims: ['read'], // Still missing 'write'!
       });
     } catch (err) {
       errorMessage = (err as Error).message;

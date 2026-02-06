@@ -84,6 +84,7 @@ func (m *MockOrgContextStore) UpdateContract(ctx context.Context, contract *Cont
 func (m *MockOrgContextStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) DeleteContract(ctx context.Context, id string) error { return nil }
+func (m *MockOrgContextStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) { return nil, nil }
 func (m *MockOrgContextStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockOrgContextStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
@@ -485,7 +486,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		}
 	})
 
-	t.Run("allows for contracts in current org", func(t *testing.T) {
+	t.Run("denies for registered contracts in current org without explicit grant", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -500,14 +501,21 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 			addressOwnedByOrg: map[string]map[string]bool{
 				"0xcontract1": {"org-a": true},
 			},
+			registeredToAnyOrg: map[string]bool{
+				"0xcontract1": true,
+			},
 		}
 		user := &User{ID: "user-1"}
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
+		// Registered contracts require explicit grants - no fallback to default_claims
 		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
+		if err == nil {
+			t.Fatal("expected error for registered contract without explicit grant")
+		}
+		if !strings.Contains(err.Error(), "requires explicit grant") {
+			t.Errorf("unexpected error message: %v", err)
 		}
 	})
 
@@ -539,7 +547,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for cross-org contract")
 		}
-		if !strings.Contains(err.Error(),"registered to another organization") {
+		if !strings.Contains(err.Error(), "requires explicit grant") {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
@@ -573,7 +581,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		}
 	})
 
-	t.Run("allows for contract in user's other org", func(t *testing.T) {
+	t.Run("denies for contract in user's other org without explicit grant", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -598,9 +606,13 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
+		// Even though user is member of org-b, registered contracts require explicit grants
 		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false)
-		if err != nil {
-			t.Errorf("unexpected error for contract in user's other org: %v", err)
+		if err == nil {
+			t.Fatal("expected error for registered contract without explicit grant")
+		}
+		if !strings.Contains(err.Error(), "requires explicit grant") {
+			t.Errorf("unexpected error message: %v", err)
 		}
 	})
 }

@@ -29,13 +29,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     // Grant with specific function selectors
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
       functions: [TRANSFER_SELECTOR, BALANCE_OF_SELECTOR],
     });
 
@@ -63,13 +63,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     // Only allow balanceOf, not transfer or approve
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
       functions: [BALANCE_OF_SELECTOR],
     });
 
@@ -96,13 +96,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     // No functions specified in grant - all functions allowed
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -127,13 +127,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     // Grant with specific function selector
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
       functions: [BALANCE_OF_SELECTOR],
     });
 
@@ -161,13 +161,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     // Only allow balanceOf
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
       functions: [BALANCE_OF_SELECTOR],
     });
 

@@ -307,7 +307,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(),
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance"},
-			DefaultClaims:  []rbac.Claim{rbac.ClaimRead},
+			Claims:  []rbac.Claim{rbac.ClaimRead},
 			RateLimitRPS:   intPtr(100),
 			RateLimitDaily: intPtr(10000),
 		}
@@ -342,7 +342,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(), // New ID, but same group
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-			DefaultClaims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+			Claims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
 			RateLimitRPS:   intPtr(200),
 		}
 
@@ -669,8 +669,9 @@ func TestContractGrant_CRUD(t *testing.T) {
 			ID:         uuid.New().String(),
 			ContractID: contract.ID,
 			GroupID:    group.ID,
-			Claims:     []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
-			Functions:  []string{"0x12345678"},
+			// Claims are deprecated - they're inherited from group's GroupAccess.claims
+			// The DB layer will ignore any claims passed here and store empty array
+			Functions: []string{"0x12345678"},
 		}
 
 		err := database.CreateContractGrant(ctx, grant)
@@ -715,15 +716,18 @@ func TestContractGrant_CRUD(t *testing.T) {
 	t.Run("Update", func(t *testing.T) {
 		grant, _ := database.GetContractGrantByContractAndGroup(ctx, contract.ID, group.ID)
 
-		grant.Claims = []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimAdmin}
+		// Claims are deprecated - any claims set will be ignored by the DB layer
+		// Update functions instead to verify the update works
+		grant.Functions = []string{"0x12345678", "0xabcdef00"}
 		err := database.UpdateContractGrant(ctx, grant)
 		if err != nil {
 			t.Fatalf("UpdateContractGrant() error = %v", err)
 		}
 
 		retrieved, _ := database.GetContractGrant(ctx, grant.ID)
-		if len(retrieved.Claims) != 3 {
-			t.Errorf("Claims length = %d, want 3", len(retrieved.Claims))
+		// Functions should be updated
+		if len(retrieved.Functions) != 2 {
+			t.Errorf("Functions length = %d, want 2", len(retrieved.Functions))
 		}
 	})
 }
@@ -751,7 +755,7 @@ func TestEffectivePermissionsCache(t *testing.T) {
 			ContractAccess: map[string]rbac.ContractAccess{
 				"0x1234": {Claims: []rbac.Claim{rbac.ClaimRead}},
 			},
-			DefaultClaims: []rbac.Claim{rbac.ClaimRead},
+			Claims: []rbac.Claim{rbac.ClaimRead},
 			ComputedAt:    time.Now(),
 			ExpiresAt:     time.Now().Add(1 * time.Hour),
 		}
@@ -783,7 +787,7 @@ func TestEffectivePermissionsCache(t *testing.T) {
 			OrgID:          expiredOrgID,
 			AllowedMethods: []string{},
 			ContractAccess: map[string]rbac.ContractAccess{},
-			DefaultClaims:  []rbac.Claim{},
+			Claims:  []rbac.Claim{},
 			ComputedAt:     time.Now().Add(-2 * time.Hour),
 			ExpiresAt:      time.Now().Add(-1 * time.Hour),
 		}

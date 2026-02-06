@@ -237,7 +237,7 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
             "slug": "demo-deployers",
             "name": "Demo Deployers",
             "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "net_version"],
-            "default_claims": ["read", "write", "deploy"]
+            "claims": ["read", "write", "deploy"]
         }')
     DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
 

@@ -314,7 +314,7 @@ func TestGroupAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"default_claims":  []string{"read"},
+			"claims":  []string{"read"},
 			"rate_limit_rps":  100,
 		}
 		jsonBody, _ := json.Marshal(body)
@@ -380,7 +380,7 @@ func TestGroupAccessAPI(t *testing.T) {
 	t.Run("SetGroupAccess", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"default_claims":  []string{"read"},
+			"claims":  []string{"read"},
 			"rate_limit_rps":  100,
 		}
 		jsonBody, _ := json.Marshal(body)
@@ -420,7 +420,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("RejectsWriteMethodsWithoutWriteClaim", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"default_claims":  []string{"read"}, // Missing "write" claim!
+			"claims":  []string{"read"}, // Missing "write" claim!
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -443,7 +443,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("RejectsReadMethodsWithoutReadClaim", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"default_claims":  []string{"write"}, // Missing "read" claim!
+			"claims":  []string{"write"}, // Missing "read" claim!
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -465,7 +465,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsMatchingMethodsAndClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"default_claims":  []string{"read", "write"},
+			"claims":  []string{"read", "write"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -481,7 +481,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsEmptyMethodsList", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{},
-			"default_claims":  []string{},
+			"claims":  []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -497,7 +497,7 @@ func TestGroupAccessValidation(t *testing.T) {
 	t.Run("AcceptsUnknownMethodsWithoutClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"some_unknown_method", "another_custom_method"},
-			"default_claims":  []string{}, // No claims needed for unknown methods
+			"claims":  []string{}, // No claims needed for unknown methods
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -516,7 +516,7 @@ func TestGroupAccessValidation(t *testing.T) {
 				"eth_call", "eth_getBalance", "eth_chainId",
 				"eth_sendTransaction", "eth_sendRawTransaction",
 			},
-			"default_claims": []string{"read", "write", "admin", "upgrade", "deploy"},
+			"claims": []string{"read", "write", "admin", "upgrade", "deploy"},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -735,7 +735,7 @@ func TestAccessCheckAPI(t *testing.T) {
 	// Set group access with allowed methods
 	accessBody := map[string]any{
 		"allowed_methods": []string{"eth_call", "eth_getBalance"},
-		"default_claims":  []string{"read"},
+		"claims":  []string{"read"},
 	}
 	accessJson, _ := json.Marshal(accessBody)
 	accessReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(accessJson))
@@ -828,6 +828,131 @@ func TestCacheStatsAPI(t *testing.T) {
 		assert.Contains(t, response, "entries")
 		assert.Contains(t, response, "expired_pending")
 		assert.Contains(t, response, "max_entries")
+	})
+}
+
+func TestContractABIUpload(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "abi-test-org")
+	testAddress := "0xabcdef1234567890abcdef1234567890abcdef12"
+
+	// Create contract first
+	createBody := map[string]any{
+		"address": testAddress,
+		"name":    "ABI Test Contract",
+	}
+	createJson, _ := json.Marshal(createBody)
+	createReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts", org.ID), bytes.NewReader(createJson))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.router.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	// Valid ERC20-like ABI for testing
+	validABI := `[{"type":"function","name":"balanceOf","inputs":[{"name":"account","type":"address"}],"outputs":[{"name":"","type":"uint256"}],"stateMutability":"view"},{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable"}]`
+
+	t.Run("UploadValidABI", func(t *testing.T) {
+		body := map[string]any{
+			"abi": validABI,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/contracts/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Contract should have ABI set
+		assert.Equal(t, testAddress, response["address"])
+		assert.NotEmpty(t, response["abi"])
+	})
+
+	t.Run("VerifyABIInContract", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts/%s", org.ID, testAddress), nil)
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		// Verify ABI is persisted
+		assert.NotEmpty(t, response["abi"])
+		assert.Contains(t, response["abi"], "balanceOf")
+		assert.Contains(t, response["abi"], "transfer")
+	})
+
+	t.Run("UploadInvalidJSONABI", func(t *testing.T) {
+		body := map[string]any{
+			"abi": "not valid json",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/contracts/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("UploadNonArrayABI", func(t *testing.T) {
+		body := map[string]any{
+			"abi": `{"type": "function"}`, // Object instead of array
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/contracts/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("UploadEmptyABI", func(t *testing.T) {
+		body := map[string]any{
+			"abi": "[]",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/contracts/%s/abi", org.ID, testAddress), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		// Empty array is valid ABI (contract with no public functions)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("UploadABIToNonexistentContract", func(t *testing.T) {
+		nonexistentAddr := "0x0000000000000000000000000000000000000001"
+		body := map[string]any{
+			"abi": validABI,
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/contracts/%s/abi", org.ID, nonexistentAddr), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 

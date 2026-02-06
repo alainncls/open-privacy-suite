@@ -101,7 +101,7 @@ func (lt *LoadTester) setupProxyAuth(ctx context.Context) error {
 			"eth_chainId",
 			"eth_gasPrice",
 		},
-		"default_claims": []string{"read", "write", "deploy"},
+		"claims": []string{"read", "write", "deploy"},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set group access: %w", err)

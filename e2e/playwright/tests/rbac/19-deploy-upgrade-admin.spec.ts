@@ -33,7 +33,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // Has write but NOT deploy
+      claims: ['read', 'write'], // Has write but NOT deploy
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -58,7 +58,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write', 'deploy'],
+      claims: ['read', 'write', 'deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -76,20 +76,22 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
     expect(result.claims).toContain('deploy');
   });
 
-  test('deploy claim via contract grant allows deployment', async ({ request }) => {
+  test('deploy claim via group access allows deployment on granted contracts', async ({ request }) => {
+    // Claims come from GroupAccess, not from ContractGrant
+    // ContractGrant just links a group to a contract
     const org = await ctx.fixture.createOrg('grantdeployorg');
     const group = await ctx.fixture.createGroup(org.id, 'grantdeploygroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // Set deploy claim on the group via GroupAccess
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [], // No default claims
+      claims: ['read', 'write', 'deploy'], // Deploy claim is on GroupAccess
     });
 
-    // Grant deploy claim on a contract (conceptually - for factories, etc.)
+    // Grant links the group to the contract (claims are inherited from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'deploy'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -98,7 +100,10 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     const contractAccess = perms.contract_access[contract.address.toLowerCase()];
+    // Claims on contract access come from the group's GroupAccess
     expect(contractAccess.claims).toContain('deploy');
+    expect(contractAccess.claims).toContain('read');
+    expect(contractAccess.claims).toContain('write');
   });
 
   test('RPC: deploy transaction blocked without deploy claim', async ({ request }) => {
@@ -106,7 +111,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // No deploy
+      claims: ['read', 'write'], // No deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -138,7 +143,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write', 'deploy'], // Has deploy
+      claims: ['read', 'write', 'deploy'], // Has deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -164,7 +169,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // No deploy
+      claims: ['read', 'write'], // No deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -188,7 +193,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // No deploy
+      claims: ['read', 'write'], // No deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -213,7 +218,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'], // Has write but NOT deploy
+      claims: ['read', 'write'], // Has write but NOT deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -240,7 +245,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
-      default_claims: ['read', 'write'], // No deploy
+      claims: ['read', 'write'], // No deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -265,7 +270,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
-      default_claims: ['read', 'write', 'deploy'], // Has deploy
+      claims: ['read', 'write', 'deploy'], // Has deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -290,7 +295,7 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_estimateGas'],
-      default_claims: ['read'], // Only read - no write or deploy
+      claims: ['read'], // Only read - no write or deploy
     });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -312,20 +317,21 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
   test('two groups combine to grant deploy permission', async ({ request }) => {
     // Group A: has write
-    // Group B: has deploy
-    // User in both: should have write + deploy
+    // Group B: has read + deploy
+    // User in both: should have read + write + deploy (union of claims)
     const org = await ctx.fixture.createOrg('combinedeployorg');
     const groupA = await ctx.fixture.createGroup(org.id, 'writegroup');
     const groupB = await ctx.fixture.createGroup(org.id, 'deploygroup');
 
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['write'],
+      claims: ['write'],
     });
 
+    // eth_call requires read claim, so group B needs read claim
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['deploy'],
+      claims: ['read', 'deploy'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -360,22 +366,22 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'noupgradegroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has read+write but NOT upgrade
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'], // No upgrade claim
     });
 
-    // Grant read+write but NOT upgrade
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Check for upgrade claim
+    // Check for upgrade claim - should fail because GroupAccess doesn't have upgrade
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -393,14 +399,15 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'canupgradegroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has upgrade claim
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'upgrade'], // Has upgrade claim
     });
 
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'upgrade'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -419,44 +426,53 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
     expect(result.claims).toContain('upgrade');
   });
 
-  test('upgrade claim is contract-specific in effective permissions', async ({ request }) => {
-    // Note: required_claims in checkAccess checks if user has claim on ANY contract,
-    // not specifically on the target. This test verifies the effective permissions
-    // show the correct per-contract claims.
+  test('upgrade claim from group applies to all granted contracts', async ({ request }) => {
+    // Claims come from GroupAccess, not from ContractGrant
+    // All contracts granted to a group get the same claims from that group
+    // To have different claims per contract, you need different groups
     const org = await ctx.fixture.createOrg('upgradespecificorg');
-    const group = await ctx.fixture.createGroup(org.id, 'upgradespecificgroup');
+    const groupWithUpgrade = await ctx.fixture.createGroup(org.id, 'upgradegroup');
+    const groupWithoutUpgrade = await ctx.fixture.createGroup(org.id, 'noupgradegroup');
     const contractA = await ctx.fixture.createContract(org.id);
     const contractB = await ctx.fixture.createContract(org.id);
 
-    await ctx.rbac.setGroupAccess(org.id, group.id, {
+    // Group with upgrade claim
+    await ctx.rbac.setGroupAccess(org.id, groupWithUpgrade.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
-    });
-
-    // Only contract A has upgrade claim
-    await ctx.rbac.createContractGrant(org.id, contractA.address, {
-      group_id: group.id,
       claims: ['read', 'write', 'upgrade'],
     });
-    await ctx.rbac.createContractGrant(org.id, contractB.address, {
-      group_id: group.id,
+
+    // Group without upgrade claim
+    await ctx.rbac.setGroupAccess(org.id, groupWithoutUpgrade.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
       claims: ['read', 'write'],
     });
 
-    const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+    // Contract A gets grant from upgrade group
+    await ctx.rbac.createContractGrant(org.id, contractA.address, {
+      group_id: groupWithUpgrade.id,
+    });
+    // Contract B gets grant from non-upgrade group
+    await ctx.rbac.createContractGrant(org.id, contractB.address, {
+      group_id: groupWithoutUpgrade.id,
+    });
+
+    // User is member of both groups
+    const { user, did } = await ctx.fixture.createUserWithMembership(request, groupWithUpgrade.id, {
       kyc: true,
     });
+    await ctx.fixture.addMembership(user.id, groupWithoutUpgrade.id);
 
     // Verify effective permissions show correct per-contract claims
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
 
-    // Contract A should have upgrade
+    // Contract A should have upgrade (from groupWithUpgrade)
     const accessA = perms.contract_access[contractA.address.toLowerCase()];
     expect(accessA.claims).toContain('upgrade');
     expect(accessA.claims).toContain('read');
     expect(accessA.claims).toContain('write');
 
-    // Contract B should NOT have upgrade
+    // Contract B should NOT have upgrade (from groupWithoutUpgrade)
     const accessB = perms.contract_access[contractB.address.toLowerCase()];
     expect(accessB.claims).not.toContain('upgrade');
     expect(accessB.claims).toContain('read');
@@ -469,22 +485,22 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'noupgradeatallgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has only read+write, no upgrade
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [], // No default claims
+      claims: ['read', 'write'], // No upgrade claim
     });
 
-    // Grant only read+write, no upgrade
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Upgrade check should fail (no upgrade on any contract)
+    // Upgrade check should fail (GroupAccess doesn't have upgrade)
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -497,27 +513,29 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
   });
 
   test('upgrade claim combined across multiple groups', async ({ request }) => {
+    // User is member of two groups - groupA has write, groupB has upgrade
+    // Combined, user should have write + upgrade claims
     const org = await ctx.fixture.createOrg('combineupgradeorg');
     const groupA = await ctx.fixture.createGroup(org.id, 'groupA');
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // Group A has write claim
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read', 'write'],
     });
 
+    // Group B has upgrade claim (plus read for eth_call)
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'upgrade'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['upgrade'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -525,6 +543,7 @@ test.describe('RBAC Upgrade Claim Enforcement', () => {
     });
     await ctx.fixture.addMembership(user.id, groupB.id);
 
+    // User gets upgrade from groupB
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -553,15 +572,15 @@ test.describe('RBAC Admin Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'noadmingroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has read+write but NOT admin
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'], // No admin claim
     });
 
-    // Grant everything EXCEPT admin
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'upgrade', 'deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -584,14 +603,15 @@ test.describe('RBAC Admin Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'canadmingroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has admin claim
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'], // Has admin claim
     });
 
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -615,15 +635,15 @@ test.describe('RBAC Admin Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'fulladmingroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has all claims including admin
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'deploy', 'upgrade', 'admin'], // All claims
     });
 
-    // Full admin access
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'deploy', 'upgrade', 'admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -647,25 +667,25 @@ test.describe('RBAC Admin Claim Enforcement', () => {
   test('admin claim inherited through group hierarchy when child has no grant', async ({ request }) => {
     // Within a hierarchy, grants use INTERSECTION (child narrows parent).
     // If child has no grant for a contract, user inherits parent's grant.
+    // Claims come from GroupAccess, not from grants.
     const org = await ctx.fixture.createOrg('adminhierarchyorg');
     const root = await ctx.fixture.createGroup(org.id, 'root');
     const child = await ctx.fixture.createGroup(org.id, 'child', { parentId: root.id });
     const contract = await ctx.fixture.createContract(org.id);
 
-    // Root has admin grant on contract
+    // Root has admin claim in GroupAccess and grant on contract
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'], // Admin claim is on GroupAccess
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: root.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     // Child has NO grant on this contract - user should inherit from parent
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
     // No grant created for child
 
@@ -685,30 +705,29 @@ test.describe('RBAC Admin Claim Enforcement', () => {
 
   test('hierarchy grants use INTERSECTION when both parent and child have grants', async ({ request }) => {
     // Within a hierarchy, if both parent and child have grants for the same contract,
-    // claims are INTERSECTED (child narrows parent)
+    // claims are INTERSECTED (child narrows parent).
+    // Claims come from GroupAccess, so we need different claims on parent vs child.
     const org = await ctx.fixture.createOrg('hierarchyintersectorg');
     const root = await ctx.fixture.createGroup(org.id, 'root');
     const child = await ctx.fixture.createGroup(org.id, 'child', { parentId: root.id });
     const contract = await ctx.fixture.createContract(org.id);
 
-    // Root has read+write+admin
+    // Root has read+write+admin in GroupAccess
     await ctx.rbac.setGroupAccess(org.id, root.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'], // Admin claim on root
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: root.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     // Child has only read+write (narrows parent by removing admin)
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'], // No admin claim on child
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: child.id,
-      claims: ['read', 'write'], // No admin
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, child.id, {
@@ -730,14 +749,15 @@ test.describe('RBAC Admin Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'multiclaimgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has all required claims
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write', 'admin'], // All required claims
     });
 
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -761,15 +781,15 @@ test.describe('RBAC Admin Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'missingclaimgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has read+write but NOT admin
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'], // No admin claim
     });
 
-    // Has read+write but NOT admin
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -806,14 +826,15 @@ test.describe('RBAC All Claims Combined', () => {
     const group = await ctx.fixture.createGroup(org.id, 'allclaimsgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // GroupAccess has all claims
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write', 'deploy', 'upgrade', 'admin'],
+      claims: ['read', 'write', 'deploy', 'upgrade', 'admin'], // All claims
     });
 
+    // Grant links group to contract (claims come from GroupAccess)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'deploy', 'upgrade', 'admin'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -828,14 +849,14 @@ test.describe('RBAC All Claims Combined', () => {
     expect(perms.allowed_methods).toContain('eth_getBalance');
     expect(perms.allowed_methods).toContain('eth_blockNumber');
 
-    // Should have all default claims
-    expect(perms.default_claims).toContain('read');
-    expect(perms.default_claims).toContain('write');
-    expect(perms.default_claims).toContain('deploy');
-    expect(perms.default_claims).toContain('upgrade');
-    expect(perms.default_claims).toContain('admin');
+    // Should have all default claims (from GroupAccess)
+    expect(perms.claims).toContain('read');
+    expect(perms.claims).toContain('write');
+    expect(perms.claims).toContain('deploy');
+    expect(perms.claims).toContain('upgrade');
+    expect(perms.claims).toContain('admin');
 
-    // Should have all claims on the contract
+    // Should have all claims on the contract (inherited from GroupAccess)
     const contractAccess = perms.contract_access[contract.address.toLowerCase()];
     expect(contractAccess.claims).toContain('read');
     expect(contractAccess.claims).toContain('write');
@@ -845,6 +866,7 @@ test.describe('RBAC All Claims Combined', () => {
   });
 
   test('claims assembled from 5 different groups', async ({ request }) => {
+    // Each group contributes one claim, user in all groups gets UNION of claims
     const org = await ctx.fixture.createOrg('fivegroupsorg');
     const groups = await Promise.all([
       ctx.fixture.createGroup(org.id, 'readgroup'),
@@ -856,16 +878,24 @@ test.describe('RBAC All Claims Combined', () => {
 
     const contract = await ctx.fixture.createContract(org.id);
 
-    // Each group contributes one claim
-    const claims: Claim[] = ['read', 'write', 'deploy', 'upgrade', 'admin'];
+    // Each group has different claims (claims are in GroupAccess)
+    // Note: eth_call requires read, eth_sendTransaction requires write
+    // Groups must have valid claim-method combinations
+    const groupConfigs = [
+      { methods: ['eth_call'], claims: ['read'] as Claim[] },                          // readgroup
+      { methods: ['eth_call', 'eth_sendTransaction'], claims: ['read', 'write'] as Claim[] },  // writegroup
+      { methods: ['eth_call', 'eth_sendTransaction'], claims: ['read', 'write', 'deploy'] as Claim[] },    // deploygroup
+      { methods: ['eth_call', 'eth_sendTransaction'], claims: ['read', 'write', 'upgrade'] as Claim[] },   // upgradegroup
+      { methods: ['eth_call', 'eth_sendTransaction'], claims: ['read', 'write', 'admin'] as Claim[] },     // admingroup
+    ];
+
     for (let i = 0; i < groups.length; i++) {
       await ctx.rbac.setGroupAccess(org.id, groups[i].id, {
-        allowed_methods: ['eth_call', 'eth_sendTransaction'],
-        default_claims: [],
+        allowed_methods: groupConfigs[i].methods,
+        claims: groupConfigs[i].claims,
       });
       await ctx.rbac.createContractGrant(org.id, contract.address, {
         group_id: groups[i].id,
-        claims: [claims[i]],
       });
     }
 
@@ -877,11 +907,12 @@ test.describe('RBAC All Claims Combined', () => {
       await ctx.fixture.addMembership(user.id, groups[i].id);
     }
 
-    // User should have UNION of all claims
+    // User should have UNION of all claims from all groups
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     const contractAccess = perms.contract_access[contract.address.toLowerCase()];
 
-    for (const claim of claims) {
+    const allClaims: Claim[] = ['read', 'write', 'deploy', 'upgrade', 'admin'];
+    for (const claim of allClaims) {
       expect(contractAccess.claims).toContain(claim);
     }
   });

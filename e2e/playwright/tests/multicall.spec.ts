@@ -24,7 +24,7 @@ test.describe('Multicall Blocking', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
