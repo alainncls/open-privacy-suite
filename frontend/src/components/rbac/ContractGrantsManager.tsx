@@ -21,11 +21,26 @@ import {
   Copy,
   Check,
   Info,
+  Pencil,
+  Code2,
 } from 'lucide-react';
 
 // Helper to get contract address from either new or legacy format
 const getContractAddress = (contract: Contract): string => {
   return contract.address || contract.contract_address || '';
+};
+
+// Common function selectors with human-readable names (same as in form)
+const COMMON_SELECTORS: Record<string, string> = {
+  '0x70a08231': 'balanceOf',
+  '0x18160ddd': 'totalSupply',
+  '0xa9059cbb': 'transfer',
+  '0x23b872dd': 'transferFrom',
+  '0x095ea7b3': 'approve',
+  '0xdd62ed3e': 'allowance',
+  '0x06fdde03': 'name',
+  '0x95d89b41': 'symbol',
+  '0x313ce567': 'decimals',
 };
 
 interface ContractGrantsManagerProps {
@@ -49,6 +64,7 @@ export default function ContractGrantsManager({
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingGrant, setEditingGrant] = useState<GrantWithGroup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GrantWithGroup | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
 
@@ -103,6 +119,7 @@ export default function ContractGrantsManager({
 
   const handleSave = async () => {
     setShowForm(false);
+    setEditingGrant(null);
     await loadData();
   };
 
@@ -135,6 +152,11 @@ export default function ContractGrantsManager({
   };
 
   const existingGrantGroupIds = grants.map(g => g.group_id);
+
+  // Get selector display name
+  const getSelectorName = (selector: string) => {
+    return COMMON_SELECTORS[selector.toLowerCase()] || null;
+  };
 
   return (
     <div className="space-y-4">
@@ -170,7 +192,7 @@ export default function ContractGrantsManager({
       <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-start gap-2">
         <Info className="w-4 h-4 text-[#0284C7] mt-0.5 flex-shrink-0" />
         <p className="text-xs text-[#0369A1]">
-          Groups define claims (read, write, etc.) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims.
+          Groups define claims (read, write, etc.) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims. You can also restrict access to specific functions.
         </p>
       </div>
 
@@ -225,15 +247,25 @@ export default function ContractGrantsManager({
                       )}
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeleteTarget(grant)}
-                    className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
-                    title="Remove group access"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingGrant(grant)}
+                      title="Edit function access"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeleteTarget(grant)}
+                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+                      title="Remove group access"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Group's claims from GroupAccess */}
@@ -252,6 +284,30 @@ export default function ContractGrantsManager({
                     <span className="text-xs text-[#94A3B8] italic">
                       No claims configured - set up in Groups tab
                     </span>
+                  )}
+                </div>
+
+                {/* Function access */}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#6B7280]">Functions:</span>
+                  {!grant.functions || grant.functions.length === 0 ? (
+                    <span className="text-xs text-[#22C55E] font-medium">All functions allowed</span>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {grant.functions.map(selector => {
+                        const name = getSelectorName(selector);
+                        return (
+                          <span
+                            key={selector}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]"
+                            title={name ? `${name}()` : selector}
+                          >
+                            <Code2 className="w-3 h-3" />
+                            {name || selector}
+                          </span>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
@@ -274,6 +330,27 @@ export default function ContractGrantsManager({
             onClose={() => setShowForm(false)}
             onSave={handleSave}
           />
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Grant Dialog */}
+      <Dialog open={!!editingGrant} onOpenChange={open => !open && setEditingGrant(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Function Access</DialogTitle>
+          </DialogHeader>
+          {editingGrant && (
+            <ContractGrantForm
+              key={editingGrant.id}
+              orgId={orgId}
+              contractAddress={contractAddress}
+              grant={editingGrant}
+              groups={groups}
+              existingGrantGroupIds={existingGrantGroupIds}
+              onClose={() => setEditingGrant(null)}
+              onSave={handleSave}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
