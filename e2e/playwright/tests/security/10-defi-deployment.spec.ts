@@ -131,13 +131,14 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
   let routerAddress: string;
 
   test.beforeAll(async ({ request }) => {
+    // Generate unique test run ID (must be before early return so nested beforeAll can use it)
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     // Skip entire suite if runtime tracing is enabled (preregistration is disabled)
     if (await isRuntimeTracingEnabled(request)) {
       skipAllTests = true;
       return;
     }
-    // Generate unique test run ID
-    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     orgSlug = `defi-test-${testRunId}`;
 
     // Create Organization for DeFi deployment

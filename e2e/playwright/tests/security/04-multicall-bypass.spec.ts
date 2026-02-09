@@ -53,18 +53,41 @@ async function setupUser(request: any) {
     data: { kyc: true }
   });
 
-  // Step 4: Add user to default org's default group using internal ID
+  // Step 4: Create group with deploy claims and add user
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
   const orgs = await orgsResp.json();
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
   if (defaultOrg) {
-    const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-    const groups = await groupsResp.json();
-    const defaultGroup = groups.find((g: any) => g.slug === 'default');
-    if (defaultGroup) {
+    // Create a group with deploy claims (needed for unregistered contract access)
+    const groupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
+      data: {
+        slug: 'security-multicall-test',
+        name: 'Security Multicall Test',
+      }
+    });
+    let groupId: string;
+    if (groupResp.ok()) {
+      const group = await groupResp.json();
+      groupId = group.id;
+    } else {
+      // Group already exists from previous run, find it
+      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groups = await groupsResp.json();
+      groupId = groups.find((g: any) => g.slug === 'security-multicall-test')?.id;
+    }
+
+    if (groupId) {
+      // Set group access with deploy claims
+      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${groupId}/access`, {
+        data: {
+          allowed_methods: ['eth_call', 'eth_getBalance', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction', 'eth_estimateGas'],
+          claims: ['deploy'] // deploy needed for unregistered contract access
+        }
+      });
+
       await request.post(
         `${API_URL}/api/v1/users/${user.id}/memberships`,
-        { data: { org_id: defaultOrg.id, group_id: defaultGroup.id } }
+        { data: { org_id: defaultOrg.id, group_id: groupId } }
       );
     }
   }

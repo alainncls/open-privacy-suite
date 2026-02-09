@@ -40,13 +40,11 @@ async function setupUser(request: any) {
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
   if (defaultOrg) {
-    // Create a group with eth_call and read permissions
+    // Create a group
     const groupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-historical-state',
         name: 'Security Historical State Test',
-        allowed_methods: ['eth_call', 'eth_getStorageAt', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount'],
-        claims: ['read']
       }
     });
 
@@ -62,8 +60,16 @@ async function setupUser(request: any) {
       if (existing) groupId = existing.id;
     }
 
-    // Add user to the group - note: membership endpoint is on users, not orgs
     if (groupId) {
+      // Set group access via separate endpoint
+      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${groupId}/access`, {
+        data: {
+          allowed_methods: ['eth_call', 'eth_getStorageAt', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount'],
+          claims: ['deploy'] // deploy needed for unregistered contract access
+        }
+      });
+
+      // Add user to the group
       await request.post(
         `${API_URL}/api/v1/users/${user.id}/memberships`,
         { data: { org_id: defaultOrg.id, group_id: groupId } }

@@ -439,8 +439,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-007: Public contract (not registered to any org) is accessible", func(t *testing.T) {
-		// publicContract is NOT registered to any org
+	t.Run("SECURITY-007: Public contract denied for read-only user", func(t *testing.T) {
+		// publicContract is NOT registered to any org, but user only has read claim
+		// On a private network, unregistered contracts require deploy or admin claim
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:user-a",
 			Method:         "eth_call",
@@ -452,9 +453,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be allowed via default_claims since it's a public contract
-		if !result.Allowed {
-			t.Errorf("expected access to be allowed for public contract, got: %s", result.Reason)
+		// Should be DENIED - read-only users cannot access unregistered contracts
+		if result.Allowed {
+			t.Errorf("expected access to be denied for public contract with read-only user")
 		}
 	})
 
@@ -563,15 +564,17 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 
 	contractA := "0xaaaa000000000000000000000000000000000001"
 
-	t.Run("SECURITY-011: Registered contract in own org WITHOUT explicit grant is denied", func(t *testing.T) {
-		// Set up user-a with default_claims but NO explicit access to contractA
+	t.Run("SECURITY-011: Registered contract in own org WITHOUT explicit grant is denied (read-only)", func(t *testing.T) {
+		// Set up user-a with read claim but NO explicit access to contractA.
+		// Read-only users can't access unregistered contracts, so they also can't
+		// reach the "requires explicit grant" check — they're denied earlier.
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
 			UserID:         "user-a",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
-			Claims:  []Claim{ClaimRead},          // Has read claim via default_claims
+			Claims:  []Claim{ClaimRead},          // Has read claim only — no deploy/admin
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -590,6 +593,42 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		// Should be DENIED - registered contracts require explicit grants
+		if result.Allowed {
+			t.Error("expected access to be denied for read-only user without explicit grant")
+		}
+		if !containsString(result.Reason, "requires explicit grant") {
+			t.Errorf("expected 'requires explicit grant' message, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("SECURITY-011b: Deploy user denied for registered contract without explicit grant", func(t *testing.T) {
+		// Deploy user CAN access unregistered contracts via default claims,
+		// but registered contracts still require explicit grants.
+		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+			ID:             "perms-a",
+			UserID:         "user-a",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
+			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
+			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be DENIED - registered contracts require explicit grants even for deploy users
 		if result.Allowed {
 			t.Error("expected access to be denied for registered contract without explicit grant")
 		}
@@ -632,9 +671,8 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-013: Public contract (not registered anywhere) allowed via default_claims", func(t *testing.T) {
+	t.Run("SECURITY-013: Public contract denied for read-only user via default_claims", func(t *testing.T) {
 		publicContract := "0x1111111111111111111111111111111111111111"
-		// Public contract is NOT in registeredToAnyOrg - should work with default_claims
 
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
@@ -642,7 +680,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // No explicit grants
-			Claims:  []Claim{ClaimRead},          // Has read via default_claims
+			Claims:         []Claim{ClaimRead},           // Read only — no deploy/admin
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -660,9 +698,42 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be ALLOWED - public contract accessible via default_claims
+		// Should be DENIED - read-only users cannot access unregistered contracts
+		if result.Allowed {
+			t.Errorf("expected access to be denied for public contract with read-only user")
+		}
+	})
+
+	t.Run("SECURITY-013b: Public contract allowed for deploy user via default_claims", func(t *testing.T) {
+		publicContract := "0x1111111111111111111111111111111111111111"
+
+		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+			ID:             "perms-a",
+			UserID:         "user-a",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
+			ContractAccess: map[string]ContractAccess{}, // No explicit grants
+			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": publicContract, "data": "0x"}, "latest"},
+			TargetAddress:  publicContract,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be ALLOWED - deploy user can access unregistered contracts
 		if !result.Allowed {
-			t.Errorf("expected access to be allowed for public contract via default_claims, got: %s", result.Reason)
+			t.Errorf("expected access to be allowed for public contract with deploy user, got: %s", result.Reason)
 		}
 	})
 }
@@ -1075,7 +1146,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			UserID:         "user-1",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			ContractAccess: map[string]ContractAccess{},
+			ContractAccess: map[string]ContractAccess{
+				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant, no upgrade
+			},
 			Claims:         []Claim{ClaimRead, ClaimWrite},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
@@ -1120,7 +1193,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			UserID:         "user-1",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			ContractAccess: map[string]ContractAccess{},
+			ContractAccess: map[string]ContractAccess{
+				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite, ClaimUpgrade}}, // Explicit grant with upgrade
+			},
 			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
@@ -1160,7 +1235,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			UserID:         "user-1",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			ContractAccess: map[string]ContractAccess{},
+			ContractAccess: map[string]ContractAccess{
+				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant
+			},
 			Claims:         []Claim{ClaimRead, ClaimWrite},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),

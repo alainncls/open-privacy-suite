@@ -140,7 +140,7 @@ test.describe('Runtime Transaction Tracing', () => {
     // Set group access permissions
     await apiCall(request, 'PUT', `/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas', 'eth_getBalance'],
-      claims: ['read', 'write']
+      claims: ['deploy'] // deploy needed for unregistered contract access
     });
 
     // Create contracts - unique addresses per test run

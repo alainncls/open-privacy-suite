@@ -109,8 +109,9 @@ When a user accesses a contract:
 
 **Isolation Rules:**
 - Users can only access contracts owned by organizations they belong to
-- `default_claims` only apply to **public contracts** (not registered to any org)
-- Contract registered to Org A cannot be accessed by Org B users via default_claims
+- Unregistered contracts are only accessible to users with `deploy` or `admin` claims
+- Regular `read`/`write` users must use registered contracts with explicit grants
+- Contract registered to Org A cannot be accessed by Org B users, even with deploy/admin claims
 
 **Multi-Organization Users:**
 Users can be members of multiple organizations. The system:

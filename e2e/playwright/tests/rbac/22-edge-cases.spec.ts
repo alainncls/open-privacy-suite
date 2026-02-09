@@ -845,7 +845,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['read'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -871,7 +871,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['read'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {

@@ -491,16 +491,16 @@ test.describe('RBAC Contract Grants', () => {
       expect(result.allowed).toBe(true);
     });
 
-    test('public contract (not registered) allowed via claims', async ({ request }) => {
+    test('public contract (not registered) allowed for deploy user', async ({ request }) => {
       const org = await ctx.fixture.createOrg('grant-security-org3');
       const group = await ctx.fixture.createGroup(org.id, 'security-group3');
       // This address is NOT registered to any org
       const publicContractAddr = '0x' + 'ab'.repeat(20);
 
-      // Set up group access with claims
+      // Deploy claim required for unregistered contract access
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call'],
-        claims: ['read'],
+        claims: ['deploy'],
       });
 
       // Create user with membership (removes default membership so only our group applies)
@@ -510,7 +510,7 @@ test.describe('RBAC Contract Grants', () => {
 
       // Do NOT register the contract - it stays public
 
-      // Access check should ALLOW via claims for public contract
+      // Access check should ALLOW for deploy user on unregistered contract
       const result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
@@ -518,6 +518,31 @@ test.describe('RBAC Contract Grants', () => {
         target_address: publicContractAddr,
       });
       expect(result.allowed).toBe(true);
+    });
+
+    test('public contract (not registered) denied for read-only user', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('grant-security-org3b');
+      const group = await ctx.fixture.createGroup(org.id, 'security-group3b');
+      const publicContractAddr = '0x' + 'cd'.repeat(20);
+
+      // Read-only — no deploy/admin
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      // Read-only users can't access unregistered contracts
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: publicContractAddr,
+      });
+      expect(result.allowed).toBe(false);
     });
   });
 

@@ -20,7 +20,7 @@ The RBAC system uses a **group-centric claim model**:
 
 2. **ContractGrants link groups to contracts** - For registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
 
-3. **Public contracts use group claims directly** - If a contract isn't registered to any organization, users can access it based on their group's claims (e.g., if your group has `read`, you can read from any public contract).
+3. **Unregistered contracts require deploy/admin** - If a contract isn't registered to any organization, only users with `deploy` or `admin` claims can access it. Regular `read`/`write` users must use registered contracts with explicit grants.
 
 4. **Deployers get automatic access** - Users who deploy a contract automatically get `read` and `write` claims on that contract, no explicit grant needed.
 
@@ -29,7 +29,7 @@ The RBAC system uses a **group-centric claim model**:
 **Quick Reference:**
 | Contract Type | Access Requirement |
 |--------------|-------------------|
-| Public (unregistered) | Group's claims apply directly |
+| Unregistered | Deploy/admin claim required |
 | Registered | ContractGrant + Group claims |
 | Self-deployed | Automatic read+write |
 | Org admin member | All claims on all contracts |
@@ -85,9 +85,9 @@ The RBAC system uses a **group-centric claim model**:
 │  1. Group has claims via GroupAccess                             │
 │     GroupAccess { claims: [read, write], methods: [...] }        │
 │                                                                  │
-│  2. For PUBLIC contracts (not registered):                       │
-│     → User's group claims apply directly                         │
-│     → If group has [read, write], user can read/write any public │
+│  2. For UNREGISTERED contracts:                                  │
+│     → Only deploy/admin users can access                         │
+│     → Read/write-only users must use registered contracts        │
 │                                                                  │
 │  3. For REGISTERED contracts:                                    │
 │     → User needs ContractGrant linking their group to contract   │
@@ -135,7 +135,7 @@ Claims are capability tokens that grant specific actions. Groups define `claims`
 
 **Simplified Claim Model:**
 - Groups have `claims` that define what capabilities members have
-- For **unregistered/public contracts**: Group claims apply directly (if user has `read` claim, they can read from any public contract)
+- For **unregistered contracts**: Only users with `deploy` or `admin` claims can access them (prevents race conditions with freshly deployed contracts)
 - For **registered contracts**: User needs both:
   1. A `ContractGrant` linking their group to the contract
   2. The group must have the required claims in its `GroupAccess.claims`
@@ -279,7 +279,7 @@ Request: eth_sendTransaction to contract owned by Org B
 |--------|-------------|----------|
 | Contract owned by Org A | Org A | Use Org A memberships |
 | Contract owned by Org B | Org B | Use Org B memberships |
-| Public contract (no owner) | User's default org | Use default org memberships |
+| Unregistered contract (no owner) | User's default org | Deploy/admin only |
 | Contract owned by Org C (user not member) | - | Request denied |
 | No target (deployment) | User's default org | Use default org memberships |
 
@@ -436,7 +436,7 @@ curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts/{address}/grants 
 
 **Key points:**
 - You don't specify claims when linking a group to a contract
-- The group's `default_claims` from Step 1 determine what members can do
+- The group's claims from Step 1 determine what members can do
 - Multiple groups can have access to the same contract with different permission levels
 
 ### Visual Workflow
@@ -468,8 +468,8 @@ curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts/{address}/grants 
 │  │      ├─ Audit Group → read (inherited from group claims)    │ │
 │  │      └─ Trader Group → read+write (inherited from group)    │ │
 │  │                                                              │ │
-│  │  Note: For PUBLIC contracts (not registered), group claims  │ │
-│  │  apply directly without needing a ContractGrant!            │ │
+│  │  Note: Unregistered contracts only accessible to deploy/     │ │
+│  │  admin users. Read/write users need registered contracts.   │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                            │                                     │
 │                            ▼                                     │
@@ -895,7 +895,7 @@ This prevents accidental or malicious use of a different factory that could brea
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                  │
 │       Admin optionally assigns grants via UI or API                             │
-│       (Contracts are accessible with default claims immediately)                │
+│       (Unregistered contracts only accessible to deploy/admin users)            │
 │                          │                                                       │
 │                          ▼                                                       │
 │       ┌─────────────────────────────────────────┐                               │
@@ -1233,9 +1233,11 @@ To prevent access to historical data after permissions change:
 
 **Workaround:** Use polling with `eth_getLogs` instead of subscriptions.
 
-### Default Claims Isolation
+### Unregistered Contract Access
 
-The `default_claims` feature only applies to contracts **not registered to any organization**. If a contract is registered to Org A, users in Org B cannot access it via default_claims, even if their group grants default read/write permissions.
+Unregistered contracts (not registered to any organization) are only accessible to users with `deploy` or `admin` claims. Regular `read`/`write` users cannot access unregistered contracts — they must use registered contracts with explicit grants. This prevents race conditions where freshly deployed contracts could be interacted with before registration.
+
+Additionally, if a contract IS registered to Org A, users in Org B cannot access it via default claims, even if their group has deploy/admin permissions. Cross-org isolation is always enforced.
 
 ## Known Limitations
 

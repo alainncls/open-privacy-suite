@@ -215,26 +215,30 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
   test('RPC: regular transaction to contract allowed with write claim', async ({ request }) => {
     // This test ensures we didn't break normal transactions
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcwritegroup');
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
       claims: ['read', 'write'], // Has write but NOT deploy
     });
 
+    // Grant group access to the registered contract
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, { group_id: group.id });
+
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       keepDefaultMembership: false,
     });
 
-    // Regular transaction to an address (not deployment)
+    // Regular transaction to a registered contract (not deployment)
     const regularTx = {
       from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-      to: '0x0000000000000000000000000000000000000001', // Has 'to' = not deployment
+      to: contract.address, // Registered contract with explicit grant
       value: '0x0',
       data: '0x',
     };
 
-    // Should be allowed because user has write claim
+    // Should be allowed because user has write claim on registered contract
     const rpcResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [regularTx]);
     // Should not be 403 (access denied)
     expect(rpcResult.status).not.toBe(403);
@@ -292,25 +296,29 @@ test.describe('RBAC Deploy Claim Enforcement', () => {
 
   test('RPC: eth_estimateGas for regular call allowed with read claim', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcestimatereadgroup');
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_estimateGas'],
       claims: ['read'], // Only read - no write or deploy
     });
 
+    // Grant group access to the registered contract
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, { group_id: group.id });
+
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
       keepDefaultMembership: false,
     });
 
-    // Estimate gas for regular call (has 'to' address)
+    // Estimate gas for regular call to registered contract (has 'to' address)
     const estimateTx = {
       from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-      to: '0x0000000000000000000000000000000000000001',
+      to: contract.address, // Registered contract with explicit grant
       data: '0xa9059cbb',
     };
 
-    // Should be allowed because user has read claim and it's not a deployment
+    // Should be allowed because user has read claim on registered contract
     const rpcResult = await makeRPCRequest(request, token, 'eth_estimateGas', [estimateTx]);
     expect(rpcResult.status).not.toBe(403);
   });
@@ -868,12 +876,16 @@ test.describe('RBAC Deploy vs Upgrade Claim Separation', () => {
 
   test('user with upgrade (no deploy) cannot deploy but can send write txns', async ({ request }) => {
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'upgradeonlygroup');
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
 
     // upgrade expands to upgrade+read+write (no deploy)
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
       claims: ['upgrade'],
     });
+
+    // Grant group access to the registered contract
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, { group_id: group.id });
 
     const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
@@ -893,10 +905,10 @@ test.describe('RBAC Deploy vs Upgrade Claim Separation', () => {
       : '';
     expect(errorMsg.toLowerCase()).toContain('deploy');
 
-    // Regular write transaction should succeed (has write via upgrade implication)
+    // Regular write transaction to registered contract should succeed (has write via upgrade implication)
     const writeTx = {
       from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-      to: '0x0000000000000000000000000000000000000001',
+      to: contract.address, // Registered contract with explicit grant
       value: '0x0',
       data: '0x',
     };

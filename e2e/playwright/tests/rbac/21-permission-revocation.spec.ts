@@ -406,17 +406,17 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
     const group = await ctx.fixture.createGroup(org.id, 'defaultclaimrevokegroup');
     const unknownContract = ctx.contractAddress();
 
-    // eth_call requires 'read' claim, eth_sendTransaction requires 'write' claim
+    // Deploy claim allows unregistered contract access (expands to deploy+read+write)
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      claims: ['read', 'write'],
+      claims: ['deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Access to unknown contract should work via claims
+    // Access to unknown contract should work via deploy claim
     let result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -673,8 +673,8 @@ test.describe('RBAC Permission Revocation - Cascading Effects', () => {
     // Delete the contract
     await ctx.rbac.deleteContract(org.id, contract.address);
 
-    // After deletion, the contract is no longer registered to the org
-    // It becomes a "public" contract, accessible via claims (since user has read claim)
+    // After deletion, the contract is no longer registered to the org.
+    // It becomes unregistered, and read-only users can't access unregistered contracts.
     result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -682,7 +682,7 @@ test.describe('RBAC Permission Revocation - Cascading Effects', () => {
       target_address: contract.address,
       required_claims: ['read'],
     });
-    // Public contracts are allowed via claims
-    expect(result.allowed).toBe(true);
+    // Read-only users are denied access to unregistered contracts
+    expect(result.allowed).toBe(false);
   });
 });

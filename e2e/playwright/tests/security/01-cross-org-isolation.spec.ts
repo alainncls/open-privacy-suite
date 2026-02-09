@@ -91,7 +91,7 @@ test.describe('Cross-Organization Isolation', () => {
     await request.put(`${API_URL}/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
-        claims: ['read', 'write'] // write claim required for eth_sendTransaction
+        claims: ['deploy'] // deploy needed for unregistered contract access
       }
     });
 
@@ -113,7 +113,7 @@ test.describe('Cross-Organization Isolation', () => {
     await request.put(`${API_URL}/api/v1/orgs/${orgBId}/groups/${groupBId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
-        claims: ['read', 'write'] // write claim required for eth_sendTransaction
+        claims: ['deploy'] // deploy needed for unregistered contract access
       }
     });
 

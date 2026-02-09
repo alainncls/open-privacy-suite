@@ -278,20 +278,29 @@ func (e *EffectivePermissions) HasMethod(method string) bool {
 }
 
 // GetContractAccess returns the access for a specific contract address.
-// If the contract is not registered, returns access based on default_claims.
+// For registered contracts, returns the explicit access from ContractAccess.
+// For unregistered contracts, only deploy/admin users get access via default claims.
+// Regular read/write users must use registered contracts with explicit grants.
 func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess {
 	addr := strings.ToLower(address)
 	if access, ok := e.ContractAccess[addr]; ok {
 		return &access
 	}
-	// Return access based on default claims for unregistered contracts
-	if len(e.Claims) > 0 {
+	// Only deploy/admin users can access unregistered contracts.
+	// All traffic goes through the proxy on a private network —
+	// regular read/write users must use registered contracts with explicit grants.
+	if len(e.Claims) > 0 && (hasClaim(e.Claims, ClaimDeploy) || hasClaim(e.Claims, ClaimAdmin)) {
 		return &ContractAccess{
 			Claims:    e.Claims,
 			Functions: nil, // All functions allowed for default
 		}
 	}
 	return nil
+}
+
+// hasClaim checks if a specific claim exists in a claims slice.
+func hasClaim(claims []Claim, target Claim) bool {
+	return slices.Contains(claims, target)
 }
 
 // HasContractClaim checks if the user has a specific claim on a contract.
@@ -312,7 +321,7 @@ func (e *EffectivePermissions) HasFunctionSelector(address, selector string) boo
 	}
 
 	// If no function restrictions defined, all functions are allowed
-	if access.Functions == nil || len(access.Functions) == 0 {
+	if len(access.Functions) == 0 {
 		return true
 	}
 

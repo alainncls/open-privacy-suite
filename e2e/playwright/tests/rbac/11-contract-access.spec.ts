@@ -78,14 +78,65 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(result.reason).toContain('requires explicit grant');
   });
 
-  test('claims allows access to unregistered contracts', async ({ request }) => {
+  test('deploy user allowed access to unregistered contracts', async ({ request }) => {
     const org = await ctx.fixture.createOrg('defaultclaimsorg');
     const group = await ctx.fixture.createGroup(org.id, 'defaultclaimsgroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['read', 'write'], // Allow access to any contract
+      claims: ['deploy'], // Deploy claim expands to deploy+read+write; allows unregistered access
+    });
+
+    const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+    });
+
+    const result = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      target_address: unknownContract,
+      required_claims: ['read'],
+    });
+
+    expect(result.allowed).toBe(true);
+  });
+
+  test('read-only user denied access to unregistered contracts', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('readonlyunregorg');
+    const group = await ctx.fixture.createGroup(org.id, 'readonlyunreggroup');
+    const unknownContract = ctx.contractAddress();
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      claims: ['read'], // Read-only — no deploy/admin
+    });
+
+    const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+    });
+
+    const result = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      target_address: unknownContract,
+      required_claims: ['read'],
+    });
+
+    // Read-only users can't access unregistered contracts
+    expect(result.allowed).toBe(false);
+  });
+
+  test('admin user allowed access to unregistered contracts', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('adminunregorg');
+    const group = await ctx.fixture.createGroup(org.id, 'adminunreggroup');
+    const unknownContract = ctx.contractAddress();
+
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call'],
+      claims: ['admin'], // Admin claim expands to all claims; allows unregistered access
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -156,14 +207,14 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(body).toHaveProperty('jsonrpc', '2.0');
   });
 
-  test('RPC eth_call to unregistered contract allowed with claims', async ({ request }) => {
+  test('RPC eth_call to unregistered contract allowed with deploy claim', async ({ request }) => {
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcdefaultgroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['read', 'write'], // Allow access to any contract
+      claims: ['deploy'], // Deploy claim required for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {

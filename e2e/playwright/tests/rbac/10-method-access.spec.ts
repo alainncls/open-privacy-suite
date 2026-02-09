@@ -66,7 +66,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_getBalance'],
-      claims: ['read', 'write'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     // Create user and add to the test group, removing default membership

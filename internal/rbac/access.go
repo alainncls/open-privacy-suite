@@ -511,12 +511,30 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
-				// Address is owned (registered or preregistered) by one of user's orgs - grant full access
+				// Address is owned (registered or preregistered) by one of user's orgs - grant access.
+				// Note: we do NOT set hasExplicitAccess here. CheckDefaultClaimsAllowed will
+				// still verify whether this is a registered contract (requires explicit grant)
+				// or a preregistered address (allowed via org ownership).
 				access = &ContractAccess{
 					Claims:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 					Functions: nil, // All functions allowed
 				}
-				hasExplicitAccess = true // Treat as explicit access for cross-org check
+			}
+		}
+
+		// Cross-org deploy claim check: for unregistered contracts, permissions are resolved
+		// for one org (typically default), which may not have deploy claims. Check if the user
+		// has deploy/admin claims in ANY of their group memberships across all orgs.
+		if access == nil && !hasExplicitAccess {
+			hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, user.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check cross-org deploy claims: %w", err)
+			}
+			if hasDeployClaim {
+				access = &ContractAccess{
+					Claims:    []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+					Functions: nil,
+				}
 			}
 		}
 
@@ -1011,6 +1029,32 @@ func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID st
 	}
 
 	return orgIDs, nil
+}
+
+// userHasDeployClaimInAnyOrg checks if the user has deploy or admin claims
+// in any of their group memberships across all organizations.
+// This is used for unregistered contract access where permissions are resolved
+// for one org but deploy claims may exist in another.
+func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userID string) (bool, error) {
+	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range memberships {
+		if m.Membership == nil {
+			continue
+		}
+		access, err := c.store.GetGroupAccess(ctx, m.Membership.GroupID)
+		if err != nil || access == nil {
+			continue
+		}
+		for _, claim := range access.Claims {
+			if claim == ClaimDeploy || claim == ClaimAdmin {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // getUserDefaultOrganization returns the user's default (first) organization.
