@@ -110,7 +110,8 @@ When a user accesses a contract:
 **Isolation Rules:**
 - Users can only access contracts owned by organizations they belong to
 - Unregistered contracts are only accessible to users with `deploy` or `admin` claims
-- Regular `read`/`write` users must use registered contracts with explicit grants
+- Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
+- Regular `read`/`write` users must use registered contracts with explicit grants (ContractGrant)
 - Contract registered to Org A cannot be accessed by Org B users, even with deploy/admin claims
 
 **Multi-Organization Users:**
