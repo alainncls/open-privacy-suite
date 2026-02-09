@@ -521,51 +521,335 @@ test.describe('RBAC Contract Grants', () => {
     });
   });
 
-  // TODO: This test requires function selector checking to be fully implemented in access check
-  // The checkAccess endpoint currently doesn't properly check function selectors against grants
-  test.skip('function restrictions affect access check', async () => {
-    const org = await ctx.fixture.createOrg('grant-org10');
-    const group = await ctx.fixture.createGroup(org.id, 'func-group');
-    const contractAddr = ctx.contractAddress();
+  test.describe('Function Selector Restrictions via Access Check API', () => {
+    // Common ERC20 function selectors
+    const BALANCE_OF = '0x70a08231'; // balanceOf(address)
+    const TRANSFER = '0xa9059cbb'; // transfer(address,uint256)
+    const APPROVE = '0x095ea7b3'; // approve(address,uint256)
+    const TOTAL_SUPPLY = '0x18160ddd'; // totalSupply()
 
-    await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_call'],
-      claims: ['read'],
+    test('allowed function selector passes access check', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org1');
+      const group = await ctx.fixture.createGroup(org.id, 'func-access-grp1');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Access Contract',
+      });
+
+      // Grant with specific functions only
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+        functions: [BALANCE_OF, TOTAL_SUPPLY],
+      });
+
+      // Check access to allowed function
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: BALANCE_OF,
+      });
+      expect(result.allowed).toBe(true);
     });
 
-    const { user } = await ctx.fixture.createUser(request);
-    await ctx.rbac.createMembership(user.id, { group_id: group.id });
+    test('disallowed function selector is denied', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org2');
+      const group = await ctx.fixture.createGroup(org.id, 'func-access-grp2');
+      const contractAddr = ctx.contractAddress();
 
-    await ctx.rbac.createContract(org.id, {
-      address: contractAddr,
-      name: 'Function-Limited Contract',
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Deny Contract',
+      });
+
+      // Grant only balanceOf
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+        functions: [BALANCE_OF],
+      });
+
+      // transfer should be denied
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: TRANSFER,
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('function');
     });
 
-    // Grant with specific functions only
-    await ctx.rbac.createContractGrant(org.id, contractAddr, {
-      group_id: group.id,
-      
-      functions: ['0x70a08231'], // Only balanceOf
+    test('no function restrictions allows all selectors', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org3');
+      const group = await ctx.fixture.createGroup(org.id, 'func-access-grp3');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Unrestricted Contract',
+      });
+
+      // Grant with null functions = all allowed
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+        functions: null,
+      });
+
+      // Any function should be allowed
+      const result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: APPROVE,
+      });
+      expect(result.allowed).toBe(true);
     });
 
-    // Check access to allowed function
-    const allowedResult = await ctx.rbac.checkAccess({
-      user_external_id: user.external_id,
-      org_slug: org.slug,
-      method: 'eth_call',
-      target_address: contractAddr,
-      function_selector: '0x70a08231',
-    });
-    expect(allowedResult.allowed).toBe(true);
+    test('updating grant functions changes access', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org4');
+      const group = await ctx.fixture.createGroup(org.id, 'func-access-grp4');
+      const contractAddr = ctx.contractAddress();
 
-    // Check access to disallowed function
-    const deniedResult = await ctx.rbac.checkAccess({
-      user_external_id: user.external_id,
-      org_slug: org.slug,
-      method: 'eth_call',
-      target_address: contractAddr,
-      function_selector: '0xa9059cbb', // transfer - not in allowed list
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Update Contract',
+      });
+
+      // Create grant with only balanceOf
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+        functions: [BALANCE_OF],
+      });
+
+      // transfer should be denied initially
+      let result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: TRANSFER,
+      });
+      expect(result.allowed).toBe(false);
+
+      // Update grant to include transfer
+      await ctx.rbac.updateContractGrant(org.id, contractAddr, group.id, {
+        functions: [BALANCE_OF, TRANSFER],
+      });
+
+      // transfer should now be allowed
+      result = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: TRANSFER,
+      });
+      expect(result.allowed).toBe(true);
     });
-    expect(deniedResult.allowed).toBe(false);
+
+    test('multiple groups union their function restrictions', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org5');
+      const group1 = await ctx.fixture.createGroup(org.id, 'func-union-grp1');
+      const group2 = await ctx.fixture.createGroup(org.id, 'func-union-grp2');
+      const contractAddr = ctx.contractAddress();
+
+      // Both groups have read access
+      await ctx.rbac.setGroupAccess(org.id, group1.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+      await ctx.rbac.setGroupAccess(org.id, group2.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      // Create user with membership in BOTH groups
+      const { user, did } = await ctx.fixture.createUserWithMembership(request, group1.id, {
+        kyc: true,
+      });
+      await ctx.fixture.addMembership(user.id, group2.id);
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Union Contract',
+      });
+
+      // Group1 allows only balanceOf
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group1.id,
+        functions: [BALANCE_OF],
+      });
+
+      // Group2 allows only transfer
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group2.id,
+        functions: [TRANSFER],
+      });
+
+      // User should be able to call BOTH (union of functions across memberships)
+      const balanceResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: BALANCE_OF,
+      });
+      expect(balanceResult.allowed).toBe(true);
+
+      const transferResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: TRANSFER,
+      });
+      expect(transferResult.allowed).toBe(true);
+
+      // But approve should still be denied (not in either group's allowlist)
+      const approveResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: APPROVE,
+      });
+      expect(approveResult.allowed).toBe(false);
+    });
+
+    test('unrestricted group unions with restricted group allows all', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org6');
+      const restrictedGroup = await ctx.fixture.createGroup(org.id, 'func-restricted');
+      const unrestrictedGroup = await ctx.fixture.createGroup(org.id, 'func-unrestricted');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.setGroupAccess(org.id, restrictedGroup.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+      await ctx.rbac.setGroupAccess(org.id, unrestrictedGroup.id, {
+        allowed_methods: ['eth_call'],
+        claims: ['read'],
+      });
+
+      const { user, did } = await ctx.fixture.createUserWithMembership(request, restrictedGroup.id, {
+        kyc: true,
+      });
+      await ctx.fixture.addMembership(user.id, unrestrictedGroup.id);
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Mixed Contract',
+      });
+
+      // Restricted group: only balanceOf
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: restrictedGroup.id,
+        functions: [BALANCE_OF],
+      });
+
+      // Unrestricted group: all functions (null)
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: unrestrictedGroup.id,
+        functions: null,
+      });
+
+      // Any function should be allowed (union with null = null = all)
+      const approveResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_call',
+        target_address: contractAddr,
+        function_selector: APPROVE,
+      });
+      expect(approveResult.allowed).toBe(true);
+    });
+
+    test('function restriction with write claim on eth_sendTransaction', async ({ request }) => {
+      const org = await ctx.fixture.createOrg('func-access-org7');
+      const group = await ctx.fixture.createGroup(org.id, 'func-write-grp');
+      const contractAddr = ctx.contractAddress();
+
+      await ctx.rbac.setGroupAccess(org.id, group.id, {
+        allowed_methods: ['eth_call', 'eth_sendTransaction'],
+        claims: ['read', 'write'],
+      });
+
+      const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+        kyc: true,
+      });
+
+      await ctx.rbac.createContract(org.id, {
+        address: contractAddr,
+        name: 'Func Write Contract',
+      });
+
+      // Only allow transfer function
+      await ctx.rbac.createContractGrant(org.id, contractAddr, {
+        group_id: group.id,
+        functions: [TRANSFER],
+      });
+
+      // transfer on eth_sendTransaction should be allowed
+      const transferResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_sendTransaction',
+        target_address: contractAddr,
+        function_selector: TRANSFER,
+      });
+      expect(transferResult.allowed).toBe(true);
+
+      // approve on eth_sendTransaction should be denied (not in allowed functions)
+      const approveResult = await ctx.rbac.checkAccess({
+        user_external_id: did,
+        org_slug: org.slug,
+        method: 'eth_sendTransaction',
+        target_address: contractAddr,
+        function_selector: APPROVE,
+      });
+      expect(approveResult.allowed).toBe(false);
+      expect(approveResult.reason).toContain('function');
+    });
   });
 });
