@@ -148,6 +148,13 @@ export default function GroupAccessForm({
     return allowedMethods.filter(m => (sectionMethods as readonly string[]).includes(m)).length;
   };
 
+  // Claims with no methods selected are useless — the claim grants capability
+  // but no RPC methods would actually be allowed through
+  const claimsWithoutMethods = (['read', 'write'] as const).filter(
+    claimType => claims.includes(claimType) && getMethodsSelectedCount(claimType) === 0
+  );
+  const hasMethodGap = claimsWithoutMethods.length > 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -350,6 +357,11 @@ export default function GroupAccessForm({
           {renderMethodSection('read', 'Read Methods')}
           {renderMethodSection('write', 'Write Methods')}
         </div>
+        {hasMethodGap && (
+          <p className="text-xs text-[#EF4444] mt-1">
+            {claimsWithoutMethods.map(c => CLAIM_LABELS[c]).join(' and ')} claim{claimsWithoutMethods.length > 1 ? 's have' : ' has'} no methods selected.
+          </p>
+        )}
       </div>
 
       {/* Rate limits */}
@@ -394,7 +406,7 @@ export default function GroupAccessForm({
           <X className="w-4 h-4" />
           Cancel
         </Button>
-        <Button type="submit" disabled={saving || claims.length === 0} className="gap-2">
+        <Button type="submit" disabled={saving || claims.length === 0 || hasMethodGap} className="gap-2">
           {saving ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
