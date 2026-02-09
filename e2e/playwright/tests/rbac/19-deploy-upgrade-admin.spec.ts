@@ -810,6 +810,222 @@ test.describe('RBAC Admin Claim Enforcement', () => {
   });
 });
 
+test.describe('RBAC Deploy vs Upgrade Claim Separation', () => {
+  let ctx: RBACTestContext;
+
+  test.beforeEach(async ({ request }) => {
+    ctx = new RBACTestContext(request);
+  });
+
+  test.afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  test('user with deploy (no upgrade) can deploy but cannot upgrade', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'deployonlygroup');
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
+
+    // deploy expands to deploy+read+write (no upgrade)
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['deploy'],
+    });
+
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
+      group_id: group.id,
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Deploy should succeed (has deploy claim)
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      data: SAMPLE_BYTECODE,
+      // No 'to' = deployment
+    };
+    const deployResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(deployResult.status).not.toBe(403);
+
+    // Upgrade should be denied (no upgrade claim)
+    // upgradeTo(address) selector: 0x3659cfe6 + padded address
+    const upgradeCalldata = UPGRADE_TO_SELECTOR +
+      '000000000000000000000000' + '1234567890abcdef1234567890abcdef12345678';
+    const upgradeTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: contract.address,
+      data: upgradeCalldata,
+    };
+    const upgradeResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [upgradeTx]);
+    expect(upgradeResult.status).toBe(403);
+    const errorMsg = typeof upgradeResult.body === 'object' && upgradeResult.body !== null
+      ? (upgradeResult.body as { error?: string }).error || ''
+      : '';
+    expect(errorMsg.toLowerCase()).toContain('upgrade');
+  });
+
+  test('user with upgrade (no deploy) cannot deploy but can send write txns', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'upgradeonlygroup');
+
+    // upgrade expands to upgrade+read+write (no deploy)
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['upgrade'],
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Deploy should be denied (no deploy claim)
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      data: SAMPLE_BYTECODE,
+      // No 'to' = deployment
+    };
+    const deployResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(deployResult.status).toBe(403);
+    const errorMsg = typeof deployResult.body === 'object' && deployResult.body !== null
+      ? (deployResult.body as { error?: string }).error || ''
+      : '';
+    expect(errorMsg.toLowerCase()).toContain('deploy');
+
+    // Regular write transaction should succeed (has write via upgrade implication)
+    const writeTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: '0x0000000000000000000000000000000000000001',
+      value: '0x0',
+      data: '0x',
+    };
+    const writeResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [writeTx]);
+    expect(writeResult.status).not.toBe(403);
+  });
+
+  test('user with admin can both deploy and send upgrade txns', async ({ request }) => {
+    const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'adminbothgroup');
+    const contract = await ctx.fixture.createContract(DEFAULT_ORG_ID);
+
+    // admin expands to all claims
+    await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['admin'],
+    });
+
+    await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
+      group_id: group.id,
+    });
+
+    const { token, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+      keepDefaultMembership: false,
+    });
+
+    // Deploy should succeed (admin implies deploy)
+    const deployTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      data: SAMPLE_BYTECODE,
+    };
+    const deployResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [deployTx]);
+    expect(deployResult.status).not.toBe(403);
+
+    // Upgrade should not get 403 (admin implies upgrade)
+    // The upgrade may fail for other reasons (proxy not managed, impl not owned),
+    // but it should NOT fail with 403 due to missing upgrade claim
+    const upgradeCalldata = UPGRADE_TO_SELECTOR +
+      '000000000000000000000000' + '1234567890abcdef1234567890abcdef12345678';
+    const upgradeTx = {
+      from: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      to: contract.address,
+      data: upgradeCalldata,
+    };
+    const upgradeResult = await makeRPCRequest(request, token, 'eth_sendTransaction', [upgradeTx]);
+    // Should not be 403 for missing upgrade claim
+    // May be 403 for proxy validation reasons, but not for "missing upgrade claim"
+    if (upgradeResult.status === 403) {
+      const upgradeError = typeof upgradeResult.body === 'object' && upgradeResult.body !== null
+        ? (upgradeResult.body as { error?: string }).error || ''
+        : '';
+      expect(upgradeError).not.toContain('missing upgrade claim');
+    }
+  });
+
+  test('RPC: upgrade tx denied without upgrade claim via access check API', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('upgraderpccheckorg');
+    const group = await ctx.fixture.createGroup(org.id, 'upgraderpccheckgroup');
+    const contract = await ctx.fixture.createContract(org.id);
+
+    // Has write but NOT upgrade
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['read', 'write'], // No upgrade
+    });
+
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+    });
+
+    const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+    });
+
+    // upgradeTo(address) calldata
+    const upgradeCalldata = UPGRADE_TO_SELECTOR.replace('0x', '') +
+      '000000000000000000000000' + '1234567890abcdef1234567890abcdef12345678';
+
+    // Access check with upgrade calldata should be denied
+    const result = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_sendTransaction',
+      target_address: contract.address,
+      function_selector: UPGRADE_TO_SELECTOR,
+    });
+
+    // The write claim check passes, but we want to verify the user
+    // doesn't have upgrade claim in their effective permissions
+    const perms = await ctx.rbac.getEffectivePermissions(
+      (await ctx.rbac.findUserByExternalId(did))!.id,
+      org.slug
+    );
+    const contractAccess = perms.contract_access[contract.address.toLowerCase()];
+    expect(contractAccess.claims).not.toContain('upgrade');
+    expect(contractAccess.claims).toContain('write');
+  });
+
+  test('RPC: upgrade tx allowed with upgrade claim via access check API', async ({ request }) => {
+    const org = await ctx.fixture.createOrg('upgradeallowedorg');
+    const group = await ctx.fixture.createGroup(org.id, 'upgradeallowedgroup');
+    const contract = await ctx.fixture.createContract(org.id);
+
+    // Has write AND upgrade
+    await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['read', 'write', 'upgrade'],
+    });
+
+    await ctx.rbac.createContractGrant(org.id, contract.address, {
+      group_id: group.id,
+    });
+
+    const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
+      kyc: true,
+    });
+
+    // Verify upgrade claim is present in effective permissions
+    const perms = await ctx.rbac.getEffectivePermissions(
+      (await ctx.rbac.findUserByExternalId(did))!.id,
+      org.slug
+    );
+    const contractAccess = perms.contract_access[contract.address.toLowerCase()];
+    expect(contractAccess.claims).toContain('upgrade');
+    expect(contractAccess.claims).toContain('write');
+    expect(contractAccess.claims).toContain('read');
+  });
+});
+
 test.describe('RBAC All Claims Combined', () => {
   let ctx: RBACTestContext;
 

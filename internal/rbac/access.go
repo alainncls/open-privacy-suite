@@ -599,6 +599,19 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		if req.Method == "eth_sendTransaction" {
 			calldata := extractCalldata(req.Method, req.Params)
 			if len(calldata) > 0 {
+				// Check upgrade claim BEFORE proxy validation — if the calldata
+				// matches an upgrade selector, the user must have the upgrade claim
+				// regardless of proxy management state.
+				if len(calldata) >= 4 {
+					selector := hex.EncodeToString(calldata[:4])
+					if IsUpgradeSelector(selector) && !containsClaim(access.Claims, ClaimUpgrade) {
+						return &AccessCheckResult{
+							Allowed: false,
+							Reason:  fmt.Sprintf("missing upgrade claim for proxy upgrade on contract %s", req.TargetAddress),
+						}, nil
+					}
+				}
+
 				upgradeResult, err := c.upgradeValidator.ValidateUpgrade(ctx, org.ID, addr, calldata)
 				if err != nil {
 					return nil, fmt.Errorf("failed to validate upgrade: %w", err)

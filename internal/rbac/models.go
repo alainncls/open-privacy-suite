@@ -23,6 +23,39 @@ func AllClaims() []Claim {
 	return []Claim{ClaimRead, ClaimWrite, ClaimAdmin, ClaimUpgrade, ClaimDeploy}
 }
 
+// claimImplications defines which claims each claim implies.
+// admin implies all other claims; deploy and upgrade each imply read+write.
+var claimImplications = map[Claim][]Claim{
+	ClaimAdmin:   {ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+	ClaimDeploy:  {ClaimRead, ClaimWrite},
+	ClaimUpgrade: {ClaimRead, ClaimWrite},
+}
+
+// ExpandClaims expands claims according to the hierarchy:
+//   - admin → read, write, deploy, upgrade
+//   - deploy → read, write
+//   - upgrade → read, write
+//
+// Returns a deduplicated, sorted slice.
+func ExpandClaims(claims []Claim) []Claim {
+	set := make(map[Claim]bool, len(claims))
+	for _, c := range claims {
+		set[c] = true
+		for _, implied := range claimImplications[c] {
+			set[implied] = true
+		}
+	}
+
+	result := make([]Claim, 0, len(set))
+	for c := range set {
+		result = append(result, c)
+	}
+	slices.SortFunc(result, func(a, b Claim) int {
+		return strings.Compare(string(a), string(b))
+	})
+	return result
+}
+
 // MembershipSource indicates how a user obtained membership in a group.
 type MembershipSource string
 

@@ -229,12 +229,35 @@ export const CLAIM_LABELS: Record<Claim, string> = {
 
 // Claim descriptions for tooltips
 export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
-  read: 'Can read data from contracts (eth_call, eth_estimateGas)',
-  write: 'Can write/execute transactions (eth_sendTransaction)',
-  admin: 'Full control - considered owner of the contract',
-  upgrade: 'Can upgrade proxy contracts',
-  deploy: 'Can deploy new contracts (contract creation transactions)',
+  read: 'Can read contract data (eth_call, eth_estimateGas)',
+  write: 'Can send transactions (eth_sendTransaction)',
+  admin: 'Full control — implies Read, Write, Deploy, and Upgrade',
+  upgrade: 'Can upgrade proxy contract implementations — implies Read and Write',
+  deploy: 'Can deploy new contracts to new addresses — implies Read and Write',
 };
+
+// Claims hierarchy: which claims each claim implies
+export const CLAIM_HIERARCHY: Partial<Record<Claim, Claim[]>> = {
+  admin: ['read', 'write', 'deploy', 'upgrade'],
+  deploy: ['read', 'write'],
+  upgrade: ['read', 'write'],
+};
+
+// Get all claims implied by a given claim
+export function getImpliedClaims(claim: Claim): Claim[] {
+  return CLAIM_HIERARCHY[claim] || [];
+}
+
+// Returns which selected claim implies the given claim, or null if none
+export function getImplyingClaim(claim: Claim, selectedClaims: Claim[]): Claim | null {
+  for (const selected of selectedClaims) {
+    const implied = CLAIM_HIERARCHY[selected];
+    if (implied && implied.includes(claim)) {
+      return selected;
+    }
+  }
+  return null;
+}
 
 // RPC methods classified by required claim
 // This must match the backend classification in internal/rbac/method_claim.go

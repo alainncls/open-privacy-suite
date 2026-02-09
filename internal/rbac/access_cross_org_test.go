@@ -2,6 +2,8 @@ package rbac
 
 import (
 	"context"
+	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1031,3 +1033,196 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckAccessUpgradeClaimEnforcement tests that eth_sendTransaction with an upgrade
+// selector in calldata requires the upgrade claim, independent of proxy management state.
+func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	user := &User{ID: "user-1", ExternalID: "did:test:user1", KYC: true, Banned: false}
+	store.users["did:test:user1"] = user
+
+	group := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+	store.memberships["user-1"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-1", UserID: "user-1", GroupID: "group-a"}, Group: group},
+	}
+
+	contractAddr := "0xaaaa000000000000000000000000000000000001"
+
+	// Build upgrade calldata: upgradeTo(address) = 0x3659cfe6 + padded address
+	selectorBytes, _ := hex.DecodeString(SelectorUpgradeTo)
+	implAddr, _ := hex.DecodeString("0000000000000000000000001234567890abcdef1234567890abcdef12345678")
+	upgradeCalldata := append(selectorBytes, implAddr...)
+
+	// Non-upgrade calldata: random function call
+	regularCalldata, _ := hex.DecodeString("a9059cbb0000000000000000000000001234567890abcdef1234567890abcdef12345678")
+
+	t.Run("UPGRADE-CLAIM-001: upgrade tx denied without upgrade claim", func(t *testing.T) {
+		// Group has write but NOT upgrade
+		store.groupAccess["group-a"] = &GroupAccess{
+			ID:             "access-a",
+			GroupID:        "group-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			Claims:         []Claim{ClaimRead, ClaimWrite}, // No upgrade
+		}
+
+		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+			ID:             "perms-1",
+			UserID:         "user-1",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			ContractAccess: map[string]ContractAccess{},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user1",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(upgradeCalldata)}, "latest"},
+			TargetAddress:  contractAddr,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected upgrade tx to be denied without upgrade claim")
+		}
+		if result.Reason == "" {
+			t.Error("expected denial reason")
+		}
+		// Should specifically mention upgrade claim, not proxy management
+		if !strings.Contains(result.Reason, "upgrade claim") {
+			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		}
+	})
+
+	t.Run("UPGRADE-CLAIM-002: upgrade tx allowed with upgrade claim", func(t *testing.T) {
+		// Group has write AND upgrade
+		store.groupAccess["group-a"] = &GroupAccess{
+			ID:             "access-a",
+			GroupID:        "group-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
+		}
+
+		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+			ID:             "perms-1",
+			UserID:         "user-1",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			ContractAccess: map[string]ContractAccess{},
+			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user1",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(upgradeCalldata)}, "latest"},
+			TargetAddress:  contractAddr,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should pass claim check (may still fail on proxy validation, which is OK)
+		// The key: it should NOT fail with "missing upgrade claim"
+		if !result.Allowed && strings.Contains(result.Reason, "upgrade claim") {
+			t.Errorf("upgrade tx should not be denied for missing upgrade claim when user has it, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("UPGRADE-CLAIM-003: regular write tx not affected by upgrade claim check", func(t *testing.T) {
+		// Group has write but NOT upgrade — regular tx should still work
+		store.groupAccess["group-a"] = &GroupAccess{
+			ID:             "access-a",
+			GroupID:        "group-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+		}
+
+		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+			ID:             "perms-1",
+			UserID:         "user-1",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			ContractAccess: map[string]ContractAccess{},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user1",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(regularCalldata)}, "latest"},
+			TargetAddress:  contractAddr,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("regular write tx should be allowed without upgrade claim, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("UPGRADE-CLAIM-004: deploy claim does not grant upgrade", func(t *testing.T) {
+		// Group has deploy (implies read+write) but NOT upgrade
+		store.groupAccess["group-a"] = &GroupAccess{
+			ID:             "access-a",
+			GroupID:        "group-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy}, // No upgrade
+		}
+
+		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+			ID:             "perms-1",
+			UserID:         "user-1",
+			OrgID:          "org-a",
+			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+			ContractAccess: map[string]ContractAccess{},
+			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+			ComputedAt:     time.Now(),
+			ExpiresAt:      time.Now().Add(1 * time.Hour),
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user1",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(upgradeCalldata)}, "latest"},
+			TargetAddress:  contractAddr,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("upgrade tx should be denied when user has deploy but not upgrade")
+		}
+		if !strings.Contains(result.Reason, "upgrade claim") {
+			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		}
+	})
+}
+

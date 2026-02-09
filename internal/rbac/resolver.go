@@ -21,11 +21,11 @@ type Resolver struct {
 }
 
 // inFlightEntry holds the result of an in-progress permission computation.
+// Uses a closed channel as a broadcast signal so all waiting goroutines are woken.
 type inFlightEntry struct {
-	result chan struct {
-		perms *EffectivePermissions
-		err   error
-	}
+	done  chan struct{} // closed when computation is complete
+	perms *EffectivePermissions
+	err   error
 }
 
 // NewResolver creates a new permission resolver.
@@ -61,8 +61,8 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	if exists {
 		// Wait for the in-progress computation
 		select {
-		case res := <-entry.result:
-			return res.perms, res.err
+		case <-entry.done:
+			return entry.perms, entry.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -70,10 +70,7 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 
 	// No computation in progress, start one
 	entry = &inFlightEntry{
-		result: make(chan struct {
-			perms *EffectivePermissions
-			err   error
-		}, 1),
+		done: make(chan struct{}),
 	}
 
 	r.inFlightMu.Lock()
@@ -82,8 +79,8 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 		// Another goroutine beat us, wait on their computation
 		r.inFlightMu.Unlock()
 		select {
-		case res := <-existing.result:
-			return res.perms, res.err
+		case <-existing.done:
+			return existing.perms, existing.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -94,11 +91,10 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 	// Compute permissions
 	perms, err := r.computePermissions(ctx, userID, orgID)
 
-	// Store result and signal waiting goroutines
-	entry.result <- struct {
-		perms *EffectivePermissions
-		err   error
-	}{perms, err}
+	// Store result and broadcast to all waiting goroutines
+	entry.perms = perms
+	entry.err = err
+	close(entry.done)
 
 	// Clean up in-flight entry
 	r.inFlightMu.Lock()

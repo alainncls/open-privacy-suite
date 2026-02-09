@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { Claim, SetGroupAccessInput } from '@/types/rbac';
-import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS, RPC_METHODS_BY_CLAIM } from '@/types/rbac';
+import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS, CLAIM_HIERARCHY, getImplyingClaim, RPC_METHODS_BY_CLAIM } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertCircle, Save, X, Loader2, Check, ChevronDown, ChevronRight } from 'lucide-react';
@@ -79,11 +79,24 @@ export default function GroupAccessForm({
   };
 
   const toggleClaim = (claim: Claim) => {
-    setDefaultClaims(prev =>
-      prev.includes(claim)
-        ? prev.filter(c => c !== claim)
-        : [...prev, claim]
-    );
+    setDefaultClaims(prev => {
+      if (prev.includes(claim)) {
+        // Unchecking: remove the claim itself
+        let next = prev.filter(c => c !== claim);
+        // Also uncheck any parent claims that imply this claim
+        for (const [parent, implied] of Object.entries(CLAIM_HIERARCHY)) {
+          if (implied?.includes(claim) && next.includes(parent as Claim)) {
+            next = next.filter(c => c !== parent);
+          }
+        }
+        return next;
+      } else {
+        // Checking: add the claim and all its implied claims
+        const implied = CLAIM_HIERARCHY[claim] || [];
+        const set = new Set([...prev, claim, ...implied]);
+        return Array.from(set);
+      }
+    });
   };
 
   const toggleSection = (section: string) => {
@@ -255,32 +268,52 @@ export default function GroupAccessForm({
       {/* Claims section - moved to top */}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-[#374151]">
-          Default Claims
+          Claims
         </label>
         <p className="text-xs text-[#94A3B8] mb-2">
-          Claims applied to unregistered contracts. Read/Write claims also control which RPC methods are available.
+          Capabilities for this group. Apply to unregistered contracts directly, and to registered contracts via grants. Read/Write also control which RPC methods are available.
         </p>
         <div className="space-y-2">
-          {ALL_CLAIMS.map(claim => (
-            <label
-              key={claim}
-              className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#F5F3FF] cursor-pointer"
-              onClick={() => toggleClaim(claim)}
-            >
-              <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
-                claims.includes(claim)
-                  ? 'bg-[#8950FA] border-[#8950FA]'
-                  : 'border-[#CBD5E1] bg-white'
-              }`}>
-                {claims.includes(claim) && <Check className="w-3 h-3 text-white" />}
-              </div>
-              <div>
-                <span className="text-sm font-medium text-[#0F0F0F]">{CLAIM_LABELS[claim]}</span>
-                <p className="text-xs text-[#94A3B8]">{CLAIM_DESCRIPTIONS[claim]}</p>
-              </div>
-            </label>
-          ))}
+          {ALL_CLAIMS.map(claim => {
+            const implyingClaim = getImplyingClaim(claim, claims);
+            const isImplied = implyingClaim !== null;
+            const isChecked = claims.includes(claim);
+
+            return (
+              <label
+                key={claim}
+                className={`flex items-start gap-3 p-2 rounded-lg ${
+                  isImplied ? 'opacity-60 cursor-default' : 'hover:bg-[#F5F3FF] cursor-pointer'
+                }`}
+                onClick={() => !isImplied && toggleClaim(claim)}
+              >
+                <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
+                  isChecked
+                    ? isImplied
+                      ? 'bg-[#B8A0F0] border-[#B8A0F0]'
+                      : 'bg-[#8950FA] border-[#8950FA]'
+                    : 'border-[#CBD5E1] bg-white'
+                }`}>
+                  {isChecked && <Check className="w-3 h-3 text-white" />}
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-[#0F0F0F]">
+                    {CLAIM_LABELS[claim]}
+                    {isImplied && (
+                      <span className="text-xs font-normal text-[#94A3B8] ml-2">
+                        (implied by {CLAIM_LABELS[implyingClaim]})
+                      </span>
+                    )}
+                  </span>
+                  <p className="text-xs text-[#94A3B8]">{CLAIM_DESCRIPTIONS[claim]}</p>
+                </div>
+              </label>
+            );
+          })}
         </div>
+        {claims.length === 0 && (
+          <p className="text-xs text-[#EF4444] mt-1">Select at least one claim.</p>
+        )}
       </div>
 
       {/* RPC Methods section - now grouped by claim */}
@@ -339,7 +372,7 @@ export default function GroupAccessForm({
           <X className="w-4 h-4" />
           Cancel
         </Button>
-        <Button type="submit" disabled={saving} className="gap-2">
+        <Button type="submit" disabled={saving || claims.length === 0} className="gap-2">
           {saving ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />

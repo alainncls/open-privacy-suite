@@ -132,6 +132,84 @@ test.describe('RBAC Group Access - Claim-Method Validation', () => {
     expect(errorMessage).toContain('write claim');
   });
 
+  test('admin claim expands to all claims', async () => {
+    const org = await ctx.fixture.createOrg('claim-expand-admin');
+    const group = await ctx.fixture.createGroup(org.id, 'claim-expand-admin-g');
+
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['admin'],
+    });
+
+    // admin should expand to include all claims
+    expect(access.claims).toContain('admin');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
+    expect(access.claims).toContain('deploy');
+    expect(access.claims).toContain('upgrade');
+    expect(access.claims.length).toBe(5);
+  });
+
+  test('deploy claim expands to include read and write', async () => {
+    const org = await ctx.fixture.createOrg('claim-expand-deploy');
+    const group = await ctx.fixture.createGroup(org.id, 'claim-expand-deploy-g');
+
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['deploy'],
+    });
+
+    expect(access.claims).toContain('deploy');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
+    expect(access.claims.length).toBe(3);
+  });
+
+  test('upgrade claim expands to include read and write', async () => {
+    const org = await ctx.fixture.createOrg('claim-expand-upgrade');
+    const group = await ctx.fixture.createGroup(org.id, 'claim-expand-upgrade-g');
+
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['upgrade'],
+    });
+
+    expect(access.claims).toContain('upgrade');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
+    expect(access.claims.length).toBe(3);
+  });
+
+  test('deploy + upgrade expands to include read and write (deduplicated)', async () => {
+    const org = await ctx.fixture.createOrg('claim-expand-both');
+    const group = await ctx.fixture.createGroup(org.id, 'claim-expand-both-g');
+
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['deploy', 'upgrade'],
+    });
+
+    expect(access.claims).toContain('deploy');
+    expect(access.claims).toContain('upgrade');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
+    expect(access.claims.length).toBe(4);
+  });
+
+  test('deploy claim allows write methods via expansion', async () => {
+    const org = await ctx.fixture.createOrg('claim-expand-methods');
+    const group = await ctx.fixture.createGroup(org.id, 'claim-expand-methods-g');
+
+    // deploy implies write, so eth_sendTransaction should be allowed
+    const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['deploy'],
+    });
+
+    expect(access.allowed_methods).toContain('eth_sendTransaction');
+    expect(access.claims).toContain('write');
+  });
+
   test('validation works when updating existing access', async () => {
     const org = await ctx.fixture.createOrg('claim-val-org8');
     const group = await ctx.fixture.createGroup(org.id, 'claim-val-group8');
