@@ -81,15 +81,37 @@ export default function GroupAccessForm({
   const toggleClaim = (claim: Claim) => {
     setDefaultClaims(prev => {
       if (prev.includes(claim)) {
-        // Unchecking: remove the claim itself
-        let next = prev.filter(c => c !== claim);
-        // Also uncheck any parent claims that imply this claim
+        // Unchecking: remove the claim and all claims that were only there
+        // because of the hierarchy. Also remove parent claims that imply this one.
+        let toRemove = new Set<Claim>([claim]);
+
+        // Remove any parent claims that imply this claim
         for (const [parent, implied] of Object.entries(CLAIM_HIERARCHY)) {
-          if (implied?.includes(claim) && next.includes(parent as Claim)) {
-            next = next.filter(c => c !== parent);
+          if (implied?.includes(claim)) {
+            toRemove.add(parent as Claim);
           }
         }
-        return next;
+
+        // Remove implied children, cascading: a child is removed if every
+        // parent that implies it is being removed
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const removed of toRemove) {
+            for (const child of (CLAIM_HIERARCHY[removed] || [])) {
+              if (toRemove.has(child)) continue;
+              const stillImplied = prev.some(c =>
+                !toRemove.has(c) && (CLAIM_HIERARCHY[c]?.includes(child) ?? false)
+              );
+              if (!stillImplied) {
+                toRemove.add(child);
+                changed = true;
+              }
+            }
+          }
+        }
+
+        return prev.filter(c => !toRemove.has(c));
       } else {
         // Checking: add the claim and all its implied claims
         const implied = CLAIM_HIERARCHY[claim] || [];
