@@ -601,9 +601,8 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-011b: Deploy user denied for registered contract without explicit grant", func(t *testing.T) {
-		// Deploy user CAN access unregistered contracts via default claims,
-		// but registered contracts still require explicit grants.
+	t.Run("SECURITY-011b: Deploy user ALLOWED for registered contract in own org without explicit grant", func(t *testing.T) {
+		// Deploy users can access registered contracts in their own org via default claims.
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
 			UserID:         "user-a",
@@ -628,12 +627,9 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be DENIED - registered contracts require explicit grants even for deploy users
-		if result.Allowed {
-			t.Error("expected access to be denied for registered contract without explicit grant")
-		}
-		if !containsString(result.Reason, "requires explicit grant") {
-			t.Errorf("expected 'requires explicit grant' message, got: %s", result.Reason)
+		// Deploy users can access registered contracts in their own org
+		if !result.Allowed {
+			t.Errorf("expected deploy user to access own-org registered contract, got denied: %s", result.Reason)
 		}
 	})
 

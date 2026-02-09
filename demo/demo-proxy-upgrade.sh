@@ -263,9 +263,7 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
         -H "Content-Type: application/json" \
         -d '{
             "slug": "demo-deployers",
-            "name": "Demo Deployers",
-            "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
-            "claims": ["read", "write", "deploy"]
+            "name": "Demo Deployers"
         }')
     DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
 
@@ -280,6 +278,15 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     print_error "Failed to create or find deployers group"
     exit 1
 fi
+
+# Always configure group access (in case group was created earlier without proper config)
+curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
+        "claims": ["deploy"]
+    }' > /dev/null
+
 print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
 
 # Step 0g: Add user to the deployers group

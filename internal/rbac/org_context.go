@@ -204,7 +204,7 @@ func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses 
 // Returns:
 //   - nil if default_claims can be used (contract is not registered anywhere)
 //   - error if the contract is registered to any org (requires explicit grant)
-func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool) error {
+func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool, claims []Claim) error {
 	if hasExplicitAccess {
 		// User has explicit access via grant - no need to check default_claims
 		return nil
@@ -215,20 +215,29 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 		return nil
 	}
 
-	// Check if contract is registered to ANY org
-	isRegisteredToAnyOrg, err := oc.store.IsContractRegisteredToAnyOrg(ctx, addr)
+	// Check which org owns this contract
+	ownerOrgID, err := oc.store.GetContractOwnerOrgID(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to check contract registration: %w", err)
+		return fmt.Errorf("failed to check contract ownership: %w", err)
 	}
 
-	if isRegisteredToAnyOrg {
-		// Contract is registered - require explicit grant, don't fall back to default_claims
-		// This applies even if the contract is in user's own org
-		return fmt.Errorf("contract %s requires explicit grant (no access via default claims)", address)
+	if ownerOrgID == "" {
+		// Contract is truly public (not registered anywhere) - allow default_claims
+		return nil
 	}
 
-	// Contract is truly public (not registered anywhere) - allow default_claims
-	return nil
+	// Contract belongs to a different org - deny
+	if !oc.userOrgIDs[ownerOrgID] {
+		return fmt.Errorf("belongs to an organization you are not a member of")
+	}
+
+	// Contract is in user's own org - deploy/admin users can access via default claims
+	if hasClaim(claims, ClaimDeploy) || hasClaim(claims, ClaimAdmin) {
+		return nil
+	}
+
+	// Read/write-only users need explicit grants for registered contracts
+	return fmt.Errorf("contract %s requires explicit grant (no access via default claims)", address)
 }
 
 // ValidateFactoryCallOrgs checks factory calls against all orgs the user belongs to.

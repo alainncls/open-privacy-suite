@@ -587,7 +587,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// CROSS-ORG ISOLATION CHECK (P0 Security Fix) - now encapsulated in OrgContext
 		// If user doesn't have explicit access but got access via default_claims,
 		// we must verify the contract isn't registered to a DIFFERENT organization.
-		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  err.Error(),
@@ -1441,7 +1441,7 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 		hasExplicitAccess := perms.IsContractRegistered(addr)
 
 		// For contracts in user's orgs or public contracts, check claims
-		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
 			// Contract is in another org - should have been caught by CheckMultiAddressesInScope,
 			// but double-check here for defense in depth
 			return fmt.Errorf("eth_getLogs: %w", err)
