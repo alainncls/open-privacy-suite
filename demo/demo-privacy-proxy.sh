@@ -299,7 +299,7 @@ curl -s -X PUT "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/acces
     -H "Authorization: Bearer $AUTH_TOKEN" \
     -d '{
         "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
-        "default_claims": ["read", "write", "deploy"]
+        "claims": ["deploy"]
     }' > /dev/null
 
 print_success "Deployers group ready: $DEPLOYER_GROUP_ID"

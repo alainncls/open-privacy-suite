@@ -19,7 +19,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -42,7 +42,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -66,7 +66,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     // Create user and add to the test group, removing default membership
@@ -92,7 +92,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Create user and add to the test group, removing default membership
@@ -117,7 +117,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -141,7 +141,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: [],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -164,7 +164,7 @@ test.describe('RBAC Method Access Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });

@@ -51,6 +51,10 @@ type Store interface {
 	// Returns empty string if the contract is not registered to any organization (public contract).
 	// This is used for multi-org user support to determine which org context to use.
 	GetContractOwnerOrgID(ctx context.Context, address string) (string, error)
+	// GetContractDeployerByAddress returns the user ID that deployed a contract at the given address.
+	// Returns nil if the contract is not found or has no deployer recorded.
+	// This is used for deployer auto-grant: the user who deployed a contract automatically gets read+write access.
+	GetContractDeployerByAddress(ctx context.Context, address string) (*string, error)
 
 	// Contract Grant operations
 	CreateContractGrant(ctx context.Context, grant *ContractGrant) error

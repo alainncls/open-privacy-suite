@@ -201,11 +201,33 @@ curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
 GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
 DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
 
-if [ -n "$DEPLOYER_GROUP_ID" ] && [ "$DEPLOYER_GROUP_ID" != "null" ]; then
-    curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    # Create the deployers group if it doesn't exist
+    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups" \
         -H "Content-Type: application/json" \
-        -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}" > /dev/null
+        -d '{
+            "slug": "demo-deployers",
+            "name": "Demo Deployers"
+        }')
+    DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
 fi
+
+if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+    print_error "Failed to create or find deployers group"
+    exit 1
+fi
+
+# Always configure group access
+curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
+        "claims": ["deploy"]
+    }' > /dev/null
+
+curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+    -H "Content-Type: application/json" \
+    -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}" > /dev/null
 print_success "Permissions configured"
 
 # =============================================================================

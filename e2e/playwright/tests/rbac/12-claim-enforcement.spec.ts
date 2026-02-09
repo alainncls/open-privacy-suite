@@ -18,7 +18,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read', 'write'], // Has read + write claims
+      claims: ['read', 'write'], // Has read + write claims
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -41,18 +41,19 @@ test.describe('RBAC Claim Enforcement', () => {
     const group = await ctx.fixture.createGroup(org.id, 'lackclaimgroup');
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read'], // Only has read claim
+      allowed_methods: ['eth_call'],
+      claims: ['read'], // Only has read claim
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
+    // Request deploy claim which user doesn't have
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_sendTransaction',
+      method: 'eth_call',
       required_claims: ['deploy'],
     });
 
@@ -66,7 +67,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read', 'write'], // Has read + write, not deploy
+      claims: ['read', 'write'], // Has read + write, not deploy
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -90,7 +91,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: [], // No claims
+      claims: ['read'], // eth_blockNumber requires read claim
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -113,7 +114,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read', 'write', 'deploy', 'admin', 'upgrade'],
+      claims: ['read', 'write', 'deploy', 'admin', 'upgrade'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -139,7 +140,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write', 'deploy'],
+      claims: ['read', 'write', 'deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -162,9 +163,10 @@ test.describe('RBAC Claim Enforcement', () => {
     const org = await ctx.fixture.createOrg('noroleclaimorg');
     const group = await ctx.fixture.createGroup(org.id, 'noroleclaimgroup');
 
+    // Grant read claim for eth_call method access, but no write claim
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [], // No claims granted
+      claims: ['read'], // Only read claim, no write
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -175,10 +177,10 @@ test.describe('RBAC Claim Enforcement', () => {
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
-      required_claims: ['read'],
+      required_claims: ['write'], // Request write claim which user doesn't have
     });
 
-    // Should fail due to missing claim
+    // Should fail due to missing write claim
     expect(result.allowed).toBe(false);
   });
 
@@ -188,7 +190,7 @@ test.describe('RBAC Claim Enforcement', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_sendTransaction'],
-      default_claims: ['read', 'write', 'deploy', 'admin', 'upgrade'],
+      claims: ['read', 'write', 'deploy', 'admin', 'upgrade'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {

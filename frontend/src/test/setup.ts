@@ -3,6 +3,28 @@ import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { server } from './mocks/server';
 
+// Suppress React act() warnings from Radix UI animations
+// These occur because Radix UI's Presence component triggers state updates
+// during dialog open/close animations that happen after tests complete.
+// This is a known testing issue with Radix UI and doesn't affect functionality.
+const originalConsoleError = console.error;
+beforeAll(() => {
+  console.error = (...args: unknown[]) => {
+    const message = args[0];
+    if (
+      typeof message === 'string' &&
+      message.includes('was not wrapped in act')
+    ) {
+      return; // Suppress act() warnings
+    }
+    originalConsoleError(...args);
+  };
+});
+
+afterAll(() => {
+  console.error = originalConsoleError;
+});
+
 // Start MSW server before all tests
 // Use 'warn' instead of 'error' to avoid failing tests due to cleanup/refetch requests
 // that happen after test completion. Tests still pass; unhandled requests are just logged.

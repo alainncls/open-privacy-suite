@@ -20,9 +20,10 @@ test.describe('RBAC Permission Revocation - Membership Removal', () => {
     const org = await ctx.fixture.createOrg('revokeorg');
     const group = await ctx.fixture.createGroup(org.id, 'revokegroup');
 
+    // eth_call and eth_getBalance are read methods, so only 'read' claim is needed
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read'],
     });
 
     const { user, did, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -57,13 +58,13 @@ test.describe('RBAC Permission Revocation - Membership Removal', () => {
     // Group A: eth_call
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     // Group B: eth_getBalance
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
       allowed_methods: ['eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, did, membership: membershipA } = await ctx.fixture.createUserWithMembership(
@@ -113,23 +114,24 @@ test.describe('RBAC Permission Revocation - Membership Removal', () => {
     const group = await ctx.fixture.createGroup(org.id, 'contractrevokegroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // Claims come from GroupAccess, not ContractGrant
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'admin'],
     });
 
     const { user, did, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Verify user has admin on contract
+    // Verify user has read/write claims on contract (from GroupAccess)
     let perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
-    expect(perms.contract_access[contract.address.toLowerCase()]?.claims).toContain('admin');
+    expect(perms.contract_access[contract.address.toLowerCase()]?.claims).toContain('read');
+    expect(perms.contract_access[contract.address.toLowerCase()]?.claims).toContain('write');
 
     // Remove membership
     await ctx.rbac.deleteMembership(user.id, membership.id);
@@ -150,7 +152,7 @@ test.describe('RBAC Permission Revocation - Membership Removal', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, token, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -189,12 +191,12 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [], // No default claims
+      claims: ['read'],
     });
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -214,7 +216,7 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
     // Remove the grant
     await ctx.rbac.deleteContractGrant(org.id, contract.address, group.id);
 
-    // Access should now be denied (no grant, no default_claims)
+    // Access should now be denied (no grant, no claims)
     result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -231,22 +233,22 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
     const groupB = await ctx.fixture.createGroup(org.id, 'groupB');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // Group A: read claims only
     await ctx.rbac.setGroupAccess(org.id, groupA.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      claims: ['read'],
     });
 
+    // Group B: write claims only (eth_sendTransaction requires write)
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
-      allowed_methods: ['eth_call'],
-      default_claims: [],
+      allowed_methods: ['eth_sendTransaction'],
+      claims: ['write'],
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      claims: ['write'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -254,7 +256,7 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
     });
     await ctx.fixture.addMembership(user.id, groupB.id);
 
-    // Verify user has both claims
+    // Verify user has both claims (read from A, write from B)
     let perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     let access = perms.contract_access[contract.address.toLowerCase()];
     expect(access.claims).toContain('read');
@@ -270,43 +272,47 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
     expect(access.claims).toContain('write');
   });
 
-  test('updating grant to remove claims works correctly', async ({ request }) => {
-    const org = await ctx.fixture.createOrg('updateclaimsorg');
-    const group = await ctx.fixture.createGroup(org.id, 'updateclaimsgroup');
+  test('updating grant to restrict functions works correctly', async ({ request }) => {
+    // Grants no longer have claims (claims come from GroupAccess).
+    // Instead, grants can restrict which functions are accessible.
+    // This test verifies that updating a grant to restrict functions works.
+    const org = await ctx.fixture.createOrg('updatefunctionsorg');
+    const group = await ctx.fixture.createGroup(org.id, 'updatefunctionsgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: [],
+      claims: ['read', 'write'],
     });
 
+    // Create grant with access to all functions (null = all)
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write', 'admin'],
+      functions: null, // All functions allowed
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Verify all claims
+    // Verify user has access with all functions
     let perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
-    expect(perms.contract_access[contract.address.toLowerCase()].claims).toContain('admin');
+    let access = perms.contract_access[contract.address.toLowerCase()];
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
+    // functions should be null (all allowed) or undefined
+    expect(access.functions === null || access.functions === undefined).toBe(true);
 
-    // Update grant to remove admin
+    // Update grant to restrict to specific functions
+    const allowedFunctions = ['0xa9059cbb', '0x095ea7b3']; // transfer, approve
     await ctx.rbac.updateContractGrant(org.id, contract.address, group.id, {
-      claims: ['read', 'write'], // No admin
+      functions: allowedFunctions,
     });
 
-    // Admin should now be denied
-    const result = await ctx.rbac.checkAccess({
-      user_external_id: did,
-      org_slug: org.slug,
-      method: 'eth_call',
-      target_address: contract.address,
-      required_claims: ['admin'],
-    });
-    expect(result.allowed).toBe(false);
+    // Verify functions are now restricted
+    perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
+    access = perms.contract_access[contract.address.toLowerCase()];
+    expect(access.functions).toEqual(allowedFunctions);
   });
 
   test('RPC: removing grant immediately blocks RPC access to contract', async ({ request }) => {
@@ -315,12 +321,12 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [], // No default claims
+      claims: ['read'],
     });
 
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read'],
+
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -364,7 +370,7 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -382,7 +388,7 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
     // Update group access to remove eth_getBalance
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_blockNumber'], // Removed eth_getBalance
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     // eth_getBalance should now be blocked
@@ -395,21 +401,22 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
     expect(result.reason).toContain('method');
   });
 
-  test('removing default_claims blocks access to unregistered contracts', async ({ request }) => {
+  test('removing claims blocks access to unregistered contracts', async ({ request }) => {
     const org = await ctx.fixture.createOrg('defaultclaimrevokeorg');
     const group = await ctx.fixture.createGroup(org.id, 'defaultclaimrevokegroup');
     const unknownContract = ctx.contractAddress();
 
+    // Deploy claim allows unregistered contract access (expands to deploy+read+write)
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      allowed_methods: ['eth_call', 'eth_sendTransaction'],
+      claims: ['deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Access to unknown contract should work via default_claims
+    // Access to unknown contract should work via deploy claim
     let result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -419,10 +426,10 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
     });
     expect(result.allowed).toBe(true);
 
-    // Remove default_claims
+    // Remove claims (also remove allowed_methods to pass validation)
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_call'],
-      default_claims: [], // No default claims
+      allowed_methods: [],
+      claims: [],
     });
 
     // Access should now be blocked
@@ -442,7 +449,7 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
@@ -463,7 +470,7 @@ test.describe('RBAC Permission Revocation - Group Access Changes', () => {
     // Reduce rate limits
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 10,
       rate_limit_daily: 100,
     });
@@ -496,7 +503,7 @@ test.describe('RBAC Permission Revocation - User Status Changes', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write', 'admin'],
+      claims: ['read', 'write', 'admin'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -531,7 +538,7 @@ test.describe('RBAC Permission Revocation - User Status Changes', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -564,7 +571,7 @@ test.describe('RBAC Permission Revocation - User Status Changes', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber', 'eth_chainId'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -607,7 +614,7 @@ test.describe('RBAC Permission Revocation - Cascading Effects', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -639,34 +646,35 @@ test.describe('RBAC Permission Revocation - Cascading Effects', () => {
     const group = await ctx.fixture.createGroup(org.id, 'deletecontractgroup');
     const contract = await ctx.fixture.createContract(org.id);
 
+    // Claims come from GroupAccess - use 'read' claim which matches eth_call
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Verify access
+    // Verify access with 'read' claim (which is what the group has)
     let result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
       target_address: contract.address,
-      required_claims: ['admin'],
+      required_claims: ['read'],
     });
     expect(result.allowed).toBe(true);
 
     // Delete the contract
     await ctx.rbac.deleteContract(org.id, contract.address);
 
-    // Access should be revoked
+    // After deletion, the contract is no longer registered to the org.
+    // It becomes unregistered, and read-only users can't access unregistered contracts.
     result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
@@ -674,6 +682,7 @@ test.describe('RBAC Permission Revocation - Cascading Effects', () => {
       target_address: contract.address,
       required_claims: ['read'],
     });
+    // Read-only users are denied access to unregistered contracts
     expect(result.allowed).toBe(false);
   });
 });

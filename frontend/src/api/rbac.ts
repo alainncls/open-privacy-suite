@@ -109,6 +109,9 @@ export const rbacApi = {
       api.put<ContractGrant>(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`, input),
     deleteGrant: (orgId: string, address: string, groupId: string) =>
       api.delete(`/orgs/${orgId}/contracts/${address}/grants/${groupId}`),
+    // ABI management
+    updateABI: (orgId: string, address: string, abi: string) =>
+      api.put<Contract>(`/orgs/${orgId}/contracts/${address}/abi`, { abi }),
     // Sync with chain
     syncCheck: (orgId: string) =>
       api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),

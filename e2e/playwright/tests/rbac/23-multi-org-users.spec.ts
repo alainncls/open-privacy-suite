@@ -119,13 +119,13 @@ test.describe('Multi-Organization Users', () => {
       // Set different permissions for each group
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call', 'eth_sendTransaction'],
-        default_claims: ['admin', 'write', 'read'],
+        claims: ['admin', 'write', 'read'],
         rate_limit_rps: 100,
       });
 
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
         rate_limit_rps: 10,
       });
 
@@ -137,16 +137,16 @@ test.describe('Multi-Organization Users', () => {
       // Get effective permissions for org1
       const perms1 = await ctx.rbac.getEffectivePermissions(user.id, org1.slug);
       expect(perms1.org_id).toBe(org1.id);
-      expect(perms1.default_claims).toContain('admin');
-      expect(perms1.default_claims).toContain('write');
+      expect(perms1.claims).toContain('admin');
+      expect(perms1.claims).toContain('write');
       expect(perms1.allowed_methods).toContain('eth_sendTransaction');
       expect(perms1.rate_limit_rps).toBe(100);
 
       // Get effective permissions for org2
       const perms2 = await ctx.rbac.getEffectivePermissions(user.id, org2.slug);
       expect(perms2.org_id).toBe(org2.id);
-      expect(perms2.default_claims).toContain('read');
-      expect(perms2.default_claims).not.toContain('admin');
+      expect(perms2.claims).toContain('read');
+      expect(perms2.claims).not.toContain('admin');
       expect(perms2.allowed_methods).not.toContain('eth_sendTransaction');
       expect(perms2.rate_limit_rps).toBe(10);
     });
@@ -160,7 +160,7 @@ test.describe('Multi-Organization Users', () => {
       const group1 = await ctx.fixture.createGroup(org1.id, 'privileged');
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_sendRawTransaction'],
-        default_claims: ['admin', 'write', 'read'],
+        claims: ['admin', 'write', 'read'],
       });
 
       // Create user with membership only in org1
@@ -169,12 +169,12 @@ test.describe('Multi-Organization Users', () => {
 
       // Verify permissions in org1
       const perms1 = await ctx.rbac.getEffectivePermissions(user.id, org1.slug);
-      expect(perms1.default_claims).toContain('admin');
+      expect(perms1.claims).toContain('admin');
 
       // Verify no permissions in org2 (user is not a member)
       // The endpoint should still return a result but with no/empty permissions
       const perms2 = await ctx.rbac.getEffectivePermissions(user.id, org2.slug);
-      expect(perms2.default_claims?.length ?? 0).toBe(0);
+      expect(perms2.claims?.length ?? 0).toBe(0);
       expect(perms2.allowed_methods?.length ?? 0).toBe(0);
     });
 
@@ -188,12 +188,13 @@ test.describe('Multi-Organization Users', () => {
 
       await ctx.rbac.setGroupAccess(org.id, readers.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
+      // eth_sendTransaction requires 'write' claim per backend validation
       await ctx.rbac.setGroupAccess(org.id, deployers.id, {
         allowed_methods: ['eth_sendTransaction'],
-        default_claims: ['deploy'],
+        claims: ['write', 'deploy'],
       });
 
       // Create user with memberships in both groups
@@ -205,8 +206,9 @@ test.describe('Multi-Organization Users', () => {
       const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
 
       // Should have claims from both groups
-      expect(perms.default_claims).toContain('read');
-      expect(perms.default_claims).toContain('deploy');
+      expect(perms.claims).toContain('read');
+      expect(perms.claims).toContain('deploy');
+      expect(perms.claims).toContain('write');
 
       // Should have methods from both groups
       expect(perms.allowed_methods).toContain('eth_call');
@@ -226,12 +228,12 @@ test.describe('Multi-Organization Users', () => {
 
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_sendTransaction'],
-        default_claims: ['write'],
+        claims: ['write'],
       });
 
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
       // Create user with KYC and membership in group1
@@ -285,14 +287,14 @@ test.describe('Multi-Organization Users', () => {
 
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
         rate_limit_rps: 1000,
         rate_limit_daily: 100000,
       });
 
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
         rate_limit_rps: 10,
         rate_limit_daily: 1000,
       });
@@ -349,25 +351,27 @@ test.describe('Multi-Organization Users', () => {
       const group1 = await ctx.fixture.createGroup(org1.id, 'contractadmins');
       const group2 = await ctx.fixture.createGroup(org2.id, 'contractreaders');
 
+      // Claims come from GroupAccess, not from ContractGrant
+      // Org1 group has admin claim (for contract admins)
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read', 'admin'],
       });
 
+      // Org2 group only has read claim
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
-      // Grant different claims on the contracts
+      // Contract grants just allow access to the contract for the group
+      // (no claims field - claims come from GroupAccess)
       await ctx.rbac.createContractGrant(org1.id, contractAddress1, {
         group_id: group1.id,
-        claims: ['admin', 'write', 'read'],
       });
 
       await ctx.rbac.createContractGrant(org2.id, contractAddress2, {
         group_id: group2.id,
-        claims: ['read'],
       });
 
       // Create user with KYC and membership in group1
@@ -377,7 +381,7 @@ test.describe('Multi-Organization Users', () => {
       // Also add to group2
       await ctx.rbac.createMembership(user.id, { group_id: group2.id });
 
-      // Check access with admin claim in org1 - should be allowed
+      // Check access with admin claim in org1 - should be allowed (group1 has admin claim)
       const check1 = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org1.slug,
@@ -388,7 +392,7 @@ test.describe('Multi-Organization Users', () => {
       expect(check1.allowed).toBe(true);
       expect(check1.claims).toContain('admin');
 
-      // Check access with admin claim in org2 - should be denied (only has read)
+      // Check access with admin claim in org2 - should be denied (group2 only has read)
       const check2 = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org2.slug,
@@ -422,12 +426,12 @@ test.describe('Multi-Organization Users', () => {
 
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
       // Create user with KYC and membership in group1
@@ -485,12 +489,12 @@ test.describe('Multi-Organization Users', () => {
 
       await ctx.rbac.setGroupAccess(org1.id, group1.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
       await ctx.rbac.setGroupAccess(org2.id, group2.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
       });
 
       // Create user with KYC and membership in group1

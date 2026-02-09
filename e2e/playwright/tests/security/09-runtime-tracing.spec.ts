@@ -140,7 +140,7 @@ test.describe('Runtime Transaction Tracing', () => {
     // Set group access permissions
     await apiCall(request, 'PUT', `/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas', 'eth_getBalance'],
-      default_claims: ['read', 'write']
+      claims: ['deploy'] // deploy needed for unregistered contract access
     });
 
     // Create contracts - unique addresses per test run
@@ -164,6 +164,16 @@ test.describe('Runtime Transaction Tracing', () => {
     });
     if (!contractBResp.ok) {
       throw new Error(`Failed to create contract B: ${JSON.stringify(contractBResp.body)}`);
+    }
+
+    // Create contract grant linking group A to contract A
+    // This is required for group members to access the contract
+    const grantAResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgAId}/contracts/${contractA}/grants`, {
+      group_id: groupAId,
+      functions: null  // null = all functions allowed
+    });
+    if (!grantAResp.ok) {
+      throw new Error(`Failed to create contract grant for A: ${JSON.stringify(grantAResp.body)}`);
     }
 
     // Create and setup user A
@@ -326,7 +336,7 @@ test.describe('Runtime Transaction Tracing', () => {
         'latest'
       ]);
 
-      // Unregistered addresses should be accessible via default_claims
+      // Unregistered addresses should be accessible via claims
       // unless explicitly blocked
       expect(result.status).not.toBe(403);
     });

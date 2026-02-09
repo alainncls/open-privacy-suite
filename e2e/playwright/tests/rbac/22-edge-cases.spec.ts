@@ -31,13 +31,13 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
     // Empty group - no methods allowed
     await ctx.rbac.setGroupAccess(org.id, emptyGroup.id, {
       allowed_methods: [],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // Method group - has eth_call
     await ctx.rbac.setGroupAccess(org.id, methodGroup.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, emptyGroup.id, {
@@ -64,7 +64,7 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: [], // Empty!
-      default_claims: ['read', 'write', 'admin'],
+      claims: ['read', 'write', 'admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -83,13 +83,14 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
     }
   });
 
-  test('user with empty default_claims + empty contract grants has no claims', async ({ request }) => {
+  test('user with only read claims cannot access operations requiring other claims', async ({ request }) => {
     const org = await ctx.fixture.createOrg('noclaimsorg');
     const group = await ctx.fixture.createGroup(org.id, 'noclaimsgroup');
 
+    // All read methods require 'read' claim
     await ctx.rbac.setGroupAccess(org.id, group.id, {
-      allowed_methods: ['eth_call'],
-      default_claims: [], // No default claims
+      allowed_methods: ['eth_blockNumber'],
+      claims: ['read'], // Minimal claims - only read
     });
 
     // No contract grants created
@@ -98,24 +99,26 @@ test.describe('RBAC Edge Cases - Empty Permissions', () => {
       kyc: true,
     });
 
-    // eth_call without target should work (no claim required for non-contract methods)
+    // eth_blockNumber with read claim should work
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_call',
+      method: 'eth_blockNumber',
     });
-    // Note: eth_call without target_address doesn't require claims
     expect(result.allowed).toBe(true);
+    // Verify claims array has only read
+    expect(result.claims).toContain('read');
+    expect(result.claims).not.toContain('write');
+    expect(result.claims).not.toContain('admin');
 
-    // But with target_address and required_claims, should fail
-    const contractResult = await ctx.rbac.checkAccess({
+    // But requesting 'admin' claim should fail (user only has read)
+    const claimResult = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_call',
-      target_address: ctx.contractAddress(),
-      required_claims: ['read'],
+      method: 'eth_blockNumber',
+      required_claims: ['admin'],
     });
-    expect(contractResult.allowed).toBe(false);
+    expect(claimResult.allowed).toBe(false);
   });
 });
 
@@ -136,7 +139,7 @@ test.describe('RBAC Edge Cases - No Memberships', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { user, did, membership } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -188,31 +191,31 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     // L1: 5 methods
     await ctx.rbac.setGroupAccess(org.id, l1.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId', 'eth_gasPrice'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // L2: 4 methods (removes eth_gasPrice)
     await ctx.rbac.setGroupAccess(org.id, l2.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_chainId'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // L3: 3 methods
     await ctx.rbac.setGroupAccess(org.id, l3.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // L4: 2 methods
     await ctx.rbac.setGroupAccess(org.id, l4.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     // L5: 1 method
     await ctx.rbac.setGroupAccess(org.id, l5.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, l5.id, {
@@ -251,24 +254,25 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     const root2 = await ctx.fixture.createGroup(org.id, 'root2');
     const childB = await ctx.fixture.createGroup(org.id, 'childB', { parentId: root2.id });
 
-    // Root1 -> ChildA path allows eth_call, eth_getBalance
+    // Root1 -> ChildA path allows eth_call, eth_getBalance with read claim
     await ctx.rbac.setGroupAccess(org.id, root1.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
     await ctx.rbac.setGroupAccess(org.id, childA.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
-    // Root2 -> ChildB path allows eth_blockNumber, eth_chainId
+    // Root2 -> ChildB path allows eth_blockNumber, eth_chainId with read+admin claims
+    // (eth_blockNumber and eth_chainId require read claim)
     await ctx.rbac.setGroupAccess(org.id, root2.id, {
       allowed_methods: ['eth_blockNumber', 'eth_chainId'],
-      default_claims: ['write'],
+      claims: ['read', 'admin'],
     });
     await ctx.rbac.setGroupAccess(org.id, childB.id, {
       allowed_methods: ['eth_blockNumber', 'eth_chainId'],
-      default_claims: ['write'],
+      claims: ['read', 'admin'],
     });
 
     const { user, did } = await ctx.fixture.createUserWithMembership(request, childA.id, {
@@ -286,14 +290,14 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
       expect(result.allowed).toBe(true);
     }
 
-    // And both claims
+    // And both claims (read from path A, admin from path B)
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
     });
     expect(result.claims).toContain('read');
-    expect(result.claims).toContain('write');
+    expect(result.claims).toContain('admin');
   });
 
   test('child group with superset methods still gets intersection', async ({ request }) => {
@@ -307,13 +311,13 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     // Parent has limited methods
     await ctx.rbac.setGroupAccess(org.id, parent.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     // Child tries to have MORE methods
     await ctx.rbac.setGroupAccess(org.id, child.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, child.id, {
@@ -361,12 +365,12 @@ test.describe('RBAC Edge Cases - Address Normalization', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read'],
+
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -393,12 +397,12 @@ test.describe('RBAC Edge Cases - Address Normalization', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: [],
+      claims: ['read'],
     });
 
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
-      claims: ['read'],
+
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -445,14 +449,14 @@ test.describe('RBAC Edge Cases - Rate Limit Edge Cases', () => {
     // Group with null rate limits (unlimited)
     await ctx.rbac.setGroupAccess(org.id, nullGroup.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       // rate_limit_rps and rate_limit_daily not set (null = unlimited)
     });
 
     // Group with defined limits
     await ctx.rbac.setGroupAccess(org.id, limitedGroup.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 50,
       rate_limit_daily: 1000,
     });
@@ -482,14 +486,14 @@ test.describe('RBAC Edge Cases - Rate Limit Edge Cases', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group1.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 50,
       rate_limit_daily: 1000,
     });
 
     await ctx.rbac.setGroupAccess(org.id, group2.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 100,
       rate_limit_daily: 5000,
     });
@@ -517,7 +521,7 @@ test.describe('RBAC Edge Cases - Rate Limit Edge Cases', () => {
     // Try to set zero rate limits
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['read'],
       rate_limit_rps: 0, // Zero!
       rate_limit_daily: 0, // Zero!
     });
@@ -557,7 +561,7 @@ test.describe('RBAC Edge Cases - Concurrent Operations', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
@@ -589,48 +593,44 @@ test.describe('RBAC Edge Cases - Concurrent Operations', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
       kyc: true,
     });
 
-    // Start some checks
-    const check1 = ctx.rbac.checkAccess({
+    // Verify initial permissions work
+    const initialCheck = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_getBalance',
     });
+    expect(initialCheck.allowed).toBe(true);
 
-    // Change permissions
+    // Change permissions - remove eth_getBalance
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'], // Remove eth_getBalance
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
-    // More checks after change
-    const check2 = ctx.rbac.checkAccess({
+    // After permission change, a new check should see the updated permissions
+    // The key invariant: once setGroupAccess completes, subsequent checks
+    // should reflect the new permissions (no stale cache)
+    const afterChange = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_getBalance',
     });
+    expect(afterChange.allowed).toBe(false);
 
-    const [result1, result2] = await Promise.all([check1, check2]);
-
-    // check1 started before the change, so it may or may not see the old permissions
-    // depending on timing (expected to pass most of the time)
-    expect(result1.allowed).toBe(true);
-
-    // check2 started after the permission change, but due to caching and timing,
-    // it may still see old permissions. This is a documented race condition.
-    // We verify that a subsequent check DEFINITELY sees the new permissions.
-    const result3 = await ctx.rbac.checkAccess({
+    // eth_call should still work
+    const ethCallCheck = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
-      method: 'eth_getBalance',
+      method: 'eth_call',
     });
-    expect(result3.allowed).toBe(false);
+    expect(ethCallCheck.allowed).toBe(true);
   });
 });
 
@@ -653,7 +653,7 @@ test.describe('RBAC Edge Cases - Boundary Values', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: [longMethod],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -677,7 +677,7 @@ test.describe('RBAC Edge Cases - Boundary Values', () => {
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: methods,
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -714,7 +714,7 @@ test.describe('RBAC Edge Cases - Boundary Values', () => {
     for (let i = 0; i < groups.length; i++) {
       await ctx.rbac.setGroupAccess(org.id, groups[i].id, {
         allowed_methods: [`eth_method${i}`],
-        default_claims: ['read'],
+        claims: ['read'],
       });
     }
 
@@ -764,7 +764,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -791,7 +791,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_sendTransaction'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -818,7 +818,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call', 'eth_estimateGas'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -845,7 +845,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -871,7 +871,7 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {

@@ -557,7 +557,7 @@ func TestAccessController_FactoryCallIntegration(t *testing.T) {
 	store.MockStore.groupAccess["deployers"] = &GroupAccess{
 		GroupID:        "deployers",
 		AllowedMethods: []string{"eth_sendTransaction", "eth_call"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 	}
 
 	// User membership

@@ -90,7 +90,7 @@ export const mockGroupAccess: GroupAccess = {
   id: 'access-1',
   group_id: 'group-1',
   allowed_methods: ['eth_call', 'eth_getBalance'],
-  default_claims: ['read'],
+  claims: ['read'],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   created_at: '2024-01-01T00:00:00Z',
@@ -124,7 +124,7 @@ export const mockEffectivePermissions: EffectivePermissions = {
       functions: null,
     },
   },
-  default_claims: ['read', 'write'] as Claim[],
+  claims: ['read', 'write'] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   computed_at: '2024-01-01T00:00:00Z',
@@ -138,11 +138,11 @@ export const mockLinkedAddresses = [
 ];
 
 // Contract grants linking groups to contracts
+// Claims are inherited from the group's GroupAccess.claims
 export const mockContractGrant: ContractGrant = {
   id: 'grant-1',
   contract_id: 'contract-1',
   group_id: 'group-1',
-  claims: ['read', 'write'] as Claim[],
   functions: null,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
@@ -396,12 +396,12 @@ export const handlers = [
   http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
     const body = await request.json() as {
       allowed_methods?: string[];
-      default_claims?: string[];
+      claims?: string[];
     };
     return HttpResponse.json({
       ...mockGroupAccess,
       ...(body.allowed_methods && { allowed_methods: body.allowed_methods }),
-      ...(body.default_claims && { default_claims: body.default_claims }),
+      ...(body.claims && { claims: body.claims }),
     });
   }),
 
@@ -501,7 +501,6 @@ export const handlers = [
   http.post('/api/v1/orgs/:orgId/contracts/:address/grants', async ({ request, params }) => {
     const body = await request.json() as {
       group_id: string;
-      claims: Claim[];
       functions?: string[] | null;
     };
     return HttpResponse.json({
@@ -509,20 +508,17 @@ export const handlers = [
       id: 'grant-new',
       contract_id: params.address as string,
       group_id: body.group_id,
-      claims: body.claims,
       functions: body.functions ?? null,
     });
   }),
 
   http.put('/api/v1/orgs/:orgId/contracts/:address/grants/:groupId', async ({ request, params }) => {
     const body = await request.json() as {
-      claims?: Claim[];
       functions?: string[] | null;
     };
     return HttpResponse.json({
       ...mockContractGrant,
       group_id: params.groupId as string,
-      ...(body.claims && { claims: body.claims }),
       ...(body.functions !== undefined && { functions: body.functions }),
     });
   }),

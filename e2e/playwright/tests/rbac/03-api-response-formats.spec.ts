@@ -81,7 +81,7 @@ test.describe('RBAC API Response Formats', () => {
       // Set up group access
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_getBalance'],
-        default_claims: ['read', 'write'],
+        claims: ['read', 'write'],
         rate_limit_rps: 100,
         rate_limit_daily: 10000,
       });
@@ -98,7 +98,7 @@ test.describe('RBAC API Response Formats', () => {
       expect(perms).toHaveProperty('org_id');
       expect(perms).toHaveProperty('allowed_methods');
       expect(perms).toHaveProperty('contract_access');
-      expect(perms).toHaveProperty('default_claims');
+      expect(perms).toHaveProperty('claims');
       expect(perms).toHaveProperty('rate_limit_rps');
       expect(perms).toHaveProperty('rate_limit_daily');
       expect(perms).toHaveProperty('computed_at');
@@ -106,7 +106,7 @@ test.describe('RBAC API Response Formats', () => {
 
       // Verify types
       expect(Array.isArray(perms.allowed_methods)).toBe(true);
-      expect(Array.isArray(perms.default_claims)).toBe(true);
+      expect(Array.isArray(perms.claims)).toBe(true);
       expect(typeof perms.contract_access).toBe('object');
     });
 
@@ -117,7 +117,7 @@ test.describe('RBAC API Response Formats', () => {
 
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call', 'eth_sendTransaction'],
-        default_claims: ['read'],
+        claims: ['read', 'write'], // eth_sendTransaction requires write claim
       });
 
       await ctx.rbac.createMembership(user.id, { group_id: group.id });
@@ -128,23 +128,23 @@ test.describe('RBAC API Response Formats', () => {
       expect(perms.allowed_methods).toContain('eth_sendTransaction');
     });
 
-    test('default_claims contains expected values', async ({ request }) => {
+    test('claims contains expected values', async ({ request }) => {
       const org = await ctx.fixture.createOrg('claimsorg');
       const group = await ctx.fixture.createGroup(org.id, 'claimsgroup');
       const { user } = await ctx.fixture.createUser(request);
 
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read', 'write', 'admin'],
+        claims: ['read', 'write', 'admin'],
       });
 
       await ctx.rbac.createMembership(user.id, { group_id: group.id });
 
       const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
 
-      expect(perms.default_claims).toContain('read');
-      expect(perms.default_claims).toContain('write');
-      expect(perms.default_claims).toContain('admin');
+      expect(perms.claims).toContain('read');
+      expect(perms.claims).toContain('write');
+      expect(perms.claims).toContain('admin');
     });
 
     test('rate limits are returned correctly', async ({ request }) => {
@@ -154,7 +154,7 @@ test.describe('RBAC API Response Formats', () => {
 
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
         rate_limit_rps: 50,
         rate_limit_daily: 5000,
       });
@@ -281,7 +281,7 @@ test.describe('RBAC API Response Formats', () => {
 
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call'],
-        default_claims: ['read'],
+        claims: ['read'],
         rate_limit_rps: 10,
         rate_limit_daily: 1000,
       });
@@ -292,7 +292,7 @@ test.describe('RBAC API Response Formats', () => {
       expect(access).toHaveProperty('id');
       expect(access).toHaveProperty('group_id');
       expect(access).toHaveProperty('allowed_methods');
-      expect(access).toHaveProperty('default_claims');
+      expect(access).toHaveProperty('claims');
       expect(access).toHaveProperty('rate_limit_rps');
       // rate_limit_daily may be omitted when null/zero
       // Verify it's a number if present
@@ -301,7 +301,7 @@ test.describe('RBAC API Response Formats', () => {
       }
 
       expect(Array.isArray(access!.allowed_methods)).toBe(true);
-      expect(Array.isArray(access!.default_claims)).toBe(true);
+      expect(Array.isArray(access!.claims)).toBe(true);
     });
   });
 

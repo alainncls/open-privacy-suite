@@ -262,7 +262,7 @@ func createRBACUser(t *testing.T, database *db.DB, externalID string, kyc, banne
 		ID:             uuid.New().String(),
 		GroupID:        rbac.DefaultGroupID,
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_estimateGas", "eth_gasPrice", "eth_getCode", "eth_getLogs", "eth_getStorageAt", "eth_getTransactionByHash", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_sendRawTransaction", "net_version"},
-		DefaultClaims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
 	}
 	_ = database.CreateGroupAccess(ctx, groupAccess) // Ignore error if already exists
 

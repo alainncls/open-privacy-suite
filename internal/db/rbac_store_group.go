@@ -212,12 +212,12 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 // Group Access operations
 
 func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily)
 	          VALUES ($1, $2, $3, $4, $5, $6)
 	          RETURNING created_at, updated_at`
 
-	claims := make([]string, len(access.DefaultClaims))
-	for i, c := range access.DefaultClaims {
+	claims := make([]string, len(access.Claims))
+	for i, c := range access.Claims {
 		claims[i] = string(c)
 	}
 
@@ -229,7 +229,7 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 }
 
 func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
-	query := `SELECT id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily, created_at, updated_at
+	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, created_at, updated_at
 	          FROM group_access WHERE group_id = $1`
 
 	access := &rbac.GroupAccess{}
@@ -250,9 +250,9 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	}
 
 	access.AllowedMethods = allowedMethods
-	access.DefaultClaims = make([]rbac.Claim, len(defaultClaims))
+	access.Claims = make([]rbac.Claim, len(defaultClaims))
 	for i, c := range defaultClaims {
-		access.DefaultClaims[i] = rbac.Claim(c)
+		access.Claims[i] = rbac.Claim(c)
 	}
 
 	if rateLimitRPS.Valid {
@@ -268,18 +268,18 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 }
 
 func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, default_claims, rate_limit_rps, rate_limit_daily)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily)
 	          VALUES ($1, $2, $3, $4, $5, $6)
 	          ON CONFLICT (group_id) DO UPDATE SET
 	          allowed_methods = EXCLUDED.allowed_methods,
-	          default_claims = EXCLUDED.default_claims,
+	          claims = EXCLUDED.claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
-	claims := make([]string, len(access.DefaultClaims))
-	for i, c := range access.DefaultClaims {
+	claims := make([]string, len(access.Claims))
+	for i, c := range access.Claims {
 		claims[i] = string(c)
 	}
 

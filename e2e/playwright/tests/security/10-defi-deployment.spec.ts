@@ -131,13 +131,14 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
   let routerAddress: string;
 
   test.beforeAll(async ({ request }) => {
+    // Generate unique test run ID (must be before early return so nested beforeAll can use it)
+    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     // Skip entire suite if runtime tracing is enabled (preregistration is disabled)
     if (await isRuntimeTracingEnabled(request)) {
       skipAllTests = true;
       return;
     }
-    // Generate unique test run ID
-    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     orgSlug = `defi-test-${testRunId}`;
 
     // Create Organization for DeFi deployment
@@ -170,7 +171,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
         'eth_getCode',
         'eth_getTransactionReceipt'
       ],
-      default_claims: ['read', 'write', 'deploy']
+      claims: ['read', 'write', 'deploy']
     });
 
     // Create and setup user
@@ -363,7 +364,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const hexTs = Date.now().toString(16).slice(-8);
       const randomAddress = '0xcc' + hexTs + 'c'.repeat(30);
 
-      // This should be allowed for general reads via default_claims
+      // This should be allowed for general reads via claims
       // but deployment would be denied
       const result = await rpcCall(request, userToken, 'eth_sendTransaction', [
         {
@@ -514,7 +515,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       // Set group access
       await apiCall(request, 'PUT', `/api/v1/orgs/${otherOrgId}/groups/${otherGroupId}/access`, {
         allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
-        default_claims: ['read', 'write']
+        claims: ['read', 'write']
       });
 
       // Create user in other org

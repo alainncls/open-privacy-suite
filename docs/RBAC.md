@@ -12,6 +12,31 @@ The Privacy Proxy implements a multi-tenant, hierarchical Role-Based Access Cont
 - **Contract Ownership**: Track deployed contracts and define owner abilities
 - **Caching**: In-memory and database-level caching for high-performance access checks
 
+### Simplified Permission Model (TL;DR)
+
+The RBAC system uses a **group-centric claim model**:
+
+1. **Groups have claims** - Each group defines capabilities (`read`, `write`, `deploy`, `admin`, `upgrade`) via `GroupAccess.claims`. This is the single source of truth.
+
+2. **ContractGrants link groups to contracts** - For registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
+
+3. **Unregistered contracts require deploy/admin** - If a contract isn't registered to any organization, only users with `deploy` or `admin` claims can access it. Regular `read`/`write` users must use registered contracts with explicit grants.
+
+4. **Deploy/admin users have broad access in their org** - Users with `deploy` or `admin` claims can access any registered contract in their own org via default claims, without needing explicit `ContractGrant` entries. This means deployers can interact with contracts immediately after deployment and registration.
+
+5. **Read/write users need explicit grants** - Users with only `read` or `write` claims must have a `ContractGrant` linking their group to each contract they need to access.
+
+6. **Org admins bypass everything** - Groups with `is_org_admin: true` give members all claims on all contracts in the organization.
+
+**Quick Reference:**
+| Contract Type | Deploy/Admin Users | Read/Write Users |
+|--------------|-------------------|-----------------|
+| Unregistered | Allowed (default claims) | Denied |
+| Registered (own org) | Allowed (default claims) | ContractGrant required |
+| Registered (other org) | Denied (cross-org) | Denied (cross-org) |
+| Self-deployed | Automatic read+write | Automatic read+write |
+| Org admin member | All claims on all contracts | N/A |
+
 ## Architecture
 
 ```
@@ -20,28 +45,67 @@ The Privacy Proxy implements a multi-tenant, hierarchical Role-Based Access Cont
 │  (e.g., "gateway", "acme_corp")                                 │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │    Group     │    │    Group     │    │    Role      │       │
-│  │   (root)     │───▶│  (child)     │    │  (deployer)  │       │
-│  │              │    │              │    │              │       │
-│  │ permissions: │    │ permissions: │    │ claims:      │       │
-│  │ - methods    │    │ - methods    │    │ - deployer   │       │
-│  │ - contracts  │    │ - contracts  │    │ - writer     │       │
-│  │ - rate_limit │    │ - rate_limit │    │ - reader     │       │
-│  └──────────────┘    └──────────────┘    └──────────────┘       │
-│         │                   │                    │               │
-│         └───────────────────┼────────────────────┘               │
-│                             │                                    │
-│                     ┌───────▼───────┐                           │
-│                     │  Membership   │                           │
-│                     │ user + group  │                           │
-│                     │ + role        │                           │
-│                     └───────────────┘                           │
-│                             │                                    │
-│                     ┌───────▼───────┐                           │
-│                     │     User      │                           │
-│                     │ (external_id) │                           │
-│                     └───────────────┘                           │
+│  ┌───────────────────┐        ┌───────────────────┐             │
+│  │      Group        │        │     Contract      │             │
+│  │    (root)         │        │   (0x1234...)     │             │
+│  │                   │        └───────────────────┘             │
+│  │  ┌─────────────┐  │                  ▲                       │
+│  │  │ GroupAccess │  │                  │                       │
+│  │  │ - methods   │  │     ┌────────────┴────────────┐          │
+│  │  │ - claims    │──┼────▶│    ContractGrant       │          │
+│  │  │ - rate_limit│  │     │ (links group→contract) │          │
+│  │  └─────────────┘  │     │ - functions (optional) │          │
+│  └─────────┬─────────┘     └────────────────────────┘          │
+│            │                                                     │
+│            ▼                                                     │
+│  ┌───────────────────┐                                          │
+│  │    Group (child)  │   Child groups INHERIT parent claims     │
+│  │   (engineering)   │   with INTERSECTION (can only narrow)    │
+│  └─────────┬─────────┘                                          │
+│            │                                                     │
+│            ▼                                                     │
+│  ┌───────────────────┐                                          │
+│  │   UserMembership  │   User can be in multiple groups         │
+│  │   user + group    │   (claims are UNION'd across memberships)│
+│  └─────────┬─────────┘                                          │
+│            │                                                     │
+│            ▼                                                     │
+│  ┌───────────────────┐                                          │
+│  │       User        │                                          │
+│  │   (external_id)   │                                          │
+│  └───────────────────┘                                          │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Simplified Permission Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    HOW PERMISSIONS ARE COMPUTED                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Group has claims via GroupAccess                             │
+│     GroupAccess { claims: [read, write], methods: [...] }        │
+│                                                                  │
+│  2. For UNREGISTERED contracts:                                  │
+│     → Only deploy/admin users can access                         │
+│     → Read/write-only users must use registered contracts        │
+│                                                                  │
+│  3. For REGISTERED contracts (own org):                          │
+│     → Deploy/admin users: allowed via default claims             │
+│     → Read/write users: need ContractGrant to contract           │
+│     → Claims come from the group's GroupAccess.claims            │
+│     → ContractGrant.Functions can restrict which functions       │
+│                                                                  │
+│  4. DEPLOYER AUTO-GRANT:                                         │
+│     → User who deployed a contract gets read+write automatically │
+│     → No explicit grant needed for contracts you deployed        │
+│                                                                  │
+│  5. ORG ADMIN BYPASS:                                            │
+│     → Groups with is_org_admin=true get ALL claims on ALL        │
+│       contracts in the organization                              │
+│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,7 +127,7 @@ Hierarchical permission containers with:
 
 ### Claims
 
-Claims are capability tokens that grant specific actions. Groups define `default_claims` that apply to all contracts, and `ContractGrants` can assign additional claims for specific contracts.
+Claims are capability tokens that grant specific actions. Groups define `claims` (via GroupAccess) that determine what their members can do. This is the **single source of truth** for permission capabilities.
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
@@ -73,24 +137,55 @@ Claims are capability tokens that grant specific actions. Groups define `default
 | `admin` | Administrative actions | CREATE3 factory deployment |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on managed proxies |
 
-**Claim inheritance:**
-- `default_claims` from groups apply to all contracts not explicitly registered
-- `ContractGrant` claims apply to specific contracts and override default_claims for that contract
-- Multiple memberships combine claims via UNION
+**Simplified Claim Model:**
+- Groups have `claims` that define what capabilities members have
+- For **unregistered contracts**: Only users with `deploy` or `admin` claims can access them (prevents race conditions with freshly deployed contracts)
+- For **registered contracts in own org**:
+  - `deploy`/`admin` users: allowed via default claims (no ContractGrant needed)
+  - `read`/`write`-only users: need a `ContractGrant` linking their group to the contract, and the group must have the required claims in its `GroupAccess.claims`
+- For **registered contracts in other orgs**: always denied (cross-org isolation)
+- Multiple memberships combine claims via UNION (user gets all permissions from all groups)
 
 **Deploy claim special handling:**
 - Required for contract deployment (`to` field missing/empty/null)
 - Also required for `eth_estimateGas` when estimating deployment gas
 - Triggers bytecode validation to ensure deployed contracts don't access cross-org resources
 
-### Roles (Legacy)
+**Deployer Auto-Grant:**
+When a user deploys a contract, they automatically get `read` and `write` access to that contract, even without explicit grants. This ensures deployers can always interact with contracts they created. Note: This does NOT grant `admin` or `upgrade` claims - those must be assigned via ContractGrants.
 
-Named permission sets with claims (being migrated to direct claim assignment):
-- `reader` - Has `read` claim
-- `writer` - Has `read`, `write` claims
-- `deployer` - Has `read`, `write`, `deploy` claims
-- `admin` - Has all claims
-- `upgrade` - Has `read`, `write`, `upgrade` claims
+### Org Admin Groups
+
+Groups can be marked as "org admin" (`is_org_admin: true`). Members of org admin groups automatically get **all claims** on **all contracts** within that organization. This is useful for administrators who need unrestricted access.
+
+**How it works:**
+- When computing permissions, the resolver checks if the user is a member of any org admin group
+- If yes, they get all claims (`read`, `write`, `deploy`, `admin`, `upgrade`) on all registered contracts
+- Rate limits still apply from their group memberships
+
+### ContractGrant (Simplified)
+
+A `ContractGrant` links a group to a specific contract, enabling members of that group to access the contract with their group's claims.
+
+**Key principle:** The `ContractGrant` no longer stores claims itself. Instead, claims are inherited from the group's `GroupAccess.claims`. The grant just establishes the link and optionally restricts which functions can be called.
+
+```go
+// ContractGrant links a group to a contract
+type ContractGrant struct {
+    ID         string   // Unique identifier
+    ContractID string   // The contract being accessed
+    GroupID    string   // The group being granted access
+    // Claims field is DEPRECATED - claims come from GroupAccess.claims
+    Functions  []string // Optional: restrict to specific function selectors (nil = all)
+}
+```
+
+**Example:**
+```
+Group "traders" has claims: [read, write]
+ContractGrant links "traders" -> "TokenContract"
+Result: Members of "traders" can read and write to "TokenContract"
+```
 
 ### Permissions
 
@@ -189,7 +284,7 @@ Request: eth_sendTransaction to contract owned by Org B
 |--------|-------------|----------|
 | Contract owned by Org A | Org A | Use Org A memberships |
 | Contract owned by Org B | Org B | Use Org B memberships |
-| Public contract (no owner) | User's default org | Use default org memberships |
+| Unregistered contract (no owner) | User's default org | Deploy/admin only |
 | Contract owned by Org C (user not member) | - | Request denied |
 | No target (deployment) | User's default org | Use default org memberships |
 
@@ -295,6 +390,137 @@ curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts \
 ```
 
 Note: Permissions are determined by the user's role claims, not by contract-specific abilities.
+
+## Group-Contract Access Workflow
+
+The RBAC system uses a simple two-step workflow for managing contract access:
+
+### Step 1: Configure Groups (Groups Tab)
+
+Groups define what claims users have. Set up group access with:
+- **Allowed RPC Methods**: Which JSON-RPC methods members can call (e.g., `eth_call`, `eth_sendTransaction`)
+- **Claims**: The capabilities group members have (e.g., `read`, `write`, `admin`)
+
+**Example groups:**
+- **Audit Group**: `allowed_methods: [eth_call, eth_getLogs]`, `claims: [read]`
+- **Trader Group**: `allowed_methods: [eth_call, eth_sendTransaction]`, `claims: [read, write]`
+- **Admin Group**: `allowed_methods: [all]`, `claims: [read, write, admin, upgrade]`
+
+```bash
+# Set up an audit group with read-only access
+curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/access \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allowed_methods": ["eth_call", "eth_getBalance", "eth_getLogs"],
+    "claims": ["read"]
+  }'
+
+# Set up a trader group with read/write access
+curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/access \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allowed_methods": ["eth_call", "eth_sendTransaction"],
+    "claims": ["read", "write"]
+  }'
+```
+
+**Important**: Methods must match claims. For example, `eth_sendTransaction` requires the `write` claim. The system validates this when saving group access.
+
+### Step 2: Link Groups to Contracts (Contracts Tab)
+
+On the Contracts tab, use the **Shield icon** to manage which groups can access a contract. Simply select the group - the group's claims automatically determine what permissions they have.
+
+```bash
+# Link a group to a contract (group's claims apply automatically)
+curl -X POST http://localhost:8080/api/orgs/{org_id}/contracts/{address}/grants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "group_id": "{group_id}"
+  }'
+```
+
+**Key points:**
+- You don't specify claims when linking a group to a contract
+- The group's claims from Step 1 determine what members can do
+- Multiple groups can have access to the same contract with different permission levels
+
+### Visual Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RBAC PERMISSION FLOW                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  STEP 1: Groups Tab - Define Claims                             │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Audit Group                                                │ │
+│  │  ├─ Allowed Methods: [eth_call, eth_getLogs]               │ │
+│  │  └─ Claims: [read]   ← Source of truth for capabilities    │ │
+│  │                                                              │ │
+│  │  Trader Group                                               │ │
+│  │  ├─ Allowed Methods: [eth_call, eth_sendTransaction]       │ │
+│  │  └─ Claims: [read, write]                                   │ │
+│  │                                                              │ │
+│  │  Admin Group (is_org_admin: true)                           │ │
+│  │  └─ Gets ALL claims on ALL contracts automatically          │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                            │                                     │
+│                            ▼                                     │
+│  STEP 2: Contracts Tab - Link Groups (for registered contracts) │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Token Contract (0x1234...)                                 │ │
+│  │  └─ ContractGrants:                                         │ │
+│  │      ├─ Audit Group → read (inherited from group claims)    │ │
+│  │      └─ Trader Group → read+write (inherited from group)    │ │
+│  │                                                              │ │
+│  │  Note: Deploy/admin users can access all own-org contracts   │ │
+│  │  without grants. Read/write users need explicit grants.     │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                            │                                     │
+│                            ▼                                     │
+│  RESULT: User Access                                             │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Alice (member of Audit Group)                              │ │
+│  │  └─ Token Contract: eth_call ✓, eth_sendTransaction ✗      │ │
+│  │                                                              │ │
+│  │  Bob (member of Trader Group)                               │ │
+│  │  └─ Token Contract: eth_call ✓, eth_sendTransaction ✓      │ │
+│  │                                                              │ │
+│  │  Carol (deployed the contract herself)                      │ │
+│  │  └─ Token Contract: eth_call ✓, eth_sendTransaction ✓      │ │
+│  │     (deployer auto-grant: read+write without explicit grant)│ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Method-Claim Validation
+
+The system enforces consistency between allowed methods and claims:
+
+| RPC Method | Required Claim |
+|------------|----------------|
+| `eth_call`, `eth_getBalance`, `eth_getLogs`, etc. | `read` |
+| `eth_sendTransaction`, `eth_sendRawTransaction`, `eth_sign` | `write` |
+
+When saving group access, the backend validates that all methods have their required claims. For example, if you try to allow `eth_sendTransaction` without the `write` claim, you'll get a 400 Bad Request error.
+
+### UI Workflow
+
+**Groups Tab:**
+1. Select a group
+2. Configure "Allowed Methods" (grouped by Read Methods and Write Methods)
+3. Check the claims checkboxes (Read, Write, Admin, etc.)
+4. Methods are automatically disabled if their required claim is unchecked
+
+**Contracts Tab:**
+1. Click the Shield icon on a contract
+2. Click "Add Group"
+3. Select a group from the dropdown
+4. The group's claims are displayed for reference
+5. Click "Add Group Access"
+
+That's it - no need to re-specify claims when linking groups to contracts.
 
 ## API Reference
 
@@ -673,8 +899,8 @@ This prevents accidental or malicious use of a different factory that could brea
 │  │                    (Optional - fine-grained permissions)                 │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                  │
-│       Admin optionally assigns grants via UI or API                             │
-│       (Contracts are accessible with default claims immediately)                │
+│       Admin optionally assigns grants for read/write users                     │
+│       (Deploy/admin users already have access to own-org contracts)            │
 │                          │                                                       │
 │                          ▼                                                       │
 │       ┌─────────────────────────────────────────┐                               │
@@ -846,7 +1072,7 @@ Navigate to **Contracts** tab → Click **"Register Contract"** button
 │  ↳ Auto-filled from pre-registered address note if selected     │
 │                                                                  │
 │  💡 Tip: After registering, add grants to specify which groups  │
-│     can access it and with what claims.                         │
+│     can access it. Claims are inherited from the group.         │
 │                                                                  │
 │                                        [Cancel]  [Register Contract]│
 └─────────────────────────────────────────────────────────────────┘
@@ -854,7 +1080,7 @@ Navigate to **Contracts** tab → Click **"Register Contract"** button
 
 **Step 3: Assign Grants**
 
-After registering a contract, click on it to add grants:
+After registering a contract, click on it to add grants. Note that you only select the **group** - claims are automatically inherited from the group's `GroupAccess.claims`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -864,11 +1090,15 @@ After registering a contract, click on it to add grants:
 │                                                                  │
 │  Grants                                        [+ Add Grant]     │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │ Group          │ Claims                    │ Actions         ││
+│  │ Group          │ Group Claims (inherited)  │ Actions         ││
 │  ├─────────────────────────────────────────────────────────────┤│
 │  │ Engineering    │ read, write, upgrade      │ [Edit] [Delete] ││
 │  │ Operators      │ read                      │ [Edit] [Delete] ││
 │  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  Note: Claims shown are from each group's GroupAccess settings.  │
+│  The grant just links the group to the contract; it does NOT    │
+│  store separate claims.                                          │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1008,9 +1238,15 @@ To prevent access to historical data after permissions change:
 
 **Workaround:** Use polling with `eth_getLogs` instead of subscriptions.
 
-### Default Claims Isolation
+### Default Claims Access Model
 
-The `default_claims` feature only applies to contracts **not registered to any organization**. If a contract is registered to Org A, users in Org B cannot access it via default_claims, even if their group grants default read/write permissions.
+The system uses a tiered access model based on user claims and contract registration status:
+
+**Unregistered contracts** (not registered to any organization) are only accessible to users with `deploy` or `admin` claims. Regular `read`/`write` users cannot access unregistered contracts — they must use registered contracts with explicit grants. This prevents race conditions where freshly deployed contracts could be interacted with before registration.
+
+**Registered contracts in user's own org** are accessible to `deploy`/`admin` users via default claims without needing explicit `ContractGrant` entries. This means deployers can interact with contracts immediately after deployment and registration. Regular `read`/`write` users still need explicit grants.
+
+**Cross-org isolation** is always enforced — if a contract is registered to Org A, users in Org B cannot access it via default claims, even if their group has deploy/admin permissions.
 
 ## Known Limitations
 

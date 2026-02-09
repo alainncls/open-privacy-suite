@@ -131,7 +131,6 @@ func TestCreateContractWithGrant(t *testing.T) {
 	grant := &rbac.ContractGrant{
 		ID:      uuid.New().String(),
 		GroupID: rbac.DefaultGroupID,
-		Claims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
 	}
 
 	err := db.CreateContractWithGrant(ctx, contract, grant)
@@ -182,7 +181,6 @@ func TestDeleteContractWithGrants(t *testing.T) {
 	grant := &rbac.ContractGrant{
 		ID:      uuid.New().String(),
 		GroupID: rbac.DefaultGroupID,
-		Claims:  []rbac.Claim{rbac.ClaimRead},
 	}
 
 	err := db.CreateContractWithGrant(ctx, contract, grant)
@@ -244,7 +242,7 @@ func TestDeleteGroupWithDependencies(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        group.ID,
 		AllowedMethods: []string{"eth_call"},
-		DefaultClaims:  []rbac.Claim{rbac.ClaimRead},
+		Claims:  []rbac.Claim{rbac.ClaimRead},
 	}
 	err = db.CreateGroupAccess(ctx, access)
 	if err != nil {

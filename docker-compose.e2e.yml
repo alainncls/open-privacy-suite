@@ -33,7 +33,8 @@ services:
     # No port mapping
     networks:
       - e2e-network
-    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545"]
+    # --steps-tracing enables debug_traceCall support for runtime validation
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing"]
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
       interval: 5s

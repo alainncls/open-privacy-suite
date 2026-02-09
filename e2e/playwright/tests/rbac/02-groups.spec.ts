@@ -64,15 +64,15 @@ test.describe('RBAC Groups', () => {
 
     const access = await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
       rate_limit_daily: 10000,
     });
 
     expect(access.group_id).toBe(group.id);
     expect(access.allowed_methods).toEqual(['eth_call', 'eth_getBalance']);
-    expect(access.default_claims).toContain('read');
-    expect(access.default_claims).toContain('write');
+    expect(access.claims).toContain('read');
+    expect(access.claims).toContain('write');
     expect(access.rate_limit_rps).toBe(100);
     expect(access.rate_limit_daily).toBe(10000);
 
@@ -90,14 +90,14 @@ test.describe('RBAC Groups', () => {
     // Set initial access
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 50,
     });
 
     // Update access
     const updated = await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-      default_claims: ['read', 'write'],
+      claims: ['read', 'write'],
       rate_limit_rps: 100,
     });
 
@@ -183,7 +183,7 @@ test.describe('RBAC Groups', () => {
         name: 'Root',
         access: {
           allowed_methods: ['eth_call', 'eth_getBalance'],
-          default_claims: ['read', 'write'],
+          claims: ['read', 'write'],
           rate_limit_rps: 100,
         },
         children: [
@@ -192,7 +192,7 @@ test.describe('RBAC Groups', () => {
             name: 'Engineering',
             access: {
               allowed_methods: ['eth_call'],
-              default_claims: ['read', 'write'],
+              claims: ['read', 'write'],
               rate_limit_rps: 50,
             },
             children: [

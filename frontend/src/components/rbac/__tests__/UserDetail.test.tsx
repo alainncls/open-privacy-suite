@@ -520,7 +520,7 @@ describe('UserDetail', () => {
       });
     });
 
-    it('displays default_claims list', async () => {
+    it('displays claims list', async () => {
       server.use(
         http.get('/api/v1/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
@@ -564,7 +564,7 @@ describe('UserDetail', () => {
       renderUserDetail(mockUser, vi.fn(), { initialOrg: mockOrganization });
 
       await waitFor(() => {
-        // Should display "None" for empty default_claims
+        // Should display "None" for empty claims
         expect(screen.getByText('None')).toBeInTheDocument();
         // Should display "All methods (unrestricted)" for empty allowed_methods
         expect(screen.getByText('All methods (unrestricted)')).toBeInTheDocument();
@@ -812,7 +812,7 @@ describe('UserDetail', () => {
         ...mockEffectivePermissions,
         id: 'eff-perms-2',
         org_id: 'org-2',
-        default_claims: ['admin'] as const,
+        claims: ['admin'] as const,
       };
 
       server.use(
@@ -1006,7 +1006,7 @@ describe('UserDetail', () => {
           return HttpResponse.json({
             ...mockEffectivePermissions,
             allowed_methods: ['eth_specific_method'],
-            default_claims: ['reader'],
+            claims: ['reader'],
           });
         })
       );

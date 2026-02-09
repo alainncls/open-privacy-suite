@@ -77,7 +77,7 @@ async function setupUsers(request: any) {
       await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${deployGroupId}/access`, {
         data: {
           allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
-          default_claims: ['read', 'write', 'deploy']
+          claims: ['read', 'write', 'deploy']
         }
       });
     }
@@ -106,7 +106,7 @@ async function setupUsers(request: any) {
       await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${noDeployGroupId}/access`, {
         data: {
           allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
-          default_claims: ['read', 'write']  // No deploy!
+          claims: ['read', 'write']  // No deploy!
         }
       });
     }

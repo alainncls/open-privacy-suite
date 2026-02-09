@@ -169,7 +169,7 @@ export const mockGroupAccessFull: GroupAccess = {
     'eth_getBlockByNumber',
     'eth_getTransactionReceipt',
   ],
-  default_claims: ['read', 'write'] as Claim[],
+  claims: ['read', 'write'] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 50000,
   created_at: '2024-01-01T00:00:00Z',
@@ -183,7 +183,7 @@ export const mockGroupAccessReadOnly: GroupAccess = {
   id: 'access-readonly',
   group_id: 'group-operations',
   allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-  default_claims: ['read'] as Claim[],
+  claims: ['read'] as Claim[],
   rate_limit_rps: 10,
   rate_limit_daily: 1000,
   created_at: '2024-01-01T00:00:00Z',
@@ -197,7 +197,7 @@ export const mockGroupAccessAdmin: GroupAccess = {
   id: 'access-admin',
   group_id: 'group-root',
   allowed_methods: ['*'], // All methods
-  default_claims: ['read', 'write', 'admin', 'upgrade', 'deploy'] as Claim[],
+  claims: ['read', 'write', 'admin', 'upgrade', 'deploy'] as Claim[],
   rate_limit_rps: null, // Unlimited
   rate_limit_daily: null, // Unlimited
   created_at: '2024-01-01T00:00:00Z',
@@ -422,14 +422,14 @@ export const mockContractNoName: Contract = {
 // ============================================================================
 
 /**
- * Contract grants linking groups to contracts with specific claims.
+ * Contract grants linking groups to contracts.
+ * Claims are inherited from the group's GroupAccess.claims.
  */
 export const mockContractGrants: ContractGrant[] = [
   {
     id: 'grant-1',
     contract_id: 'contract-1',
     group_id: 'group-engineering',
-    claims: ['read', 'write'] as Claim[],
     functions: null, // All functions
     created_at: '2024-01-15T00:00:00Z',
     updated_at: '2024-01-15T00:00:00Z',
@@ -438,7 +438,6 @@ export const mockContractGrants: ContractGrant[] = [
     id: 'grant-2',
     contract_id: 'contract-1',
     group_id: 'group-operations',
-    claims: ['read'] as Claim[],
     functions: ['0x70a08231', '0x18160ddd'], // balanceOf, totalSupply
     created_at: '2024-01-16T00:00:00Z',
     updated_at: '2024-01-16T00:00:00Z',
@@ -447,7 +446,6 @@ export const mockContractGrants: ContractGrant[] = [
     id: 'grant-3',
     contract_id: 'contract-1',
     group_id: 'group-root',
-    claims: ['read', 'write', 'admin', 'upgrade'] as Claim[],
     functions: null,
     created_at: '2024-01-15T00:00:00Z',
     updated_at: '2024-01-15T00:00:00Z',
@@ -492,7 +490,7 @@ export const mockFullEffectivePermissions: EffectivePermissions = {
       functions: ['0x70a08231'], // balanceOf only
     },
   },
-  default_claims: ['read', 'write'] as Claim[],
+  claims: ['read', 'write'] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 50000,
   computed_at: '2024-02-01T12:00:00Z',
@@ -508,7 +506,7 @@ export const mockReadOnlyEffectivePermissions: EffectivePermissions = {
   org_id: 'org-1',
   allowed_methods: ['eth_call', 'eth_getBalance'],
   contract_access: {},
-  default_claims: ['read'] as Claim[],
+  claims: ['read'] as Claim[],
   rate_limit_rps: 10,
   rate_limit_daily: 1000,
   computed_at: '2024-02-01T12:00:00Z',
@@ -524,7 +522,7 @@ export const mockEmptyEffectivePermissions: EffectivePermissions = {
   org_id: 'org-1',
   allowed_methods: [],
   contract_access: {},
-  default_claims: [] as Claim[],
+  claims: [] as Claim[],
   rate_limit_rps: 0,
   rate_limit_daily: 0,
   computed_at: '2024-02-01T12:00:00Z',

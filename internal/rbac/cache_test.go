@@ -17,7 +17,7 @@ func TestCacheBasicOperations(t *testing.T) {
 		UserID:         "user1",
 		OrgID:          "org1",
 		AllowedMethods: []string{"eth_call"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 
 	// Test Set and Get
@@ -251,7 +251,7 @@ func TestCacheConcurrency(t *testing.T) {
 					UserID:         fmt.Sprintf("user%d", workerID),
 					OrgID:          fmt.Sprintf("org%d", j%10),
 					AllowedMethods: []string{"eth_call"},
-					DefaultClaims:  []Claim{ClaimRead},
+					Claims:  []Claim{ClaimRead},
 				})
 			}
 		}(i)

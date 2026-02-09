@@ -8,7 +8,7 @@ const getContractAddress = (contract: Contract): string => {
 };
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, Save, X, Loader2, ChevronDown, MapPin } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, ChevronDown, MapPin, Upload, Check, FileJson } from 'lucide-react';
 
 interface ContractFormProps {
   orgId: string;
@@ -27,6 +27,11 @@ export default function ContractForm({
   const [name, setName] = useState(contract?.name || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ABI upload state
+  const [hasAbi, setHasAbi] = useState(!!contract?.abi);
+  const [uploadingAbi, setUploadingAbi] = useState(false);
+  const [abiSuccess, setAbiSuccess] = useState<string | null>(null);
 
   // Pre-registered addresses state
   const [preregisteredAddresses, setPreregisteredAddresses] = useState<PreregisteredAddress[]>([]);
@@ -107,6 +112,46 @@ export default function ContractForm({
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAbiUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !contract) return;
+
+    setUploadingAbi(true);
+    setError(null);
+    setAbiSuccess(null);
+
+    try {
+      const text = await file.text();
+      // Validate JSON
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        throw new Error('ABI must be a JSON array');
+      }
+
+      await rbacApi.contracts.updateABI(orgId, getContractAddress(contract), text);
+      setHasAbi(true);
+      setAbiSuccess(`ABI uploaded successfully (${parsed.length} entries)`);
+    } catch (err: unknown) {
+      console.error('Failed to upload ABI:', err);
+      const axiosError = err as {
+        response?: { data?: { error?: string }; status?: number };
+      };
+      if (axiosError.response?.data?.error) {
+        setError(axiosError.response.data.error);
+      } else if (err instanceof SyntaxError) {
+        setError('Invalid JSON format in ABI file');
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Failed to upload ABI. Please try again.');
+      }
+    } finally {
+      setUploadingAbi(false);
+      // Reset the input so the same file can be selected again
+      e.target.value = '';
     }
   };
 
@@ -209,6 +254,63 @@ export default function ContractForm({
           A human-readable name for this contract
         </p>
       </div>
+
+      {/* ABI Upload - only show when editing */}
+      {isEditing && (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-[#374151]">
+            Contract ABI
+          </label>
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
+              hasAbi
+                ? 'bg-[#DCFCE7] border-[#86EFAC] text-[#166534]'
+                : 'bg-[#F1F5F9] border-[#E2E8F0] text-[#6B7280]'
+            }`}>
+              {hasAbi ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span className="text-sm font-medium">ABI Loaded</span>
+                </>
+              ) : (
+                <>
+                  <FileJson className="w-4 h-4" />
+                  <span className="text-sm">No ABI</span>
+                </>
+              )}
+            </div>
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] cursor-pointer transition-colors">
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleAbiUpload}
+                className="sr-only"
+                disabled={uploadingAbi}
+              />
+              {uploadingAbi ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-[#6B7280]" />
+                  <span className="text-sm text-[#6B7280]">Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 text-[#6B7280]" />
+                  <span className="text-sm text-[#6B7280]">{hasAbi ? 'Replace' : 'Upload'} ABI</span>
+                </>
+              )}
+            </label>
+          </div>
+          {abiSuccess && (
+            <p className="text-xs text-[#166534] flex items-center gap-1">
+              <Check className="w-3 h-3" />
+              {abiSuccess}
+            </p>
+          )}
+          <p className="text-xs text-[#94A3B8]">
+            Upload the contract ABI JSON to enable function-level access control
+          </p>
+        </div>
+      )}
 
       <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
         <p className="text-sm text-[#6B3DD4]">

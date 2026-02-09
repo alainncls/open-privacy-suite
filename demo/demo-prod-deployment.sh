@@ -12,8 +12,9 @@
 # 4. Transactions go through the proxy via eth_sendRawTransaction
 #
 # Prerequisites:
-#   - User authenticated and has JWT token
+#   - User authenticated and has JWT token (from web UI or mock auth)
 #   - User has 'deploy' permission in their organization
+#     (if not, script will attempt to set up permissions via admin API)
 #   - Private key with funded account
 #
 # Usage:
@@ -124,6 +125,9 @@ print_value "Deployer Address" "$DEPLOYER_ADDRESS"
 # Set ETH_RPC_URL for Foundry
 export ETH_RPC_URL="$PROXY_RPC_URL"
 
+# Extract JWT token from ETH_RPC_HEADERS
+AUTH_TOKEN=$(echo "$ETH_RPC_HEADERS" | sed 's/Authorization: Bearer //')
+
 # =============================================================================
 # Step 2: Verify Connection
 # =============================================================================
@@ -131,17 +135,156 @@ export ETH_RPC_URL="$PROXY_RPC_URL"
 print_step "Step 2: Verifying Connection to Privacy Proxy"
 
 print_info "Testing RPC connection..."
-CHAIN_RESULT=$(cast chain-id --rpc-url "$PROXY_RPC_URL" 2>&1) || {
-    print_error "Failed to connect to proxy"
-    echo -e "  ${RED}Response: $CHAIN_RESULT${NC}"
-    echo ""
-    echo "Common issues:"
-    echo "  - Token expired (get a fresh one from web UI)"
-    echo "  - User not in an organization with deploy permissions"
-    echo "  - Proxy not running"
-    exit 1
-}
-print_success "Connected to chain $CHAIN_RESULT"
+CHAIN_RESULT=$(cast chain-id --rpc-url "$PROXY_RPC_URL" 2>&1) && CONNECTION_OK=0 || CONNECTION_OK=1
+
+if [ $CONNECTION_OK -eq 0 ]; then
+    print_success "Connected to chain $CHAIN_RESULT"
+
+    # Auto-detect org for users when ORG_ID not set
+    if [ -z "$ORG_ID" ]; then
+        MY_ORGS=$(curl -s -H "Authorization: Bearer $AUTH_TOKEN" "${PROXY_BASE_URL}/api/v1/me/orgs" 2>/dev/null)
+        ORG_COUNT=$(echo "$MY_ORGS" | jq -r '.organizations | length' 2>/dev/null)
+        if [ -n "$ORG_COUNT" ] && [ "$ORG_COUNT" -gt 1 ] 2>/dev/null; then
+            print_error "User belongs to $ORG_COUNT organizations - ORG_ID required"
+            echo ""
+            echo "Your organizations:"
+            echo "$MY_ORGS" | jq -r '.organizations[] | "  - \(.name): export ORG_ID=\"\(.id)\""'
+            echo ""
+            echo "Set ORG_ID to the org with deploy permissions and re-run."
+            exit 1
+        elif [ -n "$ORG_COUNT" ] && [ "$ORG_COUNT" -eq 1 ] 2>/dev/null; then
+            ORG_ID=$(echo "$MY_ORGS" | jq -r '.organizations[0].id')
+            ORG_SLUG=$(echo "$MY_ORGS" | jq -r '.organizations[0].slug')
+            PROXY_RPC_URL="${PROXY_BASE_URL}/rpc/${ORG_ID}"
+            export ETH_RPC_URL="$PROXY_RPC_URL"
+            print_info "Auto-selected org: $ORG_SLUG ($ORG_ID)"
+        fi
+    fi
+
+    print_info "User has working permissions - skipping setup"
+else
+    # Connection failed - try to set up permissions via admin API (mock auth only)
+    print_info "Connection failed, attempting permissions setup via admin API..."
+
+    API_BASE_URL="${PROXY_BASE_URL}/api"
+
+    # Decode the JWT to get the external ID (JWT payload is base64url-encoded, 2nd segment)
+    JWT_B64=$(echo "$AUTH_TOKEN" | cut -d'.' -f2 | tr '_-' '/+')
+    # Pad base64 to multiple of 4
+    while [ $((${#JWT_B64} % 4)) -ne 0 ]; do JWT_B64="${JWT_B64}="; done
+    JWT_PAYLOAD=$(echo "$JWT_B64" | base64 -D 2>/dev/null || echo "$JWT_B64" | base64 -d 2>/dev/null || echo "{}")
+    USER_EXTERNAL_ID=$(echo "$JWT_PAYLOAD" | jq -r '.sub // empty' 2>/dev/null)
+
+    if [ -z "$USER_EXTERNAL_ID" ]; then
+        print_error "Could not decode user from JWT token"
+        print_error "Original connection error: $CHAIN_RESULT"
+        exit 1
+    fi
+
+    # Find the user
+    print_info "Looking up user..."
+    USERS_RESP=$(curl -s "${API_BASE_URL}/v1/users")
+    USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+    if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+        print_error "Connection failed and user not found via admin API"
+        print_error "Original connection error: $CHAIN_RESULT"
+        echo ""
+        echo "If you authenticated via Privado ID, ensure your permissions"
+        echo "are configured in the admin UI before running this script."
+        exit 1
+    fi
+    print_success "User: $USER_ID ($USER_EXTERNAL_ID)"
+
+    # Find or determine the org
+    if [ -z "$ORG_ID" ]; then
+        MEMBERSHIPS_RESP=$(curl -s "${API_BASE_URL}/v1/users/${USER_ID}/memberships")
+        ORG_ID=$(echo "$MEMBERSHIPS_RESP" | jq -r '.[0].org_id // empty' 2>/dev/null)
+
+        if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
+            ORGS_RESP=$(curl -s "${API_BASE_URL}/orgs")
+            ORG_ID=$(echo "$ORGS_RESP" | jq -r '.[0].id // empty')
+
+            if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
+                print_info "Creating demo organization..."
+                ORG_CREATE_RESP=$(curl -s -X POST "${API_BASE_URL}/orgs" \
+                    -H "Content-Type: application/json" \
+                    -d '{"slug": "demo-org", "name": "Demo Organization"}')
+                ORG_ID=$(echo "$ORG_CREATE_RESP" | jq -r '.id')
+            fi
+        fi
+    fi
+    print_value "Organization" "$ORG_ID"
+
+    # Set KYC
+    curl -s -X PUT "${API_BASE_URL}/v1/users/${USER_ID}" \
+        -H "Content-Type: application/json" \
+        -d '{"kyc": true}' > /dev/null
+
+    # Find or create deployers group with deploy claim
+    GROUPS_RESP=$(curl -s "${API_BASE_URL}/v1/orgs/$ORG_ID/groups")
+    DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
+
+    if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+        GROUP_CREATE_RESP=$(curl -s -X POST "${API_BASE_URL}/v1/orgs/$ORG_ID/groups" \
+            -H "Content-Type: application/json" \
+            -d '{"slug": "demo-deployers", "name": "Demo Deployers"}')
+        DEPLOYER_GROUP_ID=$(echo "$GROUP_CREATE_RESP" | jq -r '.id')
+    fi
+
+    if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
+        print_error "Failed to create or find deployers group"
+        exit 1
+    fi
+
+    # Configure group access
+    curl -s -X PUT "${API_BASE_URL}/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "allowed_methods": ["eth_sendRawTransaction", "eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "eth_getTransactionByHash", "eth_getCode", "eth_feeHistory", "eth_gasPrice", "net_version"],
+            "claims": ["deploy"]
+        }' > /dev/null
+
+    # Add user to group
+    curl -s -X POST "${API_BASE_URL}/v1/users/${USER_ID}/memberships" \
+        -H "Content-Type: application/json" \
+        -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}" > /dev/null 2>&1
+
+    print_success "Deploy permissions configured"
+
+    # Refresh JWT token to pick up new permissions
+    print_info "Refreshing auth token..."
+    AUTH_REQUEST_RESP=$(curl -s -X POST "${PROXY_BASE_URL}/auth/request" \
+        -H "Content-Type: application/json" \
+        -d '{"reason": "Token refresh"}')
+    SESSION_ID=$(echo "$AUTH_REQUEST_RESP" | jq -r '.session_id // .sessionId // empty')
+    if [ -n "$SESSION_ID" ] && [ "$SESSION_ID" != "null" ]; then
+        MOCK_TOKEN="mock.${USER_EXTERNAL_ID}"
+        AUTH_CALLBACK_RESP=$(curl -s -X POST "${PROXY_BASE_URL}/auth/callback?session=$SESSION_ID" \
+            -H "Content-Type: application/json" \
+            -d "{\"token\": \"$MOCK_TOKEN\"}")
+        NEW_TOKEN=$(echo "$AUTH_CALLBACK_RESP" | jq -r '.access_token // .accessToken // empty')
+        if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ]; then
+            AUTH_TOKEN="$NEW_TOKEN"
+            export ETH_RPC_HEADERS="Authorization: Bearer $AUTH_TOKEN"
+            print_success "Auth token refreshed with deploy permissions"
+        fi
+    fi
+
+    # Update RPC URL with org context
+    if [ -n "$ORG_ID" ]; then
+        PROXY_RPC_URL="${PROXY_BASE_URL}/rpc/${ORG_ID}"
+        export ETH_RPC_URL="$PROXY_RPC_URL"
+    fi
+
+    # Verify connection after setup
+    print_info "Verifying connection after setup..."
+    CHAIN_RESULT=$(cast chain-id --rpc-url "$PROXY_RPC_URL" 2>&1) || {
+        print_error "Still failed to connect after permissions setup"
+        echo -e "  ${RED}Response: $CHAIN_RESULT${NC}"
+        exit 1
+    }
+    print_success "Connected to chain $CHAIN_RESULT"
+fi
 
 # Check balance
 BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$PROXY_RPC_URL" 2>/dev/null)
@@ -190,6 +333,7 @@ print_info "Deploying SimpleDemoToken..."
 TOKEN_DEPLOY=$(forge create src/token/SimpleDemoToken.sol:SimpleDemoToken \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Token deployment failed"
     echo "$TOKEN_DEPLOY"
@@ -209,6 +353,7 @@ print_info "Deploying SimpleLiquidityPool..."
 POOL_DEPLOY=$(forge create src/pool/SimpleLiquidityPool.sol:SimpleLiquidityPool \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Pool deployment failed"
     echo "$POOL_DEPLOY"
@@ -228,6 +373,7 @@ print_info "Deploying SimpleSwapRouter..."
 ROUTER_DEPLOY=$(forge create src/router/SimpleSwapRouter.sol:SimpleSwapRouter \
     --rpc-url "$PROXY_RPC_URL" \
     --private-key "$PRIVATE_KEY" \
+    --broadcast \
     --json 2>&1) || {
     print_error "Router deployment failed"
     echo "$ROUTER_DEPLOY"
@@ -243,10 +389,79 @@ fi
 print_success "SimpleSwapRouter deployed at: $ROUTER_ADDR"
 
 # =============================================================================
-# Step 5: Initialize Contracts
+# Step 5: Register Contracts to Organization
 # =============================================================================
 
-print_step "Step 5: Initializing Contracts"
+if [ -n "$ORG_ID" ]; then
+    print_step "Step 5: Registering Contracts to Organization"
+
+    CONTRACTS_API_URL="${PROXY_BASE_URL}/api/orgs/${ORG_ID}/contracts"
+
+    register_contract() {
+        local addr="$1"
+        local name="$2"
+        local response
+        response=$(curl -s -X POST "$CONTRACTS_API_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            -d "{\"address\": \"$addr\", \"name\": \"$name\"}" 2>&1)
+
+        if echo "$response" | grep -q '"id"'; then
+            print_success "Registered $name at $addr"
+        elif echo "$response" | grep -q 'already exists'; then
+            print_info "$name already registered"
+        else
+            print_error "Failed to register $name: $response"
+        fi
+    }
+
+    upload_abi() {
+        local addr="$1"
+        local name="$2"
+        local contract_file="$3"
+        local abi_json
+        local response
+
+        # Get ABI from forge output
+        abi_json=$(jq -c '.abi' "out/${contract_file}/${name}.json" 2>/dev/null) || {
+            print_info "No ABI found for $name"
+            return
+        }
+
+        # Upload ABI to API
+        response=$(curl -s -X PUT "${CONTRACTS_API_URL}/${addr}/abi" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $AUTH_TOKEN" \
+            -d "{\"abi\": $(echo "$abi_json" | jq -Rs .)}" 2>&1)
+
+        if echo "$response" | grep -q '"id"'; then
+            local func_count=$(echo "$abi_json" | jq '[.[] | select(.type == "function")] | length')
+            print_success "Uploaded ABI for $name ($func_count functions)"
+        else
+            print_error "Failed to upload ABI for $name: $response"
+        fi
+    }
+
+    print_info "Registering contracts to org $ORG_ID..."
+    register_contract "$TOKEN_ADDR" "SimpleDemoToken"
+    register_contract "$POOL_ADDR" "SimpleLiquidityPool"
+    register_contract "$ROUTER_ADDR" "SimpleSwapRouter"
+
+    print_info "Uploading contract ABIs..."
+    upload_abi "$TOKEN_ADDR" "SimpleDemoToken" "SimpleDemoToken.sol"
+    upload_abi "$POOL_ADDR" "SimpleLiquidityPool" "SimpleLiquidityPool.sol"
+    upload_abi "$ROUTER_ADDR" "SimpleSwapRouter" "SimpleSwapRouter.sol"
+
+else
+    print_step "Step 5: Skipping Contract Registration"
+    print_info "No ORG_ID set - contracts accessible via deploy claim (unregistered)"
+fi
+
+# =============================================================================
+# Step 6: Initialize Contracts
+# =============================================================================
+
+print_step "Step 6: Initializing Contracts"
 
 # Initialize Token
 print_info "Initializing token with pool reference..."
@@ -273,10 +488,10 @@ cast send "$ROUTER_ADDR" "initialize(address,address,address)" "$DEPLOYER_ADDRES
 print_success "Router initialized"
 
 # =============================================================================
-# Step 6: Verify Deployment
+# Step 7: Verify Deployment
 # =============================================================================
 
-print_step "Step 6: Verifying Deployment"
+print_step "Step 7: Verifying Deployment"
 
 # Verify code exists
 TOKEN_CODE=$(cast codesize "$TOKEN_ADDR" --rpc-url "$PROXY_RPC_URL" 2>/dev/null || echo "0")
@@ -305,10 +520,10 @@ else
 fi
 
 # =============================================================================
-# Step 7: Test Interaction
+# Step 8: Test Interaction
 # =============================================================================
 
-print_step "Step 7: Testing Contract Interaction"
+print_step "Step 8: Testing Contract Interaction"
 
 # Mint some tokens
 print_info "Minting 1000 tokens..."

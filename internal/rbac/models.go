@@ -23,6 +23,39 @@ func AllClaims() []Claim {
 	return []Claim{ClaimRead, ClaimWrite, ClaimAdmin, ClaimUpgrade, ClaimDeploy}
 }
 
+// claimImplications defines which claims each claim implies.
+// admin implies all other claims; deploy and upgrade each imply read+write.
+var claimImplications = map[Claim][]Claim{
+	ClaimAdmin:   {ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+	ClaimDeploy:  {ClaimRead, ClaimWrite},
+	ClaimUpgrade: {ClaimRead, ClaimWrite},
+}
+
+// ExpandClaims expands claims according to the hierarchy:
+//   - admin → read, write, deploy, upgrade
+//   - deploy → read, write
+//   - upgrade → read, write
+//
+// Returns a deduplicated, sorted slice.
+func ExpandClaims(claims []Claim) []Claim {
+	set := make(map[Claim]bool, len(claims))
+	for _, c := range claims {
+		set[c] = true
+		for _, implied := range claimImplications[c] {
+			set[implied] = true
+		}
+	}
+
+	result := make([]Claim, 0, len(set))
+	for c := range set {
+		result = append(result, c)
+	}
+	slices.SortFunc(result, func(a, b Claim) int {
+		return strings.Compare(string(a), string(b))
+	})
+	return result
+}
+
 // MembershipSource indicates how a user obtained membership in a group.
 type MembershipSource string
 
@@ -72,6 +105,7 @@ type Contract struct {
 	OrgID            string         `json:"org_id"`
 	Address          string         `json:"address"` // lowercase 0x-prefixed
 	Name             string         `json:"name,omitempty"`
+	ABI              string         `json:"abi,omitempty"` // Contract ABI JSON for function-level access control
 	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
 	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
 	Metadata         map[string]any `json:"metadata"`
@@ -79,23 +113,27 @@ type Contract struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// ContractGrant links a group to a contract with specific claims.
+// ContractGrant links a group to a contract, enabling access.
+// The group's claims (from GroupAccess) apply to this contract.
+// Functions can optionally restrict which contract functions are accessible.
+// Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
 	ID         string    `json:"id"`
 	ContractID string    `json:"contract_id"`
 	GroupID    string    `json:"group_id"`
-	Claims     []Claim   `json:"claims"`              // read, write, admin, upgrade
 	Functions  []string  `json:"functions,omitempty"` // nil = all functions, or specific selectors
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // GroupAccess represents RPC method permissions and rate limits for a group.
+// Claims define what capabilities group members have (read, write, deploy, admin, upgrade).
+// These claims apply to public contracts directly, and to registered contracts via grants.
 type GroupAccess struct {
 	ID             string    `json:"id"`
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
-	DefaultClaims  []Claim   `json:"default_claims"` // Claims for unregistered contracts
+	Claims         []Claim   `json:"claims"` // Capabilities: read, write, deploy, admin, upgrade
 	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -134,13 +172,15 @@ type ContractAccess struct {
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
+// Claims are the user's capabilities from their group memberships.
+// ContractAccess maps registered contract addresses to their access settings.
 type EffectivePermissions struct {
 	ID             string                    `json:"id"`
 	UserID         string                    `json:"user_id"`
 	OrgID          string                    `json:"org_id"`
 	AllowedMethods []string                  `json:"allowed_methods"`
 	ContractAccess map[string]ContractAccess `json:"contract_access"` // address -> access
-	DefaultClaims  []Claim                   `json:"default_claims"`  // Claims for unregistered contracts
+	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
 	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
 	ComputedAt     time.Time                 `json:"computed_at"`
@@ -238,20 +278,29 @@ func (e *EffectivePermissions) HasMethod(method string) bool {
 }
 
 // GetContractAccess returns the access for a specific contract address.
-// If the contract is not registered, returns access based on default_claims.
+// For registered contracts, returns the explicit access from ContractAccess.
+// For unregistered contracts, only deploy/admin users get access via default claims.
+// Regular read/write users must use registered contracts with explicit grants.
 func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess {
 	addr := strings.ToLower(address)
 	if access, ok := e.ContractAccess[addr]; ok {
 		return &access
 	}
-	// Return access based on default claims for unregistered contracts
-	if len(e.DefaultClaims) > 0 {
+	// Only deploy/admin users can access unregistered contracts.
+	// All traffic goes through the proxy on a private network —
+	// regular read/write users must use registered contracts with explicit grants.
+	if len(e.Claims) > 0 && (hasClaim(e.Claims, ClaimDeploy) || hasClaim(e.Claims, ClaimAdmin)) {
 		return &ContractAccess{
-			Claims:    e.DefaultClaims,
+			Claims:    e.Claims,
 			Functions: nil, // All functions allowed for default
 		}
 	}
 	return nil
+}
+
+// hasClaim checks if a specific claim exists in a claims slice.
+func hasClaim(claims []Claim, target Claim) bool {
+	return slices.Contains(claims, target)
 }
 
 // HasContractClaim checks if the user has a specific claim on a contract.
@@ -272,7 +321,7 @@ func (e *EffectivePermissions) HasFunctionSelector(address, selector string) boo
 	}
 
 	// If no function restrictions defined, all functions are allowed
-	if access.Functions == nil || len(access.Functions) == 0 {
+	if len(access.Functions) == 0 {
 		return true
 	}
 
@@ -307,7 +356,7 @@ func (e *EffectivePermissions) HasContractAccess(address string) bool {
 
 // HasDefaultClaim checks if the user has a specific default claim.
 func (e *EffectivePermissions) HasDefaultClaim(claim Claim) bool {
-	return slices.Contains(e.DefaultClaims, claim)
+	return slices.Contains(e.Claims, claim)
 }
 
 // HasClaim checks if a ContractAccess includes a specific claim.

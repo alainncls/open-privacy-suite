@@ -120,13 +120,12 @@ test.describe('RBAC Contracts', () => {
 
     const grant = await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read', 'write'],
+      
     });
 
     expect(grant.contract_id).toBe(contract.id);
     expect(grant.group_id).toBe(group.id);
-    expect(grant.claims).toContain('read');
-    expect(grant.claims).toContain('write');
+    // Claims are now inherited from group's GroupAccess, not stored on grants
   });
 
   test('lists contract grants', async () => {
@@ -137,11 +136,11 @@ test.describe('RBAC Contracts', () => {
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group1.id,
-      claims: ['read'],
+      
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group2.id,
-      claims: ['write'],
+      
     });
 
     const grants = await ctx.rbac.listContractGrants(org.id, contract.address);
@@ -159,7 +158,7 @@ test.describe('RBAC Contracts', () => {
 
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
-      claims: ['read'],
+      
     });
 
     // Verify grant exists

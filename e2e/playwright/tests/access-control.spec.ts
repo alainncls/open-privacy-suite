@@ -21,7 +21,7 @@ test.describe('Access Control', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_getBalance'],
-      default_claims: ['read'],
+      claims: ['deploy'], // deploy needed for unregistered contract access
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -44,7 +44,7 @@ test.describe('Access Control', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -64,7 +64,7 @@ test.describe('Access Control', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -85,7 +85,7 @@ test.describe('Access Control', () => {
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_blockNumber'],
-      default_claims: ['read'],
+      claims: ['read'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {

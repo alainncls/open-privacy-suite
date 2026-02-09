@@ -485,9 +485,9 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                               (for unregistered contracts)
                             </span>
                           </label>
-                          {effectivePerms.default_claims && effectivePerms.default_claims.length > 0 ? (
+                          {effectivePerms.claims && effectivePerms.claims.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
-                              {effectivePerms.default_claims.map(claim => (
+                              {effectivePerms.claims.map(claim => (
                                 <Badge
                                   key={claim}
                                   variant="outline"

@@ -260,6 +260,9 @@ func (m *MockStore) GetContractOwnerOrgID(ctx context.Context, address string) (
 	}
 	return "", nil
 }
+func (m *MockStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
+	return nil, nil
+}
 func (m *MockStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil
@@ -356,14 +359,14 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	store.groupAccess["root"] = &GroupAccess{
 		GroupID:        "root",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimRead, ClaimWrite},
+		Claims:  []Claim{ClaimRead, ClaimWrite},
 	}
 
 	// Child group access - more restrictive (INTERSECTION with parent)
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 
 	// User in child group
@@ -396,8 +399,8 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	}
 
 	// Should only have intersection of claims: read
-	if len(perms.DefaultClaims) != 1 || perms.DefaultClaims[0] != ClaimRead {
-		t.Errorf("Expected only read claim, got %v", perms.DefaultClaims)
+	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimRead {
+		t.Errorf("Expected only read claim, got %v", perms.Claims)
 	}
 }
 
@@ -418,13 +421,13 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	store.groupAccess["groupA"] = &GroupAccess{
 		GroupID:        "groupA",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		DefaultClaims:  []Claim{ClaimRead},
+		Claims:  []Claim{ClaimRead},
 	}
 	// Group B access
 	store.groupAccess["groupB"] = &GroupAccess{
 		GroupID:        "groupB",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		DefaultClaims:  []Claim{ClaimWrite},
+		Claims:  []Claim{ClaimWrite},
 	}
 
 	// User is member of both groups
@@ -450,8 +453,8 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	}
 
 	// Should have UNION of default claims: read, write
-	if len(perms.DefaultClaims) != 2 {
-		t.Errorf("Expected 2 default claims, got %d: %v", len(perms.DefaultClaims), perms.DefaultClaims)
+	if len(perms.Claims) != 2 {
+		t.Errorf("Expected 2 default claims, got %d: %v", len(perms.Claims), perms.Claims)
 	}
 }
 
@@ -471,24 +474,27 @@ func TestResolverContractGrantsInheritance(t *testing.T) {
 	contractA := &Contract{ID: "contractA", OrgID: "org1", Address: "0xaddressA"}
 	store.contracts["contractA"] = contractA
 
-	// Root group has admin claim on contract A
+	// Note: Grant-level claims are deprecated. Claims are now inherited from GroupAccess.
+	// Grants just link groups to contracts and optionally restrict functions.
+	// For this test, we set up GroupAccess.Claims on root and child to test inheritance.
 	store.contractGrants["root"] = []*ContractGrant{
-		{ContractID: "contractA", GroupID: "root", Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+		{ContractID: "contractA", GroupID: "root"},
 	}
 
-	// Child group narrows to read/write only
 	store.contractGrants["child"] = []*ContractGrant{
-		{ContractID: "contractA", GroupID: "child", Claims: []Claim{ClaimRead, ClaimWrite}},
+		{ContractID: "contractA", GroupID: "child"},
 	}
 
-	// Group access
+	// Group access - claims here are now the source of truth for contract access
 	store.groupAccess["root"] = &GroupAccess{
 		GroupID:        "root",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
 	}
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
+		Claims:         []Claim{ClaimRead, ClaimWrite}, // More restrictive than parent
 	}
 
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -581,8 +587,8 @@ func TestResolverNoMemberships(t *testing.T) {
 	if len(perms.AllowedMethods) != 0 {
 		t.Errorf("Expected 0 methods for user with no memberships, got %d", len(perms.AllowedMethods))
 	}
-	if len(perms.DefaultClaims) != 0 {
-		t.Errorf("Expected 0 default claims for user with no memberships, got %d", len(perms.DefaultClaims))
+	if len(perms.Claims) != 0 {
+		t.Errorf("Expected 0 default claims for user with no memberships, got %d", len(perms.Claims))
 	}
 	if len(perms.ContractAccess) != 0 {
 		t.Errorf("Expected 0 contract access for user with no memberships, got %d", len(perms.ContractAccess))

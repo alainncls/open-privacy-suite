@@ -91,7 +91,7 @@ test.describe('Cross-Organization Isolation', () => {
     await request.put(`${API_URL}/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
-        default_claims: ['read']
+        claims: ['deploy'] // deploy needed for unregistered contract access
       }
     });
 
@@ -113,7 +113,7 @@ test.describe('Cross-Organization Isolation', () => {
     await request.put(`${API_URL}/api/v1/orgs/${orgBId}/groups/${groupBId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
-        default_claims: ['read']
+        claims: ['deploy'] // deploy needed for unregistered contract access
       }
     });
 
@@ -136,6 +136,22 @@ test.describe('Cross-Organization Isolation', () => {
     });
     if (!contractBResp.ok()) {
       throw new Error(`Failed to create contract B: ${await contractBResp.text()}`);
+    }
+
+    // Grant group A access to contract A (explicit grants required for registered contracts)
+    const grantAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/contracts/${contractA}/grants`, {
+      data: { group_id: groupAId }
+    });
+    if (!grantAResp.ok()) {
+      throw new Error(`Failed to create grant for contract A: ${await grantAResp.text()}`);
+    }
+
+    // Grant group B access to contract B
+    const grantBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/contracts/${contractB}/grants`, {
+      data: { group_id: groupBId }
+    });
+    if (!grantBResp.ok()) {
+      throw new Error(`Failed to create grant for contract B: ${await grantBResp.text()}`);
     }
 
     // Create unique DIDs for this test run
@@ -248,9 +264,9 @@ test.describe('Cross-Organization Isolation', () => {
     expect(result.status).toBe(403);
   });
 
-  test('SECURITY-006: eth_getBalance on cross-org address uses default_claims correctly', async ({ request }) => {
+  test('SECURITY-006: eth_getBalance on cross-org address uses claims correctly', async ({ request }) => {
     // eth_getBalance doesn't have contract-level permissions, but cross-org should still apply
-    // This tests whether default_claims can be abused for cross-org access
+    // This tests whether claims can be abused for cross-org access
     const result = await rpcCall(request, userAToken, 'eth_getBalance', [
       contractB,
       'latest'
@@ -268,7 +284,7 @@ test.describe('Cross-Organization Isolation', () => {
     const hexTs = Date.now().toString(16).slice(-8);
     const publicContract = '0xee' + hexTs + 'e'.repeat(30);
 
-    // User A should be able to access via default_claims
+    // User A should be able to access via claims
     const result = await rpcCall(request, userAToken, 'eth_call', [
       { to: publicContract, data: '0x' },
       'latest'

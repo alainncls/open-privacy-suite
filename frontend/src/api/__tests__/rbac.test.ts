@@ -134,7 +134,7 @@ describe('RBAC API', () => {
       it('should set group access settings', async () => {
         const response = await rbacApi.groups.setAccess('org-1', 'group-1', {
           allowed_methods: ['eth_call', 'eth_sendTransaction'],
-          default_claims: ['read', 'write'],
+          claims: ['read', 'write'],
         });
 
         expect(response.data.allowed_methods).toContain('eth_call');
@@ -203,7 +203,7 @@ describe('RBAC API', () => {
         expect(response.data.allowed_methods).toEqual(
           mockEffectivePermissions.allowed_methods
         );
-        expect(response.data.default_claims).toEqual(mockEffectivePermissions.default_claims);
+        expect(response.data.claims).toEqual(mockEffectivePermissions.claims);
       });
 
       it('should get effective permissions for specific org', async () => {

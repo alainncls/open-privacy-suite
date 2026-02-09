@@ -19,7 +19,7 @@ export interface HierarchyNode {
   name: string;
   access?: {
     allowed_methods?: string[];
-    default_claims?: Claim[];
+    claims?: Claim[];
     rate_limit_rps?: number;
     rate_limit_daily?: number;
   };
