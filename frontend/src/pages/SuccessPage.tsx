@@ -374,14 +374,14 @@ export function SuccessPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <p className="text-xs text-[#94A3B8] mb-1">Foundry (forge/cast)</p>
+              <p className="text-xs text-[#94A3B8] mb-1">Foundry (cast)</p>
               <pre className="p-2 bg-[#F1F5F9] rounded text-xs font-mono text-[#374151] overflow-x-auto">
 {`# Set auth header (use "Copy for Foundry" button above)
 export ETH_RPC_HEADERS="Authorization: Bearer <token>"
 
-# Deploy contracts
-forge script script/Deploy.s.sol \\
-  --rpc-url ${rpcEndpoint} --broadcast`}
+# Query the chain
+cast block-number --rpc-url ${rpcEndpoint}
+cast balance <address> --rpc-url ${rpcEndpoint}`}
               </pre>
             </div>
 

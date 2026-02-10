@@ -46,11 +46,19 @@ export const wagmiConfig = createConfig({
   ssr: false,
 });
 
-// Get RPC endpoint URL based on current origin
+// Get RPC endpoint URL for the backend.
+// The frontend dev server (port 5173) is NOT the RPC endpoint — the backend
+// runs on a different port (default 8080). Use VITE_BACKEND_URL when set,
+// otherwise infer by replacing the current origin's port with 8080.
 export function getRpcEndpoint(): string {
-  const origin = window.location.origin;
-  // The RPC endpoint is at /rpc path
-  return `${origin}/rpc`;
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  if (backendUrl) {
+    return `${backendUrl}/rpc`;
+  }
+  // Default: backend runs on port 8080 on the same host
+  const url = new URL(window.location.origin);
+  url.port = '8080';
+  return `${url.origin}/rpc`;
 }
 
 // Generate Add to MetaMask params

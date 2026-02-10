@@ -80,6 +80,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
+      - VITE_BACKEND_URL=http://localhost:${BACKEND_HOST_PORT:-8080}
       - VITE_ALLOW_MOCK_LOGIN=true
     depends_on:
       proxy-backend:
