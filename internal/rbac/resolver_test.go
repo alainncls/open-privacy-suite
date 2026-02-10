@@ -646,3 +646,260 @@ func TestResolverMultipleMembershipsRateLimitsMax(t *testing.T) {
 		t.Errorf("Expected rate limit 100, got %v", perms.RateLimitRPS)
 	}
 }
+
+func TestIntersectFunctions(t *testing.T) {
+	tests := []struct {
+		name   string
+		parent []FunctionRule
+		child  []FunctionRule
+		want   []FunctionRule
+	}{
+		{
+			name:   "both nil returns nil",
+			parent: nil,
+			child:  nil,
+			want:   nil,
+		},
+		{
+			name:   "parent nil child has rules returns child",
+			parent: nil,
+			child: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "parent has rules child nil returns parent",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: nil,
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "intersection of selectors",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: []FunctionRule{
+				{Selector: "0x2222"},
+				{Selector: "0x3333"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "child param rules override parent param rules",
+			parent: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			child: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+		},
+		{
+			name:   "both empty slices returns empty",
+			parent: []FunctionRule{},
+			child:  []FunctionRule{},
+			want:   []FunctionRule{},
+		},
+		{
+			name: "parent has param rules child has none keeps parent rules",
+			parent: []FunctionRule{
+				{Selector: "0xbbbb", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			child: []FunctionRule{
+				{Selector: "0xbbbb"},
+			},
+			want: []FunctionRule{
+				{Selector: "0xbbbb", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := intersectFunctions(tt.parent, tt.child)
+
+			// Both nil
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %v", got)
+				}
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d rules, got %d: %+v", len(tt.want), len(got), got)
+			}
+
+			// Build lookup from result for order-independent comparison
+			gotMap := make(map[string]FunctionRule, len(got))
+			for _, r := range got {
+				gotMap[strings.ToLower(r.Selector)] = r
+			}
+
+			for _, wantRule := range tt.want {
+				gotRule, ok := gotMap[strings.ToLower(wantRule.Selector)]
+				if !ok {
+					t.Errorf("expected selector %s in result, not found", wantRule.Selector)
+					continue
+				}
+				if len(gotRule.ParamRules) != len(wantRule.ParamRules) {
+					t.Errorf("selector %s: expected %d param rules, got %d: %+v",
+						wantRule.Selector, len(wantRule.ParamRules), len(gotRule.ParamRules), gotRule.ParamRules)
+					continue
+				}
+				for i, wantParam := range wantRule.ParamRules {
+					if gotRule.ParamRules[i] != wantParam {
+						t.Errorf("selector %s param_rule[%d]: expected %+v, got %+v",
+							wantRule.Selector, i, wantParam, gotRule.ParamRules[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestUnionFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		a    []FunctionRule
+		b    []FunctionRule
+		want []FunctionRule
+	}{
+		{
+			name: "both nil returns nil",
+			a:    nil,
+			b:    nil,
+			want: nil,
+		},
+		{
+			name: "a nil b has rules returns nil",
+			a:    nil,
+			b: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			want: nil,
+		},
+		{
+			name: "a has rules b nil returns nil",
+			a: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			b:    nil,
+			want: nil,
+		},
+		{
+			name: "union of disjoint selectors",
+			a: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			b: []FunctionRule{
+				{Selector: "0x2222"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "one has param rules other has none drops param rules",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa"},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa"},
+			},
+		},
+		{
+			name: "same param rules on both keeps them",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+		{
+			name: "both empty slices returns empty",
+			a:    []FunctionRule{},
+			b:    []FunctionRule{},
+			want: []FunctionRule{},
+		},
+		{
+			name: "different param rules on both keeps a side",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unionFunctions(tt.a, tt.b)
+
+			// Both nil
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %v", got)
+				}
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d rules, got %d: %+v", len(tt.want), len(got), got)
+			}
+
+			// Build lookup from result for order-independent comparison
+			gotMap := make(map[string]FunctionRule, len(got))
+			for _, r := range got {
+				gotMap[strings.ToLower(r.Selector)] = r
+			}
+
+			for _, wantRule := range tt.want {
+				gotRule, ok := gotMap[strings.ToLower(wantRule.Selector)]
+				if !ok {
+					t.Errorf("expected selector %s in result, not found", wantRule.Selector)
+					continue
+				}
+				if len(gotRule.ParamRules) != len(wantRule.ParamRules) {
+					t.Errorf("selector %s: expected %d param rules, got %d: %+v",
+						wantRule.Selector, len(wantRule.ParamRules), len(gotRule.ParamRules), gotRule.ParamRules)
+					continue
+				}
+				for i, wantParam := range wantRule.ParamRules {
+					if gotRule.ParamRules[i] != wantParam {
+						t.Errorf("selector %s param_rule[%d]: expected %+v, got %+v",
+							wantRule.Selector, i, wantParam, gotRule.ParamRules[i])
+					}
+				}
+			}
+		})
+	}
+}

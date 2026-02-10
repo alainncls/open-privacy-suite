@@ -732,6 +732,160 @@ func TestContractGrant_CRUD(t *testing.T) {
 	})
 }
 
+// Contract Grant ParamRules Tests
+
+func TestContractGrant_ParamRules(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+
+	org := &rbac.Organization{ID: uuid.New().String(), Slug: "paramrules-org", Name: "ParamRules Org", Settings: map[string]interface{}{}}
+	database.CreateOrganization(ctx, org)
+
+	group := &rbac.Group{ID: uuid.New().String(), OrgID: org.ID, Slug: "paramrules-group", Name: "ParamRules Group", Depth: 0, Path: "paramrules-group"}
+	database.CreateGroup(ctx, group)
+
+	contract := &rbac.Contract{ID: uuid.New().String(), OrgID: org.ID, Address: "0x4444444444444444444444444444444444444444", Metadata: map[string]interface{}{}}
+	database.CreateContract(ctx, contract)
+
+	t.Run("CreateWithParamRules", func(t *testing.T) {
+		grant := &rbac.ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: contract.ID,
+			GroupID:    group.ID,
+			Functions: []rbac.FunctionRule{
+				{Selector: "0x70a08231", ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}}},
+				{Selector: "0xa9059cbb"},
+			},
+		}
+
+		err := database.CreateContractGrant(ctx, grant)
+		if err != nil {
+			t.Fatalf("CreateContractGrant() error = %v", err)
+		}
+
+		retrieved, err := database.GetContractGrant(ctx, grant.ID)
+		if err != nil {
+			t.Fatalf("GetContractGrant() error = %v", err)
+		}
+		if retrieved == nil {
+			t.Fatal("GetContractGrant() returned nil")
+		}
+
+		if len(retrieved.Functions) != 2 {
+			t.Fatalf("Functions length = %d, want 2", len(retrieved.Functions))
+		}
+
+		// First function: selector with param rules
+		if retrieved.Functions[0].Selector != "0x70a08231" {
+			t.Errorf("Functions[0].Selector = %q, want %q", retrieved.Functions[0].Selector, "0x70a08231")
+		}
+		if len(retrieved.Functions[0].ParamRules) != 1 {
+			t.Fatalf("Functions[0].ParamRules length = %d, want 1", len(retrieved.Functions[0].ParamRules))
+		}
+		if retrieved.Functions[0].ParamRules[0].Index != 0 {
+			t.Errorf("Functions[0].ParamRules[0].Index = %d, want 0", retrieved.Functions[0].ParamRules[0].Index)
+		}
+		if retrieved.Functions[0].ParamRules[0].MustBe != "self" {
+			t.Errorf("Functions[0].ParamRules[0].MustBe = %q, want %q", retrieved.Functions[0].ParamRules[0].MustBe, "self")
+		}
+
+		// Second function: bare selector with no param rules
+		if retrieved.Functions[1].Selector != "0xa9059cbb" {
+			t.Errorf("Functions[1].Selector = %q, want %q", retrieved.Functions[1].Selector, "0xa9059cbb")
+		}
+		if len(retrieved.Functions[1].ParamRules) != 0 {
+			t.Errorf("Functions[1].ParamRules length = %d, want 0", len(retrieved.Functions[1].ParamRules))
+		}
+	})
+
+	t.Run("UpdateToAddParamRules", func(t *testing.T) {
+		// Create a second contract+grant with bare selectors
+		contract2 := &rbac.Contract{ID: uuid.New().String(), OrgID: org.ID, Address: "0x5555555555555555555555555555555555555555", Metadata: map[string]interface{}{}}
+		database.CreateContract(ctx, contract2)
+
+		grant := &rbac.ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: contract2.ID,
+			GroupID:    group.ID,
+			Functions:  []rbac.FunctionRule{{Selector: "0xdeadbeef"}, {Selector: "0xcafebabe"}},
+		}
+
+		err := database.CreateContractGrant(ctx, grant)
+		if err != nil {
+			t.Fatalf("CreateContractGrant() error = %v", err)
+		}
+
+		// Verify bare selectors round-trip without param rules
+		before, _ := database.GetContractGrant(ctx, grant.ID)
+		if len(before.Functions[0].ParamRules) != 0 {
+			t.Fatalf("Before update: ParamRules should be empty, got %d", len(before.Functions[0].ParamRules))
+		}
+
+		// Update to add param rules
+		grant.Functions = []rbac.FunctionRule{
+			{Selector: "0xdeadbeef", ParamRules: []rbac.ParamRule{{Index: 1, MustBe: "self"}}},
+			{Selector: "0xcafebabe"},
+		}
+		err = database.UpdateContractGrant(ctx, grant)
+		if err != nil {
+			t.Fatalf("UpdateContractGrant() error = %v", err)
+		}
+
+		after, err := database.GetContractGrant(ctx, grant.ID)
+		if err != nil {
+			t.Fatalf("GetContractGrant() after update error = %v", err)
+		}
+
+		if len(after.Functions) != 2 {
+			t.Fatalf("After update: Functions length = %d, want 2", len(after.Functions))
+		}
+		if len(after.Functions[0].ParamRules) != 1 {
+			t.Fatalf("After update: Functions[0].ParamRules length = %d, want 1", len(after.Functions[0].ParamRules))
+		}
+		if after.Functions[0].ParamRules[0].Index != 1 {
+			t.Errorf("After update: ParamRules[0].Index = %d, want 1", after.Functions[0].ParamRules[0].Index)
+		}
+		if after.Functions[0].ParamRules[0].MustBe != "self" {
+			t.Errorf("After update: ParamRules[0].MustBe = %q, want %q", after.Functions[0].ParamRules[0].MustBe, "self")
+		}
+		if len(after.Functions[1].ParamRules) != 0 {
+			t.Errorf("After update: Functions[1].ParamRules should be empty, got %d", len(after.Functions[1].ParamRules))
+		}
+	})
+
+	t.Run("NilFunctionsRoundTrip", func(t *testing.T) {
+		// Create a grant with nil Functions (meaning all functions allowed)
+		contract3 := &rbac.Contract{ID: uuid.New().String(), OrgID: org.ID, Address: "0x6666666666666666666666666666666666666666", Metadata: map[string]interface{}{}}
+		database.CreateContract(ctx, contract3)
+
+		grant := &rbac.ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: contract3.ID,
+			GroupID:    group.ID,
+			Functions:  nil, // all functions allowed
+		}
+
+		err := database.CreateContractGrant(ctx, grant)
+		if err != nil {
+			t.Fatalf("CreateContractGrant() error = %v", err)
+		}
+
+		retrieved, err := database.GetContractGrant(ctx, grant.ID)
+		if err != nil {
+			t.Fatalf("GetContractGrant() error = %v", err)
+		}
+		if retrieved == nil {
+			t.Fatal("GetContractGrant() returned nil")
+		}
+
+		if retrieved.Functions != nil {
+			t.Errorf("Functions should be nil (all functions allowed), got %v", retrieved.Functions)
+		}
+	})
+}
+
 // Cache Tests
 
 func TestEffectivePermissionsCache(t *testing.T) {

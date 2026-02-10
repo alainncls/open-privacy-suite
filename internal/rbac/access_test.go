@@ -1,7 +1,14 @@
 package rbac
 
 import (
+	"context"
+	"encoding/hex"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func TestClassifyOperation(t *testing.T) {
@@ -2510,6 +2517,248 @@ func TestIsHistoricalStateQuery(t *testing.T) {
 			if tt.expectBlocked && reason != tt.expectedReason {
 				t.Errorf("IsHistoricalStateQuery reason = %q, expected %q",
 					reason, tt.expectedReason)
+			}
+		})
+	}
+}
+
+// paramConstraintStore wraps MockCrossOrgStore and adds configurable
+// GetLinkedEthAddresses and GetContractByAddress returns for parameter
+// constraint tests.
+type paramConstraintStore struct {
+	*MockCrossOrgStore
+	linkedAddresses    map[string][]string  // DID -> linked ETH addresses
+	contractsByAddress map[string]*Contract // "orgID:address" -> Contract
+}
+
+func newParamConstraintStore() *paramConstraintStore {
+	return &paramConstraintStore{
+		MockCrossOrgStore:  NewMockCrossOrgStore(),
+		linkedAddresses:    make(map[string][]string),
+		contractsByAddress: make(map[string]*Contract),
+	}
+}
+
+func (s *paramConstraintStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
+	return s.linkedAddresses[did], nil
+}
+
+func (s *paramConstraintStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
+	key := orgID + ":" + strings.ToLower(address)
+	return s.contractsByAddress[key], nil
+}
+
+// buildBalanceOfCalldata builds calldata for balanceOf(address) with selector 0x70a08231.
+func buildBalanceOfCalldata(addr common.Address) []byte {
+	addrType, _ := abi.NewType("address", "", nil)
+	args := abi.Arguments{{Type: addrType}}
+	packed, _ := args.Pack(addr)
+	selector, _ := hex.DecodeString("70a08231")
+	return append(selector, packed...)
+}
+
+func TestCheckAccessParamConstraints(t *testing.T) {
+	ownAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	otherAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	contractAddr := "0xaaaa000000000000000000000000000000000001"
+	balanceOfSelector := "0x70a08231"
+
+	balanceOfOwn := buildBalanceOfCalldata(ownAddr)
+	balanceOfOther := buildBalanceOfCalldata(otherAddr)
+
+	tests := []struct {
+		name string
+		// store setup
+		linkedAddresses []string // user's linked ETH addresses (nil = no addresses)
+		contractABI     string   // ABI stored on the contract (empty = no ABI)
+		// permissions setup
+		functionRules []FunctionRule // function rules on the contract grant
+		// request setup
+		calldata         []byte // raw calldata to send (nil = rely on extractCalldata from params)
+		params           []any  // JSON-RPC params (used when calldata is nil)
+		functionSelector string // function selector in request
+		method           string // RPC method
+		// expectations
+		expectAllowed bool
+		expectReason  string // substring that must appear in denial reason
+	}{
+		{
+			name:            "self constraint passes",
+			linkedAddresses: []string{strings.ToLower(ownAddr.Hex())},
+			contractABI:     testABI,
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			calldata:         balanceOfOwn,
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    true,
+		},
+		{
+			name:            "self constraint fails",
+			linkedAddresses: []string{strings.ToLower(ownAddr.Hex())},
+			contractABI:     testABI,
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			calldata:         balanceOfOther,
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    false,
+			expectReason:     "parameter constraint violation",
+		},
+		{
+			name:            "no param rules - allowed",
+			linkedAddresses: []string{strings.ToLower(ownAddr.Hex())},
+			contractABI:     testABI,
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: nil},
+			},
+			calldata:         balanceOfOwn,
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    true,
+		},
+		{
+			name:            "missing calldata - denied",
+			linkedAddresses: []string{strings.ToLower(ownAddr.Hex())},
+			contractABI:     testABI,
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			calldata:         nil,                                                     // no Calldata field
+			params:           []any{map[string]any{"to": contractAddr, "data": "0x"}}, // data="0x" yields no calldata
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    false,
+			expectReason:     "calldata required",
+		},
+		{
+			name:            "no linked addresses - denied",
+			linkedAddresses: nil, // no linked addresses
+			contractABI:     testABI,
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			calldata:         balanceOfOwn,
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    false,
+			expectReason:     "parameter constraint violation",
+		},
+		{
+			name:            "missing contract ABI - denied",
+			linkedAddresses: []string{strings.ToLower(ownAddr.Hex())},
+			contractABI:     "", // no ABI
+			functionRules: []FunctionRule{
+				{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			calldata:         balanceOfOwn,
+			functionSelector: balanceOfSelector,
+			method:           "eth_call",
+			expectAllowed:    false,
+			expectReason:     "contract ABI required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newParamConstraintStore()
+
+			// Set up organization
+			org := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+			store.organizations["org-a"] = org
+
+			// Set up user
+			user := &User{ID: "user-1", ExternalID: "did:test:user1", KYC: true, Banned: false}
+			store.users["did:test:user1"] = user
+
+			// Set up group and membership
+			group := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+			store.memberships["user-1"] = []*MembershipWithDetails{
+				{Membership: &UserMembership{ID: "mem-1", UserID: "user-1", GroupID: "group-a"}, Group: group},
+			}
+
+			// Set up group access with read claim
+			store.groupAccess["group-a"] = &GroupAccess{
+				ID:             "access-a",
+				GroupID:        "group-a",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				Claims:         []Claim{ClaimRead},
+			}
+
+			// Set up contract ownership
+			addr := strings.ToLower(contractAddr)
+			store.contractOwners[addr] = "org-a"
+			store.registeredToAnyOrg[addr] = true
+			store.addressOwnedByOrg[addr] = map[string]bool{"org-a": true}
+
+			// Set up cached permissions with function rules from the test case
+			store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+				ID:             "perms-1",
+				UserID:         "user-1",
+				OrgID:          "org-a",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				ContractAccess: map[string]ContractAccess{
+					addr: {
+						Claims:    []Claim{ClaimRead},
+						Functions: tt.functionRules,
+					},
+				},
+				Claims:     []Claim{ClaimRead},
+				ComputedAt: time.Now(),
+				ExpiresAt:  time.Now().Add(1 * time.Hour),
+			}
+
+			// Set up linked ETH addresses
+			if tt.linkedAddresses != nil {
+				store.linkedAddresses["did:test:user1"] = tt.linkedAddresses
+			}
+
+			// Set up contract with ABI
+			store.contractsByAddress["org-a:"+addr] = &Contract{
+				ID:      "contract-1",
+				OrgID:   "org-a",
+				Address: addr,
+				Name:    "TestToken",
+				ABI:     tt.contractABI,
+			}
+
+			controller := NewAccessController(store, 5*time.Minute)
+
+			req := &AccessCheckRequest{
+				UserExternalID:   "did:test:user1",
+				Method:           tt.method,
+				Params:           tt.params,
+				TargetAddress:    contractAddr,
+				FunctionSelector: tt.functionSelector,
+				Calldata:         tt.calldata,
+			}
+			// If no params were explicitly set, construct default params for the method
+			if req.Params == nil && tt.calldata != nil {
+				req.Params = []any{
+					map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(tt.calldata)},
+					"latest",
+				}
+			}
+
+			result, err := controller.CheckAccess(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				if tt.expectAllowed {
+					t.Errorf("expected access to be allowed, got denied: %s", result.Reason)
+				} else {
+					t.Errorf("expected access to be denied, got allowed")
+				}
+			}
+			if !tt.expectAllowed && tt.expectReason != "" {
+				if !strings.Contains(result.Reason, tt.expectReason) {
+					t.Errorf("expected reason to contain %q, got: %s", tt.expectReason, result.Reason)
+				}
 			}
 		})
 	}
