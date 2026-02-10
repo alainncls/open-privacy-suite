@@ -236,6 +236,17 @@ if ! command -v forge &> /dev/null; then
     exit 1
 fi
 
+# Install dependencies if not present (lib/ is gitignored)
+if [ ! -d "lib/forge-std" ]; then
+    echo -e "${YELLOW}Installing Solidity dependencies...${NC}"
+    rm -rf lib
+    mkdir -p lib
+    git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std || true
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || true
+    git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || true
+    git clone --quiet --depth 1 https://github.com/Vectorized/solady.git lib/solady || true
+fi
+
 # Compile contracts
 forge build --quiet 2>/dev/null || true
 

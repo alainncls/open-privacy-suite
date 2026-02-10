@@ -1,80 +1,114 @@
 # Privacy Proxy Demo Scripts
 
-This directory contains demo scripts showcasing the privacy proxy's deployment and RBAC features with UUPS upgradeable contracts.
+Demo scripts showcasing contract deployment and RBAC features through the privacy proxy.
+
+## Deployment Modes
+
+The proxy supports two deployment approaches:
+
+| Mode | How It Works | Address Known Before Deploy? | Use Case |
+|------|-------------|------------------------------|----------|
+| **Regular CREATE** | Deploy via `eth_sendRawTransaction`, runtime-traced by proxy | No | Simple deployments, rapid prototyping |
+| **CREATE3** | Preregister deterministic addresses, deploy via factory | Yes | Cross-chain consistency, admin/deployer separation |
+
+Both modes require the `deploy` claim. Runtime tracing (`debug_traceCall`) validates all call targets for cross-org isolation.
 
 ## Demo Scripts Overview
 
-| Script | Description | Requires Proxy |
-|--------|-------------|----------------|
-| `demo-anvil-direct.sh` | Baseline deployment directly to Anvil | No |
-| `demo-privacy-proxy.sh` | Full workflow through privacy proxy with RBAC | Yes |
-| `demo-defi-deployment.sh` | CREATE3 deterministic DeFi deployment | Yes |
-| `demo-upgrade.sh` | UUPS proxy upgrade demonstration | Yes |
-| `demo-proxy-upgrade.sh` | Proxy upgrade with preregistered addresses | Yes |
-| `demo-blocked-deployment.sh` | Demonstrates RBAC blocking unauthorized deploys | Yes |
+| Script | Description | Auth Mode |
+|--------|-------------|-----------|
+| `demo-anvil-direct.sh` | Baseline deployment directly to Anvil (no proxy) | None |
+| `demo-prod-deployment.sh` | **Production-style**: deploy with real JWT via `forge create` | JWT (Privado ID or mock) |
+| `demo-privacy-proxy.sh` | Full CREATE3 workflow with preregistration | Mock auth |
+| `demo-defi-deployment.sh` | CREATE3 deterministic DeFi deployment | Mock auth |
+| `demo-upgrade.sh` | UUPS proxy upgrade demonstration | Mock auth |
+| `demo-proxy-upgrade.sh` | Proxy upgrade with preregistered addresses | Mock auth |
+| `demo-blocked-deployment.sh` | RBAC blocking unauthorized deploys | Mock auth |
+| `demo-cross-org-attack.sh` | Cross-org isolation enforcement | Mock auth |
 
 ## Prerequisites
 
 1. **Foundry** - Install from https://getfoundry.sh
 2. **jq** - For JSON parsing
 3. **curl** - For API calls
-4. **Anvil** - Running on localhost:8545
+4. **Privacy Proxy** running (`docker-compose up -d`)
 
-For proxy scripts, also need:
-- **Privacy Proxy** running on localhost:8080
-- An organization configured in the proxy
+Anvil must be started with `--steps-tracing` for runtime tracing support (the docker-compose files handle this automatically).
 
 ## Quick Start
 
-```bash
-# Run the baseline demo (no proxy needed, just Anvil)
-anvil &
-./demo-anvil-direct.sh
+### Production-style deployment (recommended starting point)
 
-# Run proxy demos (requires privacy proxy running)
-./demo-privacy-proxy.sh
+```bash
+# 1. Start the proxy
+docker-compose up -d
+
+# 2. Authenticate via web UI (http://localhost:5173) and copy the JWT
+#    Or use mock auth to get a token
+
+# 3. Set environment and run
+export ETH_RPC_HEADERS="Authorization: Bearer <your-jwt>"
+export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+export ORG_ID="<your-org-id>"   # Required if user belongs to multiple orgs
+./demo-prod-deployment.sh
+```
+
+### Other demos (use mock auth, self-contained)
+
+```bash
+./demo-privacy-proxy.sh       # Full CREATE3 flow
+./demo-cross-org-attack.sh    # See cross-org isolation in action
+./demo-blocked-deployment.sh  # See RBAC deny unauthorized deploys
 ```
 
 ## Script Details
 
-### demo-anvil-direct.sh (Baseline)
+### demo-prod-deployment.sh (Production-Style)
 
-**Purpose:** Demonstrates direct deployment to Anvil without RBAC - serves as a baseline to verify contract logic works correctly.
+**Purpose:** Demonstrates how a real user deploys contracts through the proxy using their JWT token and private key — the closest to a production workflow.
 
 **What it does:**
-1. Compiles DemoToken, LiquidityPool, and SwapRouter contracts
-2. Deploys implementation contracts using regular CREATE opcode
-3. Predicts proxy addresses using nonce-based address computation
-4. Deploys UUPS proxies with initialization data
-5. Verifies circular references (Token ↔ Pool ↔ Router)
-6. Tests contract interactions:
-   - Mints 1000 DEMO tokens
-   - Approves and adds liquidity to pool
-   - Executes a swap through the router
+1. Verifies connection to proxy using the JWT
+2. Auto-detects org (or prompts if user has multiple orgs)
+3. Falls back to admin API setup if user has no permissions yet
+4. Builds and deploys SimpleDemoToken, SimpleLiquidityPool, SimpleSwapRouter via `forge create` (regular CREATE)
+5. Registers contracts to the organization and uploads ABIs
+6. Initializes contracts and verifies cross-references
+7. Tests contract interaction (mint + balance check)
 
 **Key Points:**
-- Uses nonce-based address prediction to resolve circular dependencies
-- No RBAC or permissions - anyone with ETH can deploy
-- Demonstrates that contracts work correctly before adding proxy layer
+- Uses regular CREATE deployment (not CREATE3) — simpler, no preregistration needed
+- Deploy claim is sufficient — no explicit contract grants needed for deployers
+- Works with both real Privado ID JWTs and mock auth tokens
+- Multi-org users must set `ORG_ID`
 
 ---
 
-### demo-privacy-proxy.sh (Full RBAC Workflow)
+### demo-anvil-direct.sh (Baseline)
 
-**Purpose:** Demonstrates the complete deployment flow through the privacy proxy with RBAC enforcement.
+**Purpose:** Baseline deployment directly to Anvil without RBAC — verifies contract logic works correctly.
+
+**What it does:**
+1. Compiles DemoToken, LiquidityPool, and SwapRouter contracts
+2. Deploys implementations and UUPS proxies
+3. Verifies circular references (Token <> Pool <> Router)
+4. Tests interactions: mint, add liquidity, swap
+
+---
+
+### demo-privacy-proxy.sh (Full CREATE3 Workflow)
+
+**Purpose:** Demonstrates the complete CREATE3 deployment flow with preregistration.
 
 **What it does:**
 1. Authenticates user via mock token
-2. Sets up organization and user permissions
+2. Sets up organization, group with deploy claim, and user permissions
 3. Deploys/configures CREATE3 factory
-4. Preregisters contract addresses
+4. Preregisters deterministic contract addresses
 5. Deploys contracts through proxy to preregistered addresses
 6. Verifies deployment and tests interactions
 
-**Security Features:**
-- All transactions go through RBAC-enforced proxy
-- Addresses must be preregistered before deployment
-- User must have KYC and deploy permissions
+**When to use CREATE3:** When you need deterministic addresses across chains, or want admin/deployer separation (admin preregisters WHERE, deployer deploys WHAT).
 
 ---
 
@@ -97,137 +131,93 @@ anvil &
 **Purpose:** Demonstrates upgrading UUPS proxies from V1 to V2 implementations.
 
 **What it does:**
-1. Deploys V1 implementations (Token, Pool, Router)
-2. Deploys proxies pointing to V1
-3. Interacts with V1 (version returns "1.0.0")
-4. Deploys V2 implementations with new features
-5. Upgrades proxies to V2
-6. Verifies state preservation and new features
-
-**V2 Features:**
-- DemoTokenV2: `burn()` function
-- LiquidityPoolV2: Configurable fees
-- SwapRouterV2: Deadline protection
+1. Deploys V1 implementations and proxies
+2. Interacts with V1 (version returns "1.0.0")
+3. Deploys V2 implementations with new features
+4. Upgrades proxies to V2
+5. Verifies state preservation and new features
 
 ---
 
 ### demo-proxy-upgrade.sh (Preregistered Upgrade)
 
-**Purpose:** Shows the admin/deployer separation for contract upgrades.
+**Purpose:** Shows the admin/deployer separation for contract upgrades using preregistered addresses.
 
 **Security Model:**
-- **Org Admin**: Preregisters addresses (controls WHERE)
+- **Org Admin**: Preregisters addresses (controls WHERE code can be deployed)
 - **Deployer**: Deploys to preregistered addresses only
 
 ---
 
 ### demo-blocked-deployment.sh (RBAC Enforcement)
 
-**Purpose:** Demonstrates that the RBAC system blocks unauthorized deployments.
+**Purpose:** Demonstrates RBAC blocking unauthorized deployments.
 
 **What it shows:**
-- Deployments to non-preregistered addresses are blocked
-- Users without proper permissions cannot deploy
-- Cross-org isolation is enforced
+- Users without deploy claim cannot deploy contracts
+- Write-only users are denied deployment
+- Proper error messages for missing permissions
+
+---
+
+### demo-cross-org-attack.sh (Cross-Org Isolation)
+
+**Purpose:** Demonstrates that the proxy prevents cross-organization access.
+
+**What it shows:**
+- Sets up two organizations with separate users and contracts
+- User in Org A cannot access Org B's contracts
+- Runtime tracing catches cross-org calls even through internal contract interactions
 
 ## Environment Variables
 
 ```bash
-# Optional (defaults shown)
+# For demo-prod-deployment.sh
+export ETH_RPC_HEADERS="Authorization: Bearer <jwt>"  # From web UI "Copy for Foundry" button
+export PRIVATE_KEY="0xac0974..."                       # Deployer private key
+export ORG_ID="<uuid>"                                 # Required for multi-org users
+
+# For other demo scripts (optional, defaults shown)
 export ADMIN_API_URL="http://localhost:8080/api"
 export PROXY_RPC_URL="http://localhost:8080"
 export ANVIL_URL="http://localhost:8545"
-
-# Deployer key - defaults to Anvil's first account
 export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 # Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
 
-## Contract Architecture
+## RBAC Permission Model
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        DemoToken Proxy                            │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ ERC1967 Storage: implementation → DemoToken V1/V2          │  │
-│  │ State: balances, allowances, owner, pool reference         │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ delegatecall
-┌──────────────────────────────────────────────────────────────────┐
-│  DemoToken Implementation (V1 or V2)                              │
-│  - ERC20 functionality                                            │
-│  - mint() (owner only)                                            │
-│  - pool reference for circular dependency                         │
-└──────────────────────────────────────────────────────────────────┘
+Claims hierarchy:
+  admin   -> read + write + deploy + upgrade
+  deploy  -> read + write
+  upgrade -> read + write
+  read, write -> independent
 
-┌──────────────────────────────────────────────────────────────────┐
-│                      LiquidityPool Proxy                          │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ State: token reference, reserves, liquidity shares         │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ delegatecall
-┌──────────────────────────────────────────────────────────────────┐
-│  LiquidityPool Implementation                                     │
-│  - addLiquidity() / removeLiquidity()                             │
-│  - swap() functionality                                           │
-│  - V2 adds: setFee(), configurable fees                           │
-└──────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────┐
-│                       SwapRouter Proxy                            │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ State: pool reference, token reference                     │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ delegatecall
-┌──────────────────────────────────────────────────────────────────┐
-│  SwapRouter Implementation                                        │
-│  - swapTokensForETH() / swapETHForTokens()                        │
-│  - V2 adds: deadline protection                                   │
-└──────────────────────────────────────────────────────────────────┘
+Access rules:
+  Unregistered contracts  -> deploy/admin users only
+  Registered (own org)    -> deploy/admin via default claims, read/write need grants
+  Registered (other org)  -> always denied (cross-org isolation)
 ```
-
-## Circular Dependency Resolution
-
-The contracts have circular dependencies:
-- Token needs Pool address (for authorized minting)
-- Pool needs Token address (to transfer tokens)
-- Router needs both Pool and Token addresses
-
-**Solution with CREATE3:**
-1. Compute all addresses deterministically BEFORE deployment
-2. Pass addresses during initialization
-3. Deploy in any order - addresses are already known
-
-**Solution with CREATE (nonce-based):**
-1. Predict addresses using deployer + nonce
-2. Deploy proxies in predicted order
-3. Initialize with predicted addresses
 
 ## Troubleshooting
 
 ### "Could not connect to Anvil"
 ```bash
-# Start Anvil
-anvil
+docker-compose up -d   # Starts Anvil with --steps-tracing
 ```
-
-### "No CREATE3 factory configured" / "Factory has no code"
-The scripts now auto-deploy the factory using the dev endpoint. If issues persist:
-```bash
-curl -X POST "http://localhost:8080/api/v1/dev/create3-factory"
-```
-
-### "target address is not preregistered"
-Addresses must be preregistered before deployment. The demo scripts handle this automatically.
 
 ### "missing required deploy claim"
-Ensure the user has deploy permissions in their group.
+The user's group needs the `deploy` claim. The `deploy` claim automatically includes `read` and `write`.
 
-### RBAC blocks upgrade calls
-The `upgradeToAndCall()` function may be blocked by RBAC if the V2 implementation address isn't properly registered. Use `demo-anvil-direct.sh` to verify contract logic works.
+### "User belongs to N organizations - ORG_ID required"
+Multi-org users must specify which org to use:
+```bash
+export ORG_ID="<org-id-with-deploy-permissions>"
+```
+
+### "access denied: missing required deploy claim for contract deployment"
+The user has RPC access but lacks the `deploy` claim. Check group access configuration in the admin UI.
+
+### "target address is not preregistered"
+Only applies to CREATE3 factory deployments. Use `demo-prod-deployment.sh` for regular CREATE deploys that don't require preregistration.
