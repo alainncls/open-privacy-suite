@@ -23,7 +23,8 @@ async function setupUser(request: any) {
 
   // Step 2: Find the user by external ID to get their internal ID
   const usersResp = await request.get(`${API_URL}/api/v1/users`);
-  const users = await usersResp.json();
+  const usersBody = await usersResp.json();
+  const users = Array.isArray(usersBody) ? usersBody : (usersBody?.data ?? []);
   const user = users.find((u: any) => u.external_id === USER_DID);
   if (!user) {
     throw new Error(`User not created after auth: ${USER_DID}`);
@@ -36,7 +37,8 @@ async function setupUser(request: any) {
 
   // Step 4: Get default org and create/find a group with proper permissions
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-  const orgs = await orgsResp.json();
+  const orgsBody = await orgsResp.json();
+  const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
   if (defaultOrg) {
@@ -55,7 +57,9 @@ async function setupUser(request: any) {
     } else {
       // Group might already exist, find it
       const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-      const groups = await groupsResp.json();
+      const groupsBody = await groupsResp.json();
+      const groupsRaw = Array.isArray(groupsBody) ? groupsBody : (groupsBody?.data ?? []);
+      const groups = groupsRaw.map((g: any) => g.group ?? g);
       const existing = groups.find((g: any) => g.slug === 'security-historical-state');
       if (existing) groupId = existing.id;
     }

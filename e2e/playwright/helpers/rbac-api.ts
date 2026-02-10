@@ -255,8 +255,9 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to list organizations: ${response.status()} - ${body}`);
     }
-    const orgs = (await response.json()) as Organization[] | null;
-    return orgs ?? [];
+    const body = await response.json();
+    const items = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    return items as Organization[];
   }
 
   async createOrganization(input: CreateOrgInput): Promise<Organization> {
@@ -303,8 +304,10 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to list groups: ${response.status()} - ${body}`);
     }
-    const groups = (await response.json()) as Group[] | null;
-    return groups ?? [];
+    const body = await response.json();
+    const items = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    // API returns GroupWithAccess[] ({group, access}), unwrap to Group[]
+    return items.map((item: any) => item.group ?? item) as Group[];
   }
 
   async createGroup(orgId: string, input: CreateGroupInput): Promise<Group> {
@@ -394,8 +397,9 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to list users: ${response.status()} - ${body}`);
     }
-    const users = (await response.json()) as User[] | null;
-    return users ?? [];
+    const body = await response.json();
+    const items = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    return items as User[];
   }
 
   async getUser(userId: string): Promise<User | null> {
@@ -485,8 +489,9 @@ export class RBACApiClient {
       const body = await response.text();
       throw new Error(`Failed to list contracts: ${response.status()} - ${body}`);
     }
-    const contracts = (await response.json()) as Contract[] | null;
-    return contracts ?? [];
+    const body = await response.json();
+    const items = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    return items as Contract[];
   }
 
   async createContract(orgId: string, input: CreateContractInput): Promise<Contract> {
