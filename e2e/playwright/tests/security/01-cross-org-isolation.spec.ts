@@ -165,7 +165,8 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Step 2: Find users by external ID to get their internal IDs
     const usersResp = await request.get(`${API_URL}/api/v1/users`);
-    const users = await usersResp.json();
+    const usersBody = await usersResp.json();
+    const users = Array.isArray(usersBody) ? usersBody : (usersBody?.data ?? []);
     const userA = users.find((u: any) => u.external_id === userADID);
     const userB = users.find((u: any) => u.external_id === userBDID);
 

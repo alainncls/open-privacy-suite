@@ -22,7 +22,8 @@ async function setupUser(request: any) {
 
   // Step 2: Find the user by external ID to get their internal ID
   const usersResp = await request.get(`${API_URL}/api/v1/users`);
-  const users = await usersResp.json();
+  const usersBody = await usersResp.json();
+  const users = Array.isArray(usersBody) ? usersBody : (usersBody?.data ?? []);
   const user = users.find((u: any) => u.external_id === USER_DID);
   if (!user) {
     throw new Error(`User not created after auth: ${USER_DID}`);
@@ -35,11 +36,14 @@ async function setupUser(request: any) {
 
   // Step 4: Add user to default org's default group using internal ID
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-  const orgs = await orgsResp.json();
+  const orgsBody = await orgsResp.json();
+  const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
   if (defaultOrg) {
     const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-    const groups = await groupsResp.json();
+    const groupsBody = await groupsResp.json();
+    const groupsRaw = Array.isArray(groupsBody) ? groupsBody : (groupsBody?.data ?? []);
+    const groups = groupsRaw.map((g: any) => g.group ?? g);
     const defaultGroup = groups.find((g: any) => g.slug === 'default');
     if (defaultGroup) {
       await request.post(
@@ -132,7 +136,8 @@ test.describe('SQL Injection Tests', () => {
     test('SQLI-003: Contract address with SQL payload', async ({ request }) => {
       // Get default org
       const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgs = await orgsResp.json();
+      const orgsBody = await orgsResp.json();
+      const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
       const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
       if (defaultOrg) {

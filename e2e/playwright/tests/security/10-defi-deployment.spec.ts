@@ -180,7 +180,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
 
     // Find user and update KYC + membership
     const usersResp = await apiCall(request, 'GET', '/api/v1/users');
-    const users = usersResp.body;
+    const users = Array.isArray(usersResp.body) ? usersResp.body : (usersResp.body?.data ?? []);
     const user = users.find((u: any) => u.external_id === userDID);
     if (!user) {
       throw new Error(`User not created after auth: ${userDID}`);
@@ -523,7 +523,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       otherUserToken = await getJWTToken(request, otherUserDID);
 
       const usersResp = await apiCall(request, 'GET', '/api/v1/users');
-      const users = usersResp.body;
+      const users = Array.isArray(usersResp.body) ? usersResp.body : (usersResp.body?.data ?? []);
       const otherUser = users.find((u: any) => u.external_id === otherUserDID);
       if (!otherUser) {
         throw new Error(`Other user not created: ${otherUserDID}`);

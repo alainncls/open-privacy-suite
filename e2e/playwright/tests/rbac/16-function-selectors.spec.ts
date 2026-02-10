@@ -44,12 +44,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
       kyc: true,
     });
 
-    // Transfer should be allowed
+    // Transfer should be allowed (must pass function_selector when grant has function restrictions)
     const result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
       target_address: contract.address,
+      function_selector: TRANSFER_SELECTOR,
       required_claims: ['read'],
     });
 
@@ -78,12 +79,13 @@ test.describe('RBAC Function Selector Enforcement', () => {
       kyc: true,
     });
 
-    // balanceOf should be allowed
+    // balanceOf should be allowed (must pass function_selector when grant has function restrictions)
     let result = await ctx.rbac.checkAccess({
       user_external_id: did,
       org_slug: org.slug,
       method: 'eth_call',
       target_address: contract.address,
+      function_selector: BALANCE_OF_SELECTOR,
       required_claims: ['read'],
     });
     expect(result.allowed).toBe(true);
