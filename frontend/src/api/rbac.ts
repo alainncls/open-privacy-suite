@@ -28,6 +28,8 @@ import type {
   PreregisterResponse,
   ContractSyncCheckResponse,
   ContractSyncDeleteResponse,
+  PaginatedResponse,
+  GroupWithAccess,
 } from '../types/rbac';
 
 const api = axios.create({
@@ -40,7 +42,8 @@ const api = axios.create({
 export const rbacApi = {
   // Organizations
   orgs: {
-    list: () => api.get<Organization[]>('/orgs'),
+    list: (params?: { limit?: number; offset?: number }) =>
+      api.get<PaginatedResponse<Organization>>('/orgs', { params }),
     get: (orgId: string) => api.get<Organization>(`/orgs/${orgId}`),
     create: (input: CreateOrganizationInput) => api.post<Organization>('/orgs', input),
     update: (orgId: string, input: UpdateOrganizationInput) =>
@@ -50,7 +53,8 @@ export const rbacApi = {
 
   // Groups
   groups: {
-    list: (orgId: string) => api.get<Group[]>(`/orgs/${orgId}/groups`),
+    list: (orgId: string, params?: { limit?: number; offset?: number }) =>
+      api.get<PaginatedResponse<GroupWithAccess>>(`/orgs/${orgId}/groups`, { params }),
     get: (orgId: string, groupId: string) =>
       api.get<Group>(`/orgs/${orgId}/groups/${groupId}`),
     create: (orgId: string, input: CreateGroupInput) =>
@@ -69,7 +73,7 @@ export const rbacApi = {
   // Users
   users: {
     list: (params?: { limit?: number; offset?: number; org_id?: string; search?: string }) =>
-      api.get<User[]>('/users', { params }),
+      api.get<PaginatedResponse<User>>('/users', { params }),
     get: (userId: string) => api.get<User>(`/users/${userId}`),
     update: (userId: string, input: UpdateUserInput) =>
       api.put<User>(`/users/${userId}`, input),
@@ -91,7 +95,8 @@ export const rbacApi = {
 
   // Contracts (first-class resources)
   contracts: {
-    list: (orgId: string) => api.get<Contract[]>(`/orgs/${orgId}/contracts`),
+    list: (orgId: string, params?: { limit?: number; offset?: number }) =>
+      api.get<PaginatedResponse<Contract>>(`/orgs/${orgId}/contracts`, { params }),
     get: (orgId: string, address: string) =>
       api.get<Contract>(`/orgs/${orgId}/contracts/${address}`),
     create: (orgId: string, input: CreateContractInput) =>

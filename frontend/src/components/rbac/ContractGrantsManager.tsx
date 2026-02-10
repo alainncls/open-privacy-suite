@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Contract, ContractGrant, FunctionRule, Group, GroupAccess } from '@/types/rbac';
+import type { Contract, ContractGrant, FunctionRule, Group, GroupAccess, GroupWithAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
@@ -86,7 +86,7 @@ export default function ContractGrantsManager({
 
       const grantsData = grantsRes.data || [];
       const groupsWithAccess = groupsRes.data?.data || [];
-      const groupsData = groupsWithAccess.map(gwa => gwa.group);
+      const groupsData = groupsWithAccess.map((gwa: GroupWithAccess) => gwa.group);
       setGroups(groupsData);
 
       // Build access map from inline data
@@ -99,7 +99,7 @@ export default function ContractGrantsManager({
 
       // Map grants to include group and access info
       const grantsWithGroups: GrantWithGroup[] = grantsData.map(grant => {
-          const group = groupsData.find(g => g.id === grant.group_id);
+          const group = groupsData.find((g: Group) => g.id === grant.group_id);
           const groupAccess = group ? accessMap.get(group.id) : undefined;
           return {
             ...grant,

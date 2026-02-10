@@ -227,6 +227,20 @@ export interface UpdateContractGrantInput {
   functions?: FunctionRule[] | null;
 }
 
+// Paginated response envelope from backend list endpoints
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// Group with inline access settings (returned by paginated groups list)
+export interface GroupWithAccess {
+  group: Group;
+  access: GroupAccess | null;
+}
+
 // All available claims for reference
 export const ALL_CLAIMS: Claim[] = ['read', 'write', 'admin', 'upgrade', 'deploy'];
 
