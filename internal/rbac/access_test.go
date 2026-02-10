@@ -1747,19 +1747,19 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("HasFunctionSelector with empty slice allows all", func(t *testing.T) {
+	t.Run("HasFunctionSelector with empty slice denies all", func(t *testing.T) {
 		addr := "0xaaaa000000000000000000000000000000000001"
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				addr: {
 					Claims:    []Claim{ClaimRead},
-					Functions: []FunctionRule{}, // Empty
+					Functions: []FunctionRule{}, // Explicitly empty = deny all
 				},
 			},
 		}
 
-		if !perms.HasFunctionSelector(addr, "0xa9059cbb") {
-			t.Error("Should allow any selector when Functions is empty")
+		if perms.HasFunctionSelector(addr, "0xa9059cbb") {
+			t.Error("Should deny all selectors when Functions is explicitly empty (non-nil)")
 		}
 	})
 
@@ -2795,10 +2795,11 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 			expectAllowed: true,
 		},
 		{
-			name:          "empty function restrictions slice + empty selector -> allowed",
-			functionRules: []FunctionRule{}, // empty slice also means no restrictions
+			name:          "empty function restrictions slice + empty selector -> denied",
+			functionRules: []FunctionRule{}, // non-nil empty = explicit deny all
 			selector:      "",
-			expectAllowed: true,
+			expectAllowed: false,
+			expectReason:  "function selector required",
 		},
 		{
 			name: "function restrictions + valid matching selector -> allowed",

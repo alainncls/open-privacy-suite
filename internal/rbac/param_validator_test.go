@@ -167,6 +167,18 @@ func TestValidateParamRules(t *testing.T) {
 			wantErr:       true,
 			errContains:   "calldata too short",
 		},
+		{
+			name: "selector mismatch between rule and calldata",
+			rule: &FunctionRule{
+				Selector:   "0x70a08231", // balanceOf selector
+				ParamRules: []ParamRule{{Index: 0, MustBe: "self"}},
+			},
+			calldata:      transferOwn,   // transfer calldata (selector 0xa9059cbb)
+			contractABI:   testABI,
+			userAddresses: []string{ownAddr.Hex()},
+			wantErr:       true,
+			errContains:   "does not match rule selector",
+		},
 	}
 
 	for _, tt := range tests {

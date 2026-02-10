@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -38,6 +39,14 @@ func ValidateParamRules(rule *FunctionRule, calldata []byte, contractABI string,
 	method, err := parsedABI.MethodById(calldata[:4])
 	if err != nil {
 		return fmt.Errorf("failed to find method by selector: %w", err)
+	}
+
+	// Verify calldata selector matches the rule's selector (defense in depth).
+	// Both currently derive from the same calldata, but this guards against future
+	// refactors where req.FunctionSelector might come from a different source.
+	calldataSelector := "0x" + hex.EncodeToString(calldata[:4])
+	if !strings.EqualFold(calldataSelector, rule.Selector) {
+		return fmt.Errorf("calldata selector %s does not match rule selector %s", calldataSelector, rule.Selector)
 	}
 
 	args, err := method.Inputs.Unpack(calldata[4:])

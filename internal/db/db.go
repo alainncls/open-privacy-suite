@@ -17,6 +17,10 @@ import (
 // ErrAddressAlreadyLinked is returned when an ETH address is already linked to a different DID.
 var ErrAddressAlreadyLinked = errors.New("ETH address is already linked to a different identity")
 
+// ErrAddressLinkRevoked is returned when an ETH address link was revoked by an administrator
+// and the user attempts to re-link it. Requires explicit admin action to un-revoke.
+var ErrAddressLinkRevoked = errors.New("ETH address link has been revoked by an administrator")
+
 type DB struct {
 	conn        *sql.DB
 	databaseURL string
@@ -338,8 +342,9 @@ type EthAddressLink struct {
 }
 
 // LinkEthAddress creates a new link between an ETH address and a DID.
-// If the address is already linked to the same DID, it refreshes the signature.
+// If the address is already linked to the same DID (and not revoked), it refreshes the signature.
 // If the address is already linked to a different DID, it returns ErrAddressAlreadyLinked.
+// If the address link was revoked by an admin, it returns ErrAddressLinkRevoked.
 func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, messageHash string) error {
 	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
 	          VALUES ($1, $2, $3, $4)
@@ -347,11 +352,10 @@ func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, mes
 	          signature = excluded.signature,
 	          message_hash = excluded.message_hash,
 	          verified_at = CURRENT_TIMESTAMP,
-	          revoked = false,
-	          revoked_at = NULL,
 	          ens_name = NULL,
 	          ens_resolved_at = NULL
-	          WHERE eth_address_links.did = excluded.did`
+	          WHERE eth_address_links.did = excluded.did
+	          AND eth_address_links.revoked = false`
 
 	result, err := d.conn.ExecContext(ctx, query, did, ethAddress, signature, messageHash)
 	if err != nil {
@@ -363,7 +367,24 @@ func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, mes
 		return fmt.Errorf("failed to check link result: %w", err)
 	}
 	if rowsAffected == 0 {
-		return ErrAddressAlreadyLinked
+		// Distinguish: different DID vs same DID but revoked
+		var existingDID string
+		var revoked bool
+		err := d.conn.QueryRowContext(ctx,
+			`SELECT did, revoked FROM eth_address_links WHERE eth_address = $1`,
+			ethAddress,
+		).Scan(&existingDID, &revoked)
+		if err != nil {
+			return fmt.Errorf("failed to check existing link: %w", err)
+		}
+		if existingDID != did {
+			return ErrAddressAlreadyLinked
+		}
+		if revoked {
+			return ErrAddressLinkRevoked
+		}
+		// Same DID, not revoked — shouldn't happen, but treat as success
+		return nil
 	}
 	return nil
 }

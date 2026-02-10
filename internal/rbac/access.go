@@ -653,9 +653,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		} else {
 			// No function selector available — check if the contract has function restrictions.
 			// If it does, we must deny because we can't verify the call is allowed.
-			// access.Functions being nil/empty means "all functions allowed" (no restrictions).
-			// Only when len(access.Functions) > 0 does it mean there are specific function restrictions.
-			if len(access.Functions) > 0 {
+			// access.Functions == nil means "all functions allowed" (no restrictions).
+			// access.Functions != nil (including empty) means function restrictions exist:
+			//   - non-empty: specific selectors allowed
+			//   - empty []: explicitly no functions allowed (deny all)
+			if access.Functions != nil {
 				return &AccessCheckResult{
 					Allowed: false,
 					Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),

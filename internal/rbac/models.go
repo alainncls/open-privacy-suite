@@ -334,9 +334,13 @@ func (e *EffectivePermissions) HasFunctionSelector(address, selector string) boo
 		return false
 	}
 
-	// If no function restrictions defined, all functions are allowed
-	if len(access.Functions) == 0 {
+	// nil = unrestricted (all functions allowed)
+	if access.Functions == nil {
 		return true
+	}
+	// Non-nil but empty = explicitly no functions allowed (deny all)
+	if len(access.Functions) == 0 {
+		return false
 	}
 
 	// Check if selector is in the allowed list (case-insensitive)
@@ -356,8 +360,11 @@ func (e *EffectivePermissions) GetFunctionRule(address, selector string) *Functi
 	if access == nil {
 		return nil
 	}
+	if access.Functions == nil {
+		return nil // nil = unrestricted, no specific rule
+	}
 	if len(access.Functions) == 0 {
-		return nil // No function restrictions
+		return nil // empty = deny all, no matching rule (HasFunctionSelector handles denial)
 	}
 	for i := range access.Functions {
 		if strings.EqualFold(access.Functions[i].Selector, selector) {

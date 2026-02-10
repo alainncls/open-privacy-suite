@@ -906,6 +906,23 @@ func TestIntersectFunctions(t *testing.T) {
 			want:   []FunctionRule{},
 		},
 		{
+			name: "parent has rules child is empty returns empty (child deny-all narrows)",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: []FunctionRule{},
+			want:  []FunctionRule{},
+		},
+		{
+			name:   "parent is empty child has rules returns empty (parent deny-all narrows)",
+			parent: []FunctionRule{},
+			child: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			want: []FunctionRule{},
+		},
+		{
 			name: "parent has param rules child has none keeps parent rules",
 			parent: []FunctionRule{
 				{Selector: "0xbbbb", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},

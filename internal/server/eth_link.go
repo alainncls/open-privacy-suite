@@ -240,6 +240,10 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 			respondConflict(c, "ETH address is already linked to a different identity")
 			return
 		}
+		if errors.Is(err, db.ErrAddressLinkRevoked) {
+			respondForbidden(c, "ETH address link has been revoked — contact an administrator")
+			return
+		}
 		log.Printf("Error linking address %s for user %s: %v", normalizedAddr, userDID, err)
 		respondInternalError(c, "failed to link address")
 		return

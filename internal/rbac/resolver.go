@@ -533,13 +533,18 @@ func intersectFunctions(a, b []FunctionRule) []FunctionRule {
 		return a
 	}
 
+	// Non-nil but empty = "no functions allowed" — intersection with anything is empty
+	if len(a) == 0 || len(b) == 0 {
+		return []FunctionRule{}
+	}
+
 	// Index b by selector for O(n) lookup
 	bMap := make(map[string]FunctionRule, len(b))
 	for _, rule := range b {
 		bMap[strings.ToLower(rule.Selector)] = rule
 	}
 
-	var result []FunctionRule
+	result := []FunctionRule{}
 	for _, ruleA := range a {
 		if ruleB, ok := bMap[strings.ToLower(ruleA.Selector)]; ok {
 			// Both sides allow this selector - keep the one with param rules

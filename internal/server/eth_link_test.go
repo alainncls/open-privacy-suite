@@ -593,6 +593,32 @@ func TestLinkAddress_SameDIDRefresh(t *testing.T) {
 	assert.Equal(t, address, links[0].EthAddress)
 }
 
+// TestLinkAddress_RevokedCannotRelink verifies that a revoked address link cannot be
+// re-established by the same user. Requires explicit admin action to un-revoke.
+func TestLinkAddress_RevokedCannotRelink(t *testing.T) {
+	srv := setupTestServerForEthLink(t)
+
+	subject := "did:privado:test123"
+	address := "0x742d35cc6634c0532925a3b844bc9e7595f5be5f"
+
+	// Initial link
+	err := srv.db.LinkEthAddress(context.Background(), subject, address, "sig1", "hash1")
+	require.NoError(t, err)
+
+	// Admin revokes the link
+	err = srv.db.RevokeEthAddressLink(context.Background(), subject, address)
+	require.NoError(t, err)
+
+	// Same DID tries to re-link — must fail with revocation error
+	err = srv.db.LinkEthAddress(context.Background(), subject, address, "sig2", "hash2")
+	require.ErrorIs(t, err, db.ErrAddressLinkRevoked)
+
+	// Address must still be revoked (not visible in active links)
+	links, err := srv.db.GetEthAddressesByDID(context.Background(), subject)
+	require.NoError(t, err)
+	assert.Empty(t, links, "revoked address should not appear in active links")
+}
+
 // TestHandleEthLinkVerify_RejectHijack_HTTP tests the 409 response when another user
 // tries to link an address already owned by a different DID via the HTTP endpoint.
 func TestHandleEthLinkVerify_RejectHijack_HTTP(t *testing.T) {
