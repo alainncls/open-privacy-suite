@@ -53,6 +53,7 @@ if result.Claims == nil {
 **Attack**: Place a user in a hierarchy where the child group has empty claims → user inherits the parent's full claim set instead of being restricted.
 **Same pattern applies to `AllowedMethods`** at line 315-319.
 **Fix**: Distinguish `nil` (unset / inherit) from `[]` (explicitly empty / deny-all). If `access.Claims != nil && len(access.Claims) == 0`, set `result.Claims = []Claim{}`.
+**Status**: ✅ FIXED in `e1a66cf` — resolver now distinguishes nil (inherit) from empty slice (deny all) for both `AllowedMethods` and `Claims`.
 
 ### 2.2 Functions `nil` vs Empty Slice Confusion — MEDIUM (NEW)
 
@@ -64,6 +65,7 @@ if len(access.Functions) == 0 {
 ```
 **Issue**: Both `nil` (no restriction set) and `[]FunctionRule{}` (explicitly "no functions allowed") evaluate to `len == 0`, meaning "all functions allowed". An admin who removes all function selectors from a grant (emptying the array) unintentionally grants access to ALL functions.
 **Fix**: Use a pointer or a separate boolean field to distinguish "unrestricted" from "none".
+**Status**: ✅ FIXED in `94065a2` — `HasFunctionSelector`, access checks, and `intersectFunctions` now distinguish nil (unrestricted) from empty `[]` (deny all).
 
 ### 2.3 Default Claims Escape for Unregistered Contracts — MEDIUM (PREVIOUSLY KNOWN, REFINED)
 
@@ -100,6 +102,7 @@ if req.FunctionSelector != "" {
 **Issue**: The entire function-selector and parameter-constraint block is gated on `req.FunctionSelector != ""`. If the function selector is not extracted (calldata < 4 bytes, or `extractTargetAddress` doesn't set it), the check is skipped entirely. The user still has contract-level access — they just bypass function-level restrictions.
 **Attack**: Send `eth_call` with a `data` field of `"0x"` or 1-3 bytes. The selector extraction returns `""`, so function/param checks are skipped. The call still reaches the node, which may execute `fallback()` or `receive()`. If the contract's fallback has sensitive logic, it runs unchecked.
 **Fix**: When `access.Functions` is non-empty (function restrictions exist), require a valid selector. Deny if the selector is empty.
+**Status**: ✅ FIXED in `e1a66cf` — access check now denies when function selector is empty but contract has function-level restrictions.
 
 ### 3.2 Calldata Selector vs Claimed Selector Not Cross-Verified — HIGH (NEW)
 
@@ -107,6 +110,7 @@ if req.FunctionSelector != "" {
 **Issue**: `req.FunctionSelector` is extracted from the `data` field early in the pipeline, and `GetFunctionRule(addr, req.FunctionSelector)` looks up the matching rule. Then `ValidateParamRules` calls `parsedABI.MethodById(calldata[:4])` independently. These two selectors come from the same calldata, so they should match — but there's no explicit verification.
 **Risk assessment**: Currently low because both derive from the same `data` field. But if any code path sets `req.FunctionSelector` from a source other than calldata (e.g., from the method name in a future refactor), the param validator would check the wrong function's constraints.
 **Fix**: Add a guard in `ValidateParamRules`: verify `calldata[:4]` matches `rule.Selector`.
+**Status**: ✅ FIXED in `94065a2` — param validator now cross-verifies calldata[:4] matches rule.Selector before validating parameter constraints.
 
 ### 3.3 `extractCalldata` Silently Returns nil — MEDIUM (NEW)
 
@@ -145,6 +149,7 @@ if isSimpleValueTransfer(data) {
 **Issue**: The comment claims `receive()`/`fallback()` with empty calldata is "minimal risk". This is incorrect: a contract's `receive()` function **can make external calls** to other contracts, including cross-org contracts. By sending ETH with empty calldata, an attacker triggers `receive()` which may call into contracts belonging to other organizations — bypassing the cross-org isolation that runtime tracing is supposed to enforce.
 **Attack**: Deploy a contract with a `receive() external payable` that calls `otherOrgContract.someFunction()`. Send a simple value transfer to it. Tracing is skipped, so the cross-org call is never detected.
 **Fix**: Only skip tracing for transfers to EOAs (check with `eth_getCode`). For transfers to contracts, always trace.
+**Status**: ✅ FIXED in `e1a66cf` — simple value transfers to contracts are now traced; only EOAs (verified via `eth_getCode`) skip tracing.
 
 ### 4.2 Trace Result `nil` Treated as Success — MEDIUM (NEW)
 
@@ -157,6 +162,7 @@ if traceResult == nil {
 **Issue**: If `TraceTransaction` returns `(nil, nil)` — no result, no error — the transaction is allowed. This could happen if the tracer implementation has a bug or edge case where it returns nil for certain inputs.
 **Current risk**: Depends entirely on the tracer implementation. If the tracer is well-tested this is low risk. But it's a fail-open design.
 **Fix**: Fail-closed — if trace was requested but returned nil, deny.
+**Status**: ✅ FIXED in `e1a66cf` — nil trace result now fails closed instead of silently allowing.
 
 ### 4.3 Deployment Race Condition — HIGH (PREVIOUSLY KNOWN)
 
@@ -186,6 +192,7 @@ ON CONFLICT (eth_address) DO UPDATE SET
 
 **Impact with param constraints**: This is amplified by the new `"self"` param rules — hijacking an address now also hijacks all parameter-constrained permissions.
 **Fix**: Reject re-linking if the address is already linked to a different DID (unless the current owner explicitly unlinks it first). The `ON CONFLICT` should `DO NOTHING` or raise an error when `did != excluded.did`.
+**Status**: ✅ FIXED in `e1a66cf` — ON CONFLICT no longer overwrites DID; returns `ErrAddressAlreadyLinked` if address belongs to another identity.
 
 ### 5.2 ON CONFLICT Clears Revocation — Audit Trail Erasure — MEDIUM (NEW)
 
@@ -195,6 +202,7 @@ revoked = false, revoked_at = NULL
 ```
 **Issue**: The same `ON CONFLICT` clause resets `revoked = false`. If an admin revoked an address link (e.g., because it was compromised), the address holder can simply re-link it and the revocation is silently undone. No audit trail of the revocation survives.
 **Fix**: Do not clear revocation flags on re-link. Require explicit admin action to un-revoke.
+**Status**: ✅ FIXED in `94065a2` — ON CONFLICT no longer clears revoked flag; returns `ErrAddressLinkRevoked` for admin-revoked links.
 
 ### 5.3 Historical State Queries — Incomplete Detection — MEDIUM (PREVIOUSLY KNOWN)
 
@@ -265,19 +273,19 @@ func IsBatchRequest(body []byte) bool {
 | 1.2 | JWT secret auto-gen | CRITICAL | Previously known | Auth |
 | 1.3 | Mock signature bypass | HIGH | Previously known | Auth |
 | 1.4 | Localhost admin IP match | HIGH | Previously known | Auth |
-| 2.1 | Empty claims don't narrow hierarchy | HIGH | **NEW** | RBAC |
-| 2.2 | nil vs empty Functions confusion | MEDIUM | **NEW** | RBAC |
+| 2.1 | Empty claims don't narrow hierarchy | HIGH | ✅ FIXED | RBAC |
+| 2.2 | nil vs empty Functions confusion | MEDIUM | ✅ FIXED | RBAC |
 | 2.3 | Default claims for unregistered contracts | MEDIUM | Known, refined | RBAC |
 | 2.4 | Cache invalidation race | MEDIUM | **NEW** | RBAC |
-| 3.1 | Empty selector bypasses function checks | HIGH | **NEW** | Param |
-| 3.2 | Selector cross-verification missing | HIGH | **NEW** | Param |
+| 3.1 | Empty selector bypasses function checks | HIGH | ✅ FIXED | Param |
+| 3.2 | Selector cross-verification missing | HIGH | ✅ FIXED | Param |
 | 3.3 | extractCalldata silent nil | MEDIUM | **NEW** | Param |
 | 3.4 | eth_getStorageAt bypasses param rules | MEDIUM | Known | Param |
-| 4.1 | Simple transfer skips tracing | HIGH | **NEW** | State |
-| 4.2 | Nil trace result = success | MEDIUM | **NEW** | State |
+| 4.1 | Simple transfer skips tracing | HIGH | ✅ FIXED | State |
+| 4.2 | Nil trace result = success | MEDIUM | ✅ FIXED | State |
 | 4.3 | Deployment race condition | HIGH | Previously known | State |
-| 5.1 | ETH address hijacking via re-link | CRITICAL | **NEW** | Data |
-| 5.2 | ON CONFLICT clears revocation | MEDIUM | **NEW** | Data |
+| 5.1 | ETH address hijacking via re-link | CRITICAL | ✅ FIXED | Data |
+| 5.2 | ON CONFLICT clears revocation | MEDIUM | ✅ FIXED | Data |
 | 5.3 | Incomplete historical state detection | MEDIUM | Previously known | Data |
 | 5.4 | eth_getLogs topic filtering | LOW | Previously known | Data |
 | 6.1 | Batch detection fragility | LOW | **NEW** | Infra |
@@ -291,16 +299,16 @@ func IsBatchRequest(body []byte) bool {
 ## Recommended Priority for Fixes
 
 **Immediate (before any shared deployment):**
-1. **5.1** — ETH address hijacking. Change `ON CONFLICT` to reject re-linking to a different DID.
-2. **2.1** — Empty claims hierarchy bypass. Distinguish `nil` from `[]` in resolver intersection.
-3. **3.1** — Empty selector bypass. Require valid selector when function restrictions exist.
-4. **4.1** — Simple transfer tracing skip. Check `eth_getCode` before skipping trace.
+1. ~~**5.1** — ETH address hijacking.~~ ✅ FIXED in `e1a66cf`
+2. ~~**2.1** — Empty claims hierarchy bypass.~~ ✅ FIXED in `e1a66cf`
+3. ~~**3.1** — Empty selector bypass.~~ ✅ FIXED in `e1a66cf`
+4. ~~**4.1** — Simple transfer tracing skip.~~ ✅ FIXED in `e1a66cf`
 
 **Short-term:**
-5. **3.2** — Add selector cross-verification in param validator.
-6. **2.2** — nil vs empty Functions semantic fix.
-7. **5.2** — Don't clear revocation on re-link.
-8. **4.2** — Fail-closed on nil trace result.
+5. ~~**3.2** — Add selector cross-verification in param validator.~~ ✅ FIXED in `94065a2`
+6. ~~**2.2** — nil vs empty Functions semantic fix.~~ ✅ FIXED in `94065a2`
+7. ~~**5.2** — Don't clear revocation on re-link.~~ ✅ FIXED in `94065a2`
+8. ~~**4.2** — Fail-closed on nil trace result.~~ ✅ FIXED in `e1a66cf`
 
 **When moving toward production:**
 9. **1.1, 1.2, 1.3** — Build-time enforcement of mock/secret flags.
