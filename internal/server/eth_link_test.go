@@ -541,3 +541,121 @@ func TestLinkAddress_DatabaseStorage(t *testing.T) {
 	assert.Equal(t, address, links[0].EthAddress)
 	assert.Equal(t, subject, links[0].DID)
 }
+
+// TestLinkAddress_RejectHijack verifies that a different DID cannot steal an address
+// already linked to another DID (security fix for address hijacking via ON CONFLICT).
+func TestLinkAddress_RejectHijack(t *testing.T) {
+	srv := setupTestServerForEthLink(t)
+
+	user1 := "did:privado:user1"
+	user2 := "did:privado:user2"
+	address := "0x742d35cc6634c0532925a3b844bc9e7595f5be5f"
+
+	// User 1 links the address
+	err := srv.db.LinkEthAddress(context.Background(), user1, address, "sig1", "hash1")
+	require.NoError(t, err)
+
+	// User 2 tries to steal the same address — must fail
+	err = srv.db.LinkEthAddress(context.Background(), user2, address, "sig2", "hash2")
+	require.ErrorIs(t, err, db.ErrAddressAlreadyLinked)
+
+	// Address must still belong to user1
+	links, err := srv.db.GetEthAddressesByDID(context.Background(), user1)
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	assert.Equal(t, address, links[0].EthAddress)
+
+	// User2 must have no linked addresses
+	links2, err := srv.db.GetEthAddressesByDID(context.Background(), user2)
+	require.NoError(t, err)
+	assert.Empty(t, links2)
+}
+
+// TestLinkAddress_SameDIDRefresh verifies that the same DID can refresh its own link.
+func TestLinkAddress_SameDIDRefresh(t *testing.T) {
+	srv := setupTestServerForEthLink(t)
+
+	subject := "did:privado:test123"
+	address := "0x742d35cc6634c0532925a3b844bc9e7595f5be5f"
+
+	// Initial link
+	err := srv.db.LinkEthAddress(context.Background(), subject, address, "sig1", "hash1")
+	require.NoError(t, err)
+
+	// Same DID re-links with a new signature — must succeed
+	err = srv.db.LinkEthAddress(context.Background(), subject, address, "sig2", "hash2")
+	require.NoError(t, err)
+
+	// Address still belongs to the same DID
+	links, err := srv.db.GetEthAddressesByDID(context.Background(), subject)
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	assert.Equal(t, address, links[0].EthAddress)
+}
+
+// TestHandleEthLinkVerify_RejectHijack_HTTP tests the 409 response when another user
+// tries to link an address already owned by a different DID via the HTTP endpoint.
+func TestHandleEthLinkVerify_RejectHijack_HTTP(t *testing.T) {
+	srv := setupTestServerForEthLink(t)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/eth/link/challenge", auth.JWTAuthMiddleware(srv.jwtService, srv.db), srv.handleEthLinkChallenge)
+	router.POST("/eth/link/verify", auth.JWTAuthMiddleware(srv.jwtService, srv.db), srv.handleEthLinkVerify)
+
+	user1 := "did:privado:user1"
+	user2 := "did:privado:user2"
+	token1 := createTestJWT(t, srv, user1)
+	token2 := createTestJWT(t, srv, user2)
+	testAddress := "0x742d35Cc6634C0532925a3b844Bc9e7595f5bE5F"
+
+	// User 1 links the address
+	req1 := httptest.NewRequest("POST", "/eth/link/challenge", nil)
+	req1.Header.Set("Authorization", "Bearer "+token1)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	var challenge1 ChallengeResponse
+	err := json.Unmarshal(w1.Body.Bytes(), &challenge1)
+	require.NoError(t, err)
+
+	verifyReq1 := VerifyLinkRequest{
+		Nonce:     challenge1.Nonce,
+		Address:   testAddress,
+		Signature: "0x" + strings.Repeat("a", 130),
+	}
+	body1, _ := json.Marshal(verifyReq1)
+	req2 := httptest.NewRequest("POST", "/eth/link/verify", bytes.NewReader(body1))
+	req2.Header.Set("Authorization", "Bearer "+token1)
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusOK, w2.Code)
+
+	// User 2 tries to link the same address — should get 409 Conflict
+	req3 := httptest.NewRequest("POST", "/eth/link/challenge", nil)
+	req3.Header.Set("Authorization", "Bearer "+token2)
+	w3 := httptest.NewRecorder()
+	router.ServeHTTP(w3, req3)
+	require.Equal(t, http.StatusOK, w3.Code)
+
+	var challenge2 ChallengeResponse
+	err = json.Unmarshal(w3.Body.Bytes(), &challenge2)
+	require.NoError(t, err)
+
+	verifyReq2 := VerifyLinkRequest{
+		Nonce:     challenge2.Nonce,
+		Address:   testAddress,
+		Signature: "0x" + strings.Repeat("b", 130),
+	}
+	body2, _ := json.Marshal(verifyReq2)
+	req4 := httptest.NewRequest("POST", "/eth/link/verify", bytes.NewReader(body2))
+	req4.Header.Set("Authorization", "Bearer "+token2)
+	req4.Header.Set("Content-Type", "application/json")
+	w4 := httptest.NewRecorder()
+	router.ServeHTTP(w4, req4)
+
+	assert.Equal(t, http.StatusConflict, w4.Code)
+	assert.Contains(t, w4.Body.String(), "already linked to a different identity")
+}

@@ -650,6 +650,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					}, nil
 				}
 			}
+		} else {
+			// No function selector available — check if the contract has function restrictions.
+			// If it does, we must deny because we can't verify the call is allowed.
+			// access.Functions being nil/empty means "all functions allowed" (no restrictions).
+			// Only when len(access.Functions) > 0 does it mean there are specific function restrictions.
+			if len(access.Functions) > 0 {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),
+				}, nil
+			}
 		}
 
 		// Validate proxy upgrades for eth_sendTransaction (not deployments)

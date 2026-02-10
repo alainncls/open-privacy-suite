@@ -2763,3 +2763,139 @@ func TestCheckAccessParamConstraints(t *testing.T) {
 		})
 	}
 }
+
+// TestEmptySelectorDeniedWithFunctionRestrictions verifies that an empty function
+// selector is denied when the contract has function-level restrictions defined.
+// This closes a security vulnerability where callers could bypass function-level
+// restrictions by sending calldata shorter than 4 bytes (or no calldata at all).
+func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
+	contractAddr := "0xaaaa000000000000000000000000000000000002"
+	transferSelector := "0xa9059cbb" // transfer(address,uint256)
+
+	tests := []struct {
+		name          string
+		functionRules []FunctionRule // function rules on the contract grant
+		selector      string        // function selector in request
+		expectAllowed bool
+		expectReason  string // substring that must appear in denial reason
+	}{
+		{
+			name: "function restrictions + empty selector -> denied",
+			functionRules: []FunctionRule{
+				{Selector: transferSelector},
+			},
+			selector:      "",
+			expectAllowed: false,
+			expectReason:  "function selector required",
+		},
+		{
+			name:          "no function restrictions + empty selector -> allowed",
+			functionRules: nil, // nil means all functions allowed
+			selector:      "",
+			expectAllowed: true,
+		},
+		{
+			name:          "empty function restrictions slice + empty selector -> allowed",
+			functionRules: []FunctionRule{}, // empty slice also means no restrictions
+			selector:      "",
+			expectAllowed: true,
+		},
+		{
+			name: "function restrictions + valid matching selector -> allowed",
+			functionRules: []FunctionRule{
+				{Selector: transferSelector},
+			},
+			selector:      transferSelector,
+			expectAllowed: true,
+		},
+		{
+			name: "function restrictions + non-matching selector -> denied by selector check",
+			functionRules: []FunctionRule{
+				{Selector: transferSelector},
+			},
+			selector:      "0xdeadbeef",
+			expectAllowed: false,
+			expectReason:  "function 0xdeadbeef not allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newParamConstraintStore()
+
+			// Set up organization
+			org := &Organization{ID: "org-b", Slug: "org-b", Name: "Org B"}
+			store.organizations["org-b"] = org
+
+			// Set up user
+			user := &User{ID: "user-2", ExternalID: "did:test:user2", KYC: true, Banned: false}
+			store.users["did:test:user2"] = user
+
+			// Set up group and membership
+			group := &Group{ID: "group-b", OrgID: "org-b", Slug: "group-b", Name: "Group B"}
+			store.memberships["user-2"] = []*MembershipWithDetails{
+				{Membership: &UserMembership{ID: "mem-2", UserID: "user-2", GroupID: "group-b"}, Group: group},
+			}
+
+			// Set up group access with read+write claims
+			store.groupAccess["group-b"] = &GroupAccess{
+				ID:             "access-b",
+				GroupID:        "group-b",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				Claims:         []Claim{ClaimRead, ClaimWrite},
+			}
+
+			// Set up contract ownership
+			addr := strings.ToLower(contractAddr)
+			store.contractOwners[addr] = "org-b"
+			store.registeredToAnyOrg[addr] = true
+			store.addressOwnedByOrg[addr] = map[string]bool{"org-b": true}
+
+			// Set up cached permissions with function rules from the test case
+			store.cachedPermissions["user-2:org-b"] = &EffectivePermissions{
+				ID:             "perms-2",
+				UserID:         "user-2",
+				OrgID:          "org-b",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				ContractAccess: map[string]ContractAccess{
+					addr: {
+						Claims:    []Claim{ClaimRead, ClaimWrite},
+						Functions: tt.functionRules,
+					},
+				},
+				Claims:     []Claim{ClaimRead, ClaimWrite},
+				ComputedAt: time.Now(),
+				ExpiresAt:  time.Now().Add(1 * time.Hour),
+			}
+
+			controller := NewAccessController(store, 5*time.Minute)
+
+			req := &AccessCheckRequest{
+				UserExternalID:   "did:test:user2",
+				Method:           "eth_call",
+				Params:           []any{map[string]any{"to": contractAddr, "data": "0x"}, "latest"},
+				TargetAddress:    contractAddr,
+				FunctionSelector: tt.selector,
+			}
+
+			result, err := controller.CheckAccess(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				if tt.expectAllowed {
+					t.Errorf("expected access to be allowed, got denied: %s", result.Reason)
+				} else {
+					t.Errorf("expected access to be denied, got allowed")
+				}
+			}
+			if !tt.expectAllowed && tt.expectReason != "" {
+				if !strings.Contains(result.Reason, tt.expectReason) {
+					t.Errorf("expected reason to contain %q, got: %s", tt.expectReason, result.Reason)
+				}
+			}
+		})
+	}
+}

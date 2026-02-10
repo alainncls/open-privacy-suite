@@ -311,17 +311,21 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		}
 
 		if access != nil {
-			// Apply INTERSECTION for allowed methods (restrictive inheritance)
+			// Apply INTERSECTION for allowed methods (restrictive inheritance).
+			// nil means "not set / inherit from parent" (no narrowing).
+			// []string{} means "explicitly empty / deny all" (narrows to empty).
 			if result.AllowedMethods == nil {
 				result.AllowedMethods = access.AllowedMethods
-			} else if len(access.AllowedMethods) > 0 {
+			} else if access.AllowedMethods != nil {
 				result.AllowedMethods = intersectStrings(result.AllowedMethods, access.AllowedMethods)
 			}
 
-			// Apply INTERSECTION for default claims
+			// Apply INTERSECTION for default claims.
+			// nil means "not set / inherit from parent" (no narrowing).
+			// []Claim{} means "explicitly empty / deny all" (narrows to empty).
 			if result.Claims == nil {
 				result.Claims = access.Claims
-			} else if len(access.Claims) > 0 {
+			} else if access.Claims != nil {
 				result.Claims = intersectClaims(result.Claims, access.Claims)
 			}
 

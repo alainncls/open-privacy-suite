@@ -174,6 +174,78 @@ func TestTraceCall_MockServer(t *testing.T) {
 	}
 }
 
+func TestHasCode_Contract(t *testing.T) {
+	// Mock server returns bytecode for a contract address
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result":  "0x6080604052348015600e575f80fd5b50",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tr := NewTracer(server.URL, 5*time.Second)
+	hasCode, err := tr.HasCode(context.Background(), "0x1234567890abcdef1234567890abcdef12345678")
+	if err != nil {
+		t.Fatalf("HasCode failed: %v", err)
+	}
+	if !hasCode {
+		t.Error("expected hasCode=true for contract address")
+	}
+}
+
+func TestHasCode_EOA(t *testing.T) {
+	// Mock server returns "0x" for an EOA (no code)
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result":  "0x",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tr := NewTracer(server.URL, 5*time.Second)
+	hasCode, err := tr.HasCode(context.Background(), "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	if err != nil {
+		t.Fatalf("HasCode failed: %v", err)
+	}
+	if hasCode {
+		t.Error("expected hasCode=false for EOA address")
+	}
+}
+
+func TestHasCode_RPCError(t *testing.T) {
+	// Mock server returns an RPC error
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"error": map[string]any{
+			"code":    -32000,
+			"message": "internal error",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tr := NewTracer(server.URL, 5*time.Second)
+	_, err := tr.HasCode(context.Background(), "0x1234567890abcdef1234567890abcdef12345678")
+	if err == nil {
+		t.Fatal("expected error for RPC error response")
+	}
+}
+
 func TestTraceCall_RPCError(t *testing.T) {
 	// Create a mock server that returns an RPC error
 	mockResponse := map[string]any{

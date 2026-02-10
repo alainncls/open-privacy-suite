@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,9 @@ import (
 
 	"privacy-proxy/internal/db/migrations"
 )
+
+// ErrAddressAlreadyLinked is returned when an ETH address is already linked to a different DID.
+var ErrAddressAlreadyLinked = errors.New("ETH address is already linked to a different identity")
 
 type DB struct {
 	conn        *sql.DB
@@ -333,24 +337,33 @@ type EthAddressLink struct {
 	ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
 }
 
-// LinkEthAddress creates a new link between an ETH address and a DID
-// The ETH address must not already be linked to another DID
+// LinkEthAddress creates a new link between an ETH address and a DID.
+// If the address is already linked to the same DID, it refreshes the signature.
+// If the address is already linked to a different DID, it returns ErrAddressAlreadyLinked.
 func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, messageHash string) error {
 	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
 	          VALUES ($1, $2, $3, $4)
 	          ON CONFLICT (eth_address) DO UPDATE SET
-	          did = excluded.did,
 	          signature = excluded.signature,
 	          message_hash = excluded.message_hash,
 	          verified_at = CURRENT_TIMESTAMP,
 	          revoked = false,
 	          revoked_at = NULL,
 	          ens_name = NULL,
-	          ens_resolved_at = NULL`
+	          ens_resolved_at = NULL
+	          WHERE eth_address_links.did = excluded.did`
 
-	_, err := d.conn.ExecContext(ctx, query, did, ethAddress, signature, messageHash)
+	result, err := d.conn.ExecContext(ctx, query, did, ethAddress, signature, messageHash)
 	if err != nil {
 		return fmt.Errorf("failed to link ETH address: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check link result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrAddressAlreadyLinked
 	}
 	return nil
 }

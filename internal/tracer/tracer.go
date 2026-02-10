@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -212,6 +213,53 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	for i := range frame.Calls {
 		t.extractCallTargets(&frame.Calls[i], result, depth+1)
 	}
+}
+
+// HasCode checks if an address has contract code deployed.
+// Returns true if the address is a contract (has non-empty code), false for EOAs.
+func (t *Tracer) HasCode(ctx context.Context, address string) (bool, error) {
+	reqBody := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getCode",
+		Params:  []any{address, "latest"},
+		ID:      1,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.nodeURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return false, fmt.Errorf("eth_getCode request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rpcResp jsonRPCResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return false, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return false, fmt.Errorf("eth_getCode RPC error: %s", rpcResp.Error.Message)
+	}
+
+	// Parse the result - it's a hex string of the bytecode
+	var code string
+	if err := json.Unmarshal(rpcResp.Result, &code); err != nil {
+		return false, fmt.Errorf("failed to parse code result: %w", err)
+	}
+
+	// EOAs return "0x", contracts return their bytecode
+	code = strings.TrimSpace(code)
+	return code != "" && code != "0x" && code != "0X", nil
 }
 
 // parseHexUint64 parses a hex string (with or without 0x prefix) to uint64.
