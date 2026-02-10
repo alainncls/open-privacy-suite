@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { RBACTestContext } from '../../helpers/test-context.js';
 import { makeRPCRequest } from '../../helpers/auth.js';
+import { selectorsOf, fns } from '../../helpers/rbac-api.js';
 
 // Use the default org since RPC handler uses default org
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
@@ -304,15 +305,15 @@ test.describe('RBAC Permission Revocation - Grant Removal', () => {
     expect(access.functions === null || access.functions === undefined).toBe(true);
 
     // Update grant to restrict to specific functions
-    const allowedFunctions = ['0xa9059cbb', '0x095ea7b3']; // transfer, approve
+    const allowedSelectors = ['0xa9059cbb', '0x095ea7b3']; // transfer, approve
     await ctx.rbac.updateContractGrant(org.id, contract.address, group.id, {
-      functions: allowedFunctions,
+      functions: fns(...allowedSelectors),
     });
 
     // Verify functions are now restricted
     perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     access = perms.contract_access[contract.address.toLowerCase()];
-    expect(access.functions).toEqual(allowedFunctions);
+    expect(selectorsOf(access.functions)).toEqual(allowedSelectors);
   });
 
   test('RPC: removing grant immediately blocks RPC access to contract', async ({ request }) => {

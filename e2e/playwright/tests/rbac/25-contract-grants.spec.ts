@@ -1,5 +1,6 @@
 import { test, expect, APIRequestContext } from '@playwright/test';
 import { RBACTestContext } from '../../helpers/test-context.js';
+import { selectorsOf, fns } from '../../helpers/rbac-api.js';
 
 test.describe('RBAC Contract Grants', () => {
   let ctx: RBACTestContext;
@@ -67,11 +68,11 @@ test.describe('RBAC Contract Grants', () => {
 
     const grant = await ctx.rbac.createContractGrant(org.id, contractAddr, {
       group_id: group.id,
-      
-      functions: ['0x70a08231', '0x18160ddd'], // balanceOf, totalSupply
+
+      functions: fns('0x70a08231', '0x18160ddd'), // balanceOf, totalSupply
     });
 
-    expect(grant.functions).toEqual(['0x70a08231', '0x18160ddd']);
+    expect(selectorsOf(grant.functions)).toEqual(['0x70a08231', '0x18160ddd']);
   });
 
   test('lists grants for contract', async () => {
@@ -119,11 +120,11 @@ test.describe('RBAC Contract Grants', () => {
 
     // Update grant to restrict to specific functions
     const updated = await ctx.rbac.updateContractGrant(org.id, contractAddr, group.id, {
-      functions: ['0x70a08231', '0x18160ddd'], // balanceOf, totalSupply
+      functions: fns('0x70a08231', '0x18160ddd'), // balanceOf, totalSupply
     });
 
     // Grant now only allows specific functions - claims come from GroupAccess
-    expect(updated.functions).toEqual(['0x70a08231', '0x18160ddd']);
+    expect(selectorsOf(updated.functions)).toEqual(['0x70a08231', '0x18160ddd']);
   });
 
   test('updates grant to restrict functions', async () => {
@@ -145,10 +146,10 @@ test.describe('RBAC Contract Grants', () => {
 
     // Update to restrict functions
     const updated = await ctx.rbac.updateContractGrant(org.id, contractAddr, group.id, {
-      functions: ['0x70a08231'], // Only balanceOf
+      functions: fns('0x70a08231'), // Only balanceOf
     });
 
-    expect(updated.functions).toEqual(['0x70a08231']);
+    expect(selectorsOf(updated.functions)).toEqual(['0x70a08231']);
   });
 
   test('deletes grant', async () => {
@@ -575,7 +576,7 @@ test.describe('RBAC Contract Grants', () => {
       // Grant with specific functions only
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group.id,
-        functions: [BALANCE_OF, TOTAL_SUPPLY],
+        functions: fns(BALANCE_OF, TOTAL_SUPPLY),
       });
 
       // Check access to allowed function
@@ -611,7 +612,7 @@ test.describe('RBAC Contract Grants', () => {
       // Grant only balanceOf
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group.id,
-        functions: [BALANCE_OF],
+        functions: fns(BALANCE_OF),
       });
 
       // transfer should be denied
@@ -684,7 +685,7 @@ test.describe('RBAC Contract Grants', () => {
       // Create grant with only balanceOf
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group.id,
-        functions: [BALANCE_OF],
+        functions: fns(BALANCE_OF),
       });
 
       // transfer should be denied initially
@@ -699,7 +700,7 @@ test.describe('RBAC Contract Grants', () => {
 
       // Update grant to include transfer
       await ctx.rbac.updateContractGrant(org.id, contractAddr, group.id, {
-        functions: [BALANCE_OF, TRANSFER],
+        functions: fns(BALANCE_OF, TRANSFER),
       });
 
       // transfer should now be allowed
@@ -743,13 +744,13 @@ test.describe('RBAC Contract Grants', () => {
       // Group1 allows only balanceOf
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group1.id,
-        functions: [BALANCE_OF],
+        functions: fns(BALANCE_OF),
       });
 
       // Group2 allows only transfer
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group2.id,
-        functions: [TRANSFER],
+        functions: fns(TRANSFER),
       });
 
       // User should be able to call BOTH (union of functions across memberships)
@@ -810,7 +811,7 @@ test.describe('RBAC Contract Grants', () => {
       // Restricted group: only balanceOf
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: restrictedGroup.id,
-        functions: [BALANCE_OF],
+        functions: fns(BALANCE_OF),
       });
 
       // Unrestricted group: all functions (null)
@@ -852,7 +853,7 @@ test.describe('RBAC Contract Grants', () => {
       // Only allow transfer function
       await ctx.rbac.createContractGrant(org.id, contractAddr, {
         group_id: group.id,
-        functions: [TRANSFER],
+        functions: fns(TRANSFER),
       });
 
       // transfer on eth_sendTransaction should be allowed

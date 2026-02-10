@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { RBACTestContext } from '../../helpers/test-context.js';
 import { makeRPCRequest } from '../../helpers/auth.js';
+import { selectorsOf, fns } from '../../helpers/rbac-api.js';
 
 // Use the default org since RPC handler uses default org
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
@@ -111,8 +112,8 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
-      
-      functions: [TRANSFER_SELECTOR],
+
+      functions: fns(TRANSFER_SELECTOR),
     });
 
     // Group B allows only approve
@@ -122,8 +123,8 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     });
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
-      
-      functions: [APPROVE_SELECTOR],
+
+      functions: fns(APPROVE_SELECTOR),
     });
 
     // Create user and add to both groups
@@ -136,8 +137,8 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     const perms = await ctx.rbac.getEffectivePermissions(user.id, org.slug);
     const contractAccess = perms.contract_access[contract.address.toLowerCase()];
     expect(contractAccess).toBeDefined();
-    expect(contractAccess.functions).toContain(TRANSFER_SELECTOR);
-    expect(contractAccess.functions).toContain(APPROVE_SELECTOR);
+    expect(selectorsOf(contractAccess.functions)).toContain(TRANSFER_SELECTOR);
+    expect(selectorsOf(contractAccess.functions)).toContain(APPROVE_SELECTOR);
   });
 
   test('user in 2 groups with partial overlap gets full UNION', async ({ request }) => {
@@ -221,7 +222,7 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
 
-      functions: [BALANCE_OF_SELECTOR, TRANSFER_SELECTOR],
+      functions: fns(BALANCE_OF_SELECTOR, TRANSFER_SELECTOR),
     });
 
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
@@ -231,7 +232,7 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupB.id,
 
-      functions: [BALANCE_OF_SELECTOR, APPROVE_SELECTOR],
+      functions: fns(BALANCE_OF_SELECTOR, APPROVE_SELECTOR),
     });
 
     const { user } = await ctx.fixture.createUserWithMembership(request, groupA.id, {
@@ -243,12 +244,13 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     const contractAccess = perms.contract_access[contract.address.toLowerCase()];
 
     // Should have all three functions (union, no duplicates)
-    expect(contractAccess.functions).toContain(BALANCE_OF_SELECTOR);
-    expect(contractAccess.functions).toContain(TRANSFER_SELECTOR);
-    expect(contractAccess.functions).toContain(APPROVE_SELECTOR);
+    const selectors = selectorsOf(contractAccess.functions);
+    expect(selectors).toContain(BALANCE_OF_SELECTOR);
+    expect(selectors).toContain(TRANSFER_SELECTOR);
+    expect(selectors).toContain(APPROVE_SELECTOR);
     // Should not have allowance or transferFrom
-    expect(contractAccess.functions).not.toContain(ALLOWANCE_SELECTOR);
-    expect(contractAccess.functions).not.toContain(TRANSFER_FROM_SELECTOR);
+    expect(selectors).not.toContain(ALLOWANCE_SELECTOR);
+    expect(selectors).not.toContain(TRANSFER_FROM_SELECTOR);
   });
 
   test('one group with functions=null gives access to all functions', async ({ request }) => {
@@ -268,7 +270,7 @@ test.describe('RBAC Overlapping Contract Grants', () => {
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: groupA.id,
 
-      functions: [BALANCE_OF_SELECTOR], // Only balanceOf
+      functions: fns(BALANCE_OF_SELECTOR), // Only balanceOf
     });
 
     await ctx.rbac.setGroupAccess(org.id, groupB.id, {
