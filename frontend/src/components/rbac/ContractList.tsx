@@ -25,13 +25,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
+import Pagination from '@/components/ui/Pagination';
 import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield } from 'lucide-react';
+
+const PAGE_SIZE = 25;
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
   const orgId = selectedOrg?.id || '';
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Contract | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null);
@@ -48,16 +53,19 @@ export default function ContractList() {
 
   useEffect(() => {
     if (orgId) {
-      loadContracts();
+      loadContracts(0);
     }
   }, [orgId]);
 
-  const loadContracts = async () => {
+  const loadContracts = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const response = await rbacApi.contracts.list(orgId);
-      setContracts(response.data || []);
+      const response = await rbacApi.contracts.list(orgId, { limit: PAGE_SIZE, offset: newOffset });
+      const page = response.data;
+      setContracts(page.data || []);
+      setTotal(page.total);
+      setOffset(newOffset);
     } catch (error) {
       console.error('Failed to load contracts:', error);
       setContracts([]);
@@ -287,6 +295,8 @@ export default function ContractList() {
           </TableBody>
         </Table>
       )}
+
+      <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadContracts(newOffset)} />
 
       {/* Create Contract Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

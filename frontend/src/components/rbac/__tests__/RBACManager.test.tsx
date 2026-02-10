@@ -112,18 +112,19 @@ describe('RBACManager Integration Tests', () => {
     vi.clearAllMocks();
 
     // Setup default handlers for all RBAC endpoints
+    const groupsWithAccess = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
     server.use(
       http.get('/api/v1/orgs', () => {
-        return HttpResponse.json(mockOrganizations);
+        return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
       }),
       http.get('/api/v1/orgs/:orgId/groups', () => {
-        return HttpResponse.json(mockGroupHierarchy);
+        return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
       }),
       http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
         return HttpResponse.json(mockGroupAccess);
       }),
       http.get('/api/v1/users', () => {
-        return HttpResponse.json(mockUsers);
+        return HttpResponse.json({ data: mockUsers, total: mockUsers.length, limit: 25, offset: 0 });
       }),
       http.get('/api/v1/users/:userId', () => {
         return HttpResponse.json(mockUser);
@@ -138,7 +139,7 @@ describe('RBACManager Integration Tests', () => {
         return HttpResponse.json(mockFullEffectivePermissions);
       }),
       http.get('/api/v1/orgs/:orgId/contracts', () => {
-        return HttpResponse.json(mockContracts);
+        return HttpResponse.json({ data: mockContracts, total: mockContracts.length, limit: 25, offset: 0 });
       })
     );
   });
@@ -340,7 +341,7 @@ describe('RBACManager Integration Tests', () => {
       // Return empty orgs list
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [], total: 0, limit: 1000, offset: 0 });
         })
       );
 
@@ -369,9 +370,10 @@ describe('RBACManager Integration Tests', () => {
       server.use(
         http.get('/api/v1/orgs', () => {
           if (orgsCreated > 0) {
-            return HttpResponse.json([...mockOrganizations, newOrg]);
+            const all = [...mockOrganizations, newOrg];
+            return HttpResponse.json({ data: all, total: all.length, limit: 1000, offset: 0 });
           }
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         }),
         http.post('/api/v1/orgs', async ({ request }) => {
           orgsCreated++;
@@ -568,9 +570,10 @@ describe('RBACManager Integration Tests', () => {
         http.get('/api/v1/orgs', () => {
           if (deleteCalled) {
             // Return list without the first org
-            return HttpResponse.json(mockOrganizations.slice(1));
+            const remaining = mockOrganizations.slice(1);
+            return HttpResponse.json({ data: remaining, total: remaining.length, limit: 1000, offset: 0 });
           }
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         }),
         http.delete('/api/v1/orgs/:orgId', () => {
           deleteCalled = true;
@@ -608,9 +611,11 @@ describe('RBACManager Integration Tests', () => {
         http.get('/api/v1/orgs/:orgId/groups', () => {
           if (deleteCalled) {
             // Return list without the first group
-            return HttpResponse.json(mockGroupHierarchy.slice(1));
+            const remaining = mockGroupHierarchy.slice(1).map(g => ({ group: g, access: mockGroupAccess }));
+            return HttpResponse.json({ data: remaining, total: remaining.length, limit: 50, offset: 0 });
           }
-          return HttpResponse.json(mockGroupHierarchy);
+          const all = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
+          return HttpResponse.json({ data: all, total: all.length, limit: 50, offset: 0 });
         }),
         http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
           deleteCalled = true;
@@ -718,6 +723,10 @@ describe('RBACManager Integration Tests', () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
           return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        }),
+        // Ensure orgs handler still returns paginated format for org selector
+        http.get('/api/v1/orgs', () => {
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         })
       );
 
@@ -921,7 +930,7 @@ describe('RBACManager Integration Tests', () => {
 
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(specificOrgs);
+          return HttpResponse.json({ data: specificOrgs, total: specificOrgs.length, limit: 1000, offset: 0 });
         })
       );
 
@@ -943,9 +952,10 @@ describe('RBACManager Integration Tests', () => {
         createMockGroup({ id: 'test-group-2', name: 'Specific Group 2', slug: 'specific-group-2' }),
       ];
 
+      const specificGroupsWithAccess = specificGroups.map(g => ({ group: g, access: null }));
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json(specificGroups);
+          return HttpResponse.json({ data: specificGroupsWithAccess, total: specificGroupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
 
@@ -977,7 +987,7 @@ describe('RBACManager Integration Tests', () => {
 
       server.use(
         http.get('/api/v1/users', () => {
-          return HttpResponse.json(specificUsers);
+          return HttpResponse.json({ data: specificUsers, total: specificUsers.length, limit: 25, offset: 0 });
         })
       );
 
@@ -1008,7 +1018,7 @@ describe('RBACManager Integration Tests', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/contracts', () => {
-          return HttpResponse.json(specificContracts);
+          return HttpResponse.json({ data: specificContracts, total: specificContracts.length, limit: 25, offset: 0 });
         })
       );
 

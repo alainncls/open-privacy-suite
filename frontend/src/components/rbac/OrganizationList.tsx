@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import { rbacApi } from '@/api/rbac';
+import Pagination from '@/components/ui/Pagination';
 import {
   Building2,
   Plus,
@@ -28,22 +29,34 @@ import {
   Loader2,
 } from 'lucide-react';
 
+const PAGE_SIZE = 25;
+
 export default function OrganizationList() {
-  const { organizations, refreshOrgs, setSelectedOrg } = useOrgContext();
+  const { refreshOrgs, setSelectedOrg } = useOrgContext();
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Organization | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Organization | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
 
   useEffect(() => {
-    loadOrganizations();
+    loadPage(0);
   }, []);
 
-  const loadOrganizations = async () => {
+  const loadPage = async (newOffset: number = offset) => {
     try {
       setLoading(true);
-      await refreshOrgs();
+      const response = await rbacApi.orgs.list({ limit: PAGE_SIZE, offset: newOffset });
+      const page = response.data;
+      setOrganizations(page.data || []);
+      setTotal(page.total);
+      setOffset(newOffset);
+    } catch (error) {
+      console.error('Failed to load organizations:', error);
+      setOrganizations([]);
     } finally {
       setLoading(false);
     }
@@ -52,7 +65,8 @@ export default function OrganizationList() {
   const handleSave = async () => {
     setShowForm(false);
     setEditing(null);
-    await loadOrganizations();
+    await loadPage();
+    await refreshOrgs(); // Update the dropdown
   };
 
   const handleDeleteConfirm = async () => {
@@ -60,7 +74,8 @@ export default function OrganizationList() {
     try {
       await rbacApi.orgs.delete(deleteTarget.id);
       setDeleteTarget(null);
-      await loadOrganizations();
+      await loadPage();
+      await refreshOrgs(); // Update the dropdown
     } catch (error) {
       console.error('Failed to delete organization:', error);
       setDeleteTarget(null);
@@ -174,6 +189,8 @@ export default function OrganizationList() {
           </TableBody>
         </Table>
       )}
+
+      <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadPage(newOffset)} />
 
       {/* Create Organization Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

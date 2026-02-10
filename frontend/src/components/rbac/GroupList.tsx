@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
-import type { Group, GroupAccess } from '@/types/rbac';
+import type { Group, GroupWithAccess } from '@/types/rbac';
 import GroupForm from './GroupForm';
 import GroupAccessForm from './GroupAccessForm';
 import { useOrgContext } from './RBACManager';
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
+import Pagination from '@/components/ui/Pagination';
 import {
   FolderTree,
   FolderOpen,
@@ -25,15 +26,15 @@ import {
   Shield,
 } from 'lucide-react';
 
-interface GroupWithAccess extends Group {
-  access?: GroupAccess | null;
-}
+const PAGE_SIZE = 50;
 
 export default function GroupList() {
   const { selectedOrg } = useOrgContext();
   const orgId = selectedOrg?.id || '';
   const [groups, setGroups] = useState<GroupWithAccess[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
   const [editingAccess, setEditingAccess] = useState<Group | null>(null);
@@ -43,42 +44,22 @@ export default function GroupList() {
 
   useEffect(() => {
     if (orgId) {
-      loadGroups();
+      loadGroups(0);
     }
   }, [orgId]);
 
-  const loadGroups = async () => {
+  const loadGroups = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-
-      const groupsResponse = await rbacApi.groups.list(orgId);
-      const groupsList = groupsResponse.data || [];
-
-      // Load access settings for each group
-      const groupsWithAccess = await Promise.all(
-        groupsList.map(async group => {
-          try {
-            const accessResponse = await rbacApi.groups.getAccess(
-              orgId,
-              group.id
-            );
-            return {
-              ...group,
-              access: accessResponse.data,
-            };
-          } catch {
-            return {
-              ...group,
-              access: null,
-            };
-          }
-        })
-      );
-
+      const response = await rbacApi.groups.list(orgId, { limit: PAGE_SIZE, offset: newOffset });
+      const page = response.data;
+      const groupsList = page.data || [];
       // Sort by path for hierarchical display
-      groupsWithAccess.sort((a, b) => a.path.localeCompare(b.path));
-      setGroups(groupsWithAccess);
+      groupsList.sort((a, b) => a.group.path.localeCompare(b.group.path));
+      setGroups(groupsList);
+      setTotal(page.total);
+      setOffset(newOffset);
     } catch (error) {
       console.error('Failed to load groups:', error);
       setGroups([]);
@@ -119,19 +100,19 @@ export default function GroupList() {
   };
 
   // Group groups by parent for tree rendering
-  const getRootGroups = () => groups.filter(g => !g.parent_id);
+  const getRootGroups = () => groups.filter(g => !g.group.parent_id);
 
   const getChildGroups = (parentId: string) =>
-    groups.filter(g => g.parent_id === parentId);
+    groups.filter(g => g.group.parent_id === parentId);
 
-  const renderGroup = (group: GroupWithAccess, level: number = 0) => {
-    const children = getChildGroups(group.id);
+  const renderGroup = (gwa: GroupWithAccess, level: number = 0) => {
+    const children = getChildGroups(gwa.group.id);
     const hasMethods =
-      group.access &&
-      (group.access.allowed_methods?.length || 0) > 0;
+      gwa.access &&
+      (gwa.access.allowed_methods?.length || 0) > 0;
 
     return (
-      <div key={group.id} className="animate-fade-in">
+      <div key={gwa.group.id} className="animate-fade-in">
         <div
           className={`flex items-center gap-3 p-3 rounded-lg bg-[#F1F5F9] hover:bg-[#F5F3FF] transition-colors ${
             level > 0 ? 'ml-6 border-l-2 border-[#E2E8F0]' : ''
@@ -148,11 +129,11 @@ export default function GroupList() {
             )}
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-medium truncate text-[#0F0F0F]">{group.name}</span>
+                <span className="font-medium truncate text-[#0F0F0F]">{gwa.group.name}</span>
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
-                  {group.slug}
+                  {gwa.group.slug}
                 </Badge>
-                {group.is_org_admin && (
+                {gwa.group.is_org_admin && (
                   <Badge className="bg-[#FEF9C3] text-[#854D0E] border-[#FDE047] gap-1 flex-shrink-0">
                     <Shield className="w-3 h-3" />
                     Org Admin
@@ -160,12 +141,12 @@ export default function GroupList() {
                 )}
               </div>
               <div className="flex items-center gap-1 text-xs text-[#94A3B8] mt-0.5">
-                <span className="font-mono">{group.path}</span>
+                <span className="font-mono">{gwa.group.path}</span>
                 {hasMethods && (
                   <>
                     <ChevronRight className="w-3 h-3" />
                     <span>
-                      {group.access?.allowed_methods?.length || 0} methods
+                      {gwa.access?.allowed_methods?.length || 0} methods
                     </span>
                   </>
                 )}
@@ -177,7 +158,7 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => handleAddChild(group)}
+              onClick={() => handleAddChild(gwa.group)}
               title="Add child group"
             >
               <Plus className="w-4 h-4" />
@@ -185,7 +166,7 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setEditingAccess(group)}
+              onClick={() => setEditingAccess(gwa.group)}
               title="Edit access settings"
             >
               <Settings className="w-4 h-4" />
@@ -193,7 +174,7 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setEditing(group)}
+              onClick={() => setEditing(gwa.group)}
               title="Edit group"
             >
               <Pencil className="w-4 h-4" />
@@ -201,7 +182,7 @@ export default function GroupList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setDeleteTarget(group)}
+              onClick={() => setDeleteTarget(gwa.group)}
               className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
               title="Delete group"
             >
@@ -212,7 +193,7 @@ export default function GroupList() {
 
         {children.length > 0 && (
           <div className="mt-2 space-y-2">
-            {children.map(child => renderGroup(child as GroupWithAccess, level + 1))}
+            {children.map(child => renderGroup(child, level + 1))}
           </div>
         )}
       </div>
@@ -257,6 +238,8 @@ export default function GroupList() {
         <div className="space-y-2">{getRootGroups().map(g => renderGroup(g))}</div>
       )}
 
+      <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadGroups(newOffset)} />
+
       {/* Create Group Dialog */}
       <Dialog
         open={showForm}
@@ -275,7 +258,7 @@ export default function GroupList() {
           </DialogHeader>
           <GroupForm
             orgId={orgId}
-            groups={groups}
+            groups={groups.map(g => g.group)}
             parentId={parentForNew?.id}
             onClose={() => {
               setShowForm(false);
@@ -296,7 +279,7 @@ export default function GroupList() {
             <GroupForm
               key={editing.id}
               orgId={orgId}
-              groups={groups}
+              groups={groups.map(g => g.group)}
               group={editing}
               onClose={() => setEditing(null)}
               onSave={handleSave}

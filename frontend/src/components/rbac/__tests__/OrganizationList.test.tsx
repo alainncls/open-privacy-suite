@@ -64,7 +64,9 @@ function MockOrgProvider({
   const refreshOrgs = async () => {
     // Fetch from mock API
     const response = await fetch('/api/v1/orgs');
-    const data = await response.json();
+    const json = await response.json();
+    // Handle both paginated and plain array formats
+    const data = json.data || json;
     setOrganizations(data);
   };
 
@@ -113,7 +115,7 @@ describe('OrganizationList', () => {
       server.use(
         http.get('/api/v1/orgs', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -127,7 +129,7 @@ describe('OrganizationList', () => {
     it('shows "Organizations" heading and description text', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -142,7 +144,7 @@ describe('OrganizationList', () => {
     it('shows empty state message when no organizations', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
 
@@ -158,7 +160,7 @@ describe('OrganizationList', () => {
     it('displays table with correct headers (Name, Slug, Created, Actions)', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -178,7 +180,7 @@ describe('OrganizationList', () => {
     it('shows organization name in table row', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -192,7 +194,7 @@ describe('OrganizationList', () => {
     it('shows organization slug in table row', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -206,7 +208,7 @@ describe('OrganizationList', () => {
     it('formats created date correctly', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -222,7 +224,7 @@ describe('OrganizationList', () => {
     it('shows correct number of rows matching API response', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -242,7 +244,7 @@ describe('OrganizationList', () => {
     it('Create button opens dialog with OrganizationForm', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -272,7 +274,7 @@ describe('OrganizationList', () => {
     it('Edit button opens form populated with org data', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -301,7 +303,7 @@ describe('OrganizationList', () => {
     it('Delete button shows confirmation dialog', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -324,7 +326,7 @@ describe('OrganizationList', () => {
     it('Delete cancelled does not remove organization', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
@@ -358,9 +360,10 @@ describe('OrganizationList', () => {
         http.get('/api/v1/orgs', () => {
           if (deleteCalled) {
             // Return list without the deleted org
-            return HttpResponse.json(mockOrganizations.slice(1));
+            const remaining = mockOrganizations.slice(1);
+            return HttpResponse.json({ data: remaining, total: remaining.length, limit: 25, offset: 0 });
           }
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         }),
         http.delete('/api/v1/orgs/:orgId', () => {
           deleteCalled = true;
@@ -392,7 +395,7 @@ describe('OrganizationList', () => {
     it('Delete failure shows error dialog', async () => {
       server.use(
         http.get('/api/v1/orgs', () => {
-          return HttpResponse.json(mockOrganizations);
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         }),
         http.delete('/api/v1/orgs/:orgId', () => {
           return HttpResponse.json(

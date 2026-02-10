@@ -343,6 +343,17 @@ func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address stri
 	return nil
 }
 
+// Paginated list stubs
+func (m *MockStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
+	return nil, 0, nil
+}
+func (m *MockStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) {
+	return nil, 0, nil
+}
+func (m *MockStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) {
+	return nil, 0, nil
+}
+
 // Tests
 
 func TestResolverRestrictiveInheritance(t *testing.T) {
@@ -405,6 +416,184 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimRead {
 		t.Errorf("Expected only read claim, got %v", perms.Claims)
 	}
+}
+
+func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
+	t.Run("empty claims narrows parent claims to zero", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+		}
+		// Explicitly empty claims — should narrow parent to zero
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.Claims) != 0 {
+			t.Errorf("Expected 0 claims (empty narrows parent), got %d: %v", len(perms.Claims), perms.Claims)
+		}
+	})
+
+	t.Run("nil claims inherits parent claims", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+		}
+		// nil claims — should inherit parent's claims
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         nil,
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.Claims) != 2 {
+			t.Errorf("Expected 2 claims (inherited from parent), got %d: %v", len(perms.Claims), perms.Claims)
+		}
+		if !HasClaim(perms.Claims, ClaimRead) {
+			t.Error("Expected read claim to be inherited")
+		}
+		if !HasClaim(perms.Claims, ClaimWrite) {
+			t.Error("Expected write claim to be inherited")
+		}
+	})
+
+	t.Run("empty allowed methods narrows parent methods to zero", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call", "eth_getBalance"},
+			Claims:         []Claim{ClaimRead},
+		}
+		// Explicitly empty methods — should narrow parent to zero
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{},
+			Claims:         []Claim{ClaimRead},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.AllowedMethods) != 0 {
+			t.Errorf("Expected 0 methods (empty narrows parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
+		}
+	})
+
+	t.Run("nil allowed methods inherits parent methods", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call", "eth_getBalance"},
+			Claims:         []Claim{ClaimRead},
+		}
+		// nil methods — should inherit parent's methods
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: nil,
+			Claims:         []Claim{ClaimRead},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.AllowedMethods) != 2 {
+			t.Errorf("Expected 2 methods (inherited from parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
+		}
+		if !perms.HasMethod("eth_call") {
+			t.Error("Expected eth_call to be inherited")
+		}
+		if !perms.HasMethod("eth_getBalance") {
+			t.Error("Expected eth_getBalance to be inherited")
+		}
+	})
 }
 
 func TestResolverMultipleMemberships(t *testing.T) {

@@ -233,6 +233,102 @@ func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, of
 	return users, nil
 }
 
+func (d *DB) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*rbac.User, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	users, err := d.ListUsers(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, limit, offset int) ([]*rbac.User, int, error) {
+	var args []any
+	argNum := 1
+
+	// Build shared FROM/JOIN/WHERE clauses
+	from := `FROM users u`
+	var conditions []string
+
+	if filter.OrgID != "" {
+		from += `
+		    JOIN user_memberships m ON u.id = m.user_id
+		    JOIN groups g ON m.group_id = g.id`
+		conditions = append(conditions, fmt.Sprintf("g.org_id = $%d", argNum))
+		args = append(args, filter.OrgID)
+		argNum++
+	}
+
+	if filter.Search != "" {
+		from += `
+		    LEFT JOIN eth_address_links e ON u.external_id = e.did`
+		searchPattern := "%" + filter.Search + "%"
+		conditions = append(conditions, fmt.Sprintf("(u.external_id ILIKE $%d OR e.eth_address ILIKE $%d)", argNum, argNum+1))
+		args = append(args, searchPattern, searchPattern)
+		argNum += 2
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			where += " AND " + conditions[i]
+		}
+	}
+
+	// Count query
+	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT u.id) %s%s", from, where)
+	var total int
+	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	// Data query
+	dataQuery := fmt.Sprintf("SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.created_at, u.updated_at %s%s ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", from, where, argNum, argNum+1)
+	dataArgs := append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*rbac.User
+	for rows.Next() {
+		user := &rbac.User{}
+		var note sql.NullString
+		var metadata []byte
+
+		if err := rows.Scan(
+			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+			&user.CreatedAt, &user.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		}
+
+		if note.Valid {
+			user.Note = note.String
+		}
+
+		if err := json.Unmarshal(metadata, &user.Metadata); err != nil {
+			return nil, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		users = append(users, user)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating users: %w", err)
+	}
+
+	return users, total, nil
+}
+
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
 	return err

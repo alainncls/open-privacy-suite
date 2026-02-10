@@ -85,29 +85,28 @@ export default function ContractGrantsManager({
       ]);
 
       const grantsData = grantsRes.data || [];
-      const groupsData = groupsRes.data || [];
+      const groupsWithAccess = groupsRes.data?.data || [];
+      const groupsData = groupsWithAccess.map(gwa => gwa.group);
       setGroups(groupsData);
 
-      // Load group access for each group to show their claims
-      const grantsWithGroups: GrantWithGroup[] = await Promise.all(
-        grantsData.map(async grant => {
+      // Build access map from inline data
+      const accessMap = new Map<string, GroupAccess>();
+      for (const gwa of groupsWithAccess) {
+        if (gwa.access) {
+          accessMap.set(gwa.group.id, gwa.access);
+        }
+      }
+
+      // Map grants to include group and access info
+      const grantsWithGroups: GrantWithGroup[] = grantsData.map(grant => {
           const group = groupsData.find(g => g.id === grant.group_id);
-          let groupAccess: GroupAccess | undefined;
-          if (group) {
-            try {
-              const accessRes = await rbacApi.groups.getAccess(orgId, group.id);
-              groupAccess = accessRes.data;
-            } catch {
-              // Group may not have access configured
-            }
-          }
+          const groupAccess = group ? accessMap.get(group.id) : undefined;
           return {
             ...grant,
             group,
             groupAccess,
           };
-        })
-      );
+        });
 
       setGrants(grantsWithGroups);
     } catch (error) {

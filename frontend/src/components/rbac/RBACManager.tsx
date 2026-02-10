@@ -78,8 +78,8 @@ export default function RBACManager() {
   const loadOrganizations = async () => {
     try {
       setLoading(true);
-      const response = await rbacApi.orgs.list();
-      const orgs = response.data || [];
+      const response = await rbacApi.orgs.list({ limit: 1000 });
+      const orgs = response.data?.data || [];
       setOrganizations(orgs);
 
       // Check for org in URL params

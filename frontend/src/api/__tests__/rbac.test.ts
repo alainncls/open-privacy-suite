@@ -17,19 +17,19 @@ describe('RBAC API', () => {
     describe('list', () => {
       it('should list all organizations', async () => {
         const response = await rbacApi.orgs.list();
-        expect(response.data).toHaveLength(1);
-        expect(response.data[0].slug).toBe(mockOrganization.slug);
+        expect(response.data.data).toHaveLength(1);
+        expect(response.data.data[0].slug).toBe(mockOrganization.slug);
       });
 
       it('should handle empty list', async () => {
         server.use(
           http.get('/api/v1/orgs', () => {
-            return HttpResponse.json([]);
+            return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
           })
         );
 
         const response = await rbacApi.orgs.list();
-        expect(response.data).toHaveLength(0);
+        expect(response.data.data).toHaveLength(0);
       });
     });
 
@@ -79,8 +79,8 @@ describe('RBAC API', () => {
     describe('list', () => {
       it('should list groups for organization', async () => {
         const response = await rbacApi.groups.list('org-1');
-        expect(response.data).toHaveLength(1);
-        expect(response.data[0].name).toBe(mockGroup.name);
+        expect(response.data.data).toHaveLength(1);
+        expect(response.data.data[0].group.name).toBe(mockGroup.name);
       });
     });
 
@@ -147,8 +147,8 @@ describe('RBAC API', () => {
     describe('list', () => {
       it('should list users with pagination', async () => {
         const response = await rbacApi.users.list({ limit: 10, offset: 0 });
-        expect(response.data).toHaveLength(1);
-        expect(response.data[0].external_id).toBe(mockUser.external_id);
+        expect(response.data.data).toHaveLength(1);
+        expect(response.data.data[0].external_id).toBe(mockUser.external_id);
       });
     });
 
@@ -220,8 +220,8 @@ describe('RBAC API', () => {
     describe('list', () => {
       it('should list contracts for organization', async () => {
         const response = await rbacApi.contracts.list('org-1');
-        expect(response.data).toHaveLength(1);
-        expect(response.data[0].address).toBe(mockContract.address);
+        expect(response.data.data).toHaveLength(1);
+        expect(response.data.data[0].address).toBe(mockContract.address);
       });
     });
 

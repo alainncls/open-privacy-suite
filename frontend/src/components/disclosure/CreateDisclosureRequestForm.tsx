@@ -55,7 +55,7 @@ export function CreateDisclosureRequestForm({
       try {
         setUsersLoading(true);
         const response = await rbacApi.users.list({ limit: 100 });
-        setUsers(response.data || []);
+        setUsers(response.data?.data || []);
         setUsersError(null);
       } catch (err) {
         setUsersError('Failed to load users');

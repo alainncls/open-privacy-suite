@@ -18,12 +18,13 @@ import (
 
 func (s *Server) listContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
-	contracts, err := s.db.ListContracts(c.Request.Context(), orgID)
+	limit, offset := parsePaginationParams(c, 50)
+	contracts, total, err := s.db.ListContractsPaginated(c.Request.Context(), orgID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, contracts)
+	c.JSON(http.StatusOK, gin.H{"data": contracts, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) createContract(c *gin.Context) {
@@ -497,15 +498,27 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		Functions *[]rbac.FunctionRule `json:"functions"`
+		Functions json.RawMessage `json:"functions"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// input.Functions is nil when the key is absent from the JSON body (no change).
+	// input.Functions is "null" when explicitly set to null (all functions allowed).
+	// input.Functions is "[...]" when set to an array of function rules.
 	if input.Functions != nil {
-		grant.Functions = *input.Functions
+		if string(input.Functions) == "null" {
+			grant.Functions = nil
+		} else {
+			var rules []rbac.FunctionRule
+			if err := json.Unmarshal(input.Functions, &rules); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid functions format"})
+				return
+			}
+			grant.Functions = rules
+		}
 	}
 
 	if err := s.db.UpdateContractGrant(c.Request.Context(), grant); err != nil {

@@ -59,6 +59,7 @@ func (m *MockCrossOrgStore) GetUser(ctx context.Context, id string) (*User, erro
 
 func (m *MockCrossOrgStore) UpdateUser(ctx context.Context, user *User) error { return nil }
 func (m *MockCrossOrgStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
+func (m *MockCrossOrgStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) { return nil, 0, nil }
 func (m *MockCrossOrgStore) DeleteUser(ctx context.Context, id string) error { return nil }
 func (m *MockCrossOrgStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
@@ -81,6 +82,7 @@ func (m *MockCrossOrgStore) GetOrganizationBySlug(ctx context.Context, slug stri
 func (m *MockCrossOrgStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockCrossOrgStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockCrossOrgStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
+func (m *MockCrossOrgStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) { return nil, 0, nil }
 func (m *MockCrossOrgStore) DeleteOrganization(ctx context.Context, id string) error { return nil }
 
 // Membership operations
@@ -143,6 +145,7 @@ func (m *MockCrossOrgStore) GetGroupBySlug(ctx context.Context, orgID, slug stri
 func (m *MockCrossOrgStore) UpdateGroup(ctx context.Context, group *Group) error { return nil }
 func (m *MockCrossOrgStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
 func (m *MockCrossOrgStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
+func (m *MockCrossOrgStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) { return nil, 0, nil }
 func (m *MockCrossOrgStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) { return nil, nil }
 func (m *MockCrossOrgStore) DeleteGroup(ctx context.Context, id string) error { return nil }
 func (m *MockCrossOrgStore) GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) {

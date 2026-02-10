@@ -129,6 +129,87 @@ func (d *DB) ListGroupsPaginated(ctx context.Context, orgID string, limit, offse
 	return groups, total, nil
 }
 
+func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*rbac.GroupWithAccess, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, orgID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count groups: %w", err)
+	}
+
+	query := `SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at,
+	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.created_at, ga.updated_at
+	          FROM groups g
+	          LEFT JOIN group_access ga ON g.id = ga.group_id
+	          WHERE g.org_id = $1
+	          ORDER BY g.path
+	          LIMIT $2 OFFSET $3`
+
+	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list groups with access: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*rbac.GroupWithAccess
+	for rows.Next() {
+		group := &rbac.Group{}
+		var parentID, description sql.NullString
+
+		// Access fields (nullable from LEFT JOIN)
+		var accessID sql.NullString
+		var allowedMethods, claimsStr pq.StringArray
+		var rateLimitRPS, rateLimitDaily sql.NullInt32
+		var accessCreatedAt, accessUpdatedAt sql.NullTime
+
+		if err := rows.Scan(
+			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &accessCreatedAt, &accessUpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
+		}
+
+		if parentID.Valid {
+			group.ParentID = &parentID.String
+		}
+		if description.Valid {
+			group.Description = description.String
+		}
+
+		gwa := &rbac.GroupWithAccess{Group: group}
+
+		if accessID.Valid {
+			access := &rbac.GroupAccess{
+				ID:             accessID.String,
+				GroupID:        group.ID,
+				AllowedMethods: []string(allowedMethods),
+				CreatedAt:      accessCreatedAt.Time,
+				UpdatedAt:      accessUpdatedAt.Time,
+			}
+			access.Claims = make([]rbac.Claim, len(claimsStr))
+			for i, c := range claimsStr {
+				access.Claims[i] = rbac.Claim(c)
+			}
+			if rateLimitRPS.Valid {
+				val := int(rateLimitRPS.Int32)
+				access.RateLimitRPS = &val
+			}
+			if rateLimitDaily.Valid {
+				val := int(rateLimitDaily.Int32)
+				access.RateLimitDaily = &val
+			}
+			gwa.Access = access
+		}
+
+		results = append(results, gwa)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating groups with access: %w", err)
+	}
+
+	return results, total, nil
+}
+
 func (d *DB) ListGroupsByParent(ctx context.Context, parentID string) ([]*rbac.Group, error) {
 	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
 	          FROM groups WHERE parent_id = $1 ORDER BY name`

@@ -74,7 +74,7 @@ describe('GroupList', () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: mockGroupAccess }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -95,7 +95,7 @@ describe('GroupList', () => {
     it('shows empty state when no groups', async () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [], total: 0, limit: 50, offset: 0 });
         })
       );
 
@@ -119,19 +119,16 @@ describe('GroupList', () => {
 
   describe('Hierarchy Display', () => {
     beforeEach(() => {
-      // Setup hierarchical groups
+      // Setup hierarchical groups with inline access data
+      const groupsWithAccess = mockGroupHierarchy.map(g => {
+        let access = mockGroupAccess;
+        if (g.id === 'group-engineering') access = mockGroupAccessFull;
+        else if (g.id === 'group-operations') access = mockGroupAccessReadOnly;
+        return { group: g, access };
+      });
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json(mockGroupHierarchy);
-        }),
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', ({ params }) => {
-          if (params.groupId === 'group-engineering') {
-            return HttpResponse.json(mockGroupAccessFull);
-          }
-          if (params.groupId === 'group-operations') {
-            return HttpResponse.json(mockGroupAccessReadOnly);
-          }
-          return HttpResponse.json(mockGroupAccess);
+          return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
     });
@@ -322,12 +319,10 @@ describe('GroupList', () => {
 
   describe('Org Admin Badge', () => {
     it('shows Org Admin badge for admin groups', async () => {
+      const groupsWithAccess = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json(mockGroupHierarchy);
-        }),
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json(mockGroupAccess);
+          return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
 
@@ -342,15 +337,13 @@ describe('GroupList', () => {
 
   describe('Methods Count Display', () => {
     it('shows methods count when group has allowed methods', async () => {
+      const accessWith3Methods = {
+        ...mockGroupAccess,
+        allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
+      };
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
-        }),
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json({
-            ...mockGroupAccess,
-            allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
-          });
+          return HttpResponse.json({ data: [{ group: mockGroup, access: accessWith3Methods }], total: 1, limit: 50, offset: 0 });
         })
       );
 

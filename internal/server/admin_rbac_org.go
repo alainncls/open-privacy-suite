@@ -2,6 +2,7 @@ package server
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -29,15 +30,33 @@ func validateSlug(slug string) string {
 	return ""
 }
 
+// parsePaginationParams extracts limit and offset from query parameters with defaults.
+func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int) {
+	limit = defaultLimit
+	offset = 0
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	return
+}
+
 // Organization handlers
 
 func (s *Server) listOrganizations(c *gin.Context) {
-	orgs, err := s.db.ListOrganizations(c.Request.Context())
+	limit, offset := parsePaginationParams(c, 50)
+	orgs, total, err := s.db.ListOrganizationsPaginated(c.Request.Context(), limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
 	}
-	respondOK(c, orgs)
+	respondOK(c, gin.H{"data": orgs, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) createOrganization(c *gin.Context) {

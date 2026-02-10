@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { AlertDialog } from '@/components/ui/ConfirmDialog';
+import Pagination from '@/components/ui/Pagination';
 import {
   Users,
   User as UserIcon,
@@ -34,12 +35,16 @@ import {
   Search,
 } from 'lucide-react';
 
+const PAGE_SIZE = 25;
+
 export default function UserList() {
   const { userId } = useParams();
   const navigate = useNavigate();
   const { selectedOrg } = useOrgContext();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUpdateError, setShowUpdateError] = useState(false);
 
@@ -55,31 +60,40 @@ export default function UserList() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const loadUsers = useCallback(async () => {
+  const loadUsers = useCallback(async (newOffset?: number) => {
     if (!selectedOrg) return;
+    const currentOffset = newOffset ?? offset;
 
     try {
       setLoading(true);
-      const params: { org_id?: string; search?: string } = {
+      const params: { limit: number; offset: number; org_id?: string; search?: string } = {
+        limit: PAGE_SIZE,
+        offset: currentOffset,
         org_id: selectedOrg.id,
       };
       if (debouncedSearch) {
         params.search = debouncedSearch;
       }
       const response = await rbacApi.users.list(params);
-      setUsers(response.data || []);
+      const page = response.data;
+      setUsers(page.data || []);
+      setTotal(page.total);
+      if (newOffset !== undefined) {
+        setOffset(newOffset);
+      }
     } catch (error) {
       console.error('Failed to load users:', error);
       setUsers([]);
     } finally {
       setLoading(false);
     }
-  }, [selectedOrg, debouncedSearch]);
+  }, [selectedOrg, debouncedSearch, offset]);
 
-  // Load users when org or search changes
+  // Load users when org or search changes - reset to first page
   useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
+    setOffset(0);
+    loadUsers(0);
+  }, [selectedOrg, debouncedSearch]);
 
   // Open modal if userId is in URL
   useEffect(() => {
@@ -287,6 +301,8 @@ export default function UserList() {
           </TableBody>
         </Table>
       )}
+
+      <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadUsers(newOffset)} />
 
       {/* User Detail Dialog */}
       <Dialog
