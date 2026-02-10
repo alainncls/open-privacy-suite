@@ -53,6 +53,11 @@ func (rt *RuntimeTracer) IsTieredEnabled() bool {
 	return rt.tiered
 }
 
+// HasCode checks if an address has contract code deployed (is a contract vs EOA).
+func (rt *RuntimeTracer) HasCode(ctx context.Context, address string) (bool, error) {
+	return rt.tracer.HasCode(ctx, address)
+}
+
 // TraceTransaction traces a transaction and returns all call targets.
 // It uses the cache to avoid redundant traces for identical transactions.
 func (rt *RuntimeTracer) TraceTransaction(

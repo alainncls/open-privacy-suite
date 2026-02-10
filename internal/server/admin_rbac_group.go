@@ -14,12 +14,13 @@ import (
 
 func (s *Server) listGroups(c *gin.Context) {
 	orgID := c.Param("org_id")
-	groups, err := s.db.ListGroups(c.Request.Context(), orgID)
+	limit, offset := parsePaginationParams(c, 50)
+	groups, total, err := s.db.ListGroupsWithAccessPaginated(c.Request.Context(), orgID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, groups)
+	c.JSON(http.StatusOK, gin.H{"data": groups, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) createGroup(c *gin.Context) {

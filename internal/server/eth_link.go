@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/db"
 	"strings"
 	"sync"
 	"time"
@@ -234,6 +236,14 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 
 	// Store the link in the database
 	if err := s.db.LinkEthAddress(c.Request.Context(), userDID, normalizedAddr, req.Signature, messageHash); err != nil {
+		if errors.Is(err, db.ErrAddressAlreadyLinked) {
+			respondConflict(c, "ETH address is already linked to a different identity")
+			return
+		}
+		if errors.Is(err, db.ErrAddressLinkRevoked) {
+			respondForbidden(c, "ETH address link has been revoked — contact an administrator")
+			return
+		}
 		log.Printf("Error linking address %s for user %s: %v", normalizedAddr, userDID, err)
 		respondInternalError(c, "failed to link address")
 		return

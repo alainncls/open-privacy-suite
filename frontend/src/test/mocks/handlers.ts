@@ -317,7 +317,7 @@ export const handlers = [
 
   // Organization endpoints
   http.get('/api/v1/orgs', () => {
-    return HttpResponse.json([mockOrganization]);
+    return HttpResponse.json({ data: [mockOrganization], total: 1, limit: 25, offset: 0 });
   }),
 
   http.get('/api/v1/orgs/:orgId', ({ params }) => {
@@ -353,7 +353,7 @@ export const handlers = [
 
   // Group endpoints
   http.get('/api/v1/orgs/:orgId/groups', () => {
-    return HttpResponse.json([mockGroup]);
+    return HttpResponse.json({ data: [{ group: mockGroup, access: mockGroupAccess }], total: 1, limit: 50, offset: 0 });
   }),
 
   http.get('/api/v1/orgs/:orgId/groups/:groupId', ({ params }) => {
@@ -407,7 +407,7 @@ export const handlers = [
 
   // User endpoints
   http.get('/api/v1/users', () => {
-    return HttpResponse.json([mockUser]);
+    return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
   }),
 
   http.get('/api/v1/users/:userId', ({ params }) => {
@@ -457,7 +457,7 @@ export const handlers = [
 
   // Contract endpoints
   http.get('/api/v1/orgs/:orgId/contracts', () => {
-    return HttpResponse.json([mockContract]);
+    return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
   }),
 
   http.post('/api/v1/orgs/:orgId/contracts', async ({ request, params }) => {

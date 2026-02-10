@@ -147,11 +147,15 @@ func TestOrganizationAPI(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []map[string]any
+		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.GreaterOrEqual(t, len(response), 1)
+		data := response["data"].([]any)
+		assert.GreaterOrEqual(t, len(data), 1)
+		assert.NotNil(t, response["total"])
+		assert.NotNil(t, response["limit"])
+		assert.NotNil(t, response["offset"])
 	})
 
 	t.Run("GetOrganization", func(t *testing.T) {
@@ -214,6 +218,50 @@ func TestOrganizationAPI(t *testing.T) {
 		server.router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("ListOrganizationsPaginated", func(t *testing.T) {
+		// Create a second org for pagination testing
+		body := map[string]any{
+			"slug":     "test-org-2",
+			"name":     "Test Organization 2",
+			"settings": map[string]any{},
+		}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/orgs", bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		// Test with limit=1
+		req = httptest.NewRequest(http.MethodGet, "/api/orgs?limit=1&offset=0", nil)
+		w = httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		data := response["data"].([]any)
+		assert.Equal(t, 1, len(data))
+		assert.GreaterOrEqual(t, int(response["total"].(float64)), 2)
+		assert.Equal(t, float64(1), response["limit"])
+		assert.Equal(t, float64(0), response["offset"])
+
+		// Test with offset=1
+		req = httptest.NewRequest(http.MethodGet, "/api/orgs?limit=1&offset=1", nil)
+		w = httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		data = response["data"].([]any)
+		assert.Equal(t, 1, len(data))
+		assert.Equal(t, float64(1), response["offset"])
 	})
 }
 
@@ -280,11 +328,15 @@ func TestGroupAPI(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []map[string]any
+		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.GreaterOrEqual(t, len(response), 2)
+		data := response["data"].([]any)
+		assert.GreaterOrEqual(t, len(data), 2)
+		assert.NotNil(t, response["total"])
+		assert.NotNil(t, response["limit"])
+		assert.NotNil(t, response["offset"])
 	})
 
 	t.Run("GetGroup", func(t *testing.T) {
@@ -639,7 +691,7 @@ func TestMembershipAPI(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var response []map[string]any
+		var response []any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 

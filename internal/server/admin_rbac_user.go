@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -14,25 +13,14 @@ import (
 // User handlers
 
 func (s *Server) listRBACUsers(c *gin.Context) {
-	limit := 100
-	offset := 0
-	// Parse query params if provided
-	if l := c.Query("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	if o := c.Query("offset"); o != "" {
-		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
+	limit, offset := parsePaginationParams(c, 50)
 
 	// Parse filter params
 	orgID := c.Query("org_id")
 	search := c.Query("search")
 
 	var users []*rbac.User
+	var total int
 	var err error
 
 	// Use filtered query if any filters are provided
@@ -41,16 +29,16 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 			OrgID:  orgID,
 			Search: search,
 		}
-		users, err = s.db.ListUsersFiltered(c.Request.Context(), filter, limit, offset)
+		users, total, err = s.db.ListUsersFilteredPaginated(c.Request.Context(), filter, limit, offset)
 	} else {
-		users, err = s.db.ListUsers(c.Request.Context(), limit, offset)
+		users, total, err = s.db.ListUsersPaginated(c.Request.Context(), limit, offset)
 	}
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, users)
+	c.JSON(http.StatusOK, gin.H{"data": users, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) getRBACUser(c *gin.Context) {

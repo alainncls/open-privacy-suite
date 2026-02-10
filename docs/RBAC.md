@@ -97,6 +97,7 @@ The RBAC system uses a **group-centric claim model**:
 │     → Read/write users: need ContractGrant to contract           │
 │     → Claims come from the group's GroupAccess.claims            │
 │     → ContractGrant.Functions can restrict which functions       │
+│     → FunctionRule.ParamRules can constrain parameters          │
 │                                                                  │
 │  4. DEPLOYER AUTO-GRANT:                                         │
 │     → User who deployed a contract gets read+write automatically │
@@ -176,7 +177,17 @@ type ContractGrant struct {
     ContractID string   // The contract being accessed
     GroupID    string   // The group being granted access
     // Claims field is DEPRECATED - claims come from GroupAccess.claims
-    Functions  []string // Optional: restrict to specific function selectors (nil = all)
+    Functions  []FunctionRule // Optional: restrict to specific functions (nil = all)
+}
+
+type FunctionRule struct {
+    Selector   string      // e.g. "0x70a08231"
+    ParamRules []ParamRule // Optional parameter constraints
+}
+
+type ParamRule struct {
+    Index  int    // ABI parameter position (0-based)
+    MustBe string // Constraint type: "self" = must match caller's linked ETH address
 }
 ```
 
@@ -199,14 +210,15 @@ Each group can have associated permissions:
 
 ### Contract Function Selectors
 
-For fine-grained contract access control, you can restrict which functions users can call on specific contracts using the `contract_functions` field.
+For fine-grained contract access control, you can restrict which functions users can call on specific contracts using `ContractGrant.Functions`.
 
 **Format:**
 ```json
 {
-  "contract_functions": {
-    "0xcontract_address": ["0xselector1", "0xselector2"]
-  }
+  "functions": [
+    { "selector": "0x70a08231" },
+    { "selector": "0xa9059cbb", "param_rules": [{ "index": 0, "must_be": "self" }] }
+  ]
 }
 ```
 
@@ -217,10 +229,42 @@ For fine-grained contract access control, you can restrict which functions users
 - `0x23b872dd` - `transferFrom(address,address,uint256)`
 
 **Behavior:**
-- If `contract_functions` is empty/null, all functions are allowed on allowed contracts
-- If a contract has an entry, only the listed selectors are allowed
+- If `functions` is empty/null, all functions are allowed on allowed contracts
+- If a contract has function rules, only the listed selectors are allowed
 - Selectors are case-insensitive
 - Inheritance uses INTERSECTION (child restrictions narrow parent)
+
+### Parameter Constraints
+
+Function rules can include `param_rules` to enforce constraints on individual call parameters. This requires:
+1. **ETH address linking** — The user's DID must be linked to their ETH address via EIP-191 signature verification
+2. **Contract ABI** — The contract must have its ABI uploaded so calldata can be decoded
+
+**Constraint types:**
+- `"self"` — The parameter (must be an `address` type) must match one of the caller's linked ETH addresses
+
+**Example:** Allow `balanceOf` only for the caller's own address:
+```json
+{
+  "selector": "0x70a08231",
+  "param_rules": [{ "index": 0, "must_be": "self" }]
+}
+```
+
+**Enforcement flow:**
+1. User calls `balanceOf(0xAddr)` through proxy
+2. Proxy matches selector `0x70a08231`, finds param rule `{index: 0, must_be: "self"}`
+3. Looks up user's linked ETH addresses from DID
+4. Decodes calldata using uploaded ABI to extract param at index 0
+5. Compares: extracted address != linked address → deny
+
+**Applies to:** `eth_sendTransaction`, `eth_call`, `eth_estimateGas`, and `eth_sendRawTransaction`
+
+**Known limitations:**
+- `eth_getStorageAt` can bypass param constraints by reading raw storage slots
+- Internal calls within contracts cannot be intercepted
+- `eth_getLogs` topic filtering is not addressed (future work)
+- Users without a linked ETH address cannot access functions with param constraints
 
 ### Restrictive Inheritance
 
@@ -929,6 +973,7 @@ This prevents accidental or malicious use of a different factory that could brea
 │       │ 2. Contract ownership by user's org     │                               │
 │       │ 3. User has required claims             │                               │
 │       │ 4. Function selector allowed            │                               │
+│       │ 5. Parameter constraints validated      │                               │
 │       └─────────────────────────────────────────┘                               │
 │                          │                                                       │
 │                    ┌─────┴─────┐                                                │

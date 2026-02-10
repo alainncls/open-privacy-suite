@@ -67,6 +67,7 @@ func (m *MockOrgContextStore) CreateOrganization(ctx context.Context, org *Organ
 func (m *MockOrgContextStore) GetOrganizationBySlug(ctx context.Context, slug string) (*Organization, error) { return nil, nil }
 func (m *MockOrgContextStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
 func (m *MockOrgContextStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
+func (m *MockOrgContextStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) DeleteOrganization(ctx context.Context, id string) error { return nil }
 func (m *MockOrgContextStore) CreateGroup(ctx context.Context, group *Group) error { return nil }
 func (m *MockOrgContextStore) GetGroup(ctx context.Context, id string) (*Group, error) { return nil, nil }
@@ -96,6 +97,7 @@ func (m *MockOrgContextStore) GetUser(ctx context.Context, id string) (*User, er
 func (m *MockOrgContextStore) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) { return nil, nil }
 func (m *MockOrgContextStore) UpdateUser(ctx context.Context, user *User) error { return nil }
 func (m *MockOrgContextStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
+func (m *MockOrgContextStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) DeleteUser(ctx context.Context, id string) error { return nil }
 func (m *MockOrgContextStore) CreateMembership(ctx context.Context, m2 *UserMembership) error { return nil }
 func (m *MockOrgContextStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) { return nil, nil }
@@ -116,6 +118,7 @@ func (m *MockOrgContextStore) GetPreregisteredAddressByAddress(ctx context.Conte
 func (m *MockOrgContextStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) { return nil, nil }
 func (m *MockOrgContextStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error { return nil }
 func (m *MockOrgContextStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
+func (m *MockOrgContextStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) { return nil, nil }
@@ -137,6 +140,7 @@ func (m *MockOrgContextStore) UpdateManagedProxyImpl(ctx context.Context, addres
 func (m *MockOrgContextStore) IsManagedProxy(ctx context.Context, address string) (bool, error) { return false, nil }
 func (m *MockOrgContextStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
 func (m *MockOrgContextStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
+func (m *MockOrgContextStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) { return nil, nil }
 
 // Shared infrastructure stubs
 func (m *MockOrgContextStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }

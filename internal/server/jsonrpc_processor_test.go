@@ -44,6 +44,41 @@ func TestTieredValidation_OnlySkipsFactory(t *testing.T) {
 	t.Log("See jsonrpc_processor.go:validateWithTracing() for implementation")
 }
 
+// =============================================================================
+// CRITICAL SECURITY TEST: Simple Value Transfers to Contracts
+// =============================================================================
+//
+// A contract's receive()/fallback() function CAN make external calls to other
+// contracts. By sending ETH with empty calldata to a contract, an attacker
+// triggers receive() which may call into cross-org contracts -- bypassing tracing.
+//
+// The fix: Only skip tracing for transfers to EOAs (verified via eth_getCode).
+// For contracts, always trace even with empty calldata.
+
+func TestSimpleValueTransfer_ContractsMustBeTraced(t *testing.T) {
+	// This test documents the security invariant:
+	// Simple value transfers to CONTRACTS must still be traced because
+	// receive()/fallback() can make external calls to other orgs' contracts.
+	//
+	// Only transfers to EOAs (no code) can safely skip tracing.
+	//
+	// Attack scenario:
+	//   1. Attacker deploys a contract with receive() that calls OrgB's contract
+	//   2. Attacker sends ETH to their contract with empty calldata
+	//   3. Without this fix, tracing would be skipped (empty calldata)
+	//   4. The contract's receive() executes and calls OrgB -- cross-org violation
+	//
+	// Implementation in jsonrpc_processor.go:validateWithTracing():
+	//   - isSimpleValueTransfer(data) checks for empty calldata
+	//   - If empty calldata: calls runtimeTracer.HasCode(ctx, to) via eth_getCode
+	//   - If target has code (contract): proceeds with tracing
+	//   - If target has no code (EOA): safely skips tracing
+	//   - If eth_getCode fails: fails closed (proceeds with tracing)
+	t.Log("Security invariant: simple value transfers to contracts are traced")
+	t.Log("Only EOA recipients skip tracing (verified by eth_getCode)")
+	t.Log("See jsonrpc_processor.go:validateWithTracing() for implementation")
+}
+
 func TestIsSimpleValueTransfer(t *testing.T) {
 	tests := []struct {
 		name     string

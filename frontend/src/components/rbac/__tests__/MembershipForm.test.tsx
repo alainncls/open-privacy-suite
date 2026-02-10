@@ -96,9 +96,9 @@ describe('MembershipForm', () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', ({ params }) => {
           if (params.orgId === 'org-1') {
-            return HttpResponse.json([mockGroup, mockChildGroup]);
+            return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
           }
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [], total: 0, limit: 50, offset: 0 });
         })
       );
 
@@ -132,7 +132,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -158,7 +158,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -199,7 +199,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', () => {
           return HttpResponse.json(
@@ -244,7 +244,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', async ({ request, params }) => {
           capturedRequest = (await request.json()) as { group_id: string };
@@ -296,7 +296,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup, mockChildGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', async ({ request }) => {
           const body = (await request.json()) as { group_id: string };
@@ -347,7 +347,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', () => {
           return HttpResponse.json({
@@ -395,7 +395,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', () => {
           return HttpResponse.json(
@@ -437,7 +437,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', () => {
           return HttpResponse.error();
@@ -478,7 +478,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup, mockChildGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
 
@@ -506,7 +506,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup, mockChildGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
 
@@ -539,7 +539,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [], total: 0, limit: 50, offset: 0 });
         })
       );
 
@@ -571,7 +571,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', async () => {
           // Delay to see the loading state
@@ -625,7 +625,7 @@ describe('MembershipForm', () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -647,7 +647,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
         http.post('/api/v1/users/:userId/memberships', async () => {
           await new Promise(resolve => setTimeout(resolve, 200));
@@ -697,7 +697,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -740,7 +740,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup, mockChildGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
 
@@ -786,7 +786,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
 
@@ -825,7 +825,7 @@ describe('MembershipForm', () => {
 
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', () => {
-          return HttpResponse.json([mockGroup, mockChildGroup]);
+          return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
 
@@ -865,9 +865,11 @@ describe('MembershipForm', () => {
       server.use(
         http.get('/api/v1/orgs/:orgId/groups', ({ params }) => {
           if (params.orgId === 'org-1') {
-            return HttpResponse.json(org1Groups);
+            const data = org1Groups.map(g => ({ group: g, access: null }));
+            return HttpResponse.json({ data, total: data.length, limit: 50, offset: 0 });
           }
-          return HttpResponse.json(org2Groups);
+          const data = org2Groups.map(g => ({ group: g, access: null }));
+          return HttpResponse.json({ data, total: data.length, limit: 50, offset: 0 });
         })
       );
 

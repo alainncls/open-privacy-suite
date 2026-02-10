@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Contract, ContractGrant, Group, GroupAccess } from '@/types/rbac';
+import type { Contract, ContractGrant, FunctionRule, Group, GroupAccess, GroupWithAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
@@ -85,29 +85,28 @@ export default function ContractGrantsManager({
       ]);
 
       const grantsData = grantsRes.data || [];
-      const groupsData = groupsRes.data || [];
+      const groupsWithAccess = groupsRes.data?.data || [];
+      const groupsData = groupsWithAccess.map((gwa: GroupWithAccess) => gwa.group);
       setGroups(groupsData);
 
-      // Load group access for each group to show their claims
-      const grantsWithGroups: GrantWithGroup[] = await Promise.all(
-        grantsData.map(async grant => {
-          const group = groupsData.find(g => g.id === grant.group_id);
-          let groupAccess: GroupAccess | undefined;
-          if (group) {
-            try {
-              const accessRes = await rbacApi.groups.getAccess(orgId, group.id);
-              groupAccess = accessRes.data;
-            } catch {
-              // Group may not have access configured
-            }
-          }
+      // Build access map from inline data
+      const accessMap = new Map<string, GroupAccess>();
+      for (const gwa of groupsWithAccess) {
+        if (gwa.access) {
+          accessMap.set(gwa.group.id, gwa.access);
+        }
+      }
+
+      // Map grants to include group and access info
+      const grantsWithGroups: GrantWithGroup[] = grantsData.map(grant => {
+          const group = groupsData.find((g: Group) => g.id === grant.group_id);
+          const groupAccess = group ? accessMap.get(group.id) : undefined;
           return {
             ...grant,
             group,
             groupAccess,
           };
-        })
-      );
+        });
 
       setGrants(grantsWithGroups);
     } catch (error) {
@@ -321,16 +320,24 @@ export default function ContractGrantsManager({
                     <span className="text-xs text-[#22C55E] font-medium">All functions allowed</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {grant.functions.map(selector => {
-                        const name = getSelectorName(selector);
+                      {grant.functions.map((rule: FunctionRule) => {
+                        const name = getSelectorName(rule.selector);
+                        const paramLabels = (rule.param_rules || []).map(
+                          pr => `param[${pr.index}]=${pr.must_be}`
+                        );
                         return (
                           <span
-                            key={selector}
+                            key={rule.selector}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]"
-                            title={name ? `${name}()` : selector}
+                            title={name ? `${name}()` : rule.selector}
                           >
                             <Code2 className="w-3 h-3" />
-                            {name || selector}
+                            {name || rule.selector}
+                            {paramLabels.length > 0 && (
+                              <span className="ml-1 text-[10px] text-[#B45309]">
+                                [{paramLabels.join(', ')}]
+                              </span>
+                            )}
                           </span>
                         );
                       })}

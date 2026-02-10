@@ -125,7 +125,11 @@ func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 
 	var functions any
 	if grant.Functions != nil {
-		functions = pq.Array(grant.Functions)
+		b, err := json.Marshal(grant.Functions)
+		if err != nil {
+			return fmt.Errorf("failed to marshal functions: %w", err)
+		}
+		functions = b
 	}
 
 	return t.tx.QueryRowContext(ctx, query,
@@ -358,11 +362,11 @@ func scanContractRow(row *sql.Row) (*rbac.Contract, error) {
 // Helper to scan a contract grant row (shared between DB and Tx)
 func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var functions pq.StringArray
+	var functionsJSON []byte
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&functions, &grant.CreatedAt, &grant.UpdatedAt,
+		&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -371,8 +375,10 @@ func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 		return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 	}
 
-	if len(functions) > 0 {
-		grant.Functions = functions
+	if len(functionsJSON) > 0 {
+		if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+		}
 	}
 
 	return grant, nil

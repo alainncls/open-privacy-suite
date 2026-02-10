@@ -610,6 +610,59 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.TargetAddress),
 				}, nil
 			}
+
+			// Check parameter constraints
+			rule := perms.GetFunctionRule(addr, req.FunctionSelector)
+			if rule != nil && len(rule.ParamRules) > 0 {
+				// Get calldata - from request field or extract from params
+				calldata := req.Calldata
+				if calldata == nil {
+					calldata = extractCalldata(req.Method, req.Params)
+				}
+				if calldata == nil {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  "calldata required for parameter constraint validation",
+					}, nil
+				}
+
+				// Get user's linked ETH addresses
+				userAddresses, err := c.store.GetLinkedEthAddresses(ctx, req.UserExternalID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get linked ETH addresses: %w", err)
+				}
+
+				// Get contract ABI
+				contract, err := c.store.GetContractByAddress(ctx, org.ID, addr)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get contract: %w", err)
+				}
+				var contractABI string
+				if contract != nil {
+					contractABI = contract.ABI
+				}
+
+				// Validate parameter constraints
+				if err := ValidateParamRules(rule, calldata, contractABI, userAddresses); err != nil {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("parameter constraint violation on %s: %s", req.TargetAddress, err.Error()),
+					}, nil
+				}
+			}
+		} else {
+			// No function selector available — check if the contract has function restrictions.
+			// If it does, we must deny because we can't verify the call is allowed.
+			// access.Functions == nil means "all functions allowed" (no restrictions).
+			// access.Functions != nil (including empty) means function restrictions exist:
+			//   - non-empty: specific selectors allowed
+			//   - empty []: explicitly no functions allowed (deny all)
+			if access.Functions != nil {
+				return &AccessCheckResult{
+					Allowed: false,
+					Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),
+				}, nil
+			}
 		}
 
 		// Validate proxy upgrades for eth_sendTransaction (not deployments)
@@ -911,7 +964,7 @@ func extractDeploymentBytecode(method string, params []any) string {
 // For eth_sendTransaction, the calldata is in the "data" or "input" field.
 // Returns nil if calldata cannot be extracted or is empty.
 func extractCalldata(method string, params []any) []byte {
-	if method != "eth_sendTransaction" {
+	if method != "eth_sendTransaction" && method != "eth_call" && method != "eth_estimateGas" {
 		return nil
 	}
 

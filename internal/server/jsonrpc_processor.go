@@ -349,13 +349,17 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil // Deployment - skip (handled by bytecode validation)
 	}
 
-	// Skip tracing for simple value transfers (no contract code execution)
-	// This is 100% safe because:
-	// 1. No calldata means no function call
-	// 2. EOAs receiving ETH don't execute code
-	// 3. Contract receive()/fallback() with empty calldata is minimal risk
+	// Only skip tracing for simple value transfers to EOAs.
+	// Contracts can execute receive()/fallback() which may make cross-org calls.
 	if isSimpleValueTransfer(data) {
-		return nil
+		hasCode, err := p.runtimeTracer.HasCode(ctx, to)
+		if err != nil {
+			// Fail closed - if we can't check, trace anyway
+			// (fall through to tracing below)
+		} else if !hasCode {
+			return nil // EOA - safe to skip tracing
+		}
+		// Contract with empty calldata - must trace (receive/fallback could make calls)
 	}
 
 	// Perform the trace
@@ -369,7 +373,11 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	}
 
 	if traceResult == nil {
-		return nil // Tracing not applicable
+		// Fail closed: if tracing was expected but returned no result, deny
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "runtime trace returned no result",
+		}
 	}
 
 	// Validate the trace against org isolation rules
@@ -392,8 +400,9 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 }
 
 // isSimpleValueTransfer returns true if the transaction has no calldata.
-// Simple value transfers (ETH only) don't execute contract code beyond
-// receive()/fallback() which is minimal risk and doesn't make external calls.
+// Note: this alone is NOT sufficient to skip tracing - the caller must also
+// verify the target is an EOA (not a contract) via eth_getCode, because
+// contracts can execute receive()/fallback() which may make cross-org calls.
 func isSimpleValueTransfer(data string) bool {
 	// Normalize and check for empty calldata
 	data = strings.TrimSpace(data)
@@ -482,12 +491,24 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Runtime tracing validation (always runs for raw transactions)
-	if to != "" && !isSimpleValueTransfer(data) {
-		traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
-		if traceErr != nil {
-			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
-			return &ProcessResult{
-				Error: traceErr,
+	if to != "" {
+		skipTrace := false
+		if isSimpleValueTransfer(data) {
+			// Only skip tracing for simple value transfers to EOAs.
+			// Contracts can execute receive()/fallback() which may make cross-org calls.
+			hasCode, err := p.runtimeTracer.HasCode(ctx, to)
+			if err == nil && !hasCode {
+				skipTrace = true // EOA - safe to skip tracing
+			}
+			// If err or hasCode: fall through to tracing
+		}
+		if !skipTrace {
+			traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
+			if traceErr != nil {
+				p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+				return &ProcessResult{
+					Error: traceErr,
+				}
 			}
 		}
 	}
@@ -562,7 +583,11 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	}
 
 	if traceResult == nil {
-		return nil // Tracing not applicable
+		// Fail closed: if tracing was expected but returned no result, deny
+		return &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    "runtime trace returned no result",
+		}
 	}
 
 	// Validate the trace against org isolation rules

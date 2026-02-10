@@ -274,8 +274,11 @@ func (m *MockStore) UpdateContractGrant(ctx context.Context, grant *ContractGran
 func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error       { return nil }
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
+func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
+	return nil, nil
+}
+func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
 	return nil, nil
@@ -340,6 +343,17 @@ func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address stri
 	return nil
 }
 
+// Paginated list stubs
+func (m *MockStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
+	return nil, 0, nil
+}
+func (m *MockStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) {
+	return nil, 0, nil
+}
+func (m *MockStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) {
+	return nil, 0, nil
+}
+
 // Tests
 
 func TestResolverRestrictiveInheritance(t *testing.T) {
@@ -402,6 +416,184 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimRead {
 		t.Errorf("Expected only read claim, got %v", perms.Claims)
 	}
+}
+
+func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
+	t.Run("empty claims narrows parent claims to zero", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+		}
+		// Explicitly empty claims — should narrow parent to zero
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.Claims) != 0 {
+			t.Errorf("Expected 0 claims (empty narrows parent), got %d: %v", len(perms.Claims), perms.Claims)
+		}
+	})
+
+	t.Run("nil claims inherits parent claims", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         []Claim{ClaimRead, ClaimWrite},
+		}
+		// nil claims — should inherit parent's claims
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{"eth_call"},
+			Claims:         nil,
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.Claims) != 2 {
+			t.Errorf("Expected 2 claims (inherited from parent), got %d: %v", len(perms.Claims), perms.Claims)
+		}
+		if !HasClaim(perms.Claims, ClaimRead) {
+			t.Error("Expected read claim to be inherited")
+		}
+		if !HasClaim(perms.Claims, ClaimWrite) {
+			t.Error("Expected write claim to be inherited")
+		}
+	})
+
+	t.Run("empty allowed methods narrows parent methods to zero", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call", "eth_getBalance"},
+			Claims:         []Claim{ClaimRead},
+		}
+		// Explicitly empty methods — should narrow parent to zero
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: []string{},
+			Claims:         []Claim{ClaimRead},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.AllowedMethods) != 0 {
+			t.Errorf("Expected 0 methods (empty narrows parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
+		}
+	})
+
+	t.Run("nil allowed methods inherits parent methods", func(t *testing.T) {
+		store := NewMockStore()
+		resolver := NewResolver(store, 5*time.Minute)
+
+		org := &Organization{ID: "org1", Slug: "test"}
+		store.organizations["org1"] = org
+
+		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
+		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+		store.groups["root"] = rootGroup
+		store.groups["child"] = childGroup
+
+		store.groupAccess["root"] = &GroupAccess{
+			GroupID:        "root",
+			AllowedMethods: []string{"eth_call", "eth_getBalance"},
+			Claims:         []Claim{ClaimRead},
+		}
+		// nil methods — should inherit parent's methods
+		store.groupAccess["child"] = &GroupAccess{
+			GroupID:        "child",
+			AllowedMethods: nil,
+			Claims:         []Claim{ClaimRead},
+		}
+
+		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
+			{
+				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
+				Group:      childGroup,
+			},
+		}
+
+		perms, err := resolver.ResolvePermissions(context.Background(), "user1", "org1")
+		if err != nil {
+			t.Fatalf("ResolvePermissions failed: %v", err)
+		}
+
+		if len(perms.AllowedMethods) != 2 {
+			t.Errorf("Expected 2 methods (inherited from parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
+		}
+		if !perms.HasMethod("eth_call") {
+			t.Error("Expected eth_call to be inherited")
+		}
+		if !perms.HasMethod("eth_getBalance") {
+			t.Error("Expected eth_getBalance to be inherited")
+		}
+	})
 }
 
 func TestResolverMultipleMemberships(t *testing.T) {
@@ -641,5 +833,279 @@ func TestResolverMultipleMembershipsRateLimitsMax(t *testing.T) {
 	// Across memberships, should have MAXIMUM rate limit (100)
 	if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 100 {
 		t.Errorf("Expected rate limit 100, got %v", perms.RateLimitRPS)
+	}
+}
+
+func TestIntersectFunctions(t *testing.T) {
+	tests := []struct {
+		name   string
+		parent []FunctionRule
+		child  []FunctionRule
+		want   []FunctionRule
+	}{
+		{
+			name:   "both nil returns nil",
+			parent: nil,
+			child:  nil,
+			want:   nil,
+		},
+		{
+			name:   "parent nil child has rules returns child",
+			parent: nil,
+			child: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "parent has rules child nil returns parent",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: nil,
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "intersection of selectors",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: []FunctionRule{
+				{Selector: "0x2222"},
+				{Selector: "0x3333"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "child param rules override parent param rules",
+			parent: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			child: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+		},
+		{
+			name:   "both empty slices returns empty",
+			parent: []FunctionRule{},
+			child:  []FunctionRule{},
+			want:   []FunctionRule{},
+		},
+		{
+			name: "parent has rules child is empty returns empty (child deny-all narrows)",
+			parent: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+			child: []FunctionRule{},
+			want:  []FunctionRule{},
+		},
+		{
+			name:   "parent is empty child has rules returns empty (parent deny-all narrows)",
+			parent: []FunctionRule{},
+			child: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			want: []FunctionRule{},
+		},
+		{
+			name: "parent has param rules child has none keeps parent rules",
+			parent: []FunctionRule{
+				{Selector: "0xbbbb", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			child: []FunctionRule{
+				{Selector: "0xbbbb"},
+			},
+			want: []FunctionRule{
+				{Selector: "0xbbbb", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := intersectFunctions(tt.parent, tt.child)
+
+			// Both nil
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %v", got)
+				}
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d rules, got %d: %+v", len(tt.want), len(got), got)
+			}
+
+			// Build lookup from result for order-independent comparison
+			gotMap := make(map[string]FunctionRule, len(got))
+			for _, r := range got {
+				gotMap[strings.ToLower(r.Selector)] = r
+			}
+
+			for _, wantRule := range tt.want {
+				gotRule, ok := gotMap[strings.ToLower(wantRule.Selector)]
+				if !ok {
+					t.Errorf("expected selector %s in result, not found", wantRule.Selector)
+					continue
+				}
+				if len(gotRule.ParamRules) != len(wantRule.ParamRules) {
+					t.Errorf("selector %s: expected %d param rules, got %d: %+v",
+						wantRule.Selector, len(wantRule.ParamRules), len(gotRule.ParamRules), gotRule.ParamRules)
+					continue
+				}
+				for i, wantParam := range wantRule.ParamRules {
+					if gotRule.ParamRules[i] != wantParam {
+						t.Errorf("selector %s param_rule[%d]: expected %+v, got %+v",
+							wantRule.Selector, i, wantParam, gotRule.ParamRules[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestUnionFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		a    []FunctionRule
+		b    []FunctionRule
+		want []FunctionRule
+	}{
+		{
+			name: "both nil returns nil",
+			a:    nil,
+			b:    nil,
+			want: nil,
+		},
+		{
+			name: "a nil b has rules returns nil",
+			a:    nil,
+			b: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			want: nil,
+		},
+		{
+			name: "a has rules b nil returns nil",
+			a: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			b:    nil,
+			want: nil,
+		},
+		{
+			name: "union of disjoint selectors",
+			a: []FunctionRule{
+				{Selector: "0x1111"},
+			},
+			b: []FunctionRule{
+				{Selector: "0x2222"},
+			},
+			want: []FunctionRule{
+				{Selector: "0x1111"},
+				{Selector: "0x2222"},
+			},
+		},
+		{
+			name: "one has param rules other has none drops param rules",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa"},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa"},
+			},
+		},
+		{
+			name: "same param rules on both keeps them",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+		{
+			name: "both empty slices returns empty",
+			a:    []FunctionRule{},
+			b:    []FunctionRule{},
+			want: []FunctionRule{},
+		},
+		{
+			name: "different param rules on both keeps a side",
+			a: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+			b: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 1, MustBe: "self"}}},
+			},
+			want: []FunctionRule{
+				{Selector: "0xaaaa", ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unionFunctions(tt.a, tt.b)
+
+			// Both nil
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %v", got)
+				}
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %d rules, got %d: %+v", len(tt.want), len(got), got)
+			}
+
+			// Build lookup from result for order-independent comparison
+			gotMap := make(map[string]FunctionRule, len(got))
+			for _, r := range got {
+				gotMap[strings.ToLower(r.Selector)] = r
+			}
+
+			for _, wantRule := range tt.want {
+				gotRule, ok := gotMap[strings.ToLower(wantRule.Selector)]
+				if !ok {
+					t.Errorf("expected selector %s in result, not found", wantRule.Selector)
+					continue
+				}
+				if len(gotRule.ParamRules) != len(wantRule.ParamRules) {
+					t.Errorf("selector %s: expected %d param rules, got %d: %+v",
+						wantRule.Selector, len(wantRule.ParamRules), len(gotRule.ParamRules), gotRule.ParamRules)
+					continue
+				}
+				for i, wantParam := range wantRule.ParamRules {
+					if gotRule.ParamRules[i] != wantParam {
+						t.Errorf("selector %s param_rule[%d]: expected %+v, got %+v",
+							wantRule.Selector, i, wantParam, gotRule.ParamRules[i])
+					}
+				}
+			}
+		})
 	}
 }

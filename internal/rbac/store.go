@@ -12,6 +12,7 @@ type Store interface {
 	GetOrganizationBySlug(ctx context.Context, slug string) (*Organization, error)
 	UpdateOrganization(ctx context.Context, org *Organization) error
 	ListOrganizations(ctx context.Context) ([]*Organization, error)
+	ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error)
 	DeleteOrganization(ctx context.Context, id string) error
 
 	// Group operations
@@ -21,6 +22,7 @@ type Store interface {
 	UpdateGroup(ctx context.Context, group *Group) error
 	ListGroups(ctx context.Context, orgID string) ([]*Group, error)
 	ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) // Returns groups, total count
+	ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error)
 	ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error)
 	GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) // Returns groups from root to the specified group
 	DeleteGroup(ctx context.Context, id string) error
@@ -66,12 +68,16 @@ type Store interface {
 	ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error)
 	DeleteContractGrant(ctx context.Context, id string) error
 
+	// ETH Address operations (for parameter constraint enforcement)
+	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)
+
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
 	GetUser(ctx context.Context, id string) (*User, error)
 	GetUserByExternalID(ctx context.Context, externalID string) (*User, error)
 	UpdateUser(ctx context.Context, user *User) error
 	ListUsers(ctx context.Context, limit, offset int) ([]*User, error)
+	ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error)
 	DeleteUser(ctx context.Context, id string) error
 
 	// Membership operations

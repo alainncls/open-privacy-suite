@@ -340,7 +340,11 @@ func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 
 	var functions any
 	if grant.Functions != nil {
-		functions = pq.Array(grant.Functions)
+		b, err := json.Marshal(grant.Functions)
+		if err != nil {
+			return fmt.Errorf("failed to marshal functions: %w", err)
+		}
+		functions = b
 	}
 
 	return d.conn.QueryRowContext(ctx, query,
@@ -368,7 +372,11 @@ func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 
 	var functions any
 	if grant.Functions != nil {
-		functions = pq.Array(grant.Functions)
+		b, err := json.Marshal(grant.Functions)
+		if err != nil {
+			return fmt.Errorf("failed to marshal functions: %w", err)
+		}
+		functions = b
 	}
 
 	_, err := d.conn.ExecContext(ctx, query, grant.ID, functions)
@@ -421,12 +429,12 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			Group: &rbac.Group{},
 		}
 
-		var functions pq.StringArray
+		var functionsJSON []byte
 		var parentID, description sql.NullString
 
 		if err := rows.Scan(
 			&result.Grant.ID, &result.Grant.ContractID, &result.Grant.GroupID,
-			&functions, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
+			&functionsJSON, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
 			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
@@ -434,8 +442,10 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			return nil, fmt.Errorf("failed to scan contract grant with group: %w", err)
 		}
 
-		if len(functions) > 0 {
-			result.Grant.Functions = functions
+		if len(functionsJSON) > 0 {
+			if err := json.Unmarshal(functionsJSON, &result.Grant.Functions); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+			}
 		}
 		if parentID.Valid {
 			result.Group.ParentID = &parentID.String
@@ -461,11 +471,11 @@ func (d *DB) DeleteContractGrant(ctx context.Context, id string) error {
 
 func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var functions pq.StringArray
+	var functionsJSON []byte
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&functions, &grant.CreatedAt, &grant.UpdatedAt,
+		&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -474,8 +484,10 @@ func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 		return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 	}
 
-	if len(functions) > 0 {
-		grant.Functions = functions
+	if len(functionsJSON) > 0 {
+		if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+		}
 	}
 
 	return grant, nil
@@ -485,17 +497,19 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 	var grants []*rbac.ContractGrant
 	for rows.Next() {
 		grant := &rbac.ContractGrant{}
-		var functions pq.StringArray
+		var functionsJSON []byte
 
 		if err := rows.Scan(
 			&grant.ID, &grant.ContractID, &grant.GroupID,
-			&functions, &grant.CreatedAt, &grant.UpdatedAt,
+			&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 		}
 
-		if len(functions) > 0 {
-			grant.Functions = functions
+		if len(functionsJSON) > 0 {
+			if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+			}
 		}
 
 		grants = append(grants, grant)

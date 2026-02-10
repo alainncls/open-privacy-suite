@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { RBACTestContext } from '../../helpers/test-context.js';
 import { makeRPCRequest } from '../../helpers/auth.js';
+import { fns } from '../../helpers/rbac-api.js';
 
 // Use the default org since RPC handler uses default org
 const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
@@ -36,7 +37,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
 
-      functions: [TRANSFER_SELECTOR, BALANCE_OF_SELECTOR],
+      functions: fns(TRANSFER_SELECTOR, BALANCE_OF_SELECTOR),
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -70,7 +71,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
     await ctx.rbac.createContractGrant(org.id, contract.address, {
       group_id: group.id,
 
-      functions: [BALANCE_OF_SELECTOR],
+      functions: fns(BALANCE_OF_SELECTOR),
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -134,7 +135,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
 
-      functions: [BALANCE_OF_SELECTOR],
+      functions: fns(BALANCE_OF_SELECTOR),
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -168,7 +169,7 @@ test.describe('RBAC Function Selector Enforcement', () => {
     await ctx.rbac.createContractGrant(DEFAULT_ORG_ID, contract.address, {
       group_id: group.id,
 
-      functions: [BALANCE_OF_SELECTOR],
+      functions: fns(BALANCE_OF_SELECTOR),
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {

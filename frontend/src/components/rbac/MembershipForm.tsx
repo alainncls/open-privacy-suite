@@ -70,7 +70,7 @@ export default function MembershipForm({
 
     try {
       const groupsRes = await rbacApi.groups.list(selectedOrgId);
-      setAllGroups(groupsRes.data || []);
+      setAllGroups((groupsRes.data?.data || []).map(gwa => gwa.group));
     } catch (error) {
       console.error('Failed to load groups:', error);
       setAllGroups([]);

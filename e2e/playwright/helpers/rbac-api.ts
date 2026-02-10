@@ -98,12 +98,24 @@ export function getContractAddress(contract: Contract): string {
   return contract.address || contract.contract_address || '';
 }
 
+// FunctionRule - structured function selector with optional parameter constraints
+export interface FunctionRule {
+  selector: string;
+  param_rules?: ParamRule[];
+}
+
+// ParamRule - constrains a single ABI parameter of a function call
+export interface ParamRule {
+  index: number;
+  must_be: string; // "self" for now
+}
+
 // ContractGrant - links groups to contracts (claims are inherited from GroupAccess)
 export interface ContractGrant {
   id: string;
   contract_id: string;
   group_id: string;
-  functions?: string[] | null; // null = all functions, or specific selectors
+  functions?: FunctionRule[] | null; // null = all functions, or structured rules
   created_at: string;
   updated_at: string;
 }
@@ -111,7 +123,13 @@ export interface ContractGrant {
 // ContractAccess - per-contract permissions in EffectivePermissions
 export interface ContractAccess {
   claims: Claim[];
-  functions?: string[] | null;
+  functions?: FunctionRule[] | null;
+}
+
+// Helper to extract selector strings from FunctionRule arrays (for assertions)
+export function selectorsOf(functions: FunctionRule[] | null | undefined): string[] | null {
+  if (functions == null) return null;
+  return functions.map((f) => f.selector);
 }
 
 export interface EffectivePermissions {
@@ -207,11 +225,21 @@ export interface UpdateContractInput {
 
 export interface CreateContractGrantInput {
   group_id: string;
-  functions?: string[] | null;
+  functions?: FunctionRule[] | null;
 }
 
 export interface UpdateContractGrantInput {
-  functions?: string[] | null;
+  functions?: FunctionRule[] | null;
+}
+
+// Shorthand: convert a selector string to a FunctionRule with no param constraints.
+export function fn(selector: string): FunctionRule {
+  return { selector };
+}
+
+// Shorthand: convert an array of selector strings to FunctionRule[].
+export function fns(...selectors: string[]): FunctionRule[] {
+  return selectors.map((s) => ({ selector: s }));
 }
 
 // === API Client ===
