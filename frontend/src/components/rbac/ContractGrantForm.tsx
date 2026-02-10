@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Group, ContractGrant, CreateContractGrantInput } from '@/types/rbac';
+import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, ParamRule } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { AlertCircle, Save, X, Loader2, Users, Plus, FileJson } from 'lucide-react';
 
@@ -17,11 +17,18 @@ interface ContractGrantFormProps {
 }
 
 // Parsed ABI function entry
+interface AbiFunctionInput {
+  index: number;
+  name: string;
+  type: string;
+}
+
 interface AbiFunction {
   selector: string;
   name: string;
   signature: string;
   stateMutability?: string;
+  inputs: AbiFunctionInput[];
 }
 
 // Common function selectors with human-readable names
@@ -56,7 +63,7 @@ export default function ContractGrantForm({
   const [functionMode, setFunctionMode] = useState<'all' | 'specific'>(
     grant?.functions && grant.functions.length > 0 ? 'specific' : 'all'
   );
-  const [functions, setFunctions] = useState<string[]>(grant?.functions || []);
+  const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +80,8 @@ export default function ContractGrantForm({
       const results: AbiFunction[] = [];
       for (const item of parsed) {
         if (item.type !== 'function') continue;
-        const inputTypes = (item.inputs || []).map((input: { type: string }) => input.type).join(',');
+        const abiInputs = item.inputs || [];
+        const inputTypes = abiInputs.map((input: { type: string }) => input.type).join(',');
         const signature = `${item.name}(${inputTypes})`;
         try {
           const selector = toFunctionSelector(signature);
@@ -82,6 +90,11 @@ export default function ContractGrantForm({
             name: item.name,
             signature,
             stateMutability: item.stateMutability,
+            inputs: abiInputs.map((input: { name: string; type: string }, idx: number) => ({
+              index: idx,
+              name: input.name,
+              type: input.type,
+            })),
           });
         } catch {
           // Skip invalid signatures
@@ -101,6 +114,11 @@ export default function ContractGrantForm({
   // Get the selected group's details to show its claims
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
 
+  // Helper to check if a selector is already in the functions list
+  const hasFunctionSelector = (selector: string): boolean => {
+    return functions.some(f => f.selector.toLowerCase() === selector.toLowerCase());
+  };
+
   const handleAddSelector = () => {
     const selector = newSelector.trim().toLowerCase();
     if (!selector) return;
@@ -110,24 +128,44 @@ export default function ContractGrantForm({
       return;
     }
 
-    if (functions.includes(selector)) {
+    if (hasFunctionSelector(selector)) {
       setError('This selector is already added');
       return;
     }
 
-    setFunctions([...functions, selector]);
+    setFunctions([...functions, { selector }]);
     setNewSelector('');
     setError(null);
   };
 
   const handleRemoveSelector = (selector: string) => {
-    setFunctions(functions.filter(f => f !== selector));
+    setFunctions(functions.filter(f => f.selector.toLowerCase() !== selector.toLowerCase()));
   };
 
   const handleAddCommonSelector = (selector: string) => {
-    if (!functions.includes(selector)) {
-      setFunctions([...functions, selector]);
+    if (!hasFunctionSelector(selector)) {
+      setFunctions([...functions, { selector }]);
     }
+  };
+
+  // Toggle a param_rule on a function rule
+  const handleToggleParamRule = (selector: string, paramIndex: number, checked: boolean) => {
+    setFunctions(prev =>
+      prev.map(rule => {
+        if (rule.selector.toLowerCase() !== selector.toLowerCase()) return rule;
+        const existing = rule.param_rules || [];
+        if (checked) {
+          // Add the param rule if not already present
+          if (existing.some(pr => pr.index === paramIndex)) return rule;
+          const newRule: ParamRule = { index: paramIndex, must_be: 'self' };
+          return { ...rule, param_rules: [...existing, newRule] };
+        } else {
+          // Remove the param rule
+          const filtered = existing.filter(pr => pr.index !== paramIndex);
+          return { ...rule, param_rules: filtered.length > 0 ? filtered : null };
+        }
+      })
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -284,29 +322,78 @@ export default function ContractGrantForm({
           <div className="space-y-3 pt-2">
             {/* Current selectors */}
             {functions.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <p className="text-xs font-medium text-[#6B7280]">Allowed functions:</p>
-                <div className="flex flex-wrap gap-2">
-                  {functions.map(selector => {
-                    const label = getSelectorLabel(selector);
-                    const hasLabel = label !== selector;
+                <div className="space-y-2">
+                  {functions.map(rule => {
+                    const label = getSelectorLabel(rule.selector);
+                    const hasLabel = label !== rule.selector;
+                    // Find ABI info for this function to show address-param checkboxes
+                    const abiFunc = abiFunctions.find(
+                      f => f.selector.toLowerCase() === rule.selector.toLowerCase()
+                    );
+                    const addressParams = abiFunc
+                      ? abiFunc.inputs.filter(inp => inp.type === 'address')
+                      : [];
+
                     return (
-                      <span
-                        key={selector}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA] border border-[#E9E3FF]"
+                      <div
+                        key={rule.selector}
+                        className="p-2 rounded-lg border border-[#E9E3FF] bg-[#FAFAFF]"
                       >
-                        <code className="font-mono">{selector}</code>
-                        {hasLabel && (
-                          <span className="text-[#A78BFA]">({label})</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA] border border-[#E9E3FF]">
+                            <code className="font-mono">{rule.selector}</code>
+                            {hasLabel && (
+                              <span className="text-[#A78BFA]">({label})</span>
+                            )}
+                          </span>
+                          {(rule.param_rules || []).map(pr => (
+                            <span
+                              key={pr.index}
+                              className="px-1.5 py-0.5 rounded text-[10px] bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] font-medium"
+                            >
+                              param[{pr.index}]={pr.must_be}
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSelector(rule.selector)}
+                            className="ml-auto hover:text-[#7C3AED] text-[#A78BFA]"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {/* Parameter constraints for address-type params */}
+                        {addressParams.length > 0 && (
+                          <div className="mt-2 ml-2 space-y-1">
+                            {addressParams.map(param => {
+                              const isChecked = (rule.param_rules || []).some(
+                                pr => pr.index === param.index && pr.must_be === 'self'
+                              );
+                              return (
+                                <label
+                                  key={param.index}
+                                  className="flex items-center gap-2 text-xs text-[#6B7280] cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={e =>
+                                      handleToggleParamRule(rule.selector, param.index, e.target.checked)
+                                    }
+                                    className="w-3.5 h-3.5 rounded text-[#8950FA] focus:ring-[#8950FA]"
+                                  />
+                                  <span>
+                                    <code className="font-mono text-[#374151]">{param.name || `param[${param.index}]`}</code>
+                                    {' '}must be caller's own address
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveSelector(selector)}
-                          className="ml-1 hover:text-[#7C3AED]"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
+                      </div>
                     );
                   })}
                 </div>
@@ -355,7 +442,7 @@ export default function ContractGrantForm({
                         key={selector}
                         type="button"
                         onClick={() => handleAddCommonSelector(selector)}
-                        disabled={functions.includes(selector)}
+                        disabled={hasFunctionSelector(selector)}
                         className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
                       >
                         <span className="flex items-center gap-2 min-w-0">
@@ -381,7 +468,7 @@ export default function ContractGrantForm({
                       key={selector}
                       type="button"
                       onClick={() => handleAddCommonSelector(selector)}
-                      disabled={functions.includes(selector)}
+                      disabled={hasFunctionSelector(selector)}
                       className="px-2 py-1 text-xs rounded border border-[#E5E7EB] hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <code className="font-mono text-[#6B7280]">{selector}</code>

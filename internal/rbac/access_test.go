@@ -1625,7 +1625,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				addr: {
 					Claims:    []Claim{ClaimRead, ClaimWrite},
-					Functions: []string{"0xa9059cbb", "0x095ea7b3"},
+					Functions: []FunctionRule{{Selector: "0xa9059cbb"}, {Selector: "0x095ea7b3"}},
 				},
 			},
 			Claims: []Claim{ClaimRead},
@@ -1642,7 +1642,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			t.Error("Should have write claim")
 		}
 		if len(access.Functions) != 2 {
-			t.Errorf("Should have 2 function selectors, got %d", len(access.Functions))
+			t.Errorf("Should have 2 function rules, got %d", len(access.Functions))
 		}
 	})
 
@@ -1696,7 +1696,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				addr: {
 					Claims:    []Claim{ClaimRead},
-					Functions: []string{"0xa9059cbb", "0x095ea7b3"},
+					Functions: []FunctionRule{{Selector: "0xa9059cbb"}, {Selector: "0x095ea7b3"}},
 				},
 			},
 		}
@@ -1746,7 +1746,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				addr: {
 					Claims:    []Claim{ClaimRead},
-					Functions: []string{}, // Empty
+					Functions: []FunctionRule{}, // Empty
 				},
 			},
 		}

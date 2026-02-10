@@ -274,8 +274,11 @@ func (m *MockStore) UpdateContractGrant(ctx context.Context, grant *ContractGran
 func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
 	return nil, nil
 }
-func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error       { return nil }
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
+func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
+	return nil, nil
+}
+func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
 	return nil, nil

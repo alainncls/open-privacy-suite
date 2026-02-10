@@ -46,6 +46,18 @@ export interface Contract {
 }
 
 
+// FunctionRule describes access to a single contract function with optional parameter constraints
+export interface FunctionRule {
+  selector: string;
+  param_rules?: ParamRule[] | null;
+}
+
+// ParamRule constrains a single ABI parameter of a function call
+export interface ParamRule {
+  index: number;     // ABI parameter position (0-based)
+  must_be: string;   // constraint type: "self" for now
+}
+
 // ContractGrant - links groups to contracts, enabling access
 // Group's claims (from GroupAccess) apply to this contract.
 // Functions can optionally restrict which contract functions are accessible.
@@ -53,7 +65,7 @@ export interface ContractGrant {
   id: string;
   contract_id: string;
   group_id: string;
-  functions?: string[] | null; // null = all functions, or specific selectors
+  functions?: FunctionRule[] | null; // null = all functions, or structured rules with optional param constraints
   created_at: string;
   updated_at: string;
 }
@@ -97,7 +109,7 @@ export interface UserMembership {
 // ContractAccess - access permissions for a specific contract
 export interface ContractAccess {
   claims: Claim[];
-  functions?: string[] | null; // null = all functions allowed
+  functions?: FunctionRule[] | null; // null = all functions allowed
 }
 
 // EffectivePermissions - computed permissions for a user
@@ -208,11 +220,11 @@ export interface UpdateContractInput {
 // Claims are inherited from the group's GroupAccess.claims
 export interface CreateContractGrantInput {
   group_id: string;
-  functions?: string[] | null;
+  functions?: FunctionRule[] | null;
 }
 
 export interface UpdateContractGrantInput {
-  functions?: string[] | null;
+  functions?: FunctionRule[] | null;
 }
 
 // All available claims for reference

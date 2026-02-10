@@ -66,6 +66,9 @@ type Store interface {
 	ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error)
 	DeleteContractGrant(ctx context.Context, id string) error
 
+	// ETH Address operations (for parameter constraint enforcement)
+	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)
+
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
 	GetUser(ctx context.Context, id string) (*User, error)

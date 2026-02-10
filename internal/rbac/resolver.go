@@ -515,11 +515,12 @@ func unionClaims(a, b []Claim) []Claim {
 	return result
 }
 
-// intersectFunctions returns the intersection of two function selector slices.
+// intersectFunctions returns the intersection of two FunctionRule slices by selector.
 // If either is nil, it means "all functions allowed" - return the other.
 // If both are nil, return nil (all allowed).
-// If both have values, return the intersection.
-func intersectFunctions(a, b []string) []string {
+// If both have values, return rules whose selectors appear in both (keeping the
+// stricter param_rules from whichever side has them).
+func intersectFunctions(a, b []FunctionRule) []FunctionRule {
 	// nil means "all functions allowed"
 	if a == nil {
 		return b
@@ -528,21 +529,60 @@ func intersectFunctions(a, b []string) []string {
 		return a
 	}
 
-	// Both have restrictions - intersect them
-	return intersectStrings(a, b)
+	// Index b by selector for O(n) lookup
+	bMap := make(map[string]FunctionRule, len(b))
+	for _, rule := range b {
+		bMap[strings.ToLower(rule.Selector)] = rule
+	}
+
+	var result []FunctionRule
+	for _, ruleA := range a {
+		if ruleB, ok := bMap[strings.ToLower(ruleA.Selector)]; ok {
+			// Both sides allow this selector - keep the one with param rules
+			// (stricter). If both have param rules, keep b's (child narrows parent).
+			merged := ruleA
+			if len(ruleB.ParamRules) > 0 {
+				merged.ParamRules = ruleB.ParamRules
+			}
+			result = append(result, merged)
+		}
+	}
+	return result
 }
 
-// unionFunctions returns the union of two function selector slices.
+// unionFunctions returns the union of two FunctionRule slices by selector.
 // If either is nil, it means "all functions allowed" - return nil.
-// If both have values, return the union.
-func unionFunctions(a, b []string) []string {
+// If both have values, return the union (user gets all allowed functions).
+func unionFunctions(a, b []FunctionRule) []FunctionRule {
 	// nil means "all functions allowed" - if either is unrestricted, result is unrestricted
 	if a == nil || b == nil {
 		return nil
 	}
 
 	// Both have restrictions - union them (user gets all allowed functions)
-	return unionStrings(a, b)
+	seen := make(map[string]FunctionRule, len(a))
+	for _, rule := range a {
+		seen[strings.ToLower(rule.Selector)] = rule
+	}
+	for _, rule := range b {
+		key := strings.ToLower(rule.Selector)
+		if existing, ok := seen[key]; ok {
+			// Both sides allow this selector. If either side has no param rules,
+			// the union is the less restrictive one (no param rules).
+			if len(existing.ParamRules) == 0 || len(rule.ParamRules) == 0 {
+				seen[key] = FunctionRule{Selector: rule.Selector}
+			}
+			// else: both have param rules, keep existing (arbitrary but consistent)
+		} else {
+			seen[key] = rule
+		}
+	}
+
+	result := make([]FunctionRule, 0, len(seen))
+	for _, rule := range seen {
+		result = append(result, rule)
+	}
+	return result
 }
 
 // unionContractAccess merges two ContractAccess maps, taking the UNION of claims and functions.

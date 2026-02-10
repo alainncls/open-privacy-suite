@@ -60,6 +60,9 @@ func (m *MockCrossOrgStore) GetUser(ctx context.Context, id string) (*User, erro
 func (m *MockCrossOrgStore) UpdateUser(ctx context.Context, user *User) error { return nil }
 func (m *MockCrossOrgStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
 func (m *MockCrossOrgStore) DeleteUser(ctx context.Context, id string) error { return nil }
+func (m *MockCrossOrgStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
+	return nil, nil
+}
 
 // Organization operations
 func (m *MockCrossOrgStore) GetOrganization(ctx context.Context, id string) (*Organization, error) {

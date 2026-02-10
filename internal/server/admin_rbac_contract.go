@@ -434,8 +434,8 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID   string   `json:"group_id" binding:"required"`
-		Functions []string `json:"functions"` // nil = all functions
+		GroupID   string              `json:"group_id" binding:"required"`
+		Functions []rbac.FunctionRule `json:"functions"` // nil = all functions
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -497,7 +497,7 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		Functions *[]string `json:"functions"`
+		Functions *[]rbac.FunctionRule `json:"functions"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

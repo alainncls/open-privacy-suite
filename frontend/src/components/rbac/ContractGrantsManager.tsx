@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Contract, ContractGrant, Group, GroupAccess } from '@/types/rbac';
+import type { Contract, ContractGrant, FunctionRule, Group, GroupAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
@@ -321,16 +321,24 @@ export default function ContractGrantsManager({
                     <span className="text-xs text-[#22C55E] font-medium">All functions allowed</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {grant.functions.map(selector => {
-                        const name = getSelectorName(selector);
+                      {grant.functions.map((rule: FunctionRule) => {
+                        const name = getSelectorName(rule.selector);
+                        const paramLabels = (rule.param_rules || []).map(
+                          pr => `param[${pr.index}]=${pr.must_be}`
+                        );
                         return (
                           <span
-                            key={selector}
+                            key={rule.selector}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]"
-                            title={name ? `${name}()` : selector}
+                            title={name ? `${name}()` : rule.selector}
                           >
                             <Code2 className="w-3 h-3" />
-                            {name || selector}
+                            {name || rule.selector}
+                            {paramLabels.length > 0 && (
+                              <span className="ml-1 text-[10px] text-[#B45309]">
+                                [{paramLabels.join(', ')}]
+                              </span>
+                            )}
                           </span>
                         );
                       })}

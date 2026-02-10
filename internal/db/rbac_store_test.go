@@ -671,7 +671,7 @@ func TestContractGrant_CRUD(t *testing.T) {
 			GroupID:    group.ID,
 			// Claims are deprecated - they're inherited from group's GroupAccess.claims
 			// The DB layer will ignore any claims passed here and store empty array
-			Functions: []string{"0x12345678"},
+			Functions: []rbac.FunctionRule{{Selector: "0x12345678"}},
 		}
 
 		err := database.CreateContractGrant(ctx, grant)
@@ -718,7 +718,7 @@ func TestContractGrant_CRUD(t *testing.T) {
 
 		// Claims are deprecated - any claims set will be ignored by the DB layer
 		// Update functions instead to verify the update works
-		grant.Functions = []string{"0x12345678", "0xabcdef00"}
+		grant.Functions = []rbac.FunctionRule{{Selector: "0x12345678"}, {Selector: "0xabcdef00"}}
 		err := database.UpdateContractGrant(ctx, grant)
 		if err != nil {
 			t.Fatalf("UpdateContractGrant() error = %v", err)

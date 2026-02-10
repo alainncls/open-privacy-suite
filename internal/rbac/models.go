@@ -113,17 +113,30 @@ type Contract struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
+// FunctionRule describes access to a single contract function selector,
+// with optional parameter-level constraints.
+type FunctionRule struct {
+	Selector   string      `json:"selector"`
+	ParamRules []ParamRule `json:"param_rules,omitempty"`
+}
+
+// ParamRule constrains a single ABI parameter of a function call.
+type ParamRule struct {
+	Index  int    `json:"index"`   // ABI parameter position (0-based)
+	MustBe string `json:"must_be"` // constraint type: "self" for now
+}
+
 // ContractGrant links a group to a contract, enabling access.
 // The group's claims (from GroupAccess) apply to this contract.
 // Functions can optionally restrict which contract functions are accessible.
 // Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
-	ID         string    `json:"id"`
-	ContractID string    `json:"contract_id"`
-	GroupID    string    `json:"group_id"`
-	Functions  []string  `json:"functions,omitempty"` // nil = all functions, or specific selectors
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string         `json:"id"`
+	ContractID string         `json:"contract_id"`
+	GroupID    string         `json:"group_id"`
+	Functions  []FunctionRule `json:"functions,omitempty"` // nil = all functions, or structured rules with optional param constraints
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 // GroupAccess represents RPC method permissions and rate limits for a group.
@@ -167,8 +180,8 @@ type UserMembership struct {
 
 // ContractAccess represents access permissions for a specific contract.
 type ContractAccess struct {
-	Claims    []Claim  `json:"claims"`
-	Functions []string `json:"functions,omitempty"` // nil = all functions allowed
+	Claims    []Claim        `json:"claims"`
+	Functions []FunctionRule `json:"functions,omitempty"` // nil = all functions allowed
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
@@ -211,6 +224,7 @@ type AccessCheckRequest struct {
 	Params           []any   `json:"params,omitempty"`            // JSON-RPC params for Multicall detection
 	TargetAddress    string  `json:"target_address,omitempty"`    // Target address (contract or EOA)
 	FunctionSelector string  `json:"function_selector,omitempty"` // First 4 bytes of calldata (e.g., "0xa9059cbb")
+	Calldata         []byte  `json:"-"`                           // Raw calldata bytes for parameter validation (not serialized)
 	RequiredClaims   []Claim `json:"required_claims,omitempty"`
 }
 
@@ -326,13 +340,31 @@ func (e *EffectivePermissions) HasFunctionSelector(address, selector string) boo
 	}
 
 	// Check if selector is in the allowed list (case-insensitive)
-	for _, allowed := range access.Functions {
-		if strings.EqualFold(allowed, selector) {
+	for _, rule := range access.Functions {
+		if strings.EqualFold(rule.Selector, selector) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// GetFunctionRule returns the FunctionRule for a specific selector on a contract.
+// Returns nil if no specific rule exists (selector is allowed without constraints or not found).
+func (e *EffectivePermissions) GetFunctionRule(address, selector string) *FunctionRule {
+	access := e.GetContractAccess(address)
+	if access == nil {
+		return nil
+	}
+	if len(access.Functions) == 0 {
+		return nil // No function restrictions
+	}
+	for i := range access.Functions {
+		if strings.EqualFold(access.Functions[i].Selector, selector) {
+			return &access.Functions[i]
+		}
+	}
+	return nil
 }
 
 // IsContractRegistered checks if a contract is explicitly registered in RBAC.
