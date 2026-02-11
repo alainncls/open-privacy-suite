@@ -42,8 +42,8 @@ async function setupUser(request: any) {
 
   // Step 2: Find the user by external ID to get their internal ID
   const usersResp = await request.get(`${API_URL}/api/v1/users`);
-  const usersBody = await usersResp.json();
-  const users = Array.isArray(usersBody) ? usersBody : (usersBody?.data ?? []);
+  const usersData = await usersResp.json();
+  const users = usersData.data;
   const user = users.find((u: any) => u.external_id === USER_DID);
   if (!user) {
     throw new Error(`User not created after auth: ${USER_DID}`);
@@ -56,8 +56,8 @@ async function setupUser(request: any) {
 
   // Step 4: Create group with deploy claims and add user
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-  const orgsBody = await orgsResp.json();
-  const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+  const orgsData = await orgsResp.json();
+  const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
   if (defaultOrg) {
     // Create a group with deploy claims (needed for unregistered contract access)
@@ -74,9 +74,8 @@ async function setupUser(request: any) {
     } else {
       // Group already exists from previous run, find it
       const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-      const groupsBody = await groupsResp.json();
-      const groupsRaw = Array.isArray(groupsBody) ? groupsBody : (groupsBody?.data ?? []);
-      const groups = groupsRaw.map((g: any) => g.group ?? g);
+      const groupsData = await groupsResp.json();
+      const groups = groupsData.data.map((g: any) => g.group);
       groupId = groups.find((g: any) => g.slug === 'security-multicall-test')?.id;
     }
 
