@@ -120,6 +120,9 @@ fi
 # Bump deployer nonce to avoid address collision with contracts from other demo runs
 cast send --private-key "$DEPLOYER_KEY" --rpc-url "$ANVIL_URL" --value 0 "$DEPLOYER_ADDR" > /dev/null 2>&1
 
+# Pre-compile so forge create --json outputs clean JSON (first compile prints progress to stdout)
+(cd "${CONTRACTS_DIR}" && forge build --quiet 2>/dev/null)
+
 # Deploy from contracts dir (forge resolves src/ relative to CWD)
 DEPLOY_OUTPUT=$(cd "${CONTRACTS_DIR}" && forge create "src/DemoERC20.sol:DemoERC20" \
     --private-key "$DEPLOYER_KEY" \
