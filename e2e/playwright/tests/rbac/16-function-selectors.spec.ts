@@ -89,6 +89,17 @@ test.describe('RBAC Function Selector Enforcement', () => {
       required_claims: ['read'],
     });
     expect(result.allowed).toBe(true);
+
+    // approve should be denied (not in allowlist)
+    result = await ctx.rbac.checkAccess({
+      user_external_id: did,
+      org_slug: org.slug,
+      method: 'eth_call',
+      target_address: contract.address,
+      function_selector: APPROVE_SELECTOR,
+      required_claims: ['read'],
+    });
+    expect(result.allowed).toBe(false);
   });
 
   test('allows all functions when no functions restriction exists', async ({ request }) => {
