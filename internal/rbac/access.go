@@ -602,9 +602,13 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 
-		// Check function selector if specified
+		// Check function selector if specified.
+		// Use the already-retrieved local `access` variable instead of calling
+		// perms.HasFunctionSelector/GetFunctionRule, which would call GetContractAccess
+		// again and could return the deploy default (Functions: nil) instead of the
+		// actual function restrictions from the grant.
 		if req.FunctionSelector != "" {
-			if !perms.HasFunctionSelector(addr, req.FunctionSelector) {
+			if !accessHasFunctionSelector(access, req.FunctionSelector) {
 				return &AccessCheckResult{
 					Allowed: false,
 					Reason:  fmt.Sprintf("function %s not allowed on contract %s", req.FunctionSelector, req.TargetAddress),
@@ -612,7 +616,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}
 
 			// Check parameter constraints
-			rule := perms.GetFunctionRule(addr, req.FunctionSelector)
+			rule := accessGetFunctionRule(access, req.FunctionSelector)
 			if rule != nil && len(rule.ParamRules) > 0 {
 				// Get calldata - from request field or extract from params
 				calldata := req.Calldata
@@ -1011,6 +1015,43 @@ func containsClaim(claims []Claim, claim Claim) bool {
 	return false
 }
 
+// accessHasFunctionSelector checks if a function selector is allowed in the given ContractAccess.
+// Unlike EffectivePermissions.HasFunctionSelector, this operates on an already-retrieved
+// *ContractAccess to avoid re-fetching via GetContractAccess (which could return the deploy
+// default with Functions: nil, bypassing function restrictions).
+func accessHasFunctionSelector(access *ContractAccess, selector string) bool {
+	if access == nil {
+		return false
+	}
+	if access.Functions == nil {
+		return true // nil = unrestricted (all functions allowed)
+	}
+	if len(access.Functions) == 0 {
+		return false // non-nil empty = explicitly deny all
+	}
+	for _, rule := range access.Functions {
+		if strings.EqualFold(rule.Selector, selector) {
+			return true
+		}
+	}
+	return false
+}
+
+// accessGetFunctionRule returns the FunctionRule for a specific selector from the given ContractAccess.
+// Unlike EffectivePermissions.GetFunctionRule, this operates on an already-retrieved
+// *ContractAccess to avoid re-fetching via GetContractAccess.
+func accessGetFunctionRule(access *ContractAccess, selector string) *FunctionRule {
+	if access == nil || access.Functions == nil || len(access.Functions) == 0 {
+		return nil
+	}
+	for i := range access.Functions {
+		if strings.EqualFold(access.Functions[i].Selector, selector) {
+			return &access.Functions[i]
+		}
+	}
+	return nil
+}
+
 // validateFactoryCallForUserOrgs checks if the target address is a factory for any org
 // the user is a member of, and validates the factory call using that org's settings.
 // Returns nil if the target is not a factory for any of the user's orgs.
@@ -1191,7 +1232,10 @@ func GetTargetAddress(method string, params []any) string {
 				return strings.ToLower(to)
 			}
 		}
-	case "eth_getCode", "eth_getBalance", "eth_getStorageAt", "eth_getTransactionCount":
+	case "eth_getCode", "eth_getStorageAt":
+		// These query contract state and need per-contract access checks.
+		// eth_getBalance and eth_getTransactionCount are account queries (EOA or contract)
+		// and are only checked at the method level (allowed_methods), not contract level.
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
 		}
@@ -1283,6 +1327,7 @@ func IsHistoricalStateQuery(method string, params []any) (bool, string) {
 // GetFunctionSelector extracts the function selector (first 4 bytes) from calldata.
 // Returns empty string if no valid selector found.
 // Expects selector format "0xXXXXXXXX" (10 characters including 0x prefix).
+// Checks both "data" and "input" fields (some clients use "input" instead of "data").
 func GetFunctionSelector(method string, params []any) string {
 	if len(params) == 0 {
 		return ""
@@ -1290,17 +1335,14 @@ func GetFunctionSelector(method string, params []any) string {
 
 	// Only extract selectors for contract call methods
 	switch method {
-	case "eth_call", "eth_estimateGas":
+	case "eth_call", "eth_estimateGas", "eth_sendTransaction":
 		if callObj, ok := params[0].(map[string]any); ok {
+			// Check "data" first, then "input" (some clients use "input")
 			if data, ok := callObj["data"].(string); ok && len(data) >= 10 {
-				// Return first 4 bytes (10 chars including 0x prefix)
 				return strings.ToLower(data[:10])
 			}
-		}
-	case "eth_sendTransaction":
-		if txObj, ok := params[0].(map[string]any); ok {
-			if data, ok := txObj["data"].(string); ok && len(data) >= 10 {
-				return strings.ToLower(data[:10])
+			if input, ok := callObj["input"].(string); ok && len(input) >= 10 {
+				return strings.ToLower(input[:10])
 			}
 		}
 	}
