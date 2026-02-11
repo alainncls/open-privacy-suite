@@ -183,7 +183,7 @@ fi
 
 # Find user and set KYC
 USERS_RESP=$(curl -s "${API_URL}/users")
-USER_A_DB_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"${USER_A_DID}\") | .id")
+USER_A_DB_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"${USER_A_DID}\") | .id")
 
 if [ -z "$USER_A_DB_ID" ]; then
     echo -e "${RED}ERROR: User A not found${NC}"

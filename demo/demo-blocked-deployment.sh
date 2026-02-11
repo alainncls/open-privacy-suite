@@ -126,7 +126,7 @@ print_value "Anvil RPC URL" "$ANVIL_RPC_URL"
 if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
     print_substep "Looking up organization by slug: $ORG_SLUG"
     ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs")
-    ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
+    ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".data[] | select(.slug == \"$ORG_SLUG\") | .id")
 
     if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
         print_error "Organization with slug '$ORG_SLUG' not found"
@@ -185,12 +185,12 @@ print_substep "Getting user info..."
 # The user was created during auth via EnsureUserExists
 # We need to find the user by external ID to get the internal UUID
 USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users?search=${USER_EXTERNAL_ID}")
-USER_ID=$(echo "$USERS_RESP" | jq -r '.[0].id // empty')
+USER_ID=$(echo "$USERS_RESP" | jq -r '.data[0].id // empty')
 
 if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
     # Try without the search param - list all and filter
     USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
-    USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+    USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 fi
 
 if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
@@ -227,7 +227,7 @@ print_success "Authentication verified (chainId: $CHAIN_ID)"
 # Step 0f: Set up deployers group with deploy claim (after KYC is set)
 print_substep "Setting up group with deploy permissions..."
 GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
-DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "deployers" or .slug == "demo-deployers") | .id' | head -1)
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "deployers" or .group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     # Create a deployers group
@@ -242,7 +242,7 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
         # Group might already exist, try to find it
         GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
-        DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id')
+        DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id')
     fi
 fi
 
