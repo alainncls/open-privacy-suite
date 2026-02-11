@@ -24,6 +24,7 @@ authproxy: ensure-hooks
 # Run full Docker stack (postgres, anvil, backend, frontend)
 run: ensure-hooks
 	docker-compose up --build -d
+	@./scripts/print-urls.sh
 
 # Stop all services
 stop:
@@ -32,6 +33,7 @@ stop:
 # Restart all services
 restart:
 	docker-compose down && docker-compose up --build -d
+	@./scripts/print-urls.sh
 
 # View logs
 logs:
