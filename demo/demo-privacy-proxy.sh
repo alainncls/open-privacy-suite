@@ -216,13 +216,13 @@ print_step "Step 3: Organization Setup"
 if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
     print_substep "Looking for existing organizations..."
     ORGS_RESPONSE=$(api_call "GET" "/orgs")
-    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq 'length' 2>/dev/null || echo "0")
+    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq '.data | length' 2>/dev/null || echo "0")
 
     if [ "$ORG_COUNT" -gt 0 ]; then
         # Use first org
-        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.[0].id')
-        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.[0].slug')
-        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r '.[0].name')
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].id')
+        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].slug')
+        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].name')
         print_success "Using existing organization: $ORG_NAME ($ORG_SLUG)"
     else
         # Create a demo org
@@ -241,8 +241,8 @@ else
     # Use provided org
     if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
         ORGS_RESPONSE=$(api_call "GET" "/orgs")
-        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
-        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .name")
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".data[] | select(.slug == \"$ORG_SLUG\") | .id")
+        ORG_NAME=$(echo "$ORGS_RESPONSE" | jq -r ".data[] | select(.slug == \"$ORG_SLUG\") | .name")
     fi
 fi
 
@@ -258,7 +258,7 @@ print_step "Step 4: User and Group Setup"
 # Get user info
 print_substep "Getting user info..."
 USERS_RESP=$(api_call "GET" "/v1/users")
-USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 
 if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
     print_error "Could not find user ID after authentication"
@@ -276,7 +276,7 @@ print_success "KYC status set to true"
 # Set up deployers group with deploy claim
 print_substep "Setting up deployers group..."
 GROUPS_RESP=$(api_call "GET" "/v1/orgs/$ORG_ID/groups")
-DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     GROUP_CREATE_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups" \

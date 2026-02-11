@@ -184,7 +184,7 @@ else
     # Find the user
     print_info "Looking up user..."
     USERS_RESP=$(curl -s "${API_BASE_URL}/v1/users")
-    USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+    USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
     if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
         print_error "Connection failed and user not found via admin API"
         print_error "Original connection error: $CHAIN_RESULT"
@@ -198,11 +198,11 @@ else
     # Find or determine the org
     if [ -z "$ORG_ID" ]; then
         MEMBERSHIPS_RESP=$(curl -s "${API_BASE_URL}/v1/users/${USER_ID}/memberships")
-        ORG_ID=$(echo "$MEMBERSHIPS_RESP" | jq -r '.[0].org_id // empty' 2>/dev/null)
+        ORG_ID=$(echo "$MEMBERSHIPS_RESP" | jq -r '.[0].group.org_id // empty' 2>/dev/null)
 
         if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
-            ORGS_RESP=$(curl -s "${API_BASE_URL}/orgs")
-            ORG_ID=$(echo "$ORGS_RESP" | jq -r '.[0].id // empty')
+            ORGS_RESP=$(curl -s "${API_BASE_URL}/v1/orgs")
+            ORG_ID=$(echo "$ORGS_RESP" | jq -r '.data[0].id // empty')
 
             if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
                 print_info "Creating demo organization..."
@@ -222,7 +222,7 @@ else
 
     # Find or create deployers group with deploy claim
     GROUPS_RESP=$(curl -s "${API_BASE_URL}/v1/orgs/$ORG_ID/groups")
-    DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
+    DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id' | head -1)
 
     if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
         GROUP_CREATE_RESP=$(curl -s -X POST "${API_BASE_URL}/v1/orgs/$ORG_ID/groups" \

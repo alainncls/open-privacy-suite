@@ -133,19 +133,19 @@ print_success "Connected to Anvil (chainId: $CHAIN_ID)"
 
 # Get org
 if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
-    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
-    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq 'length' 2>/dev/null || echo "0")
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs")
+    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq '.data | length' 2>/dev/null || echo "0")
     if [ "$ORG_COUNT" -gt 0 ]; then
-        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.[0].id')
-        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.[0].slug')
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].id')
+        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].slug')
         print_success "Using organization: $ORG_SLUG"
     else
         print_error "No organization found"
         exit 1
     fi
 elif [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
-    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
-    ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".[] | select(.slug == \"$ORG_SLUG\") | .id")
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs")
+    ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".data[] | select(.slug == \"$ORG_SLUG\") | .id")
 fi
 
 print_value "Organization" "$ORG_SLUG ($ORG_ID)"
@@ -192,14 +192,14 @@ print_success "Authenticated"
 
 # Set up user permissions
 USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
-USER_ID=$(echo "$USERS_RESP" | jq -r ".[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
+USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 
 curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
     -H "Content-Type: application/json" \
     -d '{"kyc": true}' > /dev/null
 
 GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
-DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.[] | select(.slug == "demo-deployers") | .id' | head -1)
+DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     # Create the deployers group if it doesn't exist
