@@ -28,8 +28,8 @@ async function setupUsers(request: any) {
 
   // Step 2: Find users by external ID to get their internal IDs
   const usersResp = await request.get(`${API_URL}/api/v1/users`);
-  const usersBody = await usersResp.json();
-  const users = Array.isArray(usersBody) ? usersBody : (usersBody?.data ?? []);
+  const usersData = await usersResp.json();
+  const users = usersData.data;
   const deployerUser = users.find((u: any) => u.external_id === DEPLOYER_DID);
   const nonDeployerUser = users.find((u: any) => u.external_id === NON_DEPLOYER_DID);
 
@@ -50,8 +50,8 @@ async function setupUsers(request: any) {
 
   // Step 4: Get default org and create appropriate groups
   const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-  const orgsBody = await orgsResp.json();
-  const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+  const orgsData = await orgsResp.json();
+  const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
   if (defaultOrg) {
@@ -69,9 +69,8 @@ async function setupUsers(request: any) {
       deployGroupId = group.id;
     } else {
       const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-      const groupsBody = await groupsResp.json();
-      const groupsRaw = Array.isArray(groupsBody) ? groupsBody : (groupsBody?.data ?? []);
-      const groups = groupsRaw.map((g: any) => g.group ?? g);
+      const groupsData = await groupsResp.json();
+      const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-deployers');
       if (existing) deployGroupId = existing.id;
     }
@@ -99,11 +98,10 @@ async function setupUsers(request: any) {
       const group = await noDeployGroupResp.json();
       noDeployGroupId = group.id;
     } else {
-      const groupsResp2 = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
-      const groupsBody2 = await groupsResp2.json();
-      const groupsRaw2 = Array.isArray(groupsBody2) ? groupsBody2 : (groupsBody2?.data ?? []);
-      const groups2 = groupsRaw2.map((g: any) => g.group ?? g);
-      const existing = groups2.find((g: any) => g.slug === 'security-no-deploy');
+      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groupsData = await groupsResp.json();
+      const groups = groupsData.data.map((g: any) => g.group);
+      const existing = groups.find((g: any) => g.slug === 'security-no-deploy');
       if (existing) noDeployGroupId = existing.id;
     }
 

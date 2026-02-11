@@ -365,10 +365,23 @@ func TestGetTargetAddress(t *testing.T) {
 			expected: "0xabcd1234",
 		},
 		{
-			name:     "eth_getBalance with address",
+			name:     "eth_getStorageAt with address",
+			method:   "eth_getStorageAt",
+			params:   []any{"0xABCD1234", "0x0", "latest"},
+			expected: "0xabcd1234",
+		},
+		// Account query methods - should NOT extract target address (method-level check only)
+		{
+			name:     "eth_getBalance - account query, no contract target",
 			method:   "eth_getBalance",
 			params:   []any{"0xABCD1234", "latest"},
-			expected: "0xabcd1234",
+			expected: "",
+		},
+		{
+			name:     "eth_getTransactionCount - account query, no contract target",
+			method:   "eth_getTransactionCount",
+			params:   []any{"0x0000000000000000000000000000000000000000", "latest"},
+			expected: "",
 		},
 		{
 			name:     "Unknown method",
@@ -1866,6 +1879,37 @@ func TestGetFunctionSelectorComprehensive(t *testing.T) {
 			params:   []any{"not a map"},
 			expected: "",
 		},
+		// "input" field tests (some clients use "input" instead of "data")
+		{
+			name:     "eth_call with input field instead of data",
+			method:   "eth_call",
+			params:   []any{map[string]any{"to": "0x123", "input": "0xa9059cbb0000000000"}},
+			expected: "0xa9059cbb",
+		},
+		{
+			name:     "eth_sendTransaction with input field",
+			method:   "eth_sendTransaction",
+			params:   []any{map[string]any{"to": "0x123", "input": "0x70a08231abc"}},
+			expected: "0x70a08231",
+		},
+		{
+			name:     "data takes precedence over input",
+			method:   "eth_call",
+			params:   []any{map[string]any{"to": "0x123", "data": "0xa9059cbb00", "input": "0x70a0823100"}},
+			expected: "0xa9059cbb",
+		},
+		{
+			name:     "empty data falls back to input",
+			method:   "eth_call",
+			params:   []any{map[string]any{"to": "0x123", "data": "0x", "input": "0x70a0823100"}},
+			expected: "0x70a08231",
+		},
+		{
+			name:     "input too short",
+			method:   "eth_call",
+			params:   []any{map[string]any{"to": "0x123", "input": "0xa905"}},
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -2741,6 +2785,144 @@ func TestCheckAccessParamConstraints(t *testing.T) {
 					map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(tt.calldata)},
 					"latest",
 				}
+			}
+
+			result, err := controller.CheckAccess(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				if tt.expectAllowed {
+					t.Errorf("expected access to be allowed, got denied: %s", result.Reason)
+				} else {
+					t.Errorf("expected access to be denied, got allowed")
+				}
+			}
+			if !tt.expectAllowed && tt.expectReason != "" {
+				if !strings.Contains(result.Reason, tt.expectReason) {
+					t.Errorf("expected reason to contain %q, got: %s", tt.expectReason, result.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestDeployUserParamConstraints verifies that deploy-claim users with explicit
+// contract grants have function restrictions and parameter constraints enforced.
+// This is a regression test for a bug where CheckAccess re-fetched permissions via
+// GetContractAccess, which returned the deploy default (Functions: nil) instead of
+// using the already-retrieved access that had actual function restrictions.
+func TestDeployUserParamConstraints(t *testing.T) {
+	ownAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	otherAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	contractAddr := "0xaaaa000000000000000000000000000000000001"
+	balanceOfSelector := "0x70a08231"
+
+	balanceOfOwn := buildBalanceOfCalldata(ownAddr)
+	balanceOfOther := buildBalanceOfCalldata(otherAddr)
+
+	tests := []struct {
+		name             string
+		calldata         []byte
+		functionSelector string
+		expectAllowed    bool
+		expectReason     string
+	}{
+		{
+			name:             "deploy user - self constraint passes",
+			calldata:         balanceOfOwn,
+			functionSelector: balanceOfSelector,
+			expectAllowed:    true,
+		},
+		{
+			name:             "deploy user - self constraint denies other address",
+			calldata:         balanceOfOther,
+			functionSelector: balanceOfSelector,
+			expectAllowed:    false,
+			expectReason:     "parameter constraint violation",
+		},
+		{
+			name:             "deploy user - unlisted function denied",
+			calldata:         balanceOfOwn, // calldata doesn't matter, selector is wrong
+			functionSelector: "0xdeadbeef",
+			expectAllowed:    false,
+			expectReason:     "function 0xdeadbeef not allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newParamConstraintStore()
+
+			org := &Organization{ID: "org-d", Slug: "org-d", Name: "Org D"}
+			store.organizations["org-d"] = org
+
+			user := &User{ID: "user-d", ExternalID: "did:test:userd", KYC: true, Banned: false}
+			store.users["did:test:userd"] = user
+
+			group := &Group{ID: "group-d", OrgID: "org-d", Slug: "group-d", Name: "Group D"}
+			store.memberships["user-d"] = []*MembershipWithDetails{
+				{Membership: &UserMembership{ID: "mem-d", UserID: "user-d", GroupID: "group-d"}, Group: group},
+			}
+
+			// Deploy claim — this is what triggers the deploy default in GetContractAccess
+			store.groupAccess["group-d"] = &GroupAccess{
+				ID:             "access-d",
+				GroupID:        "group-d",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+			}
+
+			addr := strings.ToLower(contractAddr)
+			store.contractOwners[addr] = "org-d"
+			store.registeredToAnyOrg[addr] = true
+			store.addressOwnedByOrg[addr] = map[string]bool{"org-d": true}
+
+			// Cached permissions with deploy claim AND explicit function restrictions.
+			// Before the fix, CheckAccess would re-fetch via GetContractAccess and get
+			// Functions: nil (deploy default), bypassing these restrictions.
+			store.cachedPermissions["user-d:org-d"] = &EffectivePermissions{
+				ID:             "perms-d",
+				UserID:         "user-d",
+				OrgID:          "org-d",
+				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
+				ContractAccess: map[string]ContractAccess{
+					addr: {
+						Claims: []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+						Functions: []FunctionRule{
+							{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
+						},
+					},
+				},
+				Claims:     []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+				ComputedAt: time.Now(),
+				ExpiresAt:  time.Now().Add(1 * time.Hour),
+			}
+
+			store.linkedAddresses["did:test:userd"] = []string{strings.ToLower(ownAddr.Hex())}
+
+			store.contractsByAddress["org-d:"+addr] = &Contract{
+				ID:      "contract-d",
+				OrgID:   "org-d",
+				Address: addr,
+				Name:    "TestToken",
+				ABI:     testABI,
+			}
+
+			controller := NewAccessController(store, 5*time.Minute)
+
+			req := &AccessCheckRequest{
+				UserExternalID:   "did:test:userd",
+				Method:           "eth_call",
+				TargetAddress:    contractAddr,
+				FunctionSelector: tt.functionSelector,
+				Calldata:         tt.calldata,
+				Params: []any{
+					map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(tt.calldata)},
+					"latest",
+				},
 			}
 
 			result, err := controller.CheckAccess(ctx, req)

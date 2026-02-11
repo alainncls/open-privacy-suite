@@ -182,7 +182,7 @@ test.describe('Runtime Transaction Tracing', () => {
 
     // Find user and update KYC
     const usersResp = await apiCall(request, 'GET', '/api/v1/users');
-    const users = Array.isArray(usersResp.body) ? usersResp.body : (usersResp.body?.data ?? []);
+    const users = usersResp.body.data;
     const userA = users.find((u: any) => u.external_id === userADID);
     if (!userA) {
       throw new Error(`User A not created after auth: ${userADID}`);

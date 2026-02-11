@@ -182,9 +182,9 @@ func buildEthCallBody(contractAddr, calldata string) []byte {
 // encodeBalanceOfCalldata encodes a balanceOf(address) call.
 // Selector: 0x70a08231, then the address left-padded to 32 bytes.
 func encodeBalanceOfCalldata(address string) string {
-	// Remove 0x prefix from address, left-pad to 64 hex chars (32 bytes)
+	// Remove 0x prefix from address, left-pad with zeros to 64 hex chars (32 bytes)
 	addr := strings.TrimPrefix(strings.ToLower(address), "0x")
-	padded := fmt.Sprintf("%064s", addr)
+	padded := strings.Repeat("0", 64-len(addr)) + addr
 	return selectorBalanceOf + padded
 }
 
@@ -356,7 +356,7 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 	groupID := uuid.New().String()
 	contractAddr := "0x6666666666666666666666666666666666666666"
 	linkedAddr1 := "0xcccccccccccccccccccccccccccccccccccccccc"
-	linkedAddr2 := "0xdddddddddddddddddddddddddddddddddddddd"
+	linkedAddr2 := "0xdddddddddddddddddddddddddddddddddddddddd"
 
 	// Org
 	require.NoError(t, database.CreateOrganization(ctx, &rbac.Organization{

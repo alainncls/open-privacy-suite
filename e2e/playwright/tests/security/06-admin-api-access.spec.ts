@@ -60,8 +60,8 @@ test.describe('Admin API Localhost Restriction', () => {
   test.describe('Group Endpoints', () => {
     test('ADMIN-006: GET /api/v1/orgs/:org_id/groups requires localhost', async ({ request }) => {
       const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgsBody = await orgsResp.json();
-      const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+      const orgsData = await orgsResp.json();
+      const orgs = orgsData.data;
       const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
       if (defaultOrg) {
@@ -72,8 +72,8 @@ test.describe('Admin API Localhost Restriction', () => {
 
     test('ADMIN-007: POST /api/v1/orgs/:org_id/groups requires localhost', async ({ request }) => {
       const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgsBody = await orgsResp.json();
-      const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+      const orgsData = await orgsResp.json();
+      const orgs = orgsData.data;
       const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
       if (defaultOrg) {
@@ -88,8 +88,8 @@ test.describe('Admin API Localhost Restriction', () => {
   test.describe('Contract Endpoints', () => {
     test('ADMIN-008: POST /api/v1/orgs/:org_id/contracts requires localhost', async ({ request }) => {
       const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgsBody = await orgsResp.json();
-      const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+      const orgsData = await orgsResp.json();
+      const orgs = orgsData.data;
       const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
       if (defaultOrg) {
@@ -104,8 +104,8 @@ test.describe('Admin API Localhost Restriction', () => {
   test.describe('Membership Endpoints', () => {
     test('ADMIN-009: POST memberships requires localhost', async ({ request }) => {
       const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
-      const orgsBody = await orgsResp.json();
-      const orgs = Array.isArray(orgsBody) ? orgsBody : (orgsBody?.data ?? []);
+      const orgsData = await orgsResp.json();
+      const orgs = orgsData.data;
       const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
       if (defaultOrg) {
