@@ -108,21 +108,23 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="${SCRIPT_DIR}/../contracts"
 
-# Install forge-std if not present
-if [ ! -d "${CONTRACTS_DIR}/lib/forge-std" ]; then
+# Install forge-std if not present (needed for compilation)
+if [ ! -d "${CONTRACTS_DIR}/lib/forge-std" ] || [ ! -f "${CONTRACTS_DIR}/lib/forge-std/src/Test.sol" ]; then
     echo "Installing forge-std..."
-    cd "${CONTRACTS_DIR}" && forge install foundry-rs/forge-std 2>/dev/null || true
+    # Remove any stale submodule/empty dir first
+    rm -rf "${CONTRACTS_DIR}/lib/forge-std" 2>/dev/null || true
+    cd "${CONTRACTS_DIR}" && forge install foundry-rs/forge-std --no-commit 2>/dev/null || true
     cd - > /dev/null
 fi
 
 # Bump deployer nonce to avoid address collision with contracts from other demo runs
 cast send --private-key "$DEPLOYER_KEY" --rpc-url "$ANVIL_URL" --value 0 "$DEPLOYER_ADDR" > /dev/null 2>&1
 
-DEPLOY_OUTPUT=$(forge create src/DemoERC20.sol:DemoERC20 \
+# Deploy from contracts dir (forge resolves src/ relative to CWD)
+DEPLOY_OUTPUT=$(cd "${CONTRACTS_DIR}" && forge create "src/DemoERC20.sol:DemoERC20" \
     --private-key "$DEPLOYER_KEY" \
     --rpc-url "$ANVIL_URL" \
     --broadcast \
-    --root "${CONTRACTS_DIR}" \
     --json 2>/dev/null)
 
 ERC20_ADDR=$(echo "$DEPLOY_OUTPUT" | jq -r '.deployedTo')
