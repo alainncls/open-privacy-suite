@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/disclosure"
@@ -244,6 +245,13 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
 	}
 
+	// Initialize compliance checker for travel rule enforcement
+	if cfg.EnableTravelRule {
+		complianceChecker := compliance.NewChecker(database, cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
+		s.jsonrpcProcessor.SetComplianceChecker(complianceChecker)
+		log.Printf("Travel rule compliance enabled (default threshold: $%.2f, record expiry: %s)", cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
+	}
+
 	return s, nil
 }
 
@@ -396,6 +404,9 @@ func (s *Server) setupRouter() *gin.Engine {
 		// Disclosure admin endpoints
 		s.registerDisclosureRoutes(apiV1)
 
+		// Compliance endpoints (travel rule)
+		s.registerComplianceRoutes(apiV1)
+
 		// Dev-only endpoints (CREATE3 factory deployment)
 		apiV1.GET("/dev/create3-factory", s.getCreate3Factory)
 		apiV1.POST("/dev/create3-factory", s.deployCreate3Factory)
@@ -419,6 +430,9 @@ func (s *Server) setupRouter() *gin.Engine {
 
 		// Disclosure admin endpoints
 		s.registerDisclosureRoutes(api)
+
+		// Compliance endpoints (travel rule)
+		s.registerComplianceRoutes(api)
 
 		// Dev-only endpoints (CREATE3 factory deployment)
 		api.GET("/dev/create3-factory", s.getCreate3Factory)

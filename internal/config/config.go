@@ -34,6 +34,11 @@ type Config struct {
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
 	TraceTimeout          time.Duration // Timeout for debug_traceCall requests (default: 30s)
 	TraceTieredValidation bool          // If true, skip trace for known org addresses (default: true)
+
+	// Travel rule compliance configuration
+	EnableTravelRule    bool          // If true, enable travel rule enforcement (default: false)
+	DefaultThresholdUSD float64       // Default threshold if not configured per-org (default: 1000)
+	TravelRecordExpiry  time.Duration // How long travel rule records stay valid (default: 24h)
 }
 
 func Load() *Config {
@@ -121,6 +126,21 @@ func Load() *Config {
 	}
 	traceTiered := getEnv("TRACE_TIERED_VALIDATION", "true") != "false"
 
+	// Travel rule compliance configuration
+	enableTravelRule := getEnv("ENABLE_TRAVEL_RULE", "false") == "true"
+	defaultThresholdUSD := 1000.0
+	if thresholdStr := getEnv("DEFAULT_THRESHOLD_USD", ""); thresholdStr != "" {
+		if val, err := strconv.ParseFloat(thresholdStr, 64); err == nil {
+			defaultThresholdUSD = val
+		}
+	}
+	travelRecordExpiry := 24 * time.Hour
+	if expiryStr := getEnv("TRAVEL_RECORD_EXPIRY", ""); expiryStr != "" {
+		if d, err := time.ParseDuration(expiryStr); err == nil {
+			travelRecordExpiry = d
+		}
+	}
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -145,6 +165,9 @@ func Load() *Config {
 		TraceCacheTTL:              traceCacheTTL,
 		TraceTimeout:               traceTimeout,
 		TraceTieredValidation:      traceTiered,
+		EnableTravelRule:           enableTravelRule,
+		DefaultThresholdUSD:        defaultThresholdUSD,
+		TravelRecordExpiry:         travelRecordExpiry,
 	}
 }
 

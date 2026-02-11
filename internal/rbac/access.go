@@ -480,6 +480,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		allClaims := collectAllClaims(perms)
 		return &AccessCheckResult{
 			Allowed:        true,
+			OrgID:          org.ID,
+			UserID:         user.ID,
 			RateLimitRPS:   perms.RateLimitRPS,
 			RateLimitDaily: perms.RateLimitDaily,
 			Claims:         allClaims,
@@ -773,6 +775,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			// Include deployment info in the result for proxy tracking
 			return &AccessCheckResult{
 				Allowed:        true,
+				OrgID:          org.ID,
+				UserID:         user.ID,
 				RateLimitRPS:   perms.RateLimitRPS,
 				RateLimitDaily: perms.RateLimitDaily,
 				Claims:         allClaims,
@@ -808,6 +812,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 	return &AccessCheckResult{
 		Allowed:           true,
+		OrgID:             org.ID,
+		UserID:            user.ID,
 		RateLimitRPS:      perms.RateLimitRPS,
 		RateLimitDaily:    perms.RateLimitDaily,
 		Claims:            allClaims,

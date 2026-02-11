@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -21,12 +22,13 @@ import (
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
-	rbacAccessCtrl  *rbac.AccessController
-	rateLimiter     RateLimiterInterface
-	proxy           *proxy.Proxy
-	accessLogger    AccessLogger
-	runtimeTracer   *tracer.RuntimeTracer
-	traceValidator  *rbac.TraceValidator
+	rbacAccessCtrl    *rbac.AccessController
+	rateLimiter       RateLimiterInterface
+	proxy             *proxy.Proxy
+	accessLogger      AccessLogger
+	runtimeTracer     *tracer.RuntimeTracer
+	traceValidator    *rbac.TraceValidator
+	complianceChecker *compliance.Checker
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -74,6 +76,11 @@ func NewJSONRPCProcessor(
 		proxy:          proxyClient,
 		accessLogger:   logger,
 	}
+}
+
+// SetComplianceChecker sets the compliance checker for travel rule enforcement.
+func (p *JSONRPCProcessor) SetComplianceChecker(checker *compliance.Checker) {
+	p.complianceChecker = checker
 }
 
 // NewJSONRPCProcessorWithTracing creates a new processor with runtime tracing support.
@@ -178,6 +185,37 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
 		return &ProcessResult{
 			Error: traceErr,
+		}
+	}
+
+	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
+	if p.complianceChecker != nil && (req.Method == "eth_sendTransaction") {
+		from, to, data, value := extractTxParams(req.Params)
+		compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+			OrgID:  result.OrgID,
+			UserID: result.UserID,
+			From:   from,
+			To:     to,
+			Data:   data,
+			Value:  value,
+		})
+		if compErr != nil {
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusInternalServerError,
+					Message:    "compliance check failed: " + compErr.Error(),
+				},
+			}
+		}
+		if !compResult.Allowed {
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusForbidden,
+					Message:    "compliance denied: " + compResult.Reason,
+				},
+			}
 		}
 	}
 
@@ -509,6 +547,36 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				return &ProcessResult{
 					Error: traceErr,
 				}
+			}
+		}
+	}
+
+	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
+	if p.complianceChecker != nil {
+		compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+			OrgID:  result.OrgID,
+			UserID: result.UserID,
+			From:   from,
+			To:     to,
+			Data:   data,
+			Value:  value,
+		})
+		if compErr != nil {
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusInternalServerError,
+					Message:    "compliance check failed: " + compErr.Error(),
+				},
+			}
+		}
+		if !compResult.Allowed {
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusForbidden,
+					Message:    "compliance denied: " + compResult.Reason,
+				},
 			}
 		}
 	}
