@@ -196,6 +196,17 @@ test.describe('Runtime Transaction Tracing', () => {
 
     // Refresh token with updated permissions
     userAToken = await getJWTToken(request, userADID);
+
+    // Verify setup: ensure RBAC permissions are fully propagated before tests run.
+    // The first access check after setup may hit a stale cache; retry until resolved.
+    for (let i = 0; i < 10; i++) {
+      const verify = await rpcCall(request, userAToken, 'eth_call', [
+        { to: contractA, data: '0x' },
+        'latest'
+      ]);
+      if (verify.status !== 403) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
   });
 
   test.describe('Cross-Org Call Detection via Trace', () => {
