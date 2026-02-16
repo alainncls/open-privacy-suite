@@ -235,6 +235,133 @@ export const mockCreate3Factory = {
   deployed: true,
 };
 
+// =========================================================================
+// Compliance mock data
+// =========================================================================
+import type {
+  ComplianceConfig as ComplianceConfigType,
+  TokenPrice,
+  TravelRuleRecord,
+  SanctionedAddress,
+  ComplianceLog,
+} from '@/types/compliance';
+
+export const mockComplianceConfig: ComplianceConfigType = {
+  id: 'config-1',
+  org_id: 'org-1',
+  enabled: true,
+  threshold_usd: 1000,
+  created_at: '2024-01-01T00:00:00Z',
+  updated_at: '2024-01-01T00:00:00Z',
+};
+
+export const mockTokenPrices: TokenPrice[] = [
+  {
+    id: 'token-1',
+    org_id: 'org-1',
+    token_address: 'native',
+    symbol: 'ETH',
+    decimals: 18,
+    price_usd: 2500,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  },
+  {
+    id: 'token-2',
+    org_id: 'org-1',
+    token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    symbol: 'USDT',
+    decimals: 6,
+    price_usd: 1,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  },
+];
+
+export const mockTravelRuleRecords: TravelRuleRecord[] = [
+  {
+    id: 'tr-1',
+    org_id: 'org-1',
+    originator_user_id: 'user-1',
+    originator_data: { name: 'Alice' },
+    beneficiary_data: { name: 'Bob' },
+    transfer_type: 'eth',
+    beneficiary_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    amount_wei: '1000000000000000000',
+    amount_usd: 2500,
+    expires_at: new Date(Date.now() + 86400000).toISOString(),
+    created_at: '2024-01-01T00:00:00Z',
+  },
+  {
+    id: 'tr-2',
+    org_id: 'org-1',
+    originator_user_id: 'user-2',
+    originator_data: { name: 'Charlie' },
+    beneficiary_data: { name: 'Dave' },
+    transfer_type: 'erc20',
+    token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    beneficiary_address: '0x1234567890123456789012345678901234567890',
+    amount_wei: '5000000000',
+    amount_usd: 5000,
+    expires_at: '2024-01-01T00:00:00Z',
+    used_at: '2024-01-02T00:00:00Z',
+    used_tx_hash: '0xdeadbeef',
+    created_at: '2024-01-01T00:00:00Z',
+  },
+];
+
+export const mockSanctionedAddresses: SanctionedAddress[] = [
+  {
+    id: 'sanction-1',
+    address: '0xbadaddress000000000000000000000000000dead',
+    reason: 'OFAC SDN list',
+    source: 'OFAC',
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  },
+  {
+    id: 'sanction-2',
+    org_id: 'org-1',
+    address: '0xsuspicious0000000000000000000000000000bad',
+    reason: 'Internal investigation',
+    source: 'manual',
+    created_at: '2024-01-15T00:00:00Z',
+    updated_at: '2024-01-15T00:00:00Z',
+  },
+];
+
+export const mockComplianceLogs: ComplianceLog[] = [
+  {
+    id: 1,
+    org_id: 'org-1',
+    user_id: 'user-1',
+    transfer_type: 'eth',
+    from_address: '0x1111111111111111111111111111111111111111',
+    to_address: '0x2222222222222222222222222222222222222222',
+    amount_wei: '500000000000000000',
+    amount_usd: 1250,
+    threshold_usd: 1000,
+    decision: 'allowed',
+    travel_rule_record_id: 'tr-1',
+    created_at: '2024-01-15T10:30:00Z',
+  },
+  {
+    id: 2,
+    org_id: 'org-1',
+    user_id: 'user-2',
+    transfer_type: 'erc20',
+    token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    from_address: '0x3333333333333333333333333333333333333333',
+    to_address: '0xbadaddress000000000000000000000000000dead',
+    amount_wei: '2000000000',
+    amount_usd: 2000,
+    threshold_usd: 1000,
+    decision: 'denied',
+    denial_reason: 'sanctioned_address',
+    created_at: '2024-01-15T11:00:00Z',
+  },
+];
+
 // Session state for polling simulation
 let sessionCompleted = false;
 let sessionTokens: AuthTokenResponse | null = null;
@@ -614,6 +741,106 @@ export const handlers = [
     return HttpResponse.json({
       address: '0xfactory1234567890factory1234567890factory',
       deployed: true,
+    });
+  }),
+
+  // =========================================================================
+  // Compliance endpoints
+  // =========================================================================
+
+  // Compliance config
+  http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
+    return HttpResponse.json(mockComplianceConfig);
+  }),
+
+  http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
+    const body = await request.json() as { enabled?: boolean; threshold_usd?: number };
+    return HttpResponse.json({
+      ...mockComplianceConfig,
+      ...(body.enabled !== undefined && { enabled: body.enabled }),
+      ...(body.threshold_usd !== undefined && { threshold_usd: body.threshold_usd }),
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  // Token prices
+  http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+    return HttpResponse.json(mockTokenPrices);
+  }),
+
+  http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
+    const body = await request.json() as { symbol: string; decimals: number; price_usd: number };
+    return HttpResponse.json({
+      id: 'token-new',
+      org_id: params.orgId as string,
+      token_address: params.tokenAddress as string,
+      symbol: body.symbol,
+      decimals: body.decimals,
+      price_usd: body.price_usd,
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  http.delete('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
+    return HttpResponse.json({ message: 'Deleted' });
+  }),
+
+  // Travel rule records
+  http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
+    return HttpResponse.json({
+      data: mockTravelRuleRecords,
+      total: mockTravelRuleRecords.length,
+      limit: 25,
+      offset: 0,
+    });
+  }),
+
+  http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {
+    const body = await request.json() as Record<string, unknown>;
+    return HttpResponse.json({
+      id: 'travel-rule-new',
+      org_id: params.orgId as string,
+      ...body,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+      created_at: new Date().toISOString(),
+    });
+  }),
+
+  // Sanctions (global routes)
+  http.get('/api/v1/admin/compliance/sanctions', () => {
+    return HttpResponse.json({
+      data: mockSanctionedAddresses,
+      total: mockSanctionedAddresses.length,
+      limit: 25,
+      offset: 0,
+    });
+  }),
+
+  http.post('/api/v1/admin/compliance/sanctions', async ({ request }) => {
+    const body = await request.json() as { address: string; reason: string; source?: string; org_id?: string };
+    return HttpResponse.json({
+      id: 'sanction-new',
+      address: body.address,
+      reason: body.reason,
+      source: body.source || '',
+      org_id: body.org_id || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  http.delete('/api/v1/admin/compliance/sanctions/:id', () => {
+    return HttpResponse.json({ message: 'Deleted' });
+  }),
+
+  // Compliance logs
+  http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
+    return HttpResponse.json({
+      data: mockComplianceLogs,
+      total: mockComplianceLogs.length,
+      limit: 25,
+      offset: 0,
     });
   }),
 ];
