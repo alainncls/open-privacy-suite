@@ -30,7 +30,7 @@ describe('TokenPriceList', () => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', async () => {
           await delay('infinite');
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [] });
         })
       );
 
@@ -43,7 +43,7 @@ describe('TokenPriceList', () => {
     it('shows empty state when no tokens', async () => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
-          return HttpResponse.json([]);
+          return HttpResponse.json({ data: [] });
         })
       );
 

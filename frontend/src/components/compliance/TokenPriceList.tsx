@@ -39,7 +39,7 @@ export default function TokenPriceList() {
       setLoading(true);
       setError(null);
       const response = await complianceApi.tokens.list(orgId);
-      setTokens(response.data || []);
+      setTokens(response.data.data || []);
     } catch (err: unknown) {
       const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
       // 404 = no data yet, not an error

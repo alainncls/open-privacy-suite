@@ -23,7 +23,7 @@ export const complianceApi = {
 
   tokens: {
     list: (orgId: string) =>
-      api.get<TokenPrice[]>(`/admin/orgs/${orgId}/compliance/tokens`),
+      api.get<{ data: TokenPrice[] }>(`/admin/orgs/${orgId}/compliance/tokens`),
     upsert: (orgId: string, tokenAddress: string, input: UpsertTokenPriceInput) =>
       api.put<TokenPrice>(`/admin/orgs/${orgId}/compliance/tokens/${encodeURIComponent(tokenAddress)}`, input),
     delete: (orgId: string, tokenAddress: string) =>

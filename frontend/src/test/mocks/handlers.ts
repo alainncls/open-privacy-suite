@@ -763,9 +763,9 @@ export const handlers = [
     });
   }),
 
-  // Token prices
+  // Token prices — backend wraps in {data: [...]}
   http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
-    return HttpResponse.json(mockTokenPrices);
+    return HttpResponse.json({ data: mockTokenPrices });
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
