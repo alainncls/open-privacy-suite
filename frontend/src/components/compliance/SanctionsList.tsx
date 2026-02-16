@@ -49,8 +49,13 @@ export default function SanctionsList() {
       setTotal(page.total);
       setOffset(newOffset);
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || 'Failed to load sanctioned addresses');
+      const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
+      if (axiosError.response?.status === 404) {
+        setAddresses([]);
+        setTotal(0);
+      } else {
+        setError(axiosError.response?.data?.error || 'Failed to load sanctioned addresses');
+      }
     } finally {
       setLoading(false);
     }

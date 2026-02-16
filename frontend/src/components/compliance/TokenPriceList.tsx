@@ -41,8 +41,13 @@ export default function TokenPriceList() {
       const response = await complianceApi.tokens.list(orgId);
       setTokens(response.data || []);
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || 'Failed to load token prices');
+      const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
+      // 404 = no data yet, not an error
+      if (axiosError.response?.status === 404) {
+        setTokens([]);
+      } else {
+        setError(axiosError.response?.data?.error || 'Failed to load token prices');
+      }
     } finally {
       setLoading(false);
     }

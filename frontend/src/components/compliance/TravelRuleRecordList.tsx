@@ -66,8 +66,13 @@ export default function TravelRuleRecordList() {
       setTotal(page.total);
       setOffset(newOffset);
     } catch (err: unknown) {
-      const axiosError = err as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || 'Failed to load travel rule records');
+      const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
+      if (axiosError.response?.status === 404) {
+        setRecords([]);
+        setTotal(0);
+      } else {
+        setError(axiosError.response?.data?.error || 'Failed to load travel rule records');
+      }
     } finally {
       setLoading(false);
     }
