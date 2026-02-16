@@ -1,9 +1,9 @@
 import { ErrorInfo, Component, ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Shield, LayoutDashboard, ScrollText, Users, FileKey } from 'lucide-react';
+import { Shield, LayoutDashboard, ScrollText, Users, FileKey, Scale } from 'lucide-react';
 
-type Tab = 'dashboard' | 'logs' | 'rbac' | 'disclosure';
+type Tab = 'dashboard' | 'logs' | 'rbac' | 'compliance' | 'disclosure';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -59,6 +59,7 @@ function App() {
   const getActiveTab = (): Tab => {
     if (location.pathname.includes('/logs')) return 'logs';
     if (location.pathname.includes('/rbac')) return 'rbac';
+    if (location.pathname.includes('/compliance')) return 'compliance';
     if (location.pathname.includes('/disclosure')) return 'disclosure';
     return 'dashboard';
   };
@@ -75,6 +76,9 @@ function App() {
         break;
       case 'rbac':
         navigate('/admin/rbac');
+        break;
+      case 'compliance':
+        navigate('/admin/compliance');
         break;
       case 'disclosure':
         navigate('/admin/disclosure');
@@ -114,6 +118,10 @@ function App() {
                   <TabsTrigger value="rbac" className="gap-2" data-testid="nav-rbac">
                     <Users className="w-4 h-4" />
                     <span className="hidden sm:inline">RBAC</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="compliance" className="gap-2">
+                    <Scale className="w-4 h-4" />
+                    <span className="hidden sm:inline">Compliance</span>
                   </TabsTrigger>
                   <TabsTrigger value="disclosure" className="gap-2">
                     <FileKey className="w-4 h-4" />
