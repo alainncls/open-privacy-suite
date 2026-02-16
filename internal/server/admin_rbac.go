@@ -54,6 +54,9 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", s.updateContractGrant)
 	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", s.deleteContractGrant)
 
+	// Contract lookup (cross-org)
+	api.GET("/contracts/by-address/:address", s.lookupContractByAddress)
+
 	// Users
 	api.GET("/users", s.listRBACUsers)
 	api.GET("/users/:user_id", s.getRBACUser)

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { StatusCard } from './StatusCard';
-import { RequestLog } from './RequestLog';
 import { TestRequestPanel } from './TestRequestPanel';
+import { DeployDemoTokenPanel } from './DeployDemoTokenPanel';
 import { statusApi, StatusResponse } from '@/api/client';
 import { Loader2 } from 'lucide-react';
 
@@ -77,9 +77,9 @@ export function Dashboard() {
         <TestRequestPanel />
       </div>
 
-      {/* Request Log */}
-      <div className="animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-        <RequestLog />
+      {/* Dev Tools - only visible in development */}
+      <div className="animate-fade-in-up" style={{ animationDelay: '250ms' }}>
+        <DeployDemoTokenPanel />
       </div>
     </div>
   );

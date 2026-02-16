@@ -4,11 +4,12 @@ import type { Claim, SetGroupAccessInput } from '@/types/rbac';
 import { ALL_CLAIMS, CLAIM_LABELS, CLAIM_DESCRIPTIONS, CLAIM_HIERARCHY, getImplyingClaim, RPC_METHODS_BY_CLAIM } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, Save, X, Loader2, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Check, ChevronDown, ChevronRight, Info, AlertTriangle } from 'lucide-react';
 
 interface GroupAccessFormProps {
   orgId: string;
   groupId: string;
+  parentGroup?: { name: string; claims: Claim[] } | null;
   onClose: () => void;
   onSave: () => void;
 }
@@ -16,6 +17,7 @@ interface GroupAccessFormProps {
 export default function GroupAccessForm({
   orgId,
   groupId,
+  parentGroup,
   onClose,
   onSave,
 }: GroupAccessFormProps) {
@@ -293,6 +295,38 @@ export default function GroupAccessForm({
           <span className="text-[#991B1B] text-sm">{error}</span>
         </div>
       )}
+
+      {/* Parent group context */}
+      {parentGroup && (
+        <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-start gap-2">
+          <Info className="w-4 h-4 text-[#0284C7] mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-[#0369A1]">
+            <p>
+              Parent group "<strong>{parentGroup.name}</strong>" has claims:{' '}
+              {parentGroup.claims.length > 0
+                ? parentGroup.claims.map(c => CLAIM_LABELS[c]).join(', ')
+                : 'none'}
+            </p>
+            <p className="mt-1">
+              Effective claims at runtime will be the intersection of this group's claims with the parent's.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Excess claims warning */}
+      {parentGroup && parentGroup.claims.length > 0 && (() => {
+        const excess = claims.filter(c => !parentGroup.claims.includes(c));
+        if (excess.length === 0) return null;
+        return (
+          <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A] flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-[#D97706] mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-[#92400E]">
+              Claims {excess.map((c, i) => <span key={c}>{i > 0 && ', '}<strong>{CLAIM_LABELS[c]}</strong></span>)} exceed the parent group and will have no effect at runtime.
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Claims section - moved to top */}
       <div className="space-y-2">

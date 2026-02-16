@@ -141,6 +141,11 @@ export default function RBACManager() {
   }, [searchParams, organizations]);
 
   const handleOrgChange = (orgId: string) => {
+    if (orgId === '__all__') {
+      setSelectedOrg(null);
+      setSearchParams({});
+      return;
+    }
     const org = organizations.find(o => o.id === orgId);
     setSelectedOrg(org || null);
     // Update URL with new org
@@ -151,8 +156,8 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgRequiredTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
-    const needsOrg = orgRequiredTabs.includes(tab);
+    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
+    const needsOrg = orgTabs.includes(tab);
 
     let path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
     if (needsOrg && selectedOrg) {
@@ -162,9 +167,12 @@ export default function RBACManager() {
     }
   };
 
-  // Tabs that require org selection
+  // Tabs that show org selector (users shows it but doesn't block without one)
   const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
+  // Tabs that are completely blocked without org selection
+  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
+  const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
   return (
     <OrgContext.Provider
@@ -209,13 +217,28 @@ export default function RBACManager() {
                 </Badge>
               ) : (
                 <Select
-                  value={selectedOrg?.id || ''}
+                  value={selectedOrg?.id || '__all__'}
                   onValueChange={handleOrgChange}
                 >
                   <SelectTrigger className="w-[280px]" aria-label="Select organization scope" data-testid="org-selector">
-                    <SelectValue placeholder="Select organization" />
+                    {selectedOrg ? (
+                      <SelectValue placeholder="Select organization" />
+                    ) : (
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Globe className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                        <span className="text-sm">All organizations</span>
+                      </div>
+                    )}
                   </SelectTrigger>
                   <SelectContent>
+                    {!blockedWithoutOrg && (
+                      <SelectItem value="__all__">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <Globe className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                          <span>All organizations</span>
+                        </div>
+                      </SelectItem>
+                    )}
                     {organizations.map(org => (
                       <SelectItem key={org.id} value={org.id}>
                         <div className="flex items-center gap-2 whitespace-nowrap">
@@ -322,7 +345,7 @@ export default function RBACManager() {
           </Tabs>
 
           {/* Render nested route content */}
-          {requiresOrg && !selectedOrg ? <NoOrgSelected /> : <Outlet />}
+          {blockedWithoutOrg ? <NoOrgSelected /> : <Outlet />}
         </CardContent>
       </Card>
     </OrgContext.Provider>

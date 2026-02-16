@@ -532,6 +532,64 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	c.JSON(http.StatusOK, grant)
 }
 
+// lookupContractByAddress looks up a contract by address globally and returns
+// the contract info, its organization, and all grants with group+access details.
+// GET /contracts/by-address/:address
+func (s *Server) lookupContractByAddress(c *gin.Context) {
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddressGlobal(c.Request.Context(), address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	// Get the organization
+	org, err := s.db.GetOrganization(c.Request.Context(), contract.OrgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get grants for this contract
+	grants, err := s.db.ListContractGrantsByContract(c.Request.Context(), contract.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build grants with group+access info
+	type grantInfo struct {
+		Grant  *rbac.ContractGrant `json:"grant"`
+		Group  *rbac.Group         `json:"group"`
+		Access *rbac.GroupAccess   `json:"access"`
+	}
+
+	grantInfos := make([]grantInfo, 0, len(grants))
+	for _, grant := range grants {
+		group, err := s.db.GetGroup(c.Request.Context(), grant.GroupID)
+		if err != nil || group == nil {
+			continue
+		}
+		access, _ := s.db.GetGroupAccess(c.Request.Context(), grant.GroupID)
+		grantInfos = append(grantInfos, grantInfo{
+			Grant:  grant,
+			Group:  group,
+			Access: access,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"contract":     contract,
+		"organization": org,
+		"grants":       grantInfos,
+	})
+}
+
 func (s *Server) deleteContractGrant(c *gin.Context) {
 	orgID := c.Param("org_id")
 	address := c.Param("address")

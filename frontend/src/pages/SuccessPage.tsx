@@ -169,7 +169,7 @@ export function SuccessPage() {
                     Bearer {accessToken.slice(0, 20)}...{accessToken.slice(-10)}
                   </code>
                   <Button
-                    onClick={() => copyToClipboard(`Bearer ${accessToken}`, 'token')}
+                    onClick={() => copyToClipboard(accessToken, 'token')}
                     variant="outline"
                     size="icon"
                     className="flex-shrink-0"

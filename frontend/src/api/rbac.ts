@@ -122,6 +122,17 @@ export const rbacApi = {
       api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),
     syncDelete: (orgId: string, contractIds: string[]) =>
       api.post<ContractSyncDeleteResponse>(`/orgs/${orgId}/contracts/sync-delete`, { contract_ids: contractIds }),
+    // Lookup by address (cross-org, for test request panel)
+    lookupByAddress: (address: string) =>
+      api.get<{
+        contract: Contract;
+        organization: Organization;
+        grants: Array<{
+          grant: ContractGrant;
+          group: Group;
+          access: GroupAccess | null;
+        }>;
+      }>(`/contracts/by-address/${address}`),
   },
 
   // Preregistered Addresses (CREATE3)

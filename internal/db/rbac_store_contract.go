@@ -49,6 +49,13 @@ func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*
 	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
 }
 
+func (d *DB) GetContractByAddressGlobal(ctx context.Context, address string) (*rbac.Contract, error) {
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE lower(address) = $1`
+
+	return scanContract(d.conn.QueryRowContext(ctx, query, strings.ToLower(address)))
+}
+
 func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*rbac.Contract, error) {
 	if len(ids) == 0 {
 		return make(map[string]*rbac.Contract), nil

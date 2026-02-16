@@ -326,7 +326,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			if result.Claims == nil {
 				result.Claims = access.Claims
 			} else if access.Claims != nil {
-				result.Claims = intersectClaims(result.Claims, access.Claims)
+				result.Claims = IntersectClaims(result.Claims, access.Claims)
 			}
 
 			// Apply MINIMUM for rate limits (most restrictive wins within hierarchy)
@@ -396,7 +396,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 				// Child narrows parent - intersect claims and functions
 				// Claims are intersected with group's claims (inherited from GroupAccess)
 				result.ContractAccess[address] = ContractAccess{
-					Claims:    intersectClaims(existing.Claims, groupClaims),
+					Claims:    IntersectClaims(existing.Claims, groupClaims),
 					Functions: intersectFunctions(existing.Functions, grant.Functions),
 				}
 			} else {
@@ -481,8 +481,10 @@ func unionStrings(a, b []string) []string {
 	return result
 }
 
-// intersectClaims returns the intersection of two claim slices.
-func intersectClaims(a, b []Claim) []Claim {
+// IntersectClaims returns the intersection of two claim slices.
+// Used both by the resolver (hierarchy computation) and by admin handlers
+// (computing effective claims for display).
+func IntersectClaims(a, b []Claim) []Claim {
 	if len(a) == 0 || len(b) == 0 {
 		return []Claim{}
 	}

@@ -2,11 +2,9 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/config"
@@ -21,7 +19,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iden3/go-jwz/v2"
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
@@ -404,6 +401,7 @@ func (s *Server) setupRouter() *gin.Engine {
 		apiV1.POST("/dev/create3-factory", s.deployCreate3Factory)
 		apiV1.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
 		apiV1.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+		apiV1.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
@@ -653,7 +651,7 @@ func (s *Server) getStatus(c *gin.Context) {
 type TestRequestInput struct {
 	Method   string        `json:"method"`
 	Params   []interface{} `json:"params"`
-	JWZToken string        `json:"jwz_token,omitempty"`
+	JWTToken string        `json:"jwt_token,omitempty"`
 }
 
 // TestRequestResponse represents the response for test request
@@ -664,111 +662,6 @@ type TestRequestResponse struct {
 	Identity  string      `json:"identity,omitempty"` // The identity used for access control
 }
 
-// extractIdentityFromJWZ extracts the user DID from a JWZ token.
-// It first tries the jwz library, then falls back to manual base64 decoding.
-func extractIdentityFromJWZ(jwzToken string) (identity string, err error) {
-	// Recover from any panics in the jwz library
-	defer func() {
-		if r := recover(); r != nil {
-			// Fall back to manual parsing
-			identity, err = extractIdentityManual(jwzToken)
-		}
-	}()
-
-	// Try parsing with the jwz library first
-	token, err := jwz.Parse(jwzToken)
-	if err != nil {
-		// Fall back to manual parsing
-		return extractIdentityManual(jwzToken)
-	}
-
-	// Extract payload as AuthorizationResponseMessage
-	var authResponse protocol.AuthorizationResponseMessage
-	if err := json.Unmarshal(token.GetPayload(), &authResponse); err != nil {
-		return "", fmt.Errorf("invalid JWZ payload: %w", err)
-	}
-
-	if authResponse.From == "" {
-		return "", fmt.Errorf("JWZ token missing 'from' field (user DID)")
-	}
-
-	return authResponse.From, nil
-}
-
-// extractIdentityManual parses a JWZ token by manually decoding the base64 payload.
-// JWZ tokens are formatted as: header.payload.proof (similar to JWT)
-func extractIdentityManual(jwzToken string) (string, error) {
-	parts := strings.Split(jwzToken, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid JWZ token format: expected at least 2 dot-separated parts, got %d", len(parts))
-	}
-
-	// The payload is the second part (index 1)
-	payloadB64 := parts[1]
-
-	// Decode base64url (JWZ uses URL-safe base64 without padding)
-	payload, err := base64.RawURLEncoding.DecodeString(payloadB64)
-	if err != nil {
-		// Try standard base64 with padding
-		payload, err = base64.URLEncoding.DecodeString(payloadB64)
-		if err != nil {
-			// Try standard base64 without padding
-			payload, err = base64.StdEncoding.DecodeString(payloadB64)
-			if err != nil {
-				return "", fmt.Errorf("failed to decode JWZ payload (tried RawURL, URL, Std encodings): %w", err)
-			}
-		}
-	}
-
-	// Log the decoded payload for debugging
-	log.Printf("JWZ payload decoded: %s", string(payload))
-
-	// Try to extract identity from various possible locations in the payload
-	// First try as AuthorizationResponseMessage (standard iden3 auth response)
-	var authResponse protocol.AuthorizationResponseMessage
-	if err := json.Unmarshal(payload, &authResponse); err == nil && authResponse.From != "" {
-		return authResponse.From, nil
-	}
-
-	// Try as a generic map to find DID in various locations
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(payload, &payloadMap); err != nil {
-		return "", fmt.Errorf("invalid JWZ payload JSON: %w", err)
-	}
-
-	// Check common DID field locations
-	if from, ok := payloadMap["from"].(string); ok && from != "" {
-		return from, nil
-	}
-	if sub, ok := payloadMap["sub"].(string); ok && sub != "" {
-		return sub, nil
-	}
-	if id, ok := payloadMap["id"].(string); ok && strings.HasPrefix(id, "did:") {
-		return id, nil
-	}
-
-	// Check nested in body
-	if body, ok := payloadMap["body"].(map[string]interface{}); ok {
-		if did, ok := body["did"].(string); ok && did != "" {
-			return did, nil
-		}
-		if id, ok := body["id"].(string); ok && strings.HasPrefix(id, "did:") {
-			return id, nil
-		}
-	}
-
-	// Return the raw payload structure for debugging
-	return "", fmt.Errorf("could not find user DID in JWZ payload. Available fields: %v", getMapKeys(payloadMap))
-}
-
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 func (s *Server) handleTestRequest(c *gin.Context) {
 	var input TestRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -776,16 +669,15 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 
-	// Use synthetic identity for test requests or extract from JWZ token
+	// Use synthetic identity for test requests or extract from JWT token
 	testIdentity := "test:dashboard"
-	if input.JWZToken != "" {
-		// Try to extract identity from JWZ token
-		identity, err := extractIdentityFromJWZ(input.JWZToken)
+	if input.JWTToken != "" {
+		claims, err := s.jwtService.ValidateAccessToken(input.JWTToken)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JWT: " + err.Error()})
 			return
 		}
-		testIdentity = identity
+		testIdentity = claims.Subject
 	}
 
 	// Check access via RBAC
