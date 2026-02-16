@@ -303,6 +303,14 @@ export default function GroupList() {
             <GroupAccessForm
               orgId={orgId}
               groupId={editingAccess.id}
+              parentGroup={editingAccess.parent_id ? (() => {
+                const parentGwa = groups.find(g => g.group.id === editingAccess.parent_id);
+                if (!parentGwa) return null;
+                return {
+                  name: parentGwa.group.name,
+                  claims: parentGwa.access?.claims || [],
+                };
+              })() : null}
               onClose={() => setEditingAccess(null)}
               onSave={handleAccessSave}
             />

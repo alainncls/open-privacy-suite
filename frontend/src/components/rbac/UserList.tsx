@@ -61,7 +61,6 @@ export default function UserList() {
   }, [searchQuery]);
 
   const loadUsers = useCallback(async (newOffset?: number) => {
-    if (!selectedOrg) return;
     const currentOffset = newOffset ?? offset;
 
     try {
@@ -69,8 +68,10 @@ export default function UserList() {
       const params: { limit: number; offset: number; org_id?: string; search?: string } = {
         limit: PAGE_SIZE,
         offset: currentOffset,
-        org_id: selectedOrg.id,
       };
+      if (selectedOrg) {
+        params.org_id = selectedOrg.id;
+      }
       if (debouncedSearch) {
         params.search = debouncedSearch;
       }
@@ -175,17 +176,7 @@ export default function UserList() {
         )}
       </div>
 
-      {!selectedOrg ? (
-        <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <Users className="w-8 h-8 text-[#94A3B8]" />
-          </div>
-          <p className="text-[#6B7280] mb-2">Select an organization</p>
-          <p className="text-[#94A3B8] text-sm">
-            Choose an organization from the scope selector above
-          </p>
-        </div>
-      ) : loading ? (
+      {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
         </div>

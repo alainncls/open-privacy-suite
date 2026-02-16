@@ -70,7 +70,13 @@ export function LoginPage() {
       const authResponse = await authApiMethods.requestAuth();
 
       // Step 2: Verify with mock token (only works in dev mode on backend)
-      const mockDID = `did:privado:dev_${Date.now()}`;
+      // Reuse the same dev DID across sessions so ETH address links persist
+      const MOCK_DID_KEY = 'privacy-proxy-mock-did';
+      let mockDID = localStorage.getItem(MOCK_DID_KEY);
+      if (!mockDID) {
+        mockDID = `did:privado:dev_${Date.now()}`;
+        localStorage.setItem(MOCK_DID_KEY, mockDID);
+      }
       const tokens = await authApiMethods.verifyAuth(authResponse.session_id, `mock.${mockDID}`);
 
       // Step 3: Login

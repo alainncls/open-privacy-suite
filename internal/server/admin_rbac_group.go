@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -20,6 +21,14 @@ func (s *Server) listGroups(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Populate effective claims for child groups
+	for i := range groups {
+		if groups[i].Group != nil && groups[i].Group.ParentID != nil && groups[i].Access != nil {
+			s.populateEffectiveClaims(c.Request.Context(), groups[i].Group, groups[i].Access)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": groups, "total": total, "limit": limit, "offset": offset})
 }
 
@@ -180,9 +189,16 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 		access = &rbac.GroupAccess{
 			GroupID:        groupID,
 			AllowedMethods: []string{},
-			Claims:  []rbac.Claim{},
+			Claims:         []rbac.Claim{},
 		}
 	}
+
+	// Compute effective claims for child groups
+	group, err := s.db.GetGroup(c.Request.Context(), groupID)
+	if err == nil && group != nil && group.ParentID != nil {
+		s.populateEffectiveClaims(c.Request.Context(), group, access)
+	}
+
 	c.JSON(http.StatusOK, access)
 }
 
@@ -254,4 +270,47 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
 
 	c.JSON(http.StatusOK, access)
+}
+
+// populateEffectiveClaims computes effective claims for a child group by walking
+// up the parent hierarchy and intersecting claims at each level. It sets the
+// EffectiveClaims and NarrowedByParent fields on the access struct.
+func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group, access *rbac.GroupAccess) {
+	effective := make([]rbac.Claim, len(access.Claims))
+	copy(effective, access.Claims)
+
+	currentID := group.ParentID
+	for currentID != nil {
+		parentAccess, err := s.db.GetGroupAccess(ctx, *currentID)
+		if err != nil {
+			return // On error, leave effective claims unset
+		}
+		if parentAccess != nil {
+			effective = rbac.IntersectClaims(effective, parentAccess.Claims)
+		} else {
+			// Parent has no access configured — no claims flow through
+			effective = nil
+			break
+		}
+
+		parent, err := s.db.GetGroup(ctx, *currentID)
+		if err != nil || parent == nil {
+			break
+		}
+		currentID = parent.ParentID
+	}
+
+	access.EffectiveClaims = effective
+	// Narrowed if effective differs from stored claims
+	if len(effective) != len(access.Claims) {
+		access.NarrowedByParent = true
+	} else {
+		// Check if content differs (claims are sorted by ExpandClaims)
+		for i, c := range effective {
+			if c != access.Claims[i] {
+				access.NarrowedByParent = true
+				break
+			}
+		}
+	}
 }

@@ -51,12 +51,12 @@ export const statusApi = {
 };
 
 export const testApi = {
-  send: async (method: string, params: unknown[] = [], jwzToken?: string): Promise<TestRequestResult> => {
+  send: async (method: string, params: unknown[] = [], jwtToken?: string): Promise<TestRequestResult> => {
     try {
       const response = await api.post<TestRequestResponse>('/test-request', {
         method,
         params,
-        ...(jwzToken && { jwz_token: jwzToken })
+        ...(jwtToken && { jwt_token: jwtToken })
       });
       return { status: response.status, data: response.data };
     } catch (err) {
@@ -67,6 +67,73 @@ export const testApi = {
       throw err;
     }
   },
+
+  lookupUser: async (did: string) => {
+    // Search for user by DID
+    const usersResponse = await api.get('/users', { params: { search: did, limit: 1 } });
+    const users = usersResponse.data as { data: Array<{ id: string; external_id: string; kyc: boolean; banned: boolean }> };
+    if (!users.data || users.data.length === 0) return null;
+    const user = users.data[0];
+
+    // Fetch memberships and linked addresses in parallel
+    const [membershipsRes, addressesRes] = await Promise.all([
+      api.get(`/users/${user.id}/memberships`),
+      api.get(`/users/${user.id}/linked-addresses`),
+    ]);
+
+    // Get unique org IDs and fetch groups per org for claims
+    const memberships = (membershipsRes.data || []) as Array<{ membership: { id: string; group_id: string; source: string }; group: { id: string; org_id: string; name: string; path: string } }>;
+    const orgIds = [...new Set(memberships.map(m => m.group.org_id))];
+
+    // Fetch groups with access for each org
+    const orgGroupsMap: Record<string, Array<{ group: { id: string; name: string; path: string }; access: { claims: string[] } | null }>> = {};
+    await Promise.all(orgIds.map(async (orgId) => {
+      const res = await api.get(`/orgs/${orgId}/groups`, { params: { limit: 100 } });
+      const data = res.data as { data: Array<{ group: { id: string; name: string; path: string }; access: { claims: string[] } | null }> };
+      orgGroupsMap[orgId] = data.data || [];
+    }));
+
+    // Build org names map
+    const orgNames: Record<string, string> = {};
+    await Promise.all(orgIds.map(async (orgId) => {
+      const res = await api.get(`/orgs/${orgId}`);
+      const org = res.data as { name: string };
+      orgNames[orgId] = org.name;
+    }));
+
+    return {
+      user,
+      memberships,
+      linkedAddresses: ((addressesRes.data as { addresses: Array<{ address: string; verified_at: string }> }).addresses || []),
+      orgGroupsMap,
+      orgNames,
+    };
+  },
+
+  lookupContract: async (address: string) => {
+    const response = await api.get(`/contracts/by-address/${address}`);
+    return response.data as {
+      contract: { id: string; name: string; address: string; org_id: string };
+      organization: { id: string; name: string; slug: string };
+      grants: Array<{
+        grant: { id: string; contract_id: string; group_id: string; functions: Array<{ selector: string }> | null };
+        group: { id: string; name: string; path: string };
+        access: { claims: string[]; allowed_methods: string[] } | null;
+      }>;
+    };
+  },
+};
+
+export interface DeployDemoERC20Response {
+  address: string;
+  tx_hash: string;
+  registered: boolean;
+  name: string;
+}
+
+export const devApi = {
+  deployDemoERC20: (params?: { org_id?: string; name?: string }) =>
+    api.post<DeployDemoERC20Response>('/dev/deploy-demo-erc20', params ?? {}),
 };
 
 export default api;

@@ -151,6 +151,10 @@ type GroupAccess struct {
 	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	// Computed fields (not stored in DB, populated by handlers for child groups)
+	EffectiveClaims  []Claim `json:"effective_claims,omitempty"`
+	NarrowedByParent bool    `json:"narrowed_by_parent,omitempty"`
 }
 
 // User represents a user in the RBAC system.

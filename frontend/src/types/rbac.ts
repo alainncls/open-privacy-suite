@@ -81,6 +81,9 @@ export interface GroupAccess {
   rate_limit_daily?: number | null;
   created_at: string;
   updated_at: string;
+  // Computed fields (populated by backend for child groups)
+  effective_claims?: Claim[];
+  narrowed_by_parent?: boolean;
 }
 
 export interface User {

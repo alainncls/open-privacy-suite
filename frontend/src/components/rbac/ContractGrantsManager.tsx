@@ -296,16 +296,28 @@ export default function ContractGrantsManager({
 
                 {/* Group's claims from GroupAccess */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#6B7280]">Group claims:</span>
+                  <span className="text-xs text-[#6B7280]">
+                    {grant.groupAccess?.narrowed_by_parent ? 'Effective claims:' : 'Group claims:'}
+                  </span>
                   {grant.groupAccess?.claims && grant.groupAccess.claims.length > 0 ? (
-                    grant.groupAccess.claims.map(claim => (
-                      <span
-                        key={claim}
-                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
-                      >
-                        {CLAIM_LABELS[claim] || claim}
-                      </span>
-                    ))
+                    <>
+                      {(grant.groupAccess.narrowed_by_parent
+                        ? grant.groupAccess.effective_claims || []
+                        : grant.groupAccess.claims
+                      ).map(claim => (
+                        <span
+                          key={claim}
+                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
+                        >
+                          {CLAIM_LABELS[claim] || claim}
+                        </span>
+                      ))}
+                      {grant.groupAccess.narrowed_by_parent && (
+                        <span className="text-xs text-[#94A3B8] italic ml-1">
+                          (narrowed by parent)
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className="text-xs text-[#94A3B8] italic">
                       No claims configured - set up in Groups tab

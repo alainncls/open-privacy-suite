@@ -527,6 +527,22 @@ export const handlers = [
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
+  // Contract lookup by address (cross-org)
+  http.get('/api/v1/contracts/by-address/:address', ({ params }) => {
+    if (params.address === mockContract.address) {
+      return HttpResponse.json({
+        contract: mockContract,
+        organization: mockOrganization,
+        grants: [{
+          grant: mockContractGrant,
+          group: mockGroup,
+          access: mockGroupAccess,
+        }],
+      });
+    }
+    return HttpResponse.json({ error: 'contract not found' }, { status: 404 });
+  }),
+
   // Utility endpoints
   http.post('/api/v1/access/check', async () => {
     return HttpResponse.json({
