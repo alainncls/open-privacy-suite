@@ -142,6 +142,28 @@ func (d *DB) FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, bene
 		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr)))
 }
 
+func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*compliance.TravelRuleRecord, error) {
+	// Atomically find and claim (mark as used) in a single UPDATE ... RETURNING.
+	// This prevents TOCTOU race conditions: only one concurrent caller can claim a given record.
+	query := `UPDATE travel_rule_records
+	          SET used_at = NOW()
+	          WHERE id = (
+	              SELECT id FROM travel_rule_records
+	              WHERE org_id = $1 AND originator_user_id = $2
+	              AND beneficiary_address = $3 AND COALESCE(token_address, 'native') = $4
+	              AND used_at IS NULL AND expires_at > NOW()
+	              ORDER BY created_at DESC
+	              LIMIT 1
+	              FOR UPDATE SKIP LOCKED
+	          )
+	          RETURNING id, org_id, originator_user_id, originator_data, beneficiary_data,
+	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
+	          expires_at, used_at, used_tx_hash, created_at`
+
+	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query,
+		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr)))
+}
+
 func (d *DB) MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error {
 	query := `UPDATE travel_rule_records SET used_at = NOW(), used_tx_hash = $2
 	          WHERE id = $1`

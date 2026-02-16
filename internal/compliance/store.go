@@ -18,6 +18,9 @@ type Store interface {
 	CreateTravelRuleRecord(ctx context.Context, record *TravelRuleRecord) error
 	GetTravelRuleRecord(ctx context.Context, id string) (*TravelRuleRecord, error)
 	FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*TravelRuleRecord, error)
+	// ClaimUnusedTravelRuleRecord atomically finds an unused record and marks it as used.
+	// This prevents TOCTOU race conditions where two concurrent requests could claim the same record.
+	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*TravelRuleRecord, error)
 	MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error
 	ListTravelRuleRecords(ctx context.Context, orgID string, limit, offset int) ([]*TravelRuleRecord, int, error)
 	CleanupExpiredRecords(ctx context.Context) (int64, error)

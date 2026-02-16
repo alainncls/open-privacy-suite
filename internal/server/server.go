@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
@@ -250,6 +251,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		complianceChecker := compliance.NewChecker(database, cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
 		s.jsonrpcProcessor.SetComplianceChecker(complianceChecker)
 		log.Printf("Travel rule compliance enabled (default threshold: $%.2f, record expiry: %s)", cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
+	} else {
+		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}
 
 	return s, nil

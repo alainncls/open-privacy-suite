@@ -189,33 +189,10 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
-	if p.complianceChecker != nil && (req.Method == "eth_sendTransaction") {
+	if req.Method == "eth_sendTransaction" {
 		from, to, data, value := extractTxParams(req.Params)
-		compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
-			OrgID:  result.OrgID,
-			UserID: result.UserID,
-			From:   from,
-			To:     to,
-			Data:   data,
-			Value:  value,
-		})
-		if compErr != nil {
-			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
-			return &ProcessResult{
-				Error: &ProcessError{
-					StatusCode: http.StatusInternalServerError,
-					Message:    "compliance check failed: " + compErr.Error(),
-				},
-			}
-		}
-		if !compResult.Allowed {
-			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
-			return &ProcessResult{
-				Error: &ProcessError{
-					StatusCode: http.StatusForbidden,
-					Message:    "compliance denied: " + compResult.Reason,
-				},
-			}
+		if compErr := p.checkCompliance(ctx, req, result.OrgID, result.UserID, from, to, data, value); compErr != nil {
+			return compErr
 		}
 	}
 
@@ -437,6 +414,44 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	return nil
 }
 
+// checkCompliance runs travel rule compliance checks if the checker is configured.
+// Called from both eth_sendTransaction and eth_sendRawTransaction paths.
+// Returns nil if compliance passes or is disabled, or a ProcessResult with an error.
+func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequest, orgID, userID, from, to, data, value string) *ProcessResult {
+	if p.complianceChecker == nil {
+		return nil
+	}
+
+	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+		OrgID:  orgID,
+		UserID: userID,
+		From:   from,
+		To:     to,
+		Data:   data,
+		Value:  value,
+	})
+	if compErr != nil {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "compliance check failed: " + compErr.Error(),
+			},
+		}
+	}
+	if !compResult.Allowed {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "compliance denied: " + compResult.Reason,
+			},
+		}
+	}
+
+	return nil
+}
+
 // isSimpleValueTransfer returns true if the transaction has no calldata.
 // Note: this alone is NOT sufficient to skip tracing - the caller must also
 // verify the target is an EOA (not a contract) via eth_getCode, because
@@ -552,33 +567,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
-	if p.complianceChecker != nil {
-		compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
-			OrgID:  result.OrgID,
-			UserID: result.UserID,
-			From:   from,
-			To:     to,
-			Data:   data,
-			Value:  value,
-		})
-		if compErr != nil {
-			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
-			return &ProcessResult{
-				Error: &ProcessError{
-					StatusCode: http.StatusInternalServerError,
-					Message:    "compliance check failed: " + compErr.Error(),
-				},
-			}
-		}
-		if !compResult.Allowed {
-			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
-			return &ProcessResult{
-				Error: &ProcessError{
-					StatusCode: http.StatusForbidden,
-					Message:    "compliance denied: " + compResult.Reason,
-				},
-			}
-		}
+	if compErr := p.checkCompliance(ctx, req, result.OrgID, result.UserID, from, to, data, value); compErr != nil {
+		return compErr
 	}
 
 	// Check rate limits

@@ -141,10 +141,12 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}, nil
 	}
 
-	// Step 6: Above threshold -> look for travel rule record
-	record, err := c.store.FindUnusedTravelRuleRecord(ctx, req.OrgID, req.UserID, info.ToAddress, tokenAddr)
+	// Step 6: Above threshold -> atomically claim a travel rule record
+	// Uses ClaimUnusedTravelRuleRecord which does UPDATE ... FOR UPDATE SKIP LOCKED
+	// in a single query to prevent TOCTOU race conditions.
+	record, err := c.store.ClaimUnusedTravelRuleRecord(ctx, req.OrgID, req.UserID, info.ToAddress, tokenAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find travel rule record: %w", err)
+		return nil, fmt.Errorf("failed to claim travel rule record: %w", err)
 	}
 	if record == nil {
 		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountUSD, threshold)
@@ -155,11 +157,6 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 			Reason:       reason,
 			TransferInfo: info,
 		}, nil
-	}
-
-	// Step 7: Mark record as used and allow
-	if err := c.store.MarkTravelRuleRecordUsed(ctx, record.ID, nil); err != nil {
-		return nil, fmt.Errorf("failed to mark travel rule record as used: %w", err)
 	}
 
 	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountUSD, threshold, record.ID)
