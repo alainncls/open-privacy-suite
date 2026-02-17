@@ -81,6 +81,18 @@ type ComplianceLog struct {
 	CreatedAt          time.Time    `json:"created_at"`
 }
 
+// AddressThresholdOverride stores per-address threshold overrides for risk-based compliance.
+// When set, the address-specific threshold takes precedence over the org-level threshold.
+type AddressThresholdOverride struct {
+	ID           string    `json:"id"`
+	OrgID        string    `json:"org_id"`
+	Address      string    `json:"address"` // lowercased 0x-prefixed
+	ThresholdUSD float64   `json:"threshold_usd"`
+	Note         string    `json:"note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // ComplianceLogFilters for querying compliance logs.
 type ComplianceLogFilters struct {
 	UserID       *string

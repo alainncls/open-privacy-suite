@@ -17,13 +17,20 @@ type Store interface {
 	// Travel rule records
 	CreateTravelRuleRecord(ctx context.Context, record *TravelRuleRecord) error
 	GetTravelRuleRecord(ctx context.Context, id string) (*TravelRuleRecord, error)
-	FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*TravelRuleRecord, error)
+	FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*TravelRuleRecord, error)
 	// ClaimUnusedTravelRuleRecord atomically finds an unused record and marks it as used.
 	// This prevents TOCTOU race conditions where two concurrent requests could claim the same record.
-	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*TravelRuleRecord, error)
+	// Only matches records where amount_usd >= amountUSD (record must cover the transfer value).
+	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*TravelRuleRecord, error)
 	MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error
 	ListTravelRuleRecords(ctx context.Context, orgID string, limit, offset int) ([]*TravelRuleRecord, int, error)
 	CleanupExpiredRecords(ctx context.Context) (int64, error)
+
+	// Address threshold overrides
+	GetAddressThresholdOverride(ctx context.Context, orgID, address string) (*AddressThresholdOverride, error)
+	ListAddressThresholdOverrides(ctx context.Context, orgID string, limit, offset int) ([]*AddressThresholdOverride, int, error)
+	UpsertAddressThresholdOverride(ctx context.Context, override *AddressThresholdOverride) error
+	DeleteAddressThresholdOverride(ctx context.Context, orgID, address string) error
 
 	// Sanctioned addresses
 	IsAddressSanctioned(ctx context.Context, orgID, address string) (bool, error)

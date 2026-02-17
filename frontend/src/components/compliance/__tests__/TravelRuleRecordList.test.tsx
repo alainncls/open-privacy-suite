@@ -140,6 +140,7 @@ describe('TravelRuleRecordList', () => {
         http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request }) => {
           createBody = await request.json();
           createCalled = true;
+          // C3: amount_usd is computed server-side, not provided by the client
           return HttpResponse.json({
             id: 'tr-new',
             org_id: 'org-1',
@@ -149,7 +150,7 @@ describe('TravelRuleRecordList', () => {
             transfer_type: 'eth',
             beneficiary_address: createBody.beneficiary_address,
             amount_wei: createBody.amount_wei,
-            amount_usd: createBody.amount_usd,
+            amount_usd: 3750, // server-computed from amount_wei * token price
             expires_at: new Date(Date.now() + 86400000).toISOString(),
             created_at: new Date().toISOString(),
           });

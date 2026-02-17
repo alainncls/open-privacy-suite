@@ -67,7 +67,7 @@ export default function TravelRuleRecordList() {
   const [formTokenAddress, setFormTokenAddress] = useState('');
   const [formBeneficiaryAddress, setFormBeneficiaryAddress] = useState('');
   const [formHumanAmount, setFormHumanAmount] = useState('');
-  const [formAmountUsd, setFormAmountUsd] = useState('');
+  const [formEstimatedUsd, setFormEstimatedUsd] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
   const [addressError, setAddressError] = useState('');
@@ -82,7 +82,9 @@ export default function TravelRuleRecordList() {
   useEffect(() => {
     if (selectedTokenInfo && formHumanAmount && !isNaN(parseFloat(formHumanAmount))) {
       const usd = parseFloat(formHumanAmount) * selectedTokenInfo.price_usd;
-      setFormAmountUsd(usd.toFixed(2));
+      setFormEstimatedUsd(usd.toFixed(2));
+    } else {
+      setFormEstimatedUsd('');
     }
   }, [formHumanAmount, selectedTokenInfo]);
 
@@ -124,7 +126,7 @@ export default function TravelRuleRecordList() {
     setFormTokenAddress('');
     setFormBeneficiaryAddress('');
     setFormHumanAmount('');
-    setFormAmountUsd('');
+    setFormEstimatedUsd('');
     setAddressError('');
     setFormError(null);
     setShowForm(true);
@@ -155,10 +157,11 @@ export default function TravelRuleRecordList() {
       ...(formBeneficiaryInstitution.trim() && { institution: formBeneficiaryInstitution.trim() }),
     };
 
+    // C3: amount_usd is computed server-side from amount_wei and token price.
+    // We only send amount_wei; the server looks up the token price and calculates USD.
     const amountWei = selectedTokenInfo
       ? humanToWei(formHumanAmount, selectedTokenInfo.decimals)
       : formHumanAmount; // fallback: user enters wei directly if no token config
-    const amountUsd = parseFloat(formAmountUsd) || 0;
 
     try {
       setFormSaving(true);
@@ -171,7 +174,6 @@ export default function TravelRuleRecordList() {
         token_address: formTransferType === 'erc20' ? formTokenAddress.trim().toLowerCase() : undefined,
         beneficiary_address: formBeneficiaryAddress.trim().toLowerCase(),
         amount_wei: amountWei,
-        amount_usd: amountUsd,
       });
       setShowForm(false);
       loadRecords(0);
@@ -411,7 +413,7 @@ export default function TravelRuleRecordList() {
                   />
                   {formHumanAmount && !isNaN(parseFloat(formHumanAmount)) && (
                     <p className="text-xs text-[#6B7280] mt-1">
-                      ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei | ≈ ${formAmountUsd} USD
+                      ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei{formEstimatedUsd && ` | ≈ $${formEstimatedUsd} USD (server will compute exact value)`}
                     </p>
                   )}
                 </>

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +17,15 @@ import (
 // Default travel rule record expiration duration.
 const travelRuleRecordTTL = 24 * time.Hour
 
+// Max pagination limit to prevent memory exhaustion from unbounded queries.
+const maxPaginationLimit = 1000
+
+// internalError logs the real error server-side and returns a generic message to the client.
+func internalError(c *gin.Context, msg string, err error) {
+	log.Printf("ERROR: %s: %v", msg, err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+}
+
 // registerComplianceRoutes adds compliance management endpoints to the admin API.
 func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	// org-scoped routes
@@ -27,11 +38,23 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	orgRoutes.POST("/travel-rule-records", s.createTravelRuleRecord)
 	orgRoutes.GET("/travel-rule-records", s.listTravelRuleRecords)
 	orgRoutes.GET("/logs", s.listComplianceLogs)
+	orgRoutes.GET("/address-thresholds", s.listAddressThresholdOverrides)
+	orgRoutes.PUT("/address-thresholds/:address", s.upsertAddressThresholdOverride)
+	orgRoutes.DELETE("/address-thresholds/:address", s.deleteAddressThresholdOverride)
 
 	// global routes
 	adminGroup.GET("/compliance/sanctions", s.listSanctionedAddresses)
 	adminGroup.POST("/compliance/sanctions", s.addSanctionedAddress)
 	adminGroup.DELETE("/compliance/sanctions/:id", s.removeSanctionedAddress)
+}
+
+// compliancePaginationParams parses and caps pagination parameters.
+func compliancePaginationParams(c *gin.Context, defaultLimit int) (int, int) {
+	limit, offset := parsePaginationParams(c, defaultLimit)
+	if limit > maxPaginationLimit {
+		limit = maxPaginationLimit
+	}
+	return limit, offset
 }
 
 // Compliance Config handlers
@@ -41,7 +64,7 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 
 	config, err := s.db.GetComplianceConfig(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to load compliance config", err)
 		return
 	}
 
@@ -72,7 +95,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	// Fetch existing config or create a new one
 	config, err := s.db.GetComplianceConfig(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to load compliance config", err)
 		return
 	}
 
@@ -89,11 +112,15 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		config.Enabled = *input.Enabled
 	}
 	if input.ThresholdUSD != nil {
+		if *input.ThresholdUSD < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_usd must be >= 0"})
+			return
+		}
 		config.ThresholdUSD = *input.ThresholdUSD
 	}
 
 	if err := s.db.UpsertComplianceConfig(c.Request.Context(), config); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to save compliance config", err)
 		return
 	}
 
@@ -107,7 +134,7 @@ func (s *Server) listTokenPrices(c *gin.Context) {
 
 	prices, err := s.db.ListTokenPrices(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to list token prices", err)
 		return
 	}
 
@@ -121,17 +148,31 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	var input struct {
 		Symbol   string  `json:"symbol" binding:"required"`
 		Decimals int     `json:"decimals"`
-		PriceUSD float64 `json:"price_usd" binding:"required"`
+		PriceUSD float64 `json:"price_usd"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if input.PriceUSD <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "price_usd must be greater than 0"})
+		return
+	}
+	// Validate decimals range (EVM tokens use 0-77; standard tokens 0-18)
+	if input.Decimals < 0 || input.Decimals > 77 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "decimals must be between 0 and 77"})
+		return
+	}
+	// Validate symbol length
+	if len(input.Symbol) > 20 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "symbol must be 20 characters or fewer"})
 		return
 	}
 
 	// Check if a price entry already exists
 	existing, err := s.db.GetTokenPrice(c.Request.Context(), orgID, tokenAddress)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to look up token price", err)
 		return
 	}
 
@@ -150,7 +191,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	}
 
 	if err := s.db.UpsertTokenPrice(c.Request.Context(), price); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to save token price", err)
 		return
 	}
 
@@ -163,7 +204,7 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 
 	existing, err := s.db.GetTokenPrice(c.Request.Context(), orgID, tokenAddress)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to look up token price", err)
 		return
 	}
 	if existing == nil {
@@ -172,7 +213,7 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 	}
 
 	if err := s.db.DeleteTokenPrice(c.Request.Context(), orgID, tokenAddress); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to delete token price", err)
 		return
 	}
 
@@ -181,9 +222,15 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 
 // Travel Rule Record handlers
 
+// M5: No rate limit on record creation. This is an admin-only endpoint accessible
+// only from localhost. Rate limiting is out of scope for PoC but should be added
+// before production deployment.
+
 func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	orgID := c.Param("org_id")
 
+	// C3: amount_usd is NOT accepted from input — it is computed server-side from
+	// amount_wei and the configured token price to prevent forged USD values.
 	var input struct {
 		OriginatorUserID   string         `json:"originator_user_id" binding:"required"`
 		OriginatorData     map[string]any `json:"originator_data" binding:"required"`
@@ -192,10 +239,16 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		TokenAddress       *string        `json:"token_address"`
 		BeneficiaryAddress string         `json:"beneficiary_address" binding:"required"`
 		AmountWei          string         `json:"amount_wei" binding:"required"`
-		AmountUSD          float64        `json:"amount_usd" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// H3: Validate amount_wei is a valid positive numeric string
+	amountWei, ok := new(big.Int).SetString(input.AmountWei, 10)
+	if !ok || amountWei.Sign() <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "amount_wei must be a positive integer string"})
 		return
 	}
 
@@ -206,9 +259,44 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		return
 	}
 
+	// H5: Require token_address for ERC-20 records
+	if transferType == compliance.TransferTypeERC20 {
+		if input.TokenAddress == nil || !auth.IsValidAddress(*input.TokenAddress) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token_address is required and must be a valid address for erc20 transfer type"})
+			return
+		}
+	}
+
 	// Validate beneficiary address
 	if !auth.IsValidAddress(input.BeneficiaryAddress) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid beneficiary_address format"})
+		return
+	}
+
+	// C3: Look up the token price and compute amount_usd server-side.
+	tokenAddr := "native"
+	if transferType == compliance.TransferTypeERC20 && input.TokenAddress != nil {
+		tokenAddr = strings.ToLower(*input.TokenAddress)
+	}
+
+	ctx := c.Request.Context()
+	tokenPrice, err := s.db.GetTokenPrice(ctx, orgID, tokenAddr)
+	if err != nil {
+		internalError(c, "failed to look up token price", err)
+		return
+	}
+	if tokenPrice == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no token price configured for " + tokenAddr + "; configure it in Token Prices first"})
+		return
+	}
+
+	amountUSD, err := compliance.WeiToUSD(amountWei, tokenPrice.Decimals, tokenPrice.PriceUSD)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to compute USD value: " + err.Error()})
+		return
+	}
+	if amountUSD <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "computed amount_usd must be greater than 0"})
 		return
 	}
 
@@ -219,15 +307,15 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		OriginatorData:     input.OriginatorData,
 		BeneficiaryData:    input.BeneficiaryData,
 		TransferType:       transferType,
-		TokenAddress:       input.TokenAddress,
+		TokenAddress:       lowercasePtr(input.TokenAddress),
 		BeneficiaryAddress: strings.ToLower(input.BeneficiaryAddress),
 		AmountWei:          input.AmountWei,
-		AmountUSD:          input.AmountUSD,
+		AmountUSD:          amountUSD,
 		ExpiresAt:          time.Now().Add(travelRuleRecordTTL),
 	}
 
 	if err := s.db.CreateTravelRuleRecord(c.Request.Context(), record); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to create travel rule record", err)
 		return
 	}
 
@@ -236,11 +324,11 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 
 func (s *Server) listTravelRuleRecords(c *gin.Context) {
 	orgID := c.Param("org_id")
-	limit, offset := parsePaginationParams(c, 50)
+	limit, offset := compliancePaginationParams(c, 50)
 
 	records, total, err := s.db.ListTravelRuleRecords(c.Request.Context(), orgID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to list travel rule records", err)
 		return
 	}
 
@@ -250,7 +338,7 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 // Sanctioned Address handlers
 
 func (s *Server) listSanctionedAddresses(c *gin.Context) {
-	limit, offset := parsePaginationParams(c, 50)
+	limit, offset := compliancePaginationParams(c, 50)
 
 	var orgID *string
 	if q := c.Query("org_id"); q != "" {
@@ -259,7 +347,7 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 
 	addresses, total, err := s.db.ListSanctionedAddresses(c.Request.Context(), orgID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to list sanctioned addresses", err)
 		return
 	}
 
@@ -282,6 +370,11 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address format"})
 		return
 	}
+	// Validate reason length
+	if len(input.Reason) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason must be 1000 characters or fewer"})
+		return
+	}
 
 	sanction := &compliance.SanctionedAddress{
 		ID:      uuid.New().String(),
@@ -292,7 +385,7 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 	}
 
 	if err := s.db.AddSanctionedAddress(c.Request.Context(), sanction); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to add sanctioned address", err)
 		return
 	}
 
@@ -304,7 +397,7 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 
 	existing, err := s.db.GetSanctionedAddress(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to look up sanctioned address", err)
 		return
 	}
 	if existing == nil {
@@ -313,18 +406,109 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 	}
 
 	if err := s.db.RemoveSanctionedAddress(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to remove sanctioned address", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "sanctioned address removed"})
 }
 
+// Address Threshold Override handlers
+
+func (s *Server) listAddressThresholdOverrides(c *gin.Context) {
+	orgID := c.Param("org_id")
+	limit, offset := compliancePaginationParams(c, 50)
+
+	overrides, total, err := s.db.ListAddressThresholdOverrides(c.Request.Context(), orgID, limit, offset)
+	if err != nil {
+		internalError(c, "failed to list address threshold overrides", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": overrides, "total": total, "limit": limit, "offset": offset})
+}
+
+func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := strings.ToLower(c.Param("address"))
+
+	if !auth.IsValidAddress(address) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid address format"})
+		return
+	}
+
+	var input struct {
+		ThresholdUSD float64 `json:"threshold_usd"`
+		Note         string  `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if input.ThresholdUSD < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_usd must be >= 0"})
+		return
+	}
+	if len(input.Note) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "note must be 1000 characters or fewer"})
+		return
+	}
+
+	// Check if an override already exists
+	existing, err := s.db.GetAddressThresholdOverride(c.Request.Context(), orgID, address)
+	if err != nil {
+		internalError(c, "failed to look up address threshold override", err)
+		return
+	}
+
+	override := &compliance.AddressThresholdOverride{
+		OrgID:        orgID,
+		Address:      address,
+		ThresholdUSD: input.ThresholdUSD,
+		Note:         input.Note,
+	}
+
+	if existing != nil {
+		override.ID = existing.ID
+	} else {
+		override.ID = uuid.New().String()
+	}
+
+	if err := s.db.UpsertAddressThresholdOverride(c.Request.Context(), override); err != nil {
+		internalError(c, "failed to save address threshold override", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, override)
+}
+
+func (s *Server) deleteAddressThresholdOverride(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := strings.ToLower(c.Param("address"))
+
+	existing, err := s.db.GetAddressThresholdOverride(c.Request.Context(), orgID, address)
+	if err != nil {
+		internalError(c, "failed to look up address threshold override", err)
+		return
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "address threshold override not found"})
+		return
+	}
+
+	if err := s.db.DeleteAddressThresholdOverride(c.Request.Context(), orgID, address); err != nil {
+		internalError(c, "failed to delete address threshold override", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "address threshold override deleted"})
+}
+
 // Compliance Log handlers
 
 func (s *Server) listComplianceLogs(c *gin.Context) {
 	orgID := c.Param("org_id")
-	limit, offset := parsePaginationParams(c, 50)
+	limit, offset := compliancePaginationParams(c, 50)
 
 	filters := &compliance.ComplianceLogFilters{
 		Limit:  limit,
@@ -334,19 +518,30 @@ func (s *Server) listComplianceLogs(c *gin.Context) {
 	if userID := c.Query("user_id"); userID != "" {
 		filters.UserID = &userID
 	}
-	if decision := c.Query("decision"); decision != "" {
+	// Whitelist decision values
+	if decision := c.Query("decision"); decision == "allowed" || decision == "denied" {
 		filters.Decision = &decision
 	}
-	if transferType := c.Query("transfer_type"); transferType != "" {
+	// Whitelist transfer_type values
+	if transferType := c.Query("transfer_type"); transferType == "eth" || transferType == "erc20" {
 		tt := compliance.TransferType(transferType)
 		filters.TransferType = &tt
 	}
 
 	logs, total, err := s.db.ListComplianceLogs(c.Request.Context(), orgID, filters)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "failed to list compliance logs", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": logs, "total": total, "limit": limit, "offset": offset})
+}
+
+// lowercasePtr returns a pointer to the lowercased string, or nil if the input is nil.
+func lowercasePtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	lower := strings.ToLower(*s)
+	return &lower
 }

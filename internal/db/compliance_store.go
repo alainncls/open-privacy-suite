@@ -126,31 +126,35 @@ func (d *DB) GetTravelRuleRecord(ctx context.Context, id string) (*compliance.Tr
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query, id))
 }
 
-func (d *DB) FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*compliance.TravelRuleRecord, error) {
-	// Use COALESCE to handle NULL token_address (native ETH) matching "native" string
+func (d *DB) FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*compliance.TravelRuleRecord, error) {
+	// Use COALESCE to handle NULL token_address (native ETH) matching "native" string.
+	// Only match records where amount_usd >= the transfer amount (record must cover the transfer value).
 	query := `SELECT id, org_id, originator_user_id, originator_data, beneficiary_data,
 	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
 	          expires_at, used_at, used_tx_hash, created_at
 	          FROM travel_rule_records
 	          WHERE org_id = $1 AND originator_user_id = $2
 	          AND beneficiary_address = $3 AND COALESCE(token_address, 'native') = $4
+	          AND amount_usd >= $5
 	          AND used_at IS NULL AND expires_at > NOW()
 	          ORDER BY created_at DESC
 	          LIMIT 1`
 
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query,
-		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr)))
+		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountUSD))
 }
 
-func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string) (*compliance.TravelRuleRecord, error) {
+func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*compliance.TravelRuleRecord, error) {
 	// Atomically find and claim (mark as used) in a single UPDATE ... RETURNING.
 	// This prevents TOCTOU race conditions: only one concurrent caller can claim a given record.
+	// Only match records where amount_usd >= the transfer amount (record must cover the transfer value).
 	query := `UPDATE travel_rule_records
 	          SET used_at = NOW()
 	          WHERE id = (
 	              SELECT id FROM travel_rule_records
 	              WHERE org_id = $1 AND originator_user_id = $2
 	              AND beneficiary_address = $3 AND COALESCE(token_address, 'native') = $4
+	              AND amount_usd >= $5
 	              AND used_at IS NULL AND expires_at > NOW()
 	              ORDER BY created_at DESC
 	              LIMIT 1
@@ -161,7 +165,7 @@ func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, ben
 	          expires_at, used_at, used_tx_hash, created_at`
 
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query,
-		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr)))
+		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountUSD))
 }
 
 func (d *DB) MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error {
@@ -208,6 +212,89 @@ func (d *DB) CleanupExpiredRecords(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to cleanup expired records: %w", err)
 	}
 	return result.RowsAffected()
+}
+
+// Address Threshold Override operations
+
+func (d *DB) GetAddressThresholdOverride(ctx context.Context, orgID, address string) (*compliance.AddressThresholdOverride, error) {
+	query := `SELECT id, org_id, address, threshold_usd, note, created_at, updated_at
+	          FROM address_threshold_overrides WHERE org_id = $1 AND address = $2`
+
+	override := &compliance.AddressThresholdOverride{}
+	var note sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)).Scan(
+		&override.ID, &override.OrgID, &override.Address, &override.ThresholdUSD,
+		&note, &override.CreatedAt, &override.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get address threshold override: %w", err)
+	}
+	if note.Valid {
+		override.Note = note.String
+	}
+	return override, nil
+}
+
+func (d *DB) ListAddressThresholdOverrides(ctx context.Context, orgID string, limit, offset int) ([]*compliance.AddressThresholdOverride, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM address_threshold_overrides WHERE org_id = $1`, orgID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count address threshold overrides: %w", err)
+	}
+
+	query := `SELECT id, org_id, address, threshold_usd, note, created_at, updated_at
+	          FROM address_threshold_overrides WHERE org_id = $1
+	          ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+
+	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list address threshold overrides: %w", err)
+	}
+	defer rows.Close()
+
+	var overrides []*compliance.AddressThresholdOverride
+	for rows.Next() {
+		o := &compliance.AddressThresholdOverride{}
+		var note sql.NullString
+		if err := rows.Scan(&o.ID, &o.OrgID, &o.Address, &o.ThresholdUSD,
+			&note, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan address threshold override: %w", err)
+		}
+		if note.Valid {
+			o.Note = note.String
+		}
+		overrides = append(overrides, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating address threshold overrides: %w", err)
+	}
+
+	return overrides, total, nil
+}
+
+func (d *DB) UpsertAddressThresholdOverride(ctx context.Context, override *compliance.AddressThresholdOverride) error {
+	query := `INSERT INTO address_threshold_overrides (id, org_id, address, threshold_usd, note)
+	          VALUES ($1, $2, $3, $4, $5)
+	          ON CONFLICT (org_id, address) DO UPDATE SET
+	          threshold_usd = EXCLUDED.threshold_usd,
+	          note = EXCLUDED.note,
+	          updated_at = CURRENT_TIMESTAMP
+	          RETURNING created_at, updated_at`
+
+	return d.conn.QueryRowContext(ctx, query,
+		override.ID, override.OrgID, strings.ToLower(override.Address),
+		override.ThresholdUSD, sql.NullString{String: override.Note, Valid: override.Note != ""},
+	).Scan(&override.CreatedAt, &override.UpdatedAt)
+}
+
+func (d *DB) DeleteAddressThresholdOverride(ctx context.Context, orgID, address string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`DELETE FROM address_threshold_overrides WHERE org_id = $1 AND address = $2`,
+		orgID, strings.ToLower(address))
+	return err
 }
 
 // Sanctioned Address operations

@@ -85,6 +85,18 @@ func TestDetectTransfer(t *testing.T) {
 			wantTokenAddr: strPtr("0x5fbdb2315678afecb367f032d93f642f64180aa3"),
 		},
 		{
+			name:       "native ETH transfer with calldata (payable function)",
+			from:       "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+			to:         "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+			data:       "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
+			value:      "0xde0b6b3a7640000",
+			wantNil:    false,
+			wantType:   TransferTypeETH,
+			wantFrom:   "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+			wantTo:     "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+			wantAmount: new(big.Int).SetUint64(1000000000000000000),
+		},
+		{
 			name:    "zero value with no data",
 			from:    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
 			to:      "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",

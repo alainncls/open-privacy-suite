@@ -8,6 +8,8 @@ import type {
   CreateTravelRuleRecordInput,
   SanctionedAddress,
   AddSanctionedAddressInput,
+  AddressThresholdOverride,
+  UpsertAddressThresholdInput,
   ComplianceLog,
   ComplianceLogFilters,
   PaginatedResponse,
@@ -35,6 +37,15 @@ export const complianceApi = {
       api.get<PaginatedResponse<TravelRuleRecord>>(`/orgs/${orgId}/compliance/travel-rule-records`, { params }),
     create: (orgId: string, input: CreateTravelRuleRecordInput) =>
       api.post<TravelRuleRecord>(`/orgs/${orgId}/compliance/travel-rule-records`, input),
+  },
+
+  addressThresholds: {
+    list: (orgId: string, params?: { limit?: number; offset?: number }) =>
+      api.get<PaginatedResponse<AddressThresholdOverride>>(`/orgs/${orgId}/compliance/address-thresholds`, { params }),
+    upsert: (orgId: string, address: string, input: UpsertAddressThresholdInput) =>
+      api.put<AddressThresholdOverride>(`/orgs/${orgId}/compliance/address-thresholds/${encodeURIComponent(address)}`, input),
+    delete: (orgId: string, address: string) =>
+      api.delete(`/orgs/${orgId}/compliance/address-thresholds/${encodeURIComponent(address)}`),
   },
 
   sanctions: {

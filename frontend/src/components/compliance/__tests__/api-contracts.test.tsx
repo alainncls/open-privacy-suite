@@ -19,6 +19,9 @@
  *   POST /sanctions           -> SanctionedAddress directly with 201
  *   DELETE /sanctions/:id     -> {message: "sanctioned address removed"}
  *   GET  /logs                -> {data: ComplianceLog[], total, limit, offset} (paginated)
+ *   GET  /address-thresholds    -> {data: AddressThresholdOverride[], total, limit, offset} (paginated)
+ *   PUT  /address-thresholds/:addr -> AddressThresholdOverride directly (no wrapper)
+ *   DELETE /address-thresholds/:addr -> {message: "address threshold override deleted"}
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -42,6 +45,7 @@ import ComplianceConfig from '../ComplianceConfig';
 import TravelRuleRecordList from '../TravelRuleRecordList';
 import SanctionsList from '../SanctionsList';
 import ComplianceLogList from '../ComplianceLogList';
+import AddressThresholdList from '../AddressThresholdList';
 
 // ---------------------------------------------------------------------------
 // Realistic mock data matching the exact shapes the Go backend returns
@@ -76,6 +80,14 @@ const realisticSanctions = [
     id: 'sanc-1', address: '0x1234567890abcdef1234567890abcdef12345678',
     reason: 'OFAC SDN list', source: 'OFAC', org_id: null,
     created_at: '2024-01-10T00:00:00Z', updated_at: '2024-01-10T00:00:00Z',
+  },
+];
+
+const realisticAddressThresholds = [
+  {
+    id: 'ato-1', org_id: 'org-1', address: '0xabcdef1234567890abcdef1234567890abcdef12',
+    threshold_usd: 100, note: 'High-risk counterparty',
+    created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z',
   },
 ];
 
@@ -126,10 +138,11 @@ describe('API Route Path Contract Tests', () => {
     await complianceApi.travelRules.list('org-1', { limit: 25, offset: 0 });
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', { params: { limit: 25, offset: 0 } });
 
+    // C3: amount_usd is no longer sent by the client; server computes it
     await complianceApi.travelRules.create('org-1', {
       originator_user_id: 'u1', originator_data: {}, beneficiary_data: {},
       transfer_type: 'eth', beneficiary_address: '0x1234567890123456789012345678901234567890',
-      amount_wei: '1000', amount_usd: 100,
+      amount_wei: '1000',
     });
     expect(postSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', expect.any(Object));
 
@@ -141,6 +154,15 @@ describe('API Route Path Contract Tests', () => {
 
     await complianceApi.sanctions.remove('sanc-1');
     expect(deleteSpy).toHaveBeenCalledWith('/compliance/sanctions/sanc-1');
+
+    await complianceApi.addressThresholds.list('org-1', { limit: 25, offset: 0 });
+    expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds', { params: { limit: 25, offset: 0 } });
+
+    await complianceApi.addressThresholds.upsert('org-1', '0x1234567890123456789012345678901234567890', { threshold_usd: 100 });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds/0x1234567890123456789012345678901234567890', { threshold_usd: 100 });
+
+    await complianceApi.addressThresholds.delete('org-1', '0x1234567890123456789012345678901234567890');
+    expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds/0x1234567890123456789012345678901234567890');
 
     await complianceApi.logs.list('org-1', { limit: 25 });
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/logs', { params: { limit: 25 } });
@@ -269,6 +291,27 @@ describe('Backend Response Contract Tests', () => {
 
     // Verify the scope badge (org_id is null -> Global)
     expect(screen.getByText('Global')).toBeInTheDocument();
+  });
+
+  it('address thresholds list parses paginated response', async () => {
+    server.use(
+      http.get('/api/v1/admin/orgs/:orgId/compliance/address-thresholds', () => {
+        return HttpResponse.json({
+          data: realisticAddressThresholds,
+          total: 1,
+          limit: 25,
+          offset: 0,
+        });
+      }),
+    );
+
+    renderWithComplianceContext(<AddressThresholdList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('0xabcdef1234567890abcdef1234567890abcdef12')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('High-risk counterparty')).toBeInTheDocument();
   });
 
   it('compliance logs list parses paginated response', async () => {

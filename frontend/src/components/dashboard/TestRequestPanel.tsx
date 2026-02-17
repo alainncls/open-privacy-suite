@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,8 @@ import { testApi, TestRequestResult } from '@/api/client';
 import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { UserContextPanel, type UserLookupResult } from './UserContextPanel';
 import { ContractInfoPanel } from './ContractInfoPanel';
+import { rbacApi } from '../../api/rbac';
+import { complianceApi } from '../../api/compliance';
 
 const RPC_METHODS = [
   { value: 'eth_blockNumber', label: 'eth_blockNumber' },
@@ -155,6 +157,26 @@ export function TestRequestPanel() {
   const [txTo, setTxTo] = useState('');
   const [txValue, setTxValue] = useState('');
   const [userLinkedAddresses, setUserLinkedAddresses] = useState<Array<{ address: string; verified_at: string }>>([]);
+  const [ethPriceUsd, setEthPriceUsd] = useState<number | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const orgsRes = await rbacApi.orgs.list({ limit: 1 });
+        const orgs = orgsRes.data.data;
+        if (!orgs || orgs.length === 0) return;
+        const orgId = orgs[0].id;
+        const tokensRes = await complianceApi.tokens.list(orgId);
+        const tokens = tokensRes.data.data;
+        const nativeToken = tokens?.find((t) => t.token_address === 'native');
+        if (nativeToken) {
+          setEthPriceUsd(nativeToken.price_usd);
+        }
+      } catch {
+        // silently fail - USD display just won't show
+      }
+    })();
+  }, []);
 
   const erc20Method = getERC20Method(method);
   const isErc20 = isERC20(method);
@@ -412,7 +434,6 @@ export function TestRequestPanel() {
                   ))}
                 </div>
               )}
-              <ContractInfoPanel contractAddress={txTo} />
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-2">
@@ -427,9 +448,19 @@ export function TestRequestPanel() {
                 step="0.001"
               />
               {txValue && !isNaN(parseFloat(txValue)) && parseFloat(txValue) > 0 && (
-                <p className="text-xs text-[#6B7280] mt-1">
-                  = {ethToHexWei(txValue)} wei (hex)
-                </p>
+                <div className="mt-1 space-y-0.5">
+                  {ethPriceUsd != null && (
+                    <p className="text-sm font-medium text-[#374151]">
+                      ≈ ${(parseFloat(txValue) * ethPriceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD{' '}
+                      <span className="text-xs font-normal text-[#6B7280]">
+                        (at ${ethPriceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/ETH)
+                      </span>
+                    </p>
+                  )}
+                  <p className="text-xs text-[#6B7280]">
+                    = {ethToHexWei(txValue)} wei
+                  </p>
+                </div>
               )}
             </div>
           </div>

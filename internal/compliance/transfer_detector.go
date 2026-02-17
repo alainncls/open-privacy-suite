@@ -28,8 +28,22 @@ type TransferInfo struct {
 func DetectTransfer(from, to, data, value string) *TransferInfo {
 	parsedValue := parseHexValue(value)
 
-	// Native ETH transfer: no calldata and value > 0
-	if (data == "" || data == "0x") && parsedValue != nil && parsedValue.Sign() > 0 {
+	// Check for ERC-20 selectors first (need at least "0x" + 8 hex chars = 10 chars).
+	// ERC-20 transfers take priority because the token amount is in calldata, not value.
+	if len(data) >= 10 {
+		selector := strings.ToLower(data[:10])
+		dataBytes, err := hexToBytes(data)
+		if err == nil {
+			if info := detectERC20(selector, dataBytes, from, to); info != nil {
+				return info
+			}
+		}
+	}
+
+	// Native ETH transfer: value > 0 (regardless of calldata).
+	// Checked after ERC-20 selectors so that ERC-20 transfer amounts take priority.
+	// This catches: plain transfers, calls to payable functions, and any tx with ETH value.
+	if parsedValue != nil && parsedValue.Sign() > 0 {
 		return &TransferInfo{
 			Type:        TransferTypeETH,
 			FromAddress: from,
@@ -38,17 +52,11 @@ func DetectTransfer(from, to, data, value string) *TransferInfo {
 		}
 	}
 
-	// Check for ERC-20 selectors (need at least "0x" + 8 hex chars = 10 chars)
-	if len(data) < 10 {
-		return nil
-	}
+	return nil
+}
 
-	selector := strings.ToLower(data[:10])
-	dataBytes, err := hexToBytes(data)
-	if err != nil {
-		return nil
-	}
-
+// detectERC20 checks if calldata matches a known ERC-20 transfer selector.
+func detectERC20(selector string, dataBytes []byte, from, to string) *TransferInfo {
 	switch selector {
 	case SelectorTransfer:
 		// transfer(address,uint256)
@@ -56,11 +64,8 @@ func DetectTransfer(from, to, data, value string) *TransferInfo {
 		if len(dataBytes) < 68 {
 			return nil
 		}
-		// Address is in bytes 4-36, but only the last 20 bytes are the actual address (bytes 16-36)
 		recipientBytes := dataBytes[16:36]
 		recipient := "0x" + hex.EncodeToString(recipientBytes)
-
-		// Amount is in bytes 36-68
 		amount := new(big.Int).SetBytes(dataBytes[36:68])
 
 		tokenAddr := strings.ToLower(to)
@@ -78,15 +83,10 @@ func DetectTransfer(from, to, data, value string) *TransferInfo {
 		if len(dataBytes) < 100 {
 			return nil
 		}
-		// From address: bytes 4-36, actual address in bytes 16-36
 		senderBytes := dataBytes[16:36]
 		sender := "0x" + hex.EncodeToString(senderBytes)
-
-		// To address: bytes 36-68, actual address in bytes 48-68
 		recipientBytes := dataBytes[48:68]
 		recipient := "0x" + hex.EncodeToString(recipientBytes)
-
-		// Amount: bytes 68-100
 		amount := new(big.Int).SetBytes(dataBytes[68:100])
 
 		tokenAddr := strings.ToLower(to)

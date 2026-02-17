@@ -28,6 +28,7 @@ import TokenPriceList from './components/compliance/TokenPriceList';
 import TravelRuleRecordList from './components/compliance/TravelRuleRecordList';
 import SanctionsList from './components/compliance/SanctionsList';
 import ComplianceLogList from './components/compliance/ComplianceLogList';
+import AddressThresholdList from './components/compliance/AddressThresholdList';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -74,6 +75,7 @@ function Root() {
                     <Route path="config" element={<ComplianceConfig />} />
                     <Route path="tokens" element={<TokenPriceList />} />
                     <Route path="travel-rules" element={<TravelRuleRecordList />} />
+                    <Route path="address-thresholds" element={<AddressThresholdList />} />
                     <Route path="sanctions" element={<SanctionsList />} />
                     <Route path="logs" element={<ComplianceLogList />} />
                   </Route>

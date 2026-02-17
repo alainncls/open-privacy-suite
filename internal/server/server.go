@@ -56,6 +56,7 @@ type Server struct {
 	rateLimiter       RateLimiterInterface
 	authRateLimiter   *AuthRateLimiter
 	disclosureService *disclosure.DefaultService
+	complianceChecker *compliance.Checker
 	config            *config.Config
 	ensResolver       *ens.Resolver
 	jsonrpcProcessor  *JSONRPCProcessor
@@ -248,9 +249,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
-		complianceChecker := compliance.NewChecker(database, cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
-		s.jsonrpcProcessor.SetComplianceChecker(complianceChecker)
-		log.Printf("Travel rule compliance enabled (default threshold: $%.2f, record expiry: %s)", cfg.DefaultThresholdUSD, cfg.TravelRecordExpiry)
+		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry)
+		s.complianceChecker = checker
+		s.jsonrpcProcessor.SetComplianceChecker(checker)
+		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
 	} else {
 		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}
@@ -635,6 +637,7 @@ type ProxyStatus struct {
 // SecurityStatus represents the security configuration status
 type SecurityStatus struct {
 	RuntimeTracingEnabled bool `json:"runtime_tracing_enabled"`
+	TravelRuleEnabled     bool `json:"travel_rule_enabled"`
 }
 
 // NodeStatus represents the node status
@@ -665,6 +668,7 @@ func (s *Server) getStatus(c *gin.Context) {
 		},
 		Security: SecurityStatus{
 			RuntimeTracingEnabled: runtimeTracingEnabled,
+			TravelRuleEnabled:     s.complianceChecker != nil,
 		},
 	}
 
@@ -733,6 +737,63 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Identity: testIdentity,
 		})
 		return
+	}
+
+	// Travel rule compliance check for eth_sendTransaction and eth_sendRawTransaction
+	if s.complianceChecker != nil {
+		var compFrom, compTo, compData, compValue string
+		var needsCheck bool
+
+		switch input.Method {
+		case "eth_sendTransaction":
+			compFrom, compTo, compData, compValue = extractTxParams(input.Params)
+			needsCheck = true
+		case "eth_sendRawTransaction":
+			rawTxHex, extractErr := extractRawTxHex(input.Params)
+			if extractErr != nil {
+				c.JSON(http.StatusBadRequest, TestRequestResponse{
+					Error:    "failed to extract raw transaction: " + extractErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			var decodeErr error
+			compFrom, compTo, compData, compValue, decodeErr = decodeRawTransaction(rawTxHex)
+			if decodeErr != nil {
+				c.JSON(http.StatusBadRequest, TestRequestResponse{
+					Error:    "failed to decode raw transaction: " + decodeErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			needsCheck = true
+		}
+
+		if needsCheck {
+			compResult, compErr := s.complianceChecker.Check(c.Request.Context(), &compliance.CheckRequest{
+				OrgID:  result.OrgID,
+				UserID: result.UserID,
+				From:   compFrom,
+				To:     compTo,
+				Data:   compData,
+				Value:  compValue,
+			})
+			if compErr != nil {
+				c.JSON(http.StatusInternalServerError, TestRequestResponse{
+					Error:    "compliance check failed: " + compErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			if !compResult.Allowed {
+				s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+				c.JSON(http.StatusForbidden, TestRequestResponse{
+					Error:    "compliance denied: " + compResult.Reason,
+					Identity: testIdentity,
+				})
+				return
+			}
+		}
 	}
 
 	// Build JSON-RPC request

@@ -5,6 +5,22 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { TestRequestPanel } from '../TestRequestPanel';
 
+function setupEthPriceHandlers(price: number = 2500) {
+  server.use(
+    http.get('/api/v1/admin/orgs', () => {
+      return HttpResponse.json({
+        data: [{ id: 'org-1', slug: 'test', name: 'Test Org', settings: {}, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' }],
+        total: 1, limit: 1, offset: 0,
+      });
+    }),
+    http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+      return HttpResponse.json({
+        data: [{ id: 'tp-1', org_id: 'org-1', token_address: 'native', symbol: 'ETH', decimals: 18, price_usd: price, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' }],
+      });
+    }),
+  );
+}
+
 function setupSuccessHandler(handler?: (body: any) => void) {
   server.use(
     http.post('/api/v1/admin/test-request', async ({ request }) => {
@@ -484,6 +500,87 @@ describe('TestRequestPanel', () => {
       expect(capturedBody.jwt_token).toBe(
         'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.sig'
       );
+    });
+  });
+
+  describe('USD display for eth_sendTransaction', () => {
+    it('shows USD equivalent when ETH amount is entered', async () => {
+      const user = userEvent.setup();
+      setupEthPriceHandlers(2000);
+      setupSuccessHandler();
+
+      render(<TestRequestPanel />);
+
+      // Select eth_sendTransaction
+      const trigger = screen.getByRole('combobox');
+      await user.click(trigger);
+      const option = await screen.findByRole('option', { name: 'eth_sendTransaction' });
+      await user.click(option);
+
+      // Enter amount in the ETH field
+      const amountInput = screen.getByPlaceholderText('0.1');
+      await user.type(amountInput, '1.5');
+
+      // Wait for USD equivalent to appear
+      await waitFor(() => {
+        expect(screen.getByText(/\$3,000\.00 USD/)).toBeInTheDocument();
+      });
+
+      expect(screen.getByText(/\$2,000\.00\/ETH/)).toBeInTheDocument();
+    });
+
+    it('shows wei hex conversion', async () => {
+      const user = userEvent.setup();
+      setupEthPriceHandlers(2000);
+      setupSuccessHandler();
+
+      render(<TestRequestPanel />);
+
+      // Select eth_sendTransaction
+      const trigger = screen.getByRole('combobox');
+      await user.click(trigger);
+      const option = await screen.findByRole('option', { name: 'eth_sendTransaction' });
+      await user.click(option);
+
+      // Enter amount
+      const amountInput = screen.getByPlaceholderText('0.1');
+      await user.type(amountInput, '1');
+
+      // Check for wei text
+      await waitFor(() => {
+        expect(screen.getByText(/wei/)).toBeInTheDocument();
+      });
+    });
+
+    it('does not show USD when price fetch fails', async () => {
+      const user = userEvent.setup();
+      // Override orgs handler to return error so ETH price fetch fails
+      server.use(
+        http.get('/api/v1/admin/orgs', () => {
+          return HttpResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }),
+      );
+      setupSuccessHandler();
+
+      render(<TestRequestPanel />);
+
+      // Select eth_sendTransaction
+      const trigger = screen.getByRole('combobox');
+      await user.click(trigger);
+      const option = await screen.findByRole('option', { name: 'eth_sendTransaction' });
+      await user.click(option);
+
+      // Enter amount
+      const amountInput = screen.getByPlaceholderText('0.1');
+      await user.type(amountInput, '1');
+
+      // Wei should still show
+      await waitFor(() => {
+        expect(screen.getByText(/wei/)).toBeInTheDocument();
+      });
+
+      // USD text should NOT appear
+      expect(screen.queryByText(/USD/)).toBeNull();
     });
   });
 });

@@ -58,7 +58,6 @@ export interface CreateTravelRuleRecordInput {
   token_address?: string;
   beneficiary_address: string;
   amount_wei: string;
-  amount_usd: number;
 }
 
 export interface SanctionedAddress {
@@ -94,6 +93,21 @@ export interface ComplianceLog {
   denial_reason?: string;
   travel_rule_record_id?: string;
   created_at: string;
+}
+
+export interface AddressThresholdOverride {
+  id: string;
+  org_id: string;
+  address: string;
+  threshold_usd: number;
+  note?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertAddressThresholdInput {
+  threshold_usd: number;
+  note?: string;
 }
 
 export interface ComplianceLogFilters {

@@ -20,11 +20,13 @@ import {
   Building2,
   Globe,
   Loader2,
+  AlertTriangle,
+  MapPin,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type ComplianceTab = 'config' | 'tokens' | 'travel-rules' | 'sanctions' | 'logs';
+type ComplianceTab = 'config' | 'tokens' | 'travel-rules' | 'address-thresholds' | 'sanctions' | 'logs';
 
 interface ComplianceOrgContextType {
   selectedOrg: Organization | null;
@@ -49,11 +51,13 @@ export default function ComplianceManager() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
+  const [travelRuleEnabled, setTravelRuleEnabled] = useState<boolean | null>(null);
 
   const getActiveTab = (): ComplianceTab => {
     const path = location.pathname;
     if (path.includes('/tokens')) return 'tokens';
     if (path.includes('/travel-rules')) return 'travel-rules';
+    if (path.includes('/address-thresholds')) return 'address-thresholds';
     if (path.includes('/sanctions')) return 'sanctions';
     if (path.includes('/logs')) return 'logs';
     return 'config';
@@ -77,9 +81,7 @@ export default function ComplianceManager() {
         }
       }
 
-      if (!selectedOrg && orgs.length > 0) {
-        setSelectedOrg(orgs[0]);
-      } else if (selectedOrg) {
+      if (selectedOrg) {
         const updatedOrg = orgs.find((o: Organization) => o.id === selectedOrg.id);
         if (updatedOrg) {
           setSelectedOrg(updatedOrg);
@@ -99,6 +101,9 @@ export default function ComplianceManager() {
 
   useEffect(() => {
     loadOrganizations();
+    rbacApi.status.get()
+      .then(res => setTravelRuleEnabled(res.data?.security?.travel_rule_enabled ?? false))
+      .catch(() => setTravelRuleEnabled(null));
   }, []);
 
   useEffect(() => {
@@ -169,33 +174,49 @@ export default function ComplianceManager() {
                   No organizations
                 </Badge>
               ) : (
-                <Select
-                  value={selectedOrg?.id || ''}
-                  onValueChange={handleOrgChange}
-                >
-                  <SelectTrigger className="w-[280px]">
-                    <SelectValue placeholder="Select organization" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {organizations.map(org => (
-                      <SelectItem key={org.id} value={org.id}>
-                        <div className="flex items-center gap-2 whitespace-nowrap">
-                          <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
-                          <span className="truncate">{org.name}</span>
-                          <span className="text-[#94A3B8] text-xs shrink-0">
-                            ({org.slug})
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedOrg?.id || ''}
+                    onValueChange={handleOrgChange}
+                  >
+                    <SelectTrigger className={`w-[280px] ${!selectedOrg ? 'border-[#EF4444] ring-1 ring-[#EF4444]/20' : ''}`}>
+                      <SelectValue placeholder="Select organization" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {organizations.map(org => (
+                        <SelectItem key={org.id} value={org.id}>
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                            <span className="truncate">{org.name}</span>
+                            <span className="text-[#94A3B8] text-xs shrink-0">
+                              ({org.slug})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedOrg && (
+                    <span className="text-xs text-[#EF4444] whitespace-nowrap">
+                      Select an org
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="pt-0">
+          {travelRuleEnabled === false && (
+            <div className="flex items-center gap-2 p-3 mb-4 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-sm text-[#991B1B]">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>
+                Travel rule enforcement is <strong>disabled</strong> on the backend.
+                Set <code className="px-1 py-0.5 rounded bg-[#FEE2E2] text-xs font-mono">ENABLE_TRAVEL_RULE=true</code> and restart to enforce thresholds and sanctions.
+              </span>
+            </div>
+          )}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="w-full justify-start mb-4">
               <TabsTrigger value="config" className="gap-2">
@@ -209,6 +230,10 @@ export default function ComplianceManager() {
               <TabsTrigger value="travel-rules" className="gap-2">
                 <FileText className="w-4 h-4" />
                 <span>Travel Rules</span>
+              </TabsTrigger>
+              <TabsTrigger value="address-thresholds" className="gap-2">
+                <MapPin className="w-4 h-4" />
+                <span>Address Thresholds</span>
               </TabsTrigger>
               <TabsTrigger value="sanctions" className="gap-2">
                 <ShieldBan className="w-4 h-4" />

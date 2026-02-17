@@ -244,6 +244,7 @@ import type {
   TravelRuleRecord,
   SanctionedAddress,
   ComplianceLog,
+  AddressThresholdOverride,
 } from '@/types/compliance';
 
 export const mockComplianceConfig: ComplianceConfigType = {
@@ -359,6 +360,26 @@ export const mockComplianceLogs: ComplianceLog[] = [
     decision: 'denied',
     denial_reason: 'sanctioned_address',
     created_at: '2024-01-15T11:00:00Z',
+  },
+];
+
+export const mockAddressThresholdOverrides: AddressThresholdOverride[] = [
+  {
+    id: 'ato-1',
+    org_id: 'org-1',
+    address: '0xabcdef1234567890abcdef1234567890abcdef12',
+    threshold_usd: 100,
+    note: 'High-risk counterparty',
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-15T00:00:00Z',
+  },
+  {
+    id: 'ato-2',
+    org_id: 'org-1',
+    address: '0x1111111111111111111111111111111111111111',
+    threshold_usd: 0,
+    created_at: '2024-01-10T00:00:00Z',
+    updated_at: '2024-01-10T00:00:00Z',
   },
 ];
 
@@ -842,5 +863,32 @@ export const handlers = [
       limit: 25,
       offset: 0,
     });
+  }),
+
+  // Address threshold overrides
+  http.get('/api/v1/admin/orgs/:orgId/compliance/address-thresholds', () => {
+    return HttpResponse.json({
+      data: mockAddressThresholdOverrides,
+      total: mockAddressThresholdOverrides.length,
+      limit: 25,
+      offset: 0,
+    });
+  }),
+
+  http.put('/api/v1/admin/orgs/:orgId/compliance/address-thresholds/:address', async ({ request, params }) => {
+    const body = await request.json() as { threshold_usd: number; note?: string };
+    return HttpResponse.json({
+      id: 'ato-new',
+      org_id: params.orgId as string,
+      address: params.address as string,
+      threshold_usd: body.threshold_usd,
+      note: body.note || null,
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  http.delete('/api/v1/admin/orgs/:orgId/compliance/address-thresholds/:address', () => {
+    return HttpResponse.json({ message: 'Deleted' });
   }),
 ];

@@ -17,6 +17,7 @@ import ComplianceConfig from '../ComplianceConfig';
 import TokenPriceList from '../TokenPriceList';
 import SanctionsList from '../SanctionsList';
 import TravelRuleRecordList from '../TravelRuleRecordList';
+import AddressThresholdList from '../AddressThresholdList';
 import ComplianceLogList from '../ComplianceLogList';
 import {
   mockOrganization,
@@ -49,6 +50,7 @@ function renderComplianceManager(initialRoute = '/admin/compliance/config') {
               <Route path="config" element={<ComplianceConfig />} />
               <Route path="tokens" element={<TokenPriceList />} />
               <Route path="travel-rules" element={<TravelRuleRecordList />} />
+              <Route path="address-thresholds" element={<AddressThresholdList />} />
               <Route path="sanctions" element={<SanctionsList />} />
               <Route path="logs" element={<ComplianceLogList />} />
             </Route>
@@ -88,13 +90,14 @@ describe('ComplianceManager Integration Tests', () => {
   });
 
   describe('Tab Navigation', () => {
-    it('renders all five compliance tabs', async () => {
+    it('renders all six compliance tabs', async () => {
       renderComplianceManager();
 
       await waitFor(() => {
         expect(screen.getByText('Config')).toBeInTheDocument();
         expect(screen.getByText('Token Prices')).toBeInTheDocument();
         expect(screen.getByText('Travel Rules')).toBeInTheDocument();
+        expect(screen.getByText('Address Thresholds')).toBeInTheDocument();
         expect(screen.getByText('Sanctions')).toBeInTheDocument();
         expect(screen.getByText('Logs')).toBeInTheDocument();
       });
@@ -111,6 +114,15 @@ describe('ComplianceManager Integration Tests', () => {
 
     it('shows org selector on Config tab', async () => {
       renderComplianceManager('/admin/compliance/config?org=org-1');
+
+      await waitFor(() => {
+        // Should show org selector (not global scope)
+        expect(screen.queryByText('Global (all organizations)')).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows org selector on Address Thresholds tab', async () => {
+      renderComplianceManager('/admin/compliance/address-thresholds?org=org-1');
 
       await waitFor(() => {
         // Should show org selector (not global scope)
@@ -151,15 +163,25 @@ describe('ComplianceManager Integration Tests', () => {
   });
 
   describe('Organization Selector', () => {
-    it('auto-selects first org when orgs are available', async () => {
-      renderComplianceManager('/admin/compliance/config');
+    it('selects org from URL param', async () => {
+      renderComplianceManager('/admin/compliance/config?org=org-1');
 
       await waitFor(() => {
         expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
       });
     });
 
-    it('shows "No organization selected" when no org selected and tab needs one', async () => {
+    it('does not auto-select org when no org param in URL', async () => {
+      renderComplianceManager('/admin/compliance/config');
+
+      await waitFor(() => {
+        // Should show the "Select an org" hint and blocked content
+        expect(screen.getByText('Select an org')).toBeInTheDocument();
+        expect(screen.getByText('No organization selected')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "No organization selected" when no orgs exist', async () => {
       server.use(
         http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 1000, offset: 0 });
