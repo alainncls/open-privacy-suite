@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -16,7 +15,8 @@ import Pagination from '@/components/ui/Pagination';
 import { Loader2, Plus, AlertCircle, FileText } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
-import type { TravelRuleRecord, TransferType } from '@/types/compliance';
+import { UserSearchInput } from './UserSearchInput';
+import type { TravelRuleRecord, TransferType, TokenPrice } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
 
@@ -32,6 +32,20 @@ const statusBadgeVariant: Record<string, 'success' | 'secondary' | 'destructive'
   expired: 'destructive',
 };
 
+function isValidAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(address);
+}
+
+function humanToWei(amount: string, decimals: number): string {
+  if (!amount || isNaN(parseFloat(amount))) return '';
+  const parts = amount.split('.');
+  const whole = parts[0] || '0';
+  const fraction = (parts[1] || '').padEnd(decimals, '0').slice(0, decimals);
+  const combined = whole + fraction;
+  // Remove leading zeros
+  return combined.replace(/^0+/, '') || '0';
+}
+
 export default function TravelRuleRecordList() {
   const { selectedOrg } = useComplianceOrgContext();
   const orgId = selectedOrg?.id;
@@ -45,15 +59,32 @@ export default function TravelRuleRecordList() {
 
   // Form state
   const [formOriginatorUserId, setFormOriginatorUserId] = useState('');
-  const [formOriginatorData, setFormOriginatorData] = useState('{}');
-  const [formBeneficiaryData, setFormBeneficiaryData] = useState('{}');
+  const [formOriginatorName, setFormOriginatorName] = useState('');
+  const [formOriginatorAccountRef, setFormOriginatorAccountRef] = useState('');
+  const [formBeneficiaryName, setFormBeneficiaryName] = useState('');
+  const [formBeneficiaryInstitution, setFormBeneficiaryInstitution] = useState('');
   const [formTransferType, setFormTransferType] = useState<TransferType>('eth');
   const [formTokenAddress, setFormTokenAddress] = useState('');
   const [formBeneficiaryAddress, setFormBeneficiaryAddress] = useState('');
-  const [formAmountWei, setFormAmountWei] = useState('');
+  const [formHumanAmount, setFormHumanAmount] = useState('');
   const [formAmountUsd, setFormAmountUsd] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
+  const [addressError, setAddressError] = useState('');
+  const [availableTokens, setAvailableTokens] = useState<TokenPrice[]>([]);
+
+  const selectedTokenInfo = formTransferType === 'eth'
+    ? availableTokens.find(t => t.token_address === 'native')
+    : availableTokens.find(t => t.token_address === formTokenAddress);
+
+  const erc20Tokens = availableTokens.filter(t => t.token_address !== 'native');
+
+  useEffect(() => {
+    if (selectedTokenInfo && formHumanAmount && !isNaN(parseFloat(formHumanAmount))) {
+      const usd = parseFloat(formHumanAmount) * selectedTokenInfo.price_usd;
+      setFormAmountUsd(usd.toFixed(2));
+    }
+  }, [formHumanAmount, selectedTokenInfo]);
 
   const loadRecords = async (newOffset: number = offset) => {
     if (!orgId) return;
@@ -83,37 +114,51 @@ export default function TravelRuleRecordList() {
     loadRecords(0);
   }, [orgId]);
 
-  const openCreateForm = () => {
+  const openCreateForm = async () => {
     setFormOriginatorUserId('');
-    setFormOriginatorData('{}');
-    setFormBeneficiaryData('{}');
+    setFormOriginatorName('');
+    setFormOriginatorAccountRef('');
+    setFormBeneficiaryName('');
+    setFormBeneficiaryInstitution('');
     setFormTransferType('eth');
     setFormTokenAddress('');
     setFormBeneficiaryAddress('');
-    setFormAmountWei('');
+    setFormHumanAmount('');
     setFormAmountUsd('');
+    setAddressError('');
     setFormError(null);
     setShowForm(true);
+    // Fetch available tokens for the org
+    try {
+      const response = await complianceApi.tokens.list(orgId!);
+      setAvailableTokens(response.data.data || []);
+    } catch {
+      setAvailableTokens([]);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgId) return;
 
-    let originatorData: Record<string, unknown>;
-    let beneficiaryData: Record<string, unknown>;
-    try {
-      originatorData = JSON.parse(formOriginatorData);
-    } catch {
-      setFormError('Originator data must be valid JSON');
+    if (formBeneficiaryAddress && !isValidAddress(formBeneficiaryAddress)) {
+      setAddressError('Invalid address format. Must be 0x followed by 40 hex characters.');
       return;
     }
-    try {
-      beneficiaryData = JSON.parse(formBeneficiaryData);
-    } catch {
-      setFormError('Beneficiary data must be valid JSON');
-      return;
-    }
+
+    const originatorData = {
+      name: formOriginatorName.trim(),
+      ...(formOriginatorAccountRef.trim() && { account_ref: formOriginatorAccountRef.trim() }),
+    };
+    const beneficiaryData = {
+      name: formBeneficiaryName.trim(),
+      ...(formBeneficiaryInstitution.trim() && { institution: formBeneficiaryInstitution.trim() }),
+    };
+
+    const amountWei = selectedTokenInfo
+      ? humanToWei(formHumanAmount, selectedTokenInfo.decimals)
+      : formHumanAmount; // fallback: user enters wei directly if no token config
+    const amountUsd = parseFloat(formAmountUsd) || 0;
 
     try {
       setFormSaving(true);
@@ -125,8 +170,8 @@ export default function TravelRuleRecordList() {
         transfer_type: formTransferType,
         token_address: formTransferType === 'erc20' ? formTokenAddress.trim().toLowerCase() : undefined,
         beneficiary_address: formBeneficiaryAddress.trim().toLowerCase(),
-        amount_wei: formAmountWei.trim(),
-        amount_usd: parseFloat(formAmountUsd) || 0,
+        amount_wei: amountWei,
+        amount_usd: amountUsd,
       });
       setShowForm(false);
       loadRecords(0);
@@ -237,39 +282,55 @@ export default function TravelRuleRecordList() {
 
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                Originator User ID
+                Originator
               </label>
-              <Input
-                value={formOriginatorUserId}
-                onChange={e => setFormOriginatorUserId(e.target.value)}
-                placeholder="UUID of the originating user"
-                required
-              />
+              <UserSearchInput orgId={orgId!} value={formOriginatorUserId} onChange={setFormOriginatorUserId} />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Originator Data (JSON)
+                  Originator Name <span className="text-[#991B1B]">*</span>
                 </label>
-                <Textarea
-                  value={formOriginatorData}
-                  onChange={e => setFormOriginatorData(e.target.value)}
-                  placeholder='{"name": "..."}'
-                  rows={3}
-                  className="font-mono text-xs"
+                <Input
+                  value={formOriginatorName}
+                  onChange={e => setFormOriginatorName(e.target.value)}
+                  placeholder="Full legal name"
+                  required
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Beneficiary Data (JSON)
+                  Account Reference
                 </label>
-                <Textarea
-                  value={formBeneficiaryData}
-                  onChange={e => setFormBeneficiaryData(e.target.value)}
-                  placeholder='{"name": "..."}'
-                  rows={3}
-                  className="font-mono text-xs"
+                <Input
+                  value={formOriginatorAccountRef}
+                  onChange={e => setFormOriginatorAccountRef(e.target.value)}
+                  placeholder="Optional account ref"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                  Beneficiary Name <span className="text-[#991B1B]">*</span>
+                </label>
+                <Input
+                  value={formBeneficiaryName}
+                  onChange={e => setFormBeneficiaryName(e.target.value)}
+                  placeholder="Full legal name"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                  Institution
+                </label>
+                <Input
+                  value={formBeneficiaryInstitution}
+                  onChange={e => setFormBeneficiaryInstitution(e.target.value)}
+                  placeholder="Optional institution"
                 />
               </div>
             </div>
@@ -279,7 +340,7 @@ export default function TravelRuleRecordList() {
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">
                   Transfer Type
                 </label>
-                <Select value={formTransferType} onValueChange={v => setFormTransferType(v as TransferType)}>
+                <Select value={formTransferType} onValueChange={v => { setFormTransferType(v as TransferType); setFormTokenAddress(''); }}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -292,13 +353,26 @@ export default function TravelRuleRecordList() {
               {formTransferType === 'erc20' && (
                 <div>
                   <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                    Token Address
+                    Token
                   </label>
-                  <Input
-                    value={formTokenAddress}
-                    onChange={e => setFormTokenAddress(e.target.value)}
-                    placeholder="0x..."
-                  />
+                  {erc20Tokens.length > 0 ? (
+                    <Select value={formTokenAddress} onValueChange={setFormTokenAddress}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select token" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {erc20Tokens.map(token => (
+                          <SelectItem key={token.token_address} value={token.token_address}>
+                            {token.symbol} ({token.token_address.slice(0, 6)}...{token.token_address.slice(-4)})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-xs text-[#6B7280] mt-2">
+                      No ERC-20 tokens configured. Add them in Token Prices tab.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -309,38 +383,51 @@ export default function TravelRuleRecordList() {
               </label>
               <Input
                 value={formBeneficiaryAddress}
-                onChange={e => setFormBeneficiaryAddress(e.target.value)}
+                onChange={e => { setFormBeneficiaryAddress(e.target.value); setAddressError(''); }}
+                onBlur={() => {
+                  if (formBeneficiaryAddress && !isValidAddress(formBeneficiaryAddress)) {
+                    setAddressError('Invalid address format. Must be 0x followed by 40 hex characters.');
+                  } else {
+                    setAddressError('');
+                  }
+                }}
                 placeholder="0x..."
                 required
               />
+              {addressError && <p className="text-xs text-[#991B1B] mt-1">{addressError}</p>}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Amount (Wei)
-                </label>
-                <Input
-                  value={formAmountWei}
-                  onChange={e => setFormAmountWei(e.target.value)}
-                  placeholder="1000000000000000000"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Amount (USD)
-                </label>
-                <Input
-                  type="number"
-                  value={formAmountUsd}
-                  onChange={e => setFormAmountUsd(e.target.value)}
-                  placeholder="2500.00"
-                  min="0"
-                  step="0.01"
-                  required
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                {selectedTokenInfo ? `Amount (${selectedTokenInfo.symbol})` : 'Amount'}
+              </label>
+              <Input
+                value={formHumanAmount}
+                onChange={e => setFormHumanAmount(e.target.value)}
+                placeholder={selectedTokenInfo ? '1.5' : 'Enter amount in wei if no token configured'}
+                required
+              />
+              {selectedTokenInfo && formHumanAmount && !isNaN(parseFloat(formHumanAmount)) && (
+                <p className="text-xs text-[#6B7280] mt-1">
+                  ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei | ≈ ${formAmountUsd} USD
+                </p>
+              )}
+              {!selectedTokenInfo && (
+                <div className="mt-2">
+                  <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                    Amount (USD)
+                  </label>
+                  <Input
+                    type="number"
+                    value={formAmountUsd}
+                    onChange={e => setFormAmountUsd(e.target.value)}
+                    placeholder="2500.00"
+                    min="0"
+                    step="0.01"
+                    required
+                  />
+                </div>
+              )}
             </div>
 
             <DialogFooter>

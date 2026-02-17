@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithComplianceContext } from './test-utils';
-import { mockTravelRuleRecords } from '@/test/mocks/handlers';
 
 vi.mock('../ComplianceManager', async () => {
   const { TestComplianceOrgContext, useComplianceOrgContext } = await import('./test-utils');
@@ -99,7 +98,7 @@ describe('TravelRuleRecordList', () => {
   });
 
   describe('Create Record', () => {
-    it('opens create dialog with all fields', async () => {
+    it('opens create dialog with new form fields', async () => {
       const user = userEvent.setup();
       renderWithComplianceContext(<TravelRuleRecordList />);
 
@@ -114,31 +113,43 @@ describe('TravelRuleRecordList', () => {
       });
 
       // Verify form fields are present
-      expect(screen.getByText('Originator User ID')).toBeInTheDocument();
-      expect(screen.getByText('Originator Data (JSON)')).toBeInTheDocument();
-      expect(screen.getByText('Beneficiary Data (JSON)')).toBeInTheDocument();
+      // "Originator" appears in both the table header and form label
+      expect(screen.getAllByText('Originator').length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText(/Originator Name/)).toBeInTheDocument();
+      expect(screen.getByText('Account Reference')).toBeInTheDocument();
+      expect(screen.getByText(/Beneficiary Name/)).toBeInTheDocument();
+      expect(screen.getByText('Institution')).toBeInTheDocument();
       expect(screen.getByText('Transfer Type')).toBeInTheDocument();
       expect(screen.getByText('Beneficiary Address')).toBeInTheDocument();
-      expect(screen.getByText('Amount (Wei)')).toBeInTheDocument();
-      // Amount (USD) appears both in table header and form — just check form has the field
-      expect(screen.getAllByText('Amount (USD)').length).toBeGreaterThanOrEqual(1);
+
+      // Amount label may show "Amount (ETH)" once tokens are loaded
+      // "Amount" appears in both the table header ("Amount (USD)") and form label
+      await waitFor(() => {
+        expect(screen.getAllByText(/Amount/).length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Search input with placeholder for DID search
+      expect(screen.getByPlaceholderText('Search users by DID...')).toBeInTheDocument();
     });
 
-    it('submits new travel rule record', async () => {
+    it('submits record with structured fields', async () => {
       let createCalled = false;
+      let createBody: any;
+
       server.use(
-        http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async () => {
+        http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request }) => {
+          createBody = await request.json();
           createCalled = true;
           return HttpResponse.json({
             id: 'tr-new',
             org_id: 'org-1',
-            originator_user_id: 'user-1',
-            originator_data: {},
-            beneficiary_data: {},
+            originator_user_id: '',
+            originator_data: createBody.originator_data,
+            beneficiary_data: createBody.beneficiary_data,
             transfer_type: 'eth',
-            beneficiary_address: '0x1234567890123456789012345678901234567890',
-            amount_wei: '1000000000000000000',
-            amount_usd: 2500,
+            beneficiary_address: createBody.beneficiary_address,
+            amount_wei: createBody.amount_wei,
+            amount_usd: createBody.amount_usd,
             expires_at: new Date(Date.now() + 86400000).toISOString(),
             created_at: new Date().toISOString(),
           });
@@ -158,20 +169,39 @@ describe('TravelRuleRecordList', () => {
         expect(screen.getByText('Create Travel Rule Record')).toBeInTheDocument();
       });
 
-      // Fill in required fields
-      await user.type(screen.getByPlaceholderText('UUID of the originating user'), 'user-1');
-      await user.type(screen.getByPlaceholderText('0x...'), '0x1234567890123456789012345678901234567890');
-      await user.type(screen.getByPlaceholderText('1000000000000000000'), '1000000000000000000');
-      await user.type(screen.getByPlaceholderText('2500.00'), '2500');
+      // Wait for tokens to load so amount label updates
+      await waitFor(() => {
+        expect(screen.getByText('Amount (ETH)')).toBeInTheDocument();
+      });
 
+      // Fill in Originator Name (first "Full legal name" placeholder)
+      const nameInputs = screen.getAllByPlaceholderText('Full legal name');
+      await user.type(nameInputs[0], 'Alice Smith');
+
+      // Fill in Beneficiary Name (second "Full legal name" placeholder)
+      await user.type(nameInputs[1], 'Bob Jones');
+
+      // Fill in Beneficiary Address
+      await user.type(screen.getByPlaceholderText('0x...'), '0x1234567890123456789012345678901234567890');
+
+      // Fill in Amount (placeholder is '1.5' when native token is loaded)
+      await user.type(screen.getByPlaceholderText('1.5'), '1.5');
+
+      // Click submit button
       await user.click(screen.getByRole('button', { name: 'Create Record' }));
 
       await waitFor(() => {
         expect(createCalled).toBe(true);
       });
+
+      // Verify structured data was sent
+      expect(createBody.originator_data.name).toBe('Alice Smith');
+      expect(createBody.beneficiary_data.name).toBe('Bob Jones');
+      // 1.5 ETH with 18 decimals = 1500000000000000000 wei
+      expect(createBody.amount_wei).toBe('1500000000000000000');
     });
 
-    it('validates JSON fields', async () => {
+    it('validates beneficiary address format', async () => {
       const user = userEvent.setup();
       renderWithComplianceContext(<TravelRuleRecordList />);
 
@@ -185,21 +215,58 @@ describe('TravelRuleRecordList', () => {
         expect(screen.getByText('Create Travel Rule Record')).toBeInTheDocument();
       });
 
-      // Fill required fields
-      await user.type(screen.getByPlaceholderText('UUID of the originating user'), 'user-1');
-      await user.type(screen.getByPlaceholderText('0x...'), '0xabc');
-      await user.type(screen.getByPlaceholderText('1000000000000000000'), '100');
-      await user.type(screen.getByPlaceholderText('2500.00'), '100');
+      // Type an invalid address
+      const addressInput = screen.getByPlaceholderText('0x...');
+      await user.type(addressInput, '0xinvalid');
 
-      // Set invalid JSON in originator data (first textarea with this placeholder)
-      const originatorTextareas = screen.getAllByPlaceholderText('{"name": "..."}');
-      await user.clear(originatorTextareas[0]);
-      await user.type(originatorTextareas[0], 'invalid json');
-
-      await user.click(screen.getByRole('button', { name: 'Create Record' }));
+      // Trigger blur by tabbing away
+      await user.tab();
 
       await waitFor(() => {
-        expect(screen.getByText('Originator data must be valid JSON')).toBeInTheDocument();
+        expect(screen.getByText('Invalid address format. Must be 0x followed by 40 hex characters.')).toBeInTheDocument();
+      });
+    });
+
+    it('shows ERC-20 token selector when transfer type is erc20', async () => {
+      const user = userEvent.setup();
+      renderWithComplianceContext(<TravelRuleRecordList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Create Record')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Create Record'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Create Travel Rule Record')).toBeInTheDocument();
+      });
+
+      // Wait for tokens to load
+      await waitFor(() => {
+        expect(screen.getByText('Amount (ETH)')).toBeInTheDocument();
+      });
+
+      // Change transfer type to ERC-20
+      // Find the select trigger showing "ETH (Native)" default
+      const triggers = screen.getAllByRole('combobox');
+      await user.click(triggers[0]);
+      // Multiple elements may match "ERC-20 Token" (trigger + option), pick the option role
+      const erc20Options = screen.getAllByText('ERC-20 Token');
+      await user.click(erc20Options[erc20Options.length - 1]);
+
+      // Should now show the Token label and USDT option
+      await waitFor(() => {
+        expect(screen.getByText('Token')).toBeInTheDocument();
+      });
+
+      // Open the token dropdown to see USDT
+      const tokenTriggers = screen.getAllByRole('combobox');
+      // The token select should be the second combobox now
+      const tokenTrigger = tokenTriggers[1];
+      await user.click(tokenTrigger);
+
+      await waitFor(() => {
+        expect(screen.getAllByText(/USDT/).length).toBeGreaterThanOrEqual(1);
       });
     });
   });
