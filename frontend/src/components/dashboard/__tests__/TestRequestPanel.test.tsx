@@ -7,7 +7,7 @@ import { TestRequestPanel } from '../TestRequestPanel';
 
 function setupSuccessHandler(handler?: (body: any) => void) {
   server.use(
-    http.post('/api/v1/test-request', async ({ request }) => {
+    http.post('/api/v1/admin/test-request', async ({ request }) => {
       const body = await request.json();
       handler?.(body);
       return HttpResponse.json({
@@ -21,7 +21,7 @@ function setupSuccessHandler(handler?: (body: any) => void) {
 
 function setupForbiddenHandler() {
   server.use(
-    http.post('/api/v1/test-request', () => {
+    http.post('/api/v1/admin/test-request', () => {
       return HttpResponse.json(
         { error: 'access denied', identity: 'test:dashboard' },
         { status: 403 }

@@ -171,7 +171,7 @@ describe('Backend Response Contract Tests', () => {
   it('token prices list parses wrapped {data: [...]} response', async () => {
     // Backend returns {data: TokenPrice[]} — NOT a raw array, NOT paginated
     server.use(
-      http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
+      http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
         return HttpResponse.json({ data: realisticTokenPrices });
       }),
     );
@@ -189,7 +189,7 @@ describe('Backend Response Contract Tests', () => {
   it('compliance config parses unwrapped response', async () => {
     // Backend returns ComplianceConfig directly — no wrapper object
     server.use(
-      http.get('/api/v1/orgs/:orgId/compliance/config', () => {
+      http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
         return HttpResponse.json(realisticConfig);
       }),
     );
@@ -213,7 +213,7 @@ describe('Backend Response Contract Tests', () => {
   it('travel rule records list parses paginated response', async () => {
     // Backend returns {data: TravelRuleRecord[], total, limit, offset}
     server.use(
-      http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
+      http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
         return HttpResponse.json({
           data: realisticTravelRuleRecords,
           total: 1,
@@ -245,7 +245,7 @@ describe('Backend Response Contract Tests', () => {
   it('sanctions list parses paginated response', async () => {
     // Backend returns {data: SanctionedAddress[], total, limit, offset}
     server.use(
-      http.get('/api/v1/compliance/sanctions', () => {
+      http.get('/api/v1/admin/compliance/sanctions', () => {
         return HttpResponse.json({
           data: realisticSanctions,
           total: 1,
@@ -274,7 +274,7 @@ describe('Backend Response Contract Tests', () => {
   it('compliance logs list parses paginated response', async () => {
     // Backend returns {data: ComplianceLog[], total, limit, offset}
     server.use(
-      http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
+      http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
         return HttpResponse.json({
           data: realisticLogs,
           total: 1,

@@ -35,7 +35,7 @@ describe('GroupAccessForm', () => {
       let fetchCalled = false;
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           fetchCalled = true;
           return HttpResponse.json(mockGroupAccess);
         })
@@ -50,7 +50,7 @@ describe('GroupAccessForm', () => {
 
     it('shows loading spinner while fetching', () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return HttpResponse.json(mockGroupAccess);
         })
@@ -63,7 +63,7 @@ describe('GroupAccessForm', () => {
 
     it('shows existing allowed_methods as checked checkboxes', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
         })
       );
@@ -83,7 +83,7 @@ describe('GroupAccessForm', () => {
 
     it('shows existing claims', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
         })
       );
@@ -103,7 +103,7 @@ describe('GroupAccessForm', () => {
 
     it('shows existing rate limits', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
         })
       );
@@ -123,7 +123,7 @@ describe('GroupAccessForm', () => {
   describe('Editing Allowed Methods', () => {
     beforeEach(() => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             claims: ['read', 'write'] as Claim[], // Need claims to enable method sections
@@ -195,7 +195,7 @@ describe('GroupAccessForm', () => {
   describe('Editing Default Claims', () => {
     beforeEach(() => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             claims: ['read'],
@@ -219,7 +219,7 @@ describe('GroupAccessForm', () => {
 
     it('current claims are checked', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             claims: ['read', 'write'] as Claim[],
@@ -269,7 +269,7 @@ describe('GroupAccessForm', () => {
   describe('Rate Limits', () => {
     beforeEach(() => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
         })
       );
@@ -329,7 +329,7 @@ describe('GroupAccessForm', () => {
   describe('Saving', () => {
     beforeEach(() => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccess);
         })
       );
@@ -341,7 +341,7 @@ describe('GroupAccessForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             ...mockGroupAccess,
@@ -374,7 +374,7 @@ describe('GroupAccessForm', () => {
       const onSave = vi.fn();
 
       server.use(
-        http.put('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccess);
         })
       );
@@ -397,7 +397,7 @@ describe('GroupAccessForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.put('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(
             { error: 'Invalid rate limit value' },
             { status: 400 }
@@ -423,7 +423,7 @@ describe('GroupAccessForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async () => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return HttpResponse.json(mockGroupAccess);
         })
@@ -447,7 +447,7 @@ describe('GroupAccessForm', () => {
   describe('Cancel Button', () => {
     beforeEach(() => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccess);
         })
       );
@@ -473,7 +473,7 @@ describe('GroupAccessForm', () => {
   describe('Empty Access Settings', () => {
     it('handles group with no existing access settings', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(null, { status: 404 });
         })
       );
@@ -498,14 +498,14 @@ describe('GroupAccessForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             claims: ['read'] as Claim[],
             allowed_methods: ['eth_call'],
           });
         }),
-        http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             ...mockGroupAccess,

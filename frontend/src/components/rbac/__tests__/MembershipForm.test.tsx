@@ -94,7 +94,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', ({ params }) => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', ({ params }) => {
           if (params.orgId === 'org-1') {
             return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
           }
@@ -131,7 +131,7 @@ describe('MembershipForm', () => {
       const onSave = vi.fn();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
@@ -157,7 +157,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
@@ -198,10 +198,10 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', () => {
+        http.post('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(
             { error: 'User is already a member of this group' },
             { status: 409 }
@@ -243,10 +243,10 @@ describe('MembershipForm', () => {
       let capturedRequest: { group_id: string } | null = null;
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', async ({ request, params }) => {
+        http.post('/api/v1/admin/users/:userId/memberships', async ({ request, params }) => {
           capturedRequest = (await request.json()) as { group_id: string };
           expect(params.userId).toBe('user-1');
           return HttpResponse.json({
@@ -295,10 +295,10 @@ describe('MembershipForm', () => {
       let capturedGroupId: string | null = null;
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', async ({ request }) => {
+        http.post('/api/v1/admin/users/:userId/memberships', async ({ request }) => {
           const body = (await request.json()) as { group_id: string };
           capturedGroupId = body.group_id;
           return HttpResponse.json({
@@ -346,10 +346,10 @@ describe('MembershipForm', () => {
       const onSave = vi.fn();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', () => {
+        http.post('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json({
             id: 'membership-new',
             user_id: 'user-1',
@@ -394,10 +394,10 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', () => {
+        http.post('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(
             { error: 'Internal server error' },
             { status: 500 }
@@ -436,10 +436,10 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', () => {
+        http.post('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.error();
         })
       );
@@ -477,7 +477,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
@@ -505,7 +505,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
@@ -538,7 +538,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 50, offset: 0 });
         })
       );
@@ -570,10 +570,10 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', async () => {
+        http.post('/api/v1/admin/users/:userId/memberships', async () => {
           // Delay to see the loading state
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json({
@@ -623,7 +623,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
@@ -646,10 +646,10 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         }),
-        http.post('/api/v1/users/:userId/memberships', async () => {
+        http.post('/api/v1/admin/users/:userId/memberships', async () => {
           await new Promise(resolve => setTimeout(resolve, 200));
           return HttpResponse.json({
             id: 'membership-new',
@@ -696,7 +696,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
@@ -739,7 +739,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
@@ -785,7 +785,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
@@ -824,7 +824,7 @@ describe('MembershipForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }, { group: mockChildGroup, access: null }], total: 2, limit: 50, offset: 0 });
         })
       );
@@ -863,7 +863,7 @@ describe('MembershipForm', () => {
       ];
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', ({ params }) => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', ({ params }) => {
           if (params.orgId === 'org-1') {
             const data = org1Groups.map(g => ({ group: g, access: null }));
             return HttpResponse.json({ data, total: data.length, limit: 50, offset: 0 });

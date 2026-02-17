@@ -114,31 +114,31 @@ describe('RBACManager Integration Tests', () => {
     // Setup default handlers for all RBAC endpoints
     const groupsWithAccess = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
     server.use(
-      http.get('/api/v1/orgs', () => {
+      http.get('/api/v1/admin/orgs', () => {
         return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
       }),
-      http.get('/api/v1/orgs/:orgId/groups', () => {
+      http.get('/api/v1/admin/orgs/:orgId/groups', () => {
         return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
       }),
-      http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+      http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
         return HttpResponse.json(mockGroupAccess);
       }),
-      http.get('/api/v1/users', () => {
+      http.get('/api/v1/admin/users', () => {
         return HttpResponse.json({ data: mockUsers, total: mockUsers.length, limit: 25, offset: 0 });
       }),
-      http.get('/api/v1/users/:userId', () => {
+      http.get('/api/v1/admin/users/:userId', () => {
         return HttpResponse.json(mockUser);
       }),
-      http.get('/api/v1/users/:userId/memberships', () => {
+      http.get('/api/v1/admin/users/:userId/memberships', () => {
         return HttpResponse.json(mockMembershipsWithDetails);
       }),
-      http.get('/api/v1/users/:userId/linked-addresses', () => {
+      http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
         return HttpResponse.json({ addresses: mockLinkedAddresses });
       }),
-      http.get('/api/v1/users/:userId/effective-permissions', () => {
+      http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
         return HttpResponse.json(mockFullEffectivePermissions);
       }),
-      http.get('/api/v1/orgs/:orgId/contracts', () => {
+      http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
         return HttpResponse.json({ data: mockContracts, total: mockContracts.length, limit: 25, offset: 0 });
       })
     );
@@ -340,7 +340,7 @@ describe('RBACManager Integration Tests', () => {
     it('shows "No organization selected" when org is required but none selected', async () => {
       // Return empty orgs list
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 1000, offset: 0 });
         })
       );
@@ -368,14 +368,14 @@ describe('RBACManager Integration Tests', () => {
       let orgsCreated = 0;
 
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           if (orgsCreated > 0) {
             const all = [...mockOrganizations, newOrg];
             return HttpResponse.json({ data: all, total: all.length, limit: 1000, offset: 0 });
           }
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         }),
-        http.post('/api/v1/orgs', async ({ request }) => {
+        http.post('/api/v1/admin/orgs', async ({ request }) => {
           orgsCreated++;
           const body = await request.json() as { slug: string; name: string };
           return HttpResponse.json({
@@ -457,13 +457,13 @@ describe('RBACManager Integration Tests', () => {
       };
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           if (membershipAdded) {
             return HttpResponse.json([...mockMembershipsWithDetails, newMembership]);
           }
           return HttpResponse.json(mockMembershipsWithDetails);
         }),
-        http.post('/api/v1/users/:userId/memberships', async () => {
+        http.post('/api/v1/admin/users/:userId/memberships', async () => {
           membershipAdded = true;
           return HttpResponse.json(newMembership.membership);
         })
@@ -507,7 +507,7 @@ describe('RBACManager Integration Tests', () => {
       const singleMembership = [mockMembershipsWithDetails[0]];
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(singleMembership);
         })
       );
@@ -567,7 +567,7 @@ describe('RBACManager Integration Tests', () => {
       let deleteCalled = false;
 
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           if (deleteCalled) {
             // Return list without the first org
             const remaining = mockOrganizations.slice(1);
@@ -575,7 +575,7 @@ describe('RBACManager Integration Tests', () => {
           }
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId', () => {
           deleteCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -608,7 +608,7 @@ describe('RBACManager Integration Tests', () => {
       let deleteCalled = false;
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           if (deleteCalled) {
             // Return list without the first group
             const remaining = mockGroupHierarchy.slice(1).map(g => ({ group: g, access: mockGroupAccess }));
@@ -617,7 +617,7 @@ describe('RBACManager Integration Tests', () => {
           const all = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
           return HttpResponse.json({ data: all, total: all.length, limit: 50, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/groups/:groupId', () => {
           deleteCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -706,7 +706,7 @@ describe('RBACManager Integration Tests', () => {
   describe('Error Handling', () => {
     it('handles organization fetch error gracefully', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
         })
       );
@@ -721,11 +721,11 @@ describe('RBACManager Integration Tests', () => {
 
     it('handles group fetch error gracefully', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
         }),
         // Ensure orgs handler still returns paginated format for org selector
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
         })
       );
@@ -740,7 +740,7 @@ describe('RBACManager Integration Tests', () => {
 
     it('handles user fetch error gracefully', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
         })
       );
@@ -755,7 +755,7 @@ describe('RBACManager Integration Tests', () => {
 
     it('handles contract fetch error gracefully', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ error: 'Internal Server Error' }, { status: 500 });
         })
       );
@@ -770,7 +770,7 @@ describe('RBACManager Integration Tests', () => {
 
     it('shows error dialog when organization delete fails', async () => {
       server.use(
-        http.delete('/api/v1/orgs/:orgId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId', () => {
           return HttpResponse.json(
             { error: 'Organization has dependencies' },
             { status: 400 }
@@ -803,7 +803,7 @@ describe('RBACManager Integration Tests', () => {
 
     it('shows error dialog when group delete fails', async () => {
       server.use(
-        http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/groups/:groupId', () => {
           return HttpResponse.json(
             { error: 'Cannot delete group with children' },
             { status: 400 }
@@ -929,7 +929,7 @@ describe('RBACManager Integration Tests', () => {
       ];
 
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: specificOrgs, total: specificOrgs.length, limit: 1000, offset: 0 });
         })
       );
@@ -954,7 +954,7 @@ describe('RBACManager Integration Tests', () => {
 
       const specificGroupsWithAccess = specificGroups.map(g => ({ group: g, access: null }));
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: specificGroupsWithAccess, total: specificGroupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
@@ -986,7 +986,7 @@ describe('RBACManager Integration Tests', () => {
       ];
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: specificUsers, total: specificUsers.length, limit: 25, offset: 0 });
         })
       );
@@ -1017,7 +1017,7 @@ describe('RBACManager Integration Tests', () => {
       ];
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: specificContracts, total: specificContracts.length, limit: 25, offset: 0 });
         })
       );

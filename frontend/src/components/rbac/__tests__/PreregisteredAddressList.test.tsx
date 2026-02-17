@@ -33,7 +33,7 @@ describe('PreregisteredAddressList', () => {
     it('shows loading spinner initially', () => {
       // Make the request hang to see loading state
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', async () => {
           await new Promise(() => {}); // Never resolves
         })
       );
@@ -59,7 +59,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows empty state when no addresses', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([]);
         })
       );
@@ -77,7 +77,7 @@ describe('PreregisteredAddressList', () => {
 
     it('displays table with headers', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json(mockPreregisteredAddresses);
         })
       );
@@ -100,7 +100,7 @@ describe('PreregisteredAddressList', () => {
   describe('Data Display', () => {
     it('shows address (possibly truncated)', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -115,7 +115,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows factory address in CREATE3 info box', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -132,7 +132,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows note if present', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -152,7 +152,7 @@ describe('PreregisteredAddressList', () => {
       };
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([addressNoNote]);
         })
       );
@@ -168,7 +168,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows "Pending" status for unused addresses', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -182,7 +182,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows "Used" status for used addresses', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddressUsed]);
         })
       );
@@ -202,7 +202,7 @@ describe('PreregisteredAddressList', () => {
       };
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([addressWithDate]);
         })
       );
@@ -217,7 +217,7 @@ describe('PreregisteredAddressList', () => {
 
     it('shows correct number of rows', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json(mockPreregisteredAddresses);
         })
       );
@@ -238,10 +238,10 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         }),
-        http.get('/api/v1/dev/create3-factory', () => {
+        http.get('/api/v1/admin/dev/create3-factory', () => {
           return HttpResponse.json({
             address: '0x1234567890123456789012345678901234567890',
             deployed: true,
@@ -269,7 +269,7 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -296,13 +296,13 @@ describe('PreregisteredAddressList', () => {
 
       let deleted = false;
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           if (deleted) {
             return HttpResponse.json([]);
           }
           return HttpResponse.json([mockPreregisteredAddress]);
         }),
-        http.delete('/api/v1/orgs/:orgId/addresses/preregistered/:address', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/addresses/preregistered/:address', () => {
           deleted = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -333,10 +333,10 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         }),
-        http.delete('/api/v1/orgs/:orgId/addresses/preregistered/:address', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/addresses/preregistered/:address', () => {
           return HttpResponse.json(
             { error: 'Cannot delete address' },
             { status: 500 }
@@ -369,7 +369,7 @@ describe('PreregisteredAddressList', () => {
 
     it('Delete button is disabled for used addresses', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddressUsed]);
         })
       );
@@ -389,10 +389,10 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([]);
         }),
-        http.get('/api/v1/dev/create3-factory', () => {
+        http.get('/api/v1/admin/dev/create3-factory', () => {
           return HttpResponse.json({
             address: '0x1234567890123456789012345678901234567890',
             deployed: true,
@@ -419,7 +419,7 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         })
       );
@@ -458,7 +458,7 @@ describe('PreregisteredAddressList', () => {
 
       let submitCount = 0;
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           if (submitCount > 0) {
             return HttpResponse.json([
               ...mockPreregisteredAddresses,
@@ -476,7 +476,7 @@ describe('PreregisteredAddressList', () => {
           }
           return HttpResponse.json(mockPreregisteredAddresses);
         }),
-        http.post('/api/v1/orgs/:orgId/addresses/preregister', async () => {
+        http.post('/api/v1/admin/orgs/:orgId/addresses/preregister', async () => {
           submitCount++;
           return HttpResponse.json({
             addresses: [{
@@ -491,7 +491,7 @@ describe('PreregisteredAddressList', () => {
             }],
           });
         }),
-        http.get('/api/v1/dev/create3-factory', () => {
+        http.get('/api/v1/admin/dev/create3-factory', () => {
           return HttpResponse.json({
             address: '0x1234567890123456789012345678901234567890',
             deployed: true,
@@ -530,10 +530,10 @@ describe('PreregisteredAddressList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json([mockPreregisteredAddress]);
         }),
-        http.get('/api/v1/dev/create3-factory', () => {
+        http.get('/api/v1/admin/dev/create3-factory', () => {
           return HttpResponse.json({
             address: '0x1234567890123456789012345678901234567890',
             deployed: true,
@@ -568,7 +568,7 @@ describe('PreregisteredAddressList', () => {
   describe('Error States', () => {
     it('handles API error gracefully', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+        http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
           return HttpResponse.json(
             { error: 'Internal server error' },
             { status: 500 }

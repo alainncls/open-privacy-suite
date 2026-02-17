@@ -19,7 +19,7 @@ import type {
 // No token authentication is needed because network-level access control (localhost only)
 // ensures only the local admin UI can reach these endpoints.
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1/admin',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -28,7 +28,7 @@ const api = axios.create({
 // Create an authenticated API client
 const createAuthenticatedClient = (accessToken: string) => {
   return axios.create({
-    baseURL: '/api',
+    baseURL: '/api/v1',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
@@ -39,7 +39,7 @@ const createAuthenticatedClient = (accessToken: string) => {
 // Create a disclosure token authenticated client
 const createTokenClient = (disclosureToken: string) => {
   return axios.create({
-    baseURL: '/api',
+    baseURL: '/api/v1/admin',
     headers: {
       'Content-Type': 'application/json',
       'X-Disclosure-Token': disclosureToken,

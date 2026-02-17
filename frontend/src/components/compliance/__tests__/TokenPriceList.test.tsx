@@ -28,7 +28,7 @@ describe('TokenPriceList', () => {
   describe('Rendering', () => {
     it('shows loading spinner initially', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/tokens', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', async () => {
           await delay('infinite');
           return HttpResponse.json({ data: [] });
         })
@@ -42,7 +42,7 @@ describe('TokenPriceList', () => {
 
     it('shows empty state when no tokens', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
           return HttpResponse.json({ data: [] });
         })
       );
@@ -108,7 +108,7 @@ describe('TokenPriceList', () => {
     it('submits new token price', async () => {
       let upsertCalled = false;
       server.use(
-        http.put('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', async () => {
+        http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async () => {
           upsertCalled = true;
           return HttpResponse.json({
             id: 'token-new',
@@ -199,7 +199,7 @@ describe('TokenPriceList', () => {
     it('deletes token after confirmation', async () => {
       let deleteCalled = false;
       server.use(
-        http.delete('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
           deleteCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -233,7 +233,7 @@ describe('TokenPriceList', () => {
   describe('Error Handling', () => {
     it('shows error when token list fails to load', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
           return HttpResponse.json({ error: 'Internal server error' }, { status: 500 });
         })
       );
@@ -247,7 +247,7 @@ describe('TokenPriceList', () => {
 
     it('shows form error when submission fails', async () => {
       server.use(
-        http.put('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
+        http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
           return HttpResponse.json({ error: 'Price must be positive' }, { status: 400 });
         })
       );

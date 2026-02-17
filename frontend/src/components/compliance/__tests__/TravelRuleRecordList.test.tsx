@@ -27,7 +27,7 @@ describe('TravelRuleRecordList', () => {
   describe('Rendering', () => {
     it('shows loading spinner initially', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async () => {
           await delay('infinite');
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
@@ -41,7 +41,7 @@ describe('TravelRuleRecordList', () => {
 
     it('shows empty state when no records', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -137,7 +137,7 @@ describe('TravelRuleRecordList', () => {
       let createBody: any;
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/compliance/travel-rule-records', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request }) => {
           createBody = await request.json();
           createCalled = true;
           return HttpResponse.json({
@@ -274,7 +274,7 @@ describe('TravelRuleRecordList', () => {
   describe('Error Handling', () => {
     it('shows error when list fails to load', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
           return HttpResponse.json({ error: 'Database error' }, { status: 500 });
         })
       );

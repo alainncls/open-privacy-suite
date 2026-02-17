@@ -118,7 +118,7 @@ describe('UserSearchInput', () => {
 
   it('shows loading state while searching', async () => {
     server.use(
-      http.get('/api/v1/users', async () => {
+      http.get('/api/v1/admin/users', async () => {
         await delay('infinite');
         return HttpResponse.json({ data: [], total: 0, limit: 10, offset: 0 });
       })
@@ -137,7 +137,7 @@ describe('UserSearchInput', () => {
 
   it('shows "No users found" for empty results', async () => {
     server.use(
-      http.get('/api/v1/users', () => {
+      http.get('/api/v1/admin/users', () => {
         return HttpResponse.json({ data: [], total: 0, limit: 10, offset: 0 });
       })
     );

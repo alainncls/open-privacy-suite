@@ -443,18 +443,18 @@ export const handlers = [
   }),
 
   // Organization endpoints
-  http.get('/api/v1/orgs', () => {
+  http.get('/api/v1/admin/orgs', () => {
     return HttpResponse.json({ data: [mockOrganization], total: 1, limit: 25, offset: 0 });
   }),
 
-  http.get('/api/v1/orgs/:orgId', ({ params }) => {
+  http.get('/api/v1/admin/orgs/:orgId', ({ params }) => {
     if (params.orgId === 'org-1') {
       return HttpResponse.json(mockOrganization);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.post('/api/v1/orgs', async ({ request }) => {
+  http.post('/api/v1/admin/orgs', async ({ request }) => {
     const body = await request.json() as { slug: string; name: string };
     return HttpResponse.json({
       ...mockOrganization,
@@ -464,7 +464,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/v1/orgs/:orgId', async ({ request, params }) => {
+  http.put('/api/v1/admin/orgs/:orgId', async ({ request, params }) => {
     const body = await request.json() as { slug?: string; name?: string };
     return HttpResponse.json({
       ...mockOrganization,
@@ -474,23 +474,23 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/orgs/:orgId', () => {
+  http.delete('/api/v1/admin/orgs/:orgId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Group endpoints
-  http.get('/api/v1/orgs/:orgId/groups', () => {
+  http.get('/api/v1/admin/orgs/:orgId/groups', () => {
     return HttpResponse.json({ data: [{ group: mockGroup, access: mockGroupAccess }], total: 1, limit: 50, offset: 0 });
   }),
 
-  http.get('/api/v1/orgs/:orgId/groups/:groupId', ({ params }) => {
+  http.get('/api/v1/admin/orgs/:orgId/groups/:groupId', ({ params }) => {
     if (params.groupId === 'group-1') {
       return HttpResponse.json(mockGroup);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.post('/api/v1/orgs/:orgId/groups', async ({ request, params }) => {
+  http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request, params }) => {
     const body = await request.json() as { slug: string; name: string; description?: string };
     return HttpResponse.json({
       ...mockGroup,
@@ -502,7 +502,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/v1/orgs/:orgId/groups/:groupId', async ({ request, params }) => {
+  http.put('/api/v1/admin/orgs/:orgId/groups/:groupId', async ({ request, params }) => {
     const body = await request.json() as { name?: string; description?: string };
     return HttpResponse.json({
       ...mockGroup,
@@ -512,15 +512,15 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
+  http.delete('/api/v1/admin/orgs/:orgId/groups/:groupId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
-  http.get('/api/v1/orgs/:orgId/groups/:groupId/access', () => {
+  http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
     return HttpResponse.json(mockGroupAccess);
   }),
 
-  http.put('/api/v1/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+  http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
     const body = await request.json() as {
       allowed_methods?: string[];
       claims?: string[];
@@ -533,18 +533,18 @@ export const handlers = [
   }),
 
   // User endpoints
-  http.get('/api/v1/users', () => {
+  http.get('/api/v1/admin/users', () => {
     return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
   }),
 
-  http.get('/api/v1/users/:userId', ({ params }) => {
+  http.get('/api/v1/admin/users/:userId', ({ params }) => {
     if (params.userId === 'user-1') {
       return HttpResponse.json(mockUser);
     }
     return HttpResponse.json({ error: 'Not found' }, { status: 404 });
   }),
 
-  http.put('/api/v1/users/:userId', async ({ request, params }) => {
+  http.put('/api/v1/admin/users/:userId', async ({ request, params }) => {
     const body = await request.json() as { kyc?: boolean; banned?: boolean; note?: string };
     return HttpResponse.json({
       ...mockUser,
@@ -555,11 +555,11 @@ export const handlers = [
     });
   }),
 
-  http.get('/api/v1/users/:userId/memberships', () => {
+  http.get('/api/v1/admin/users/:userId/memberships', () => {
     return HttpResponse.json([mockMembershipWithDetails]);
   }),
 
-  http.post('/api/v1/users/:userId/memberships', async ({ request, params }) => {
+  http.post('/api/v1/admin/users/:userId/memberships', async ({ request, params }) => {
     const body = await request.json() as { group_id: string };
     return HttpResponse.json({
       ...mockMembership,
@@ -569,25 +569,25 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/users/:userId/memberships/:membershipId', () => {
+  http.delete('/api/v1/admin/users/:userId/memberships/:membershipId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
-  http.get('/api/v1/users/:userId/effective-permissions', () => {
+  http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
     return HttpResponse.json(mockEffectivePermissions);
   }),
 
   // Linked addresses endpoint
-  http.get('/api/v1/users/:userId/linked-addresses', () => {
+  http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
     return HttpResponse.json({ addresses: mockLinkedAddresses });
   }),
 
   // Contract endpoints
-  http.get('/api/v1/orgs/:orgId/contracts', () => {
+  http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
     return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
   }),
 
-  http.post('/api/v1/orgs/:orgId/contracts', async ({ request, params }) => {
+  http.post('/api/v1/admin/orgs/:orgId/contracts', async ({ request, params }) => {
     const body = await request.json() as {
       address: string;
       name?: string;
@@ -603,7 +603,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/v1/orgs/:orgId/contracts/:address', async ({ request, params }) => {
+  http.put('/api/v1/admin/orgs/:orgId/contracts/:address', async ({ request, params }) => {
     const body = await request.json() as {
       name?: string;
       metadata?: Record<string, unknown>;
@@ -616,16 +616,16 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
+  http.delete('/api/v1/admin/orgs/:orgId/contracts/:address', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Contract grant endpoints
-  http.get('/api/v1/orgs/:orgId/contracts/:address/grants', () => {
+  http.get('/api/v1/admin/orgs/:orgId/contracts/:address/grants', () => {
     return HttpResponse.json([mockContractGrant]);
   }),
 
-  http.post('/api/v1/orgs/:orgId/contracts/:address/grants', async ({ request, params }) => {
+  http.post('/api/v1/admin/orgs/:orgId/contracts/:address/grants', async ({ request, params }) => {
     const body = await request.json() as {
       group_id: string;
       functions?: string[] | null;
@@ -639,7 +639,7 @@ export const handlers = [
     });
   }),
 
-  http.put('/api/v1/orgs/:orgId/contracts/:address/grants/:groupId', async ({ request, params }) => {
+  http.put('/api/v1/admin/orgs/:orgId/contracts/:address/grants/:groupId', async ({ request, params }) => {
     const body = await request.json() as {
       functions?: string[] | null;
     };
@@ -650,12 +650,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/orgs/:orgId/contracts/:address/grants/:groupId', () => {
+  http.delete('/api/v1/admin/orgs/:orgId/contracts/:address/grants/:groupId', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Contract lookup by address (cross-org)
-  http.get('/api/v1/contracts/by-address/:address', ({ params }) => {
+  http.get('/api/v1/admin/contracts/by-address/:address', ({ params }) => {
     if (params.address === mockContract.address) {
       return HttpResponse.json({
         contract: mockContract,
@@ -671,7 +671,7 @@ export const handlers = [
   }),
 
   // Utility endpoints
-  http.post('/api/v1/access/check', async () => {
+  http.post('/api/v1/admin/access/check', async () => {
     return HttpResponse.json({
       allowed: true,
       reason: 'Access granted',
@@ -680,7 +680,7 @@ export const handlers = [
     });
   }),
 
-  http.get('/api/v1/cache/stats', () => {
+  http.get('/api/v1/admin/cache/stats', () => {
     return HttpResponse.json({
       hits: 100,
       misses: 10,
@@ -689,11 +689,11 @@ export const handlers = [
   }),
 
   // Preregistered addresses endpoints
-  http.get('/api/v1/orgs/:orgId/addresses/preregistered', () => {
+  http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
     return HttpResponse.json(mockPreregisteredAddresses);
   }),
 
-  http.post('/api/v1/orgs/:orgId/addresses/preregister', async ({ request, params }) => {
+  http.post('/api/v1/admin/orgs/:orgId/addresses/preregister', async ({ request, params }) => {
     const body = await request.json() as PreregisterInput;
     // Generate mock addresses based on input
     const addresses: PreregisteredAddress[] = [];
@@ -712,19 +712,19 @@ export const handlers = [
     return HttpResponse.json({ addresses });
   }),
 
-  http.delete('/api/v1/orgs/:orgId/addresses/preregistered/:address', () => {
+  http.delete('/api/v1/admin/orgs/:orgId/addresses/preregistered/:address', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Org config endpoints for CREATE3 factory
-  http.get('/api/v1/orgs/:orgId/config/create3', () => {
+  http.get('/api/v1/admin/orgs/:orgId/config/create3', () => {
     return HttpResponse.json({
       factory: '0x1234567890123456789012345678901234567890',
       configured: true,
     });
   }),
 
-  http.put('/api/v1/orgs/:orgId/config/create3', async ({ request }) => {
+  http.put('/api/v1/admin/orgs/:orgId/config/create3', async ({ request }) => {
     const body = await request.json() as { factory: string };
     return HttpResponse.json({
       factory: body.factory,
@@ -733,11 +733,11 @@ export const handlers = [
   }),
 
   // Dev endpoints for CREATE3 factory
-  http.get('/api/v1/dev/create3-factory', () => {
+  http.get('/api/v1/admin/dev/create3-factory', () => {
     return HttpResponse.json(mockCreate3Factory);
   }),
 
-  http.post('/api/v1/dev/create3-factory', () => {
+  http.post('/api/v1/admin/dev/create3-factory', () => {
     return HttpResponse.json({
       address: '0xfactory1234567890factory1234567890factory',
       deployed: true,
@@ -749,11 +749,11 @@ export const handlers = [
   // =========================================================================
 
   // Compliance config
-  http.get('/api/v1/orgs/:orgId/compliance/config', () => {
+  http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
     return HttpResponse.json(mockComplianceConfig);
   }),
 
-  http.put('/api/v1/orgs/:orgId/compliance/config', async ({ request }) => {
+  http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
     const body = await request.json() as { enabled?: boolean; threshold_usd?: number };
     return HttpResponse.json({
       ...mockComplianceConfig,
@@ -764,11 +764,11 @@ export const handlers = [
   }),
 
   // Token prices — backend wraps in {data: [...]}
-  http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
+  http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
     return HttpResponse.json({ data: mockTokenPrices });
   }),
 
-  http.put('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
+  http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
     const body = await request.json() as { symbol: string; decimals: number; price_usd: number };
     return HttpResponse.json({
       id: 'token-new',
@@ -782,12 +782,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
+  http.delete('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Travel rule records
-  http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
+  http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
     return HttpResponse.json({
       data: mockTravelRuleRecords,
       total: mockTravelRuleRecords.length,
@@ -796,7 +796,7 @@ export const handlers = [
     });
   }),
 
-  http.post('/api/v1/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {
+  http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {
     const body = await request.json() as Record<string, unknown>;
     return HttpResponse.json({
       id: 'travel-rule-new',
@@ -808,7 +808,7 @@ export const handlers = [
   }),
 
   // Sanctions (global routes)
-  http.get('/api/v1/compliance/sanctions', () => {
+  http.get('/api/v1/admin/compliance/sanctions', () => {
     return HttpResponse.json({
       data: mockSanctionedAddresses,
       total: mockSanctionedAddresses.length,
@@ -817,7 +817,7 @@ export const handlers = [
     });
   }),
 
-  http.post('/api/v1/compliance/sanctions', async ({ request }) => {
+  http.post('/api/v1/admin/compliance/sanctions', async ({ request }) => {
     const body = await request.json() as { address: string; reason: string; source?: string; org_id?: string };
     return HttpResponse.json({
       id: 'sanction-new',
@@ -830,12 +830,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/compliance/sanctions/:id', () => {
+  http.delete('/api/v1/admin/compliance/sanctions/:id', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Compliance logs
-  http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
+  http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
     return HttpResponse.json({
       data: mockComplianceLogs,
       total: mockComplianceLogs.length,

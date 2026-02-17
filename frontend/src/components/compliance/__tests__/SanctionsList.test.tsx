@@ -28,7 +28,7 @@ describe('SanctionsList', () => {
   describe('Rendering', () => {
     it('shows loading spinner initially', async () => {
       server.use(
-        http.get('/api/v1/compliance/sanctions', async () => {
+        http.get('/api/v1/admin/compliance/sanctions', async () => {
           await delay('infinite');
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
@@ -42,7 +42,7 @@ describe('SanctionsList', () => {
 
     it('shows empty state when no sanctioned addresses', async () => {
       server.use(
-        http.get('/api/v1/compliance/sanctions', () => {
+        http.get('/api/v1/admin/compliance/sanctions', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -118,7 +118,7 @@ describe('SanctionsList', () => {
     it('submits new sanctioned address', async () => {
       let addCalled = false;
       server.use(
-        http.post('/api/v1/compliance/sanctions', async () => {
+        http.post('/api/v1/admin/compliance/sanctions', async () => {
           addCalled = true;
           return HttpResponse.json({
             id: 'sanction-new',
@@ -178,7 +178,7 @@ describe('SanctionsList', () => {
     it('removes sanction after confirmation', async () => {
       let deleteCalled = false;
       server.use(
-        http.delete('/api/v1/compliance/sanctions/:id', () => {
+        http.delete('/api/v1/admin/compliance/sanctions/:id', () => {
           deleteCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -231,7 +231,7 @@ describe('SanctionsList', () => {
   describe('Error Handling', () => {
     it('shows error when list fails to load', async () => {
       server.use(
-        http.get('/api/v1/compliance/sanctions', () => {
+        http.get('/api/v1/admin/compliance/sanctions', () => {
           return HttpResponse.json({ error: 'Service unavailable' }, { status: 503 });
         })
       );
@@ -245,7 +245,7 @@ describe('SanctionsList', () => {
 
     it('shows form error when add fails', async () => {
       server.use(
-        http.post('/api/v1/compliance/sanctions', () => {
+        http.post('/api/v1/admin/compliance/sanctions', () => {
           return HttpResponse.json({ error: 'Address already sanctioned' }, { status: 409 });
         })
       );

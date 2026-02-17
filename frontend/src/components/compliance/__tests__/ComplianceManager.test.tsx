@@ -65,7 +65,7 @@ describe('ComplianceManager Integration Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     server.use(
-      http.get('/api/v1/orgs', () => {
+      http.get('/api/v1/admin/orgs', () => {
         return HttpResponse.json({
           data: mockOrganizations,
           total: mockOrganizations.length,
@@ -73,7 +73,7 @@ describe('ComplianceManager Integration Tests', () => {
           offset: 0,
         });
       }),
-      http.get('/api/v1/status', () => {
+      http.get('/api/v1/admin/status', () => {
         return HttpResponse.json({
           proxy: { status: 'ok', port: '8080' },
           node: { status: 'ok', url: 'http://localhost:8545', latency_ms: 1 },
@@ -161,7 +161,7 @@ describe('ComplianceManager Integration Tests', () => {
 
     it('shows "No organization selected" when no org selected and tab needs one', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 1000, offset: 0 });
         })
       );

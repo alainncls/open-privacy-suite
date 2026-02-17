@@ -28,7 +28,7 @@ describe('ComplianceConfig', () => {
   describe('Rendering', () => {
     it('shows loading spinner initially', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/config', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/config', async () => {
           await delay('infinite');
           return HttpResponse.json(mockComplianceConfig);
         })
@@ -62,7 +62,7 @@ describe('ComplianceConfig', () => {
 
     it('shows Disabled badge when config is disabled', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/config', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
           return HttpResponse.json({ ...mockComplianceConfig, enabled: false });
         })
       );
@@ -78,7 +78,7 @@ describe('ComplianceConfig', () => {
 
     it('populates threshold from API response', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/config', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
           return HttpResponse.json({ ...mockComplianceConfig, threshold_usd: 5000 });
         })
       );
@@ -93,7 +93,7 @@ describe('ComplianceConfig', () => {
 
     it('shows default values when no config exists (404)', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/compliance/config', () => {
+        http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
           return HttpResponse.json({ error: 'not found' }, { status: 404 });
         })
       );
@@ -140,7 +140,7 @@ describe('ComplianceConfig', () => {
 
     it('shows error when save fails', async () => {
       server.use(
-        http.put('/api/v1/orgs/:orgId/compliance/config', () => {
+        http.put('/api/v1/admin/orgs/:orgId/compliance/config', () => {
           return HttpResponse.json({ error: 'Invalid threshold' }, { status: 400 });
         })
       );

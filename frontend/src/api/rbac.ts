@@ -33,7 +33,7 @@ import type {
 } from '../types/rbac';
 
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: '/api/v1/admin',
   headers: {
     'Content-Type': 'application/json',
   },

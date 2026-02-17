@@ -395,53 +395,60 @@ func (s *Server) setupRouter() *gin.Engine {
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
 	apiV1 := router.Group("/api/v1")
-	apiV1.Use(s.localhostOnlyMiddleware())
 	{
-		apiV1.GET("/logs", s.getLogs)
-		apiV1.GET("/status", s.getStatus)
-		apiV1.POST("/test-request", s.handleTestRequest)
+		// Admin endpoints - localhost only
+		admin := apiV1.Group("/admin")
+		admin.Use(s.localhostOnlyMiddleware())
+		{
+			admin.GET("/logs", s.getLogs)
+			admin.GET("/status", s.getStatus)
+			admin.POST("/test-request", s.handleTestRequest)
 
-		// RBAC endpoints
-		s.registerRBACRoutes(apiV1)
+			// RBAC endpoints
+			s.registerRBACRoutes(admin)
 
-		// Disclosure admin endpoints
-		s.registerDisclosureRoutes(apiV1)
+			// Disclosure admin endpoints
+			s.registerDisclosureRoutes(admin)
 
-		// Compliance endpoints (travel rule)
-		s.registerComplianceRoutes(apiV1)
+			// Compliance endpoints (travel rule)
+			s.registerComplianceRoutes(admin)
 
-		// Dev-only endpoints (CREATE3 factory deployment)
-		apiV1.GET("/dev/create3-factory", s.getCreate3Factory)
-		apiV1.POST("/dev/create3-factory", s.deployCreate3Factory)
-		apiV1.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-		apiV1.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
-		apiV1.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
+			// Dev-only endpoints (CREATE3 factory deployment)
+			admin.GET("/dev/create3-factory", s.getCreate3Factory)
+			admin.POST("/dev/create3-factory", s.deployCreate3Factory)
+			admin.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+			admin.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+			admin.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
+		}
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
 	// Adds X-Deprecated header to responses
 	api := router.Group("/api")
-	api.Use(s.localhostOnlyMiddleware())
-	api.Use(s.deprecationMiddleware("/api", "/api/v1"))
 	{
-		api.GET("/logs", s.getLogs)
-		api.GET("/status", s.getStatus)
-		api.POST("/test-request", s.handleTestRequest)
+		adminLegacy := api.Group("/admin")
+		adminLegacy.Use(s.localhostOnlyMiddleware())
+		adminLegacy.Use(s.deprecationMiddleware("/api/admin", "/api/v1/admin"))
+		{
+			adminLegacy.GET("/logs", s.getLogs)
+			adminLegacy.GET("/status", s.getStatus)
+			adminLegacy.POST("/test-request", s.handleTestRequest)
 
-		// RBAC endpoints
-		s.registerRBACRoutes(api)
+			// RBAC endpoints
+			s.registerRBACRoutes(adminLegacy)
 
-		// Disclosure admin endpoints
-		s.registerDisclosureRoutes(api)
+			// Disclosure admin endpoints
+			s.registerDisclosureRoutes(adminLegacy)
 
-		// Compliance endpoints (travel rule)
-		s.registerComplianceRoutes(api)
+			// Compliance endpoints (travel rule)
+			s.registerComplianceRoutes(adminLegacy)
 
-		// Dev-only endpoints (CREATE3 factory deployment)
-		api.GET("/dev/create3-factory", s.getCreate3Factory)
-		api.POST("/dev/create3-factory", s.deployCreate3Factory)
-		api.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-		api.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+			// Dev-only endpoints (CREATE3 factory deployment)
+			adminLegacy.GET("/dev/create3-factory", s.getCreate3Factory)
+			adminLegacy.POST("/dev/create3-factory", s.deployCreate3Factory)
+			adminLegacy.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+			adminLegacy.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+		}
 	}
 
 	return router

@@ -63,7 +63,7 @@ function MockOrgProvider({
 
   const refreshOrgs = async () => {
     // Fetch from mock API
-    const response = await fetch('/api/v1/orgs');
+    const response = await fetch('/api/v1/admin/orgs');
     const json = await response.json();
     // Handle both paginated and plain array formats
     const data = json.data || json;
@@ -113,7 +113,7 @@ describe('OrganizationList', () => {
     it('shows loading spinner initially', () => {
       // Return organizations after a delay to see loading state
       server.use(
-        http.get('/api/v1/orgs', async () => {
+        http.get('/api/v1/admin/orgs', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
@@ -128,7 +128,7 @@ describe('OrganizationList', () => {
 
     it('shows "Organizations" heading and description text', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -143,7 +143,7 @@ describe('OrganizationList', () => {
 
     it('shows empty state message when no organizations', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -159,7 +159,7 @@ describe('OrganizationList', () => {
 
     it('displays table with correct headers (Name, Slug, Created, Actions)', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -179,7 +179,7 @@ describe('OrganizationList', () => {
   describe('Data Display', () => {
     it('shows organization name in table row', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -193,7 +193,7 @@ describe('OrganizationList', () => {
 
     it('shows organization slug in table row', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -207,7 +207,7 @@ describe('OrganizationList', () => {
 
     it('formats created date correctly', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -223,7 +223,7 @@ describe('OrganizationList', () => {
 
     it('shows correct number of rows matching API response', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -243,7 +243,7 @@ describe('OrganizationList', () => {
   describe('Actions', () => {
     it('Create button opens dialog with OrganizationForm', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -273,7 +273,7 @@ describe('OrganizationList', () => {
 
     it('Edit button opens form populated with org data', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -302,7 +302,7 @@ describe('OrganizationList', () => {
 
     it('Delete button shows confirmation dialog', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -325,7 +325,7 @@ describe('OrganizationList', () => {
 
     it('Delete cancelled does not remove organization', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
@@ -357,7 +357,7 @@ describe('OrganizationList', () => {
       let deleteCalled = false;
 
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           if (deleteCalled) {
             // Return list without the deleted org
             const remaining = mockOrganizations.slice(1);
@@ -365,7 +365,7 @@ describe('OrganizationList', () => {
           }
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId', () => {
           deleteCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -394,10 +394,10 @@ describe('OrganizationList', () => {
 
     it('Delete failure shows error dialog', async () => {
       server.use(
-        http.get('/api/v1/orgs', () => {
+        http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId', () => {
           return HttpResponse.json(
             { error: 'Organization has dependencies' },
             { status: 400 }

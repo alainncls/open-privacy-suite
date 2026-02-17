@@ -125,7 +125,7 @@ describe('OrganizationForm', () => {
       let capturedRequest: { name: string; slug: string } | null = null;
 
       server.use(
-        http.post('/api/v1/orgs', async ({ request }) => {
+        http.post('/api/v1/admin/orgs', async ({ request }) => {
           capturedRequest = (await request.json()) as { name: string; slug: string };
           return HttpResponse.json({
             id: 'org-new',
@@ -164,7 +164,7 @@ describe('OrganizationForm', () => {
 
     it('closes dialog on successful create', async () => {
       server.use(
-        http.post('/api/v1/orgs', () => {
+        http.post('/api/v1/admin/orgs', () => {
           return HttpResponse.json({
             id: 'org-new',
             slug: 'new-org',
@@ -196,7 +196,7 @@ describe('OrganizationForm', () => {
 
     it('shows error on API failure', async () => {
       server.use(
-        http.post('/api/v1/orgs', () => {
+        http.post('/api/v1/admin/orgs', () => {
           return HttpResponse.json(
             { error: 'Slug already exists' },
             { status: 400 }
@@ -225,7 +225,7 @@ describe('OrganizationForm', () => {
 
     it('shows generic error message when API returns no error details', async () => {
       server.use(
-        http.post('/api/v1/orgs', () => {
+        http.post('/api/v1/admin/orgs', () => {
           return HttpResponse.json({}, { status: 500 });
         })
       );
@@ -287,7 +287,7 @@ describe('OrganizationForm', () => {
       let capturedOrgId: string | null = null;
 
       server.use(
-        http.put('/api/v1/orgs/:orgId', async ({ request, params }) => {
+        http.put('/api/v1/admin/orgs/:orgId', async ({ request, params }) => {
           capturedOrgId = params.orgId as string;
           capturedRequest = (await request.json()) as { name: string; slug: string };
           return HttpResponse.json({
@@ -323,7 +323,7 @@ describe('OrganizationForm', () => {
 
     it('closes dialog on successful update', async () => {
       server.use(
-        http.put('/api/v1/orgs/:orgId', () => {
+        http.put('/api/v1/admin/orgs/:orgId', () => {
           return HttpResponse.json({
             ...existingOrg,
             name: 'Updated Name',
@@ -349,7 +349,7 @@ describe('OrganizationForm', () => {
 
     it('shows error on API failure during update', async () => {
       server.use(
-        http.put('/api/v1/orgs/:orgId', () => {
+        http.put('/api/v1/admin/orgs/:orgId', () => {
           return HttpResponse.json(
             { error: 'Organization not found' },
             { status: 404 }
@@ -388,7 +388,7 @@ describe('OrganizationForm', () => {
     it('Cancel button is disabled while saving', async () => {
       // Make the API call take a long time
       server.use(
-        http.post('/api/v1/orgs', async () => {
+        http.post('/api/v1/admin/orgs', async () => {
           await new Promise(resolve => setTimeout(resolve, 5000));
           return HttpResponse.json({
             id: 'org-new',
@@ -424,7 +424,7 @@ describe('OrganizationForm', () => {
   describe('Loading State', () => {
     it('shows saving indicator while submitting', async () => {
       server.use(
-        http.post('/api/v1/orgs', async () => {
+        http.post('/api/v1/admin/orgs', async () => {
           await new Promise(resolve => setTimeout(resolve, 5000));
           return HttpResponse.json({
             id: 'org-new',
