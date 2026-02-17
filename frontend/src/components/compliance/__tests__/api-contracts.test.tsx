@@ -93,6 +93,72 @@ const realisticLogs = [
 // Tests
 // ---------------------------------------------------------------------------
 
+describe('API Route Path Contract Tests', () => {
+  // These tests verify the frontend API client uses the correct URL paths
+  // matching the backend route registration (no /admin/ prefix).
+  // Backend registers: apiV1.Group("/orgs/:org_id/compliance") and apiV1.Group("/compliance")
+  it('compliance API paths match backend routes (no /admin/ prefix)', async () => {
+    const { complianceApi } = await import('@/api/compliance');
+
+    // Spy on the underlying axios instance to capture request URLs
+    const api = (await import('@/api/client')).default;
+    const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: {} });
+    const putSpy = vi.spyOn(api, 'put').mockResolvedValue({ data: {} });
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+    const deleteSpy = vi.spyOn(api, 'delete').mockResolvedValue({ data: {} });
+
+    // Call each API method and verify the URL path
+    await complianceApi.config.get('org-1');
+    expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/config');
+
+    await complianceApi.config.update('org-1', { enabled: true });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/config', { enabled: true });
+
+    await complianceApi.tokens.list('org-1');
+    expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens');
+
+    await complianceApi.tokens.upsert('org-1', 'native', { symbol: 'ETH', decimals: 18, price_usd: 2500 });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native', { symbol: 'ETH', decimals: 18, price_usd: 2500 });
+
+    await complianceApi.tokens.delete('org-1', 'native');
+    expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native');
+
+    await complianceApi.travelRules.list('org-1', { limit: 25, offset: 0 });
+    expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', { params: { limit: 25, offset: 0 } });
+
+    await complianceApi.travelRules.create('org-1', {
+      originator_user_id: 'u1', originator_data: {}, beneficiary_data: {},
+      transfer_type: 'eth', beneficiary_address: '0x1234567890123456789012345678901234567890',
+      amount_wei: '1000', amount_usd: 100,
+    });
+    expect(postSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', expect.any(Object));
+
+    await complianceApi.sanctions.list({ limit: 25 });
+    expect(getSpy).toHaveBeenCalledWith('/compliance/sanctions', { params: { limit: 25 } });
+
+    await complianceApi.sanctions.add({ address: '0x1234567890123456789012345678901234567890', reason: 'test' });
+    expect(postSpy).toHaveBeenCalledWith('/compliance/sanctions', expect.any(Object));
+
+    await complianceApi.sanctions.remove('sanc-1');
+    expect(deleteSpy).toHaveBeenCalledWith('/compliance/sanctions/sanc-1');
+
+    await complianceApi.logs.list('org-1', { limit: 25 });
+    expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/logs', { params: { limit: 25 } });
+
+    // Verify NO call used /admin/ prefix
+    for (const spy of [getSpy, putSpy, postSpy, deleteSpy]) {
+      for (const call of spy.mock.calls) {
+        expect(call[0]).not.toContain('/admin/');
+      }
+    }
+
+    getSpy.mockRestore();
+    putSpy.mockRestore();
+    postSpy.mockRestore();
+    deleteSpy.mockRestore();
+  });
+});
+
 describe('Backend Response Contract Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -105,7 +171,7 @@ describe('Backend Response Contract Tests', () => {
   it('token prices list parses wrapped {data: [...]} response', async () => {
     // Backend returns {data: TokenPrice[]} — NOT a raw array, NOT paginated
     server.use(
-      http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+      http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
         return HttpResponse.json({ data: realisticTokenPrices });
       }),
     );
@@ -123,7 +189,7 @@ describe('Backend Response Contract Tests', () => {
   it('compliance config parses unwrapped response', async () => {
     // Backend returns ComplianceConfig directly — no wrapper object
     server.use(
-      http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
+      http.get('/api/v1/orgs/:orgId/compliance/config', () => {
         return HttpResponse.json(realisticConfig);
       }),
     );
@@ -147,7 +213,7 @@ describe('Backend Response Contract Tests', () => {
   it('travel rule records list parses paginated response', async () => {
     // Backend returns {data: TravelRuleRecord[], total, limit, offset}
     server.use(
-      http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
+      http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
         return HttpResponse.json({
           data: realisticTravelRuleRecords,
           total: 1,
@@ -179,7 +245,7 @@ describe('Backend Response Contract Tests', () => {
   it('sanctions list parses paginated response', async () => {
     // Backend returns {data: SanctionedAddress[], total, limit, offset}
     server.use(
-      http.get('/api/v1/admin/compliance/sanctions', () => {
+      http.get('/api/v1/compliance/sanctions', () => {
         return HttpResponse.json({
           data: realisticSanctions,
           total: 1,
@@ -208,7 +274,7 @@ describe('Backend Response Contract Tests', () => {
   it('compliance logs list parses paginated response', async () => {
     // Backend returns {data: ComplianceLog[], total, limit, offset}
     server.use(
-      http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
+      http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
         return HttpResponse.json({
           data: realisticLogs,
           total: 1,

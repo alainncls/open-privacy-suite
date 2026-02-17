@@ -28,7 +28,7 @@ describe('ComplianceLogList', () => {
   describe('Rendering', () => {
     it('shows loading spinner initially', async () => {
       server.use(
-        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', async () => {
+        http.get('/api/v1/orgs/:orgId/compliance/logs', async () => {
           await delay('infinite');
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
@@ -42,7 +42,7 @@ describe('ComplianceLogList', () => {
 
     it('shows empty state when no logs', async () => {
       server.use(
-        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
+        http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -120,7 +120,7 @@ describe('ComplianceLogList', () => {
     it('filters by decision when selecting Denied', async () => {
       let lastParams: URLSearchParams | null = null;
       server.use(
-        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', ({ request }) => {
+        http.get('/api/v1/orgs/:orgId/compliance/logs', ({ request }) => {
           lastParams = new URL(request.url).searchParams;
           return HttpResponse.json({
             data: mockComplianceLogs.filter(l => {
@@ -161,7 +161,7 @@ describe('ComplianceLogList', () => {
     it('filters by user ID with debounce', async () => {
       let lastParams: URLSearchParams | null = null;
       server.use(
-        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', ({ request }) => {
+        http.get('/api/v1/orgs/:orgId/compliance/logs', ({ request }) => {
           lastParams = new URL(request.url).searchParams;
           return HttpResponse.json({
             data: mockComplianceLogs,
@@ -208,7 +208,7 @@ describe('ComplianceLogList', () => {
   describe('Error Handling', () => {
     it('shows error when logs fail to load', async () => {
       server.use(
-        http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
+        http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
           return HttpResponse.json({ error: 'Forbidden' }, { status: 403 });
         })
       );

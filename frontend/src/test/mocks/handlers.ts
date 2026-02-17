@@ -749,11 +749,11 @@ export const handlers = [
   // =========================================================================
 
   // Compliance config
-  http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
+  http.get('/api/v1/orgs/:orgId/compliance/config', () => {
     return HttpResponse.json(mockComplianceConfig);
   }),
 
-  http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
+  http.put('/api/v1/orgs/:orgId/compliance/config', async ({ request }) => {
     const body = await request.json() as { enabled?: boolean; threshold_usd?: number };
     return HttpResponse.json({
       ...mockComplianceConfig,
@@ -764,11 +764,11 @@ export const handlers = [
   }),
 
   // Token prices — backend wraps in {data: [...]}
-  http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+  http.get('/api/v1/orgs/:orgId/compliance/tokens', () => {
     return HttpResponse.json({ data: mockTokenPrices });
   }),
 
-  http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
+  http.put('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
     const body = await request.json() as { symbol: string; decimals: number; price_usd: number };
     return HttpResponse.json({
       id: 'token-new',
@@ -782,12 +782,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
+  http.delete('/api/v1/orgs/:orgId/compliance/tokens/:tokenAddress', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Travel rule records
-  http.get('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', () => {
+  http.get('/api/v1/orgs/:orgId/compliance/travel-rule-records', () => {
     return HttpResponse.json({
       data: mockTravelRuleRecords,
       total: mockTravelRuleRecords.length,
@@ -796,7 +796,7 @@ export const handlers = [
     });
   }),
 
-  http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {
+  http.post('/api/v1/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {
     const body = await request.json() as Record<string, unknown>;
     return HttpResponse.json({
       id: 'travel-rule-new',
@@ -808,7 +808,7 @@ export const handlers = [
   }),
 
   // Sanctions (global routes)
-  http.get('/api/v1/admin/compliance/sanctions', () => {
+  http.get('/api/v1/compliance/sanctions', () => {
     return HttpResponse.json({
       data: mockSanctionedAddresses,
       total: mockSanctionedAddresses.length,
@@ -817,7 +817,7 @@ export const handlers = [
     });
   }),
 
-  http.post('/api/v1/admin/compliance/sanctions', async ({ request }) => {
+  http.post('/api/v1/compliance/sanctions', async ({ request }) => {
     const body = await request.json() as { address: string; reason: string; source?: string; org_id?: string };
     return HttpResponse.json({
       id: 'sanction-new',
@@ -830,12 +830,12 @@ export const handlers = [
     });
   }),
 
-  http.delete('/api/v1/admin/compliance/sanctions/:id', () => {
+  http.delete('/api/v1/compliance/sanctions/:id', () => {
     return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Compliance logs
-  http.get('/api/v1/admin/orgs/:orgId/compliance/logs', () => {
+  http.get('/api/v1/orgs/:orgId/compliance/logs', () => {
     return HttpResponse.json({
       data: mockComplianceLogs,
       total: mockComplianceLogs.length,
