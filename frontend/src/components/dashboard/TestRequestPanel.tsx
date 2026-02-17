@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/select';
 import { testApi, TestRequestResult } from '@/api/client';
 import { Send, Loader2, Zap, ShieldX, ShieldCheck, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
-import { UserContextPanel } from './UserContextPanel';
+import { UserContextPanel, type UserLookupResult } from './UserContextPanel';
 import { ContractInfoPanel } from './ContractInfoPanel';
 
 const RPC_METHODS = [
@@ -105,6 +105,38 @@ function isERC20(method: string): boolean {
   return method.startsWith('erc20_');
 }
 
+function ethToHexWei(eth: string): string {
+  const [whole = '0', frac = ''] = eth.split('.');
+  const paddedFrac = frac.padEnd(18, '0').slice(0, 18);
+  const weiStr = whole + paddedFrac;
+  const wei = BigInt(weiStr.replace(/^0+/, '') || '0');
+  return '0x' + wei.toString(16);
+}
+
+function isValidAddress(addr: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(addr);
+}
+
+const TX_METHODS = [
+  { value: 'eth_sendTransaction', label: 'eth_sendTransaction' },
+];
+
+const isDev = import.meta.env.DEV;
+
+// Anvil's deterministic default accounts (each pre-funded with 10,000 ETH)
+const ANVIL_ACCOUNTS = [
+  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+  '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65',
+  '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
+  '0x976EA74026E726554dB657fA54763abd0C3a0aa9',
+  '0x14dC79964da2C08dA15Fd353d30d9CBa8C7C3f04',
+  '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f',
+  '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720',
+];
+
 function getERC20Method(method: string): ERC20Method | undefined {
   return ERC20_METHODS.find((m) => m.value === method);
 }
@@ -119,15 +151,27 @@ export function TestRequestPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [txFrom, setTxFrom] = useState('');
+  const [txTo, setTxTo] = useState('');
+  const [txValue, setTxValue] = useState('');
+  const [userLinkedAddresses, setUserLinkedAddresses] = useState<Array<{ address: string; verified_at: string }>>([]);
 
   const erc20Method = getERC20Method(method);
   const isErc20 = isERC20(method);
+  const isSendTx = method === 'eth_sendTransaction';
+
+  const handleUserLoaded = (data: UserLookupResult | null) => {
+    setUserLinkedAddresses(data?.linkedAddresses || []);
+  };
 
   const handleMethodChange = (value: string) => {
     setMethod(value);
     setErc20Fields({});
     setContractAddress('');
     setParams('');
+    setTxFrom('');
+    setTxTo('');
+    setTxValue('');
     setResult(null);
     setError(null);
   };
@@ -157,6 +201,28 @@ export function TestRequestPanel() {
         const calldata = buildERC20Calldata(erc20Method, erc20Fields);
         rpcMethod = 'eth_call';
         parsedParams = [{ to: contractAddress, data: calldata }, 'latest'];
+      } else if (isSendTx) {
+        if (!txFrom.trim() || !isValidAddress(txFrom.trim())) {
+          setError('Valid "From" address is required (0x + 40 hex chars)');
+          setLoading(false);
+          return;
+        }
+        if (!txTo.trim() || !isValidAddress(txTo.trim())) {
+          setError('Valid "To" address is required (0x + 40 hex chars)');
+          setLoading(false);
+          return;
+        }
+        if (!txValue.trim() || isNaN(parseFloat(txValue)) || parseFloat(txValue) <= 0) {
+          setError('A positive ETH amount is required');
+          setLoading(false);
+          return;
+        }
+        rpcMethod = 'eth_sendTransaction';
+        parsedParams = [{
+          from: txFrom.trim(),
+          to: txTo.trim(),
+          value: ethToHexWei(txValue.trim()),
+        }];
       } else {
         rpcMethod = method;
         parsedParams = [];
@@ -214,6 +280,14 @@ export function TestRequestPanel() {
                   </SelectItem>
                 ))}
               </SelectGroup>
+              <SelectGroup>
+                <SelectLabel>Transactions</SelectLabel>
+                {TX_METHODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
           <Button onClick={handleSend} disabled={loading} className="gap-2">
@@ -264,7 +338,104 @@ export function TestRequestPanel() {
           </div>
         )}
 
-        {!isErc20 && (
+        {isSendTx && (
+          <div className="space-y-3 animate-fade-in">
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-2">
+                From Address
+              </label>
+              {(userLinkedAddresses.length > 0 || isDev) ? (
+                <Select value={txFrom} onValueChange={setTxFrom}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select sender address" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userLinkedAddresses.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>User Linked Addresses</SelectLabel>
+                        {userLinkedAddresses.map((addr) => (
+                          <SelectItem key={addr.address} value={addr.address}>
+                            <span className="font-mono text-sm">{addr.address}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                    {isDev && (
+                      <SelectGroup>
+                        <SelectLabel>Anvil Dev Accounts</SelectLabel>
+                        {ANVIL_ACCOUNTS.map((addr, i) => (
+                          <SelectItem key={addr} value={addr}>
+                            <span className="font-mono text-sm">
+                              <span className="text-[#6B7280]">#{i}</span>{' '}
+                              {addr.slice(0, 10)}...{addr.slice(-4)}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={txFrom}
+                  onChange={(e) => setTxFrom(e.target.value)}
+                  placeholder="0x..."
+                />
+              )}
+              {txFrom && !isValidAddress(txFrom) && (
+                <p className="text-xs text-red-600 mt-1">Invalid address format (expected 0x + 40 hex chars)</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-2">
+                To Address
+              </label>
+              <Input
+                value={txTo}
+                onChange={(e) => setTxTo(e.target.value)}
+                placeholder="0x..."
+              />
+              {txTo && !isValidAddress(txTo) && (
+                <p className="text-xs text-red-600 mt-1">Invalid address format (expected 0x + 40 hex chars)</p>
+              )}
+              {isDev && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {ANVIL_ACCOUNTS.slice(0, 5).map((addr, i) => (
+                    <button
+                      key={addr}
+                      type="button"
+                      onClick={() => setTxTo(addr)}
+                      className="text-xs font-mono px-1.5 py-0.5 rounded bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#6B7280] hover:text-[#374151] transition-colors border border-transparent hover:border-[#D1D5DB]"
+                    >
+                      #{i} {addr.slice(0, 6)}...{addr.slice(-4)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <ContractInfoPanel contractAddress={txTo} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-2">
+                Amount (ETH)
+              </label>
+              <Input
+                type="number"
+                value={txValue}
+                onChange={(e) => setTxValue(e.target.value)}
+                placeholder="0.1"
+                min="0"
+                step="0.001"
+              />
+              {txValue && !isNaN(parseFloat(txValue)) && parseFloat(txValue) > 0 && (
+                <p className="text-xs text-[#6B7280] mt-1">
+                  = {ethToHexWei(txValue)} wei (hex)
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!isErc20 && !isSendTx && (
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-2">
               Params (JSON array, optional)
@@ -308,7 +479,7 @@ export function TestRequestPanel() {
               <p className="text-xs text-[#6B7280]">
                 Paste a JWT token to test as a specific user identity. Copy from the user dashboard after authentication.
               </p>
-              <UserContextPanel jwtToken={jwtToken} />
+              <UserContextPanel jwtToken={jwtToken} onUserLoaded={handleUserLoaded} />
             </div>
           )}
         </div>

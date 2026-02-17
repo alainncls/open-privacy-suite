@@ -59,7 +59,7 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
         org_id: orgId,
         limit: 10,
       });
-      setResults(res.data.data);
+      setResults(res.data.data || []);
     } catch {
       setResults([]);
     } finally {

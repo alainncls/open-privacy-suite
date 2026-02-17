@@ -398,34 +398,27 @@ export default function TravelRuleRecordList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                {selectedTokenInfo ? `Amount (${selectedTokenInfo.symbol})` : 'Amount'}
-              </label>
-              <Input
-                value={formHumanAmount}
-                onChange={e => setFormHumanAmount(e.target.value)}
-                placeholder={selectedTokenInfo ? '1.5' : 'Enter amount in wei if no token configured'}
-                required
-              />
-              {selectedTokenInfo && formHumanAmount && !isNaN(parseFloat(formHumanAmount)) && (
-                <p className="text-xs text-[#6B7280] mt-1">
-                  ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei | ≈ ${formAmountUsd} USD
-                </p>
-              )}
-              {!selectedTokenInfo && (
-                <div className="mt-2">
+              {selectedTokenInfo ? (
+                <>
                   <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                    Amount (USD)
+                    Amount ({selectedTokenInfo.symbol})
                   </label>
                   <Input
-                    type="number"
-                    value={formAmountUsd}
-                    onChange={e => setFormAmountUsd(e.target.value)}
-                    placeholder="2500.00"
-                    min="0"
-                    step="0.01"
+                    value={formHumanAmount}
+                    onChange={e => setFormHumanAmount(e.target.value)}
+                    placeholder="1.5"
                     required
                   />
+                  {formHumanAmount && !isNaN(parseFloat(formHumanAmount)) && (
+                    <p className="text-xs text-[#6B7280] mt-1">
+                      ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei | ≈ ${formAmountUsd} USD
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] text-sm">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  Configure token prices in the Token Prices tab first to enable amount entry.
                 </div>
               )}
             </div>
@@ -434,7 +427,7 @@ export default function TravelRuleRecordList() {
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={formSaving}>
+              <Button type="submit" disabled={formSaving || !selectedTokenInfo}>
                 {formSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Create Record
               </Button>

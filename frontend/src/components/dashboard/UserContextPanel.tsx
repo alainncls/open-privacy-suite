@@ -32,7 +32,7 @@ function getClaimColor(claim: string): string {
   }
 }
 
-interface UserLookupResult {
+export interface UserLookupResult {
   user: { id: string; external_id: string; kyc: boolean; banned: boolean };
   memberships: Array<{
     membership: { id: string; group_id: string; source: string };
@@ -48,9 +48,10 @@ interface UserLookupResult {
 
 interface UserContextPanelProps {
   jwtToken: string;
+  onUserLoaded?: (data: UserLookupResult | null) => void;
 }
 
-export function UserContextPanel({ jwtToken }: UserContextPanelProps) {
+export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<UserLookupResult | null>(null);
@@ -65,6 +66,7 @@ export function UserContextPanel({ jwtToken }: UserContextPanelProps) {
 
     if (!did || !jwtToken.includes('.')) {
       setData(null);
+      onUserLoaded?.(null);
       setError(null);
       lastDid.current = '';
       return;
@@ -81,12 +83,15 @@ export function UserContextPanel({ jwtToken }: UserContextPanelProps) {
         if (!result) {
           setError('User not found for this DID');
           setData(null);
+          onUserLoaded?.(null);
         } else {
           setData(result);
+          onUserLoaded?.(result);
         }
       } catch {
         setError('Failed to look up user');
         setData(null);
+        onUserLoaded?.(null);
       } finally {
         setLoading(false);
       }
