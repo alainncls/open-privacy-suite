@@ -4,6 +4,7 @@ import type {
   UpdateComplianceConfigInput,
   TokenPrice,
   UpsertTokenPriceInput,
+  SystemTokenPrice,
   TravelRuleRecord,
   CreateTravelRuleRecordInput,
   SanctionedAddress,
@@ -30,6 +31,11 @@ export const complianceApi = {
       api.put<TokenPrice>(`/orgs/${orgId}/compliance/tokens/${encodeURIComponent(tokenAddress)}`, input),
     delete: (orgId: string, tokenAddress: string) =>
       api.delete(`/orgs/${orgId}/compliance/tokens/${encodeURIComponent(tokenAddress)}`),
+  },
+
+  systemPrices: {
+    list: () =>
+      api.get<{ data: SystemTokenPrice[] }>('/compliance/system-token-prices'),
   },
 
   travelRules: {

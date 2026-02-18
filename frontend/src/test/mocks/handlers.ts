@@ -788,6 +788,15 @@ export const handlers = [
     });
   }),
 
+  // System token prices (CoinGecko cache)
+  http.get('/api/v1/admin/compliance/system-token-prices', () => {
+    return HttpResponse.json({ data: [
+      { coingecko_id: 'ethereum', symbol: 'ETH', decimals: 18, price_usd: 2500, updated_at: new Date().toISOString(), is_stale: false },
+      { coingecko_id: 'tether', symbol: 'USDT', decimals: 6, price_usd: 1.0, updated_at: new Date().toISOString(), is_stale: false },
+      { coingecko_id: 'usd-coin', symbol: 'USDC', decimals: 6, price_usd: 1.0, updated_at: new Date().toISOString(), is_stale: false },
+    ] });
+  }),
+
   // Token prices — backend wraps in {data: [...]}
   http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
     return HttpResponse.json({ data: mockTokenPrices });

@@ -22,6 +22,7 @@ export interface TokenPrice {
   symbol: string;
   decimals: number;
   price_usd: number;
+  coingecko_id?: string;
   updated_by_user_id?: string;
   created_at: string;
   updated_at: string;
@@ -31,6 +32,16 @@ export interface UpsertTokenPriceInput {
   symbol: string;
   decimals: number;
   price_usd: number;
+  coingecko_id?: string | null;
+}
+
+export interface SystemTokenPrice {
+  coingecko_id: string;
+  symbol: string;
+  decimals: number;
+  price_usd: number;
+  updated_at: string;
+  is_stale: boolean;
 }
 
 export interface TravelRuleRecord {

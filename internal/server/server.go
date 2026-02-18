@@ -15,6 +15,7 @@ import (
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/evm/create3"
+	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -58,6 +59,7 @@ type Server struct {
 	authRateLimiter   *AuthRateLimiter
 	disclosureService *disclosure.DefaultService
 	complianceChecker *compliance.Checker
+	priceService      *pricing.Service
 	config            *config.Config
 	ensResolver       *ens.Resolver
 	jsonrpcProcessor  *JSONRPCProcessor
@@ -90,6 +92,9 @@ func (s *Server) Stop() {
 	}
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.Stop()
+	}
+	if s.priceService != nil {
+		s.priceService.Stop()
 	}
 	if s.runtimeTracer != nil {
 		s.runtimeTracer.Stop()
@@ -254,6 +259,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.complianceChecker = checker
 		s.jsonrpcProcessor.SetComplianceChecker(checker)
 		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
+
+		// Start background CoinGecko price fetcher
+		priceSvc := pricing.NewService(database, cfg.PriceFetchInterval)
+		priceSvc.Start()
+		s.priceService = priceSvc
 	} else {
 		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -47,6 +48,7 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	orgRoutes.DELETE("/address-thresholds/:address", s.deleteAddressThresholdOverride)
 
 	// global routes
+	adminGroup.GET("/compliance/system-token-prices", s.listSystemTokenPrices)
 	adminGroup.GET("/compliance/sanctions", s.listSanctionedAddresses)
 	adminGroup.POST("/compliance/sanctions", s.addSanctionedAddress)
 	adminGroup.DELETE("/compliance/sanctions/:id", s.removeSanctionedAddress)
@@ -150,16 +152,21 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	tokenAddress := strings.ToLower(c.Param("token_address"))
 
 	var input struct {
-		Symbol   string  `json:"symbol" binding:"required"`
-		Decimals int     `json:"decimals"`
-		PriceUSD float64 `json:"price_usd"`
+		Symbol      string  `json:"symbol" binding:"required"`
+		Decimals    int     `json:"decimals"`
+		PriceUSD    float64 `json:"price_usd"`
+		CoingeckoID *string `json:"coingecko_id"` // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if input.PriceUSD <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "price_usd must be greater than 0"})
+
+	// When using CoinGecko source, price_usd=0 is OK (will be resolved from system table).
+	// For manual pricing, require price > 0.
+	isCoingecko := input.CoingeckoID != nil && *input.CoingeckoID != ""
+	if !isCoingecko && input.PriceUSD <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "price_usd must be greater than 0 for manual pricing"})
 		return
 	}
 	// Validate decimals range (EVM tokens use 0-77; standard tokens 0-18)
@@ -186,6 +193,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		Symbol:       input.Symbol,
 		Decimals:     input.Decimals,
 		PriceUSD:     input.PriceUSD,
+		CoingeckoID:  input.CoingeckoID,
 	}
 
 	if existing != nil {
@@ -222,6 +230,41 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "token price deleted"})
+}
+
+// System Token Price handlers
+
+func (s *Server) listSystemTokenPrices(c *gin.Context) {
+	prices, err := s.db.ListSystemTokenPrices(c.Request.Context())
+	if err != nil {
+		internalError(c, "failed to list system token prices", err)
+		return
+	}
+
+	// Add staleness info
+	type systemPriceResponse struct {
+		CoingeckoID string  `json:"coingecko_id"`
+		Symbol      string  `json:"symbol"`
+		Decimals    int     `json:"decimals"`
+		PriceUSD    float64 `json:"price_usd"`
+		UpdatedAt   string  `json:"updated_at"`
+		IsStale     bool    `json:"is_stale"`
+	}
+
+	staleThreshold := s.config.PriceStalenessThreshold
+	result := make([]systemPriceResponse, len(prices))
+	for i, p := range prices {
+		result[i] = systemPriceResponse{
+			CoingeckoID: p.CoingeckoID,
+			Symbol:      p.Symbol,
+			Decimals:    p.Decimals,
+			PriceUSD:    p.PriceUSD,
+			UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
+			IsStale:     time.Since(p.UpdatedAt) > staleThreshold,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 // Travel Rule Record handlers
@@ -284,17 +327,17 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	tokenPrice, err := s.db.GetTokenPrice(ctx, orgID, tokenAddr)
+	priceUSD, decimals, err := s.resolveTokenPriceForRecord(ctx, orgID, tokenAddr)
 	if err != nil {
 		internalError(c, "failed to look up token price", err)
 		return
 	}
-	if tokenPrice == nil {
+	if priceUSD <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no token price configured for " + tokenAddr + "; configure it in Token Prices first"})
 		return
 	}
 
-	amountUSD, err := compliance.WeiToUSD(amountWei, tokenPrice.Decimals, tokenPrice.PriceUSD)
+	amountUSD, err := compliance.WeiToUSD(amountWei, decimals, priceUSD)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to compute USD value: " + err.Error()})
 		return
@@ -584,6 +627,45 @@ func (s *Server) listComplianceLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": logs, "total": total, "limit": limit, "offset": offset})
+}
+
+// resolveTokenPriceForRecord resolves the effective price and decimals for a token,
+// using the same fallback chain as the compliance checker.
+func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAddr string) (float64, int, error) {
+	tokenPrice, err := s.db.GetTokenPrice(ctx, orgID, tokenAddr)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if tokenPrice != nil {
+		if tokenPrice.CoingeckoID != nil && *tokenPrice.CoingeckoID != "" {
+			sysPrice, err := s.db.GetSystemTokenPrice(ctx, *tokenPrice.CoingeckoID)
+			if err != nil {
+				return 0, 0, err
+			}
+			if sysPrice != nil && sysPrice.PriceUSD > 0 {
+				return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+			}
+			if tokenPrice.PriceUSD > 0 {
+				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+			}
+			return 0, 0, nil
+		}
+		return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+	}
+
+	// Auto-resolve native from system ethereum price
+	if tokenAddr == "native" {
+		sysPrice, err := s.db.GetSystemTokenPrice(ctx, "ethereum")
+		if err != nil {
+			return 0, 0, err
+		}
+		if sysPrice != nil && sysPrice.PriceUSD > 0 {
+			return sysPrice.PriceUSD, sysPrice.Decimals, nil
+		}
+	}
+
+	return 0, 0, nil
 }
 
 // lowercasePtr returns a pointer to the lowercased string, or nil if the input is nil.

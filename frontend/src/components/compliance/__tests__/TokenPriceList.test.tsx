@@ -50,7 +50,7 @@ describe('TokenPriceList', () => {
       renderWithComplianceContext(<TokenPriceList />);
 
       await waitFor(() => {
-        expect(screen.getByText('No token prices configured')).toBeInTheDocument();
+        expect(screen.getByText('No per-org token prices configured')).toBeInTheDocument();
       });
     });
 
@@ -58,14 +58,15 @@ describe('TokenPriceList', () => {
       renderWithComplianceContext(<TokenPriceList />);
 
       await waitFor(() => {
-        expect(screen.getByText('ETH')).toBeInTheDocument();
-        expect(screen.getByText('USDT')).toBeInTheDocument();
+        // ETH/USDT appear in both system prices and per-org sections
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText('USDT').length).toBeGreaterThanOrEqual(1);
       });
 
       // Check table headers
       expect(screen.getByText('Token Address')).toBeInTheDocument();
       expect(screen.getByText('Symbol')).toBeInTheDocument();
-      expect(screen.getByText('Decimals')).toBeInTheDocument();
+      expect(screen.getByText('Source')).toBeInTheDocument();
     });
 
     it('shows native badge for native token', async () => {
@@ -153,7 +154,7 @@ describe('TokenPriceList', () => {
       renderWithComplianceContext(<TokenPriceList />);
 
       await waitFor(() => {
-        expect(screen.getByText('ETH')).toBeInTheDocument();
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
       });
 
       // Click edit on first row (pencil icon)
@@ -180,7 +181,7 @@ describe('TokenPriceList', () => {
       renderWithComplianceContext(<TokenPriceList />);
 
       await waitFor(() => {
-        expect(screen.getByText('ETH')).toBeInTheDocument();
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
       });
 
       // Click delete button (trash icon)
@@ -209,7 +210,7 @@ describe('TokenPriceList', () => {
       renderWithComplianceContext(<TokenPriceList />);
 
       await waitFor(() => {
-        expect(screen.getByText('ETH')).toBeInTheDocument();
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
       });
 
       const allButtons = screen.getAllByRole('button');

@@ -25,6 +25,7 @@ type mockComplianceStore struct {
 	logErr          error // if set, CreateComplianceLog returns this error
 	addrOverrides   map[string]*AddressThresholdOverride // key = lowercased address
 	addrOverrideErr error // if set, GetAddressThresholdOverride returns this error
+	systemPrices    map[string]*SystemTokenPrice // key = coingecko_id
 }
 
 func (m *mockComplianceStore) GetComplianceConfig(_ context.Context, _ string) (*ComplianceConfig, error) {
@@ -141,6 +142,21 @@ func (m *mockComplianceStore) GetComplianceLog(_ context.Context, _ int64) (*Com
 }
 
 func (m *mockComplianceStore) ListComplianceLogs(_ context.Context, _ string, _ *ComplianceLogFilters) ([]*ComplianceLog, int, error) {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) GetSystemTokenPrice(_ context.Context, coingeckoID string) (*SystemTokenPrice, error) {
+	if m.systemPrices != nil {
+		return m.systemPrices[coingeckoID], nil
+	}
+	return nil, nil
+}
+
+func (m *mockComplianceStore) UpsertSystemTokenPrice(_ context.Context, _ *SystemTokenPrice) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) ListSystemTokenPrices(_ context.Context) ([]*SystemTokenPrice, error) {
 	panic("not implemented")
 }
 

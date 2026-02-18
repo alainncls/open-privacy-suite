@@ -132,15 +132,19 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		tokenAddr = strings.ToLower(*info.TokenAddress)
 	}
 
-	tokenPrice, err := c.store.GetTokenPrice(ctx, req.OrgID, tokenAddr)
+	// Resolve token price with fallback chain:
+	// 1. Per-org token_prices entry with coingecko_id → system price
+	// 2. Per-org token_prices entry without coingecko_id → manual price
+	// 3. No per-org entry + native token → auto-resolve from system "ethereum" price
+	// 4. No entry → fail closed
+	priceUSD, decimals, err := c.resolveTokenPrice(ctx, req.OrgID, tokenAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get token price: %w", err)
+		return nil, fmt.Errorf("failed to resolve token price: %w", err)
 	}
-	if tokenPrice == nil {
-		// Fail closed: no price configured means we cannot evaluate
+	if priceUSD < 0 {
+		// Sentinel: price unavailable
 		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
 		log.Printf("Compliance denied (fail closed): org=%s user=%s %s", req.OrgID, req.UserID, reason)
-		// M2: Denial — warn on log failure, still deny.
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
@@ -152,7 +156,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 
 	// Convert amountWei to USD: amountWei / 10^decimals * priceUSD
-	amountUSD, err := WeiToUSD(info.AmountWei, tokenPrice.Decimals, tokenPrice.PriceUSD)
+	amountUSD, err := WeiToUSD(info.AmountWei, decimals, priceUSD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate USD value: %w", err)
 	}
@@ -228,6 +232,51 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		Reason:       reason,
 		TransferInfo: info,
 	}, nil
+}
+
+// resolveTokenPrice implements the price fallback chain.
+// Returns (priceUSD, decimals, error). A negative priceUSD signals "not found".
+func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string) (float64, int, error) {
+	// Step 1: Check per-org token_prices
+	tokenPrice, err := c.store.GetTokenPrice(ctx, orgID, tokenAddr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get token price: %w", err)
+	}
+
+	if tokenPrice != nil {
+		// Step 2a: Has coingecko_id → resolve from system price
+		if tokenPrice.CoingeckoID != nil && *tokenPrice.CoingeckoID != "" {
+			sysPrice, err := c.store.GetSystemTokenPrice(ctx, *tokenPrice.CoingeckoID)
+			if err != nil {
+				return 0, 0, fmt.Errorf("failed to get system token price: %w", err)
+			}
+			if sysPrice != nil && sysPrice.PriceUSD > 0 {
+				return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+			}
+			// System price unavailable or zero — fall back to manual price on the per-org entry
+			if tokenPrice.PriceUSD > 0 {
+				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+			}
+			// Both system and manual are zero/unavailable
+			return -1, 0, nil
+		}
+		// Step 2b: No coingecko_id → use manual price
+		return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+	}
+
+	// Step 3: No per-org entry — auto-resolve native token from system "ethereum" price
+	if tokenAddr == "native" {
+		sysPrice, err := c.store.GetSystemTokenPrice(ctx, "ethereum")
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to get system ethereum price: %w", err)
+		}
+		if sysPrice != nil && sysPrice.PriceUSD > 0 {
+			return sysPrice.PriceUSD, sysPrice.Decimals, nil
+		}
+	}
+
+	// Step 4: Not found → fail closed (signaled by negative price)
+	return -1, 0, nil
 }
 
 // logDecision creates a compliance log entry for an allow or deny decision.

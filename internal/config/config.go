@@ -39,6 +39,10 @@ type Config struct {
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
 	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
 
+	// Token price fetching configuration
+	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
+	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
+
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 }
@@ -137,6 +141,20 @@ func Load() *Config {
 		}
 	}
 
+	// Token price fetching configuration
+	priceFetchInterval := 5 * time.Minute
+	if intervalStr := getEnv("PRICE_FETCH_INTERVAL", ""); intervalStr != "" {
+		if d, err := time.ParseDuration(intervalStr); err == nil {
+			priceFetchInterval = d
+		}
+	}
+	priceStalenessThreshold := 15 * time.Minute
+	if staleStr := getEnv("PRICE_STALENESS_THRESHOLD", ""); staleStr != "" {
+		if d, err := time.ParseDuration(staleStr); err == nil {
+			priceStalenessThreshold = d
+		}
+	}
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -163,6 +181,8 @@ func Load() *Config {
 		TraceTieredValidation:      traceTiered,
 		EnableTravelRule:           enableTravelRule,
 		TravelRecordExpiry:         travelRecordExpiry,
+		PriceFetchInterval:         priceFetchInterval,
+		PriceStalenessThreshold:    priceStalenessThreshold,
 		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}
 }

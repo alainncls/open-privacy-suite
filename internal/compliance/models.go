@@ -28,9 +28,19 @@ type TokenPrice struct {
 	Symbol          string    `json:"symbol"`
 	Decimals        int       `json:"decimals"`
 	PriceUSD        float64   `json:"price_usd"`
+	CoingeckoID     *string   `json:"coingecko_id,omitempty"` // when set, price resolves from system_token_prices
 	UpdatedByUserID *string   `json:"updated_by_user_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// SystemTokenPrice is a global price cache entry populated by the CoinGecko fetcher.
+type SystemTokenPrice struct {
+	CoingeckoID string    `json:"coingecko_id"`
+	Symbol      string    `json:"symbol"`
+	Decimals    int       `json:"decimals"`
+	PriceUSD    float64   `json:"price_usd"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // TravelRuleRecord stores IVMS101 compliance data submitted before a transfer.

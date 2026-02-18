@@ -14,6 +14,11 @@ type Store interface {
 	DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) error
 	ListTokenPrices(ctx context.Context, orgID string) ([]*TokenPrice, error)
 
+	// System token prices (CoinGecko cache)
+	GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*SystemTokenPrice, error)
+	UpsertSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
+	ListSystemTokenPrices(ctx context.Context) ([]*SystemTokenPrice, error)
+
 	// Travel rule records
 	CreateTravelRuleRecord(ctx context.Context, record *TravelRuleRecord) error
 	GetTravelRuleRecord(ctx context.Context, id string) (*TravelRuleRecord, error)

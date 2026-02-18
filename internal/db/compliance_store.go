@@ -44,29 +44,87 @@ func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.Comp
 	).Scan(&config.CreatedAt, &config.UpdatedAt)
 }
 
+// System Token Price operations
+
+func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*compliance.SystemTokenPrice, error) {
+	query := `SELECT coingecko_id, symbol, decimals, price_usd, updated_at
+	          FROM system_token_prices WHERE coingecko_id = $1`
+
+	sp := &compliance.SystemTokenPrice{}
+	err := d.conn.QueryRowContext(ctx, query, coingeckoID).Scan(
+		&sp.CoingeckoID, &sp.Symbol, &sp.Decimals, &sp.PriceUSD, &sp.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system token price: %w", err)
+	}
+	return sp, nil
+}
+
+func (d *DB) UpsertSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error {
+	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_usd, updated_at)
+	          VALUES ($1, $2, $3, $4, $5)
+	          ON CONFLICT (coingecko_id) DO UPDATE SET
+	          symbol = EXCLUDED.symbol,
+	          decimals = EXCLUDED.decimals,
+	          price_usd = EXCLUDED.price_usd,
+	          updated_at = EXCLUDED.updated_at`
+
+	_, err := d.conn.ExecContext(ctx, query,
+		price.CoingeckoID, price.Symbol, price.Decimals, price.PriceUSD, price.UpdatedAt,
+	)
+	return err
+}
+
+func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTokenPrice, error) {
+	query := `SELECT coingecko_id, symbol, decimals, price_usd, updated_at
+	          FROM system_token_prices ORDER BY coingecko_id`
+
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list system token prices: %w", err)
+	}
+	defer rows.Close()
+
+	var prices []*compliance.SystemTokenPrice
+	for rows.Next() {
+		sp := &compliance.SystemTokenPrice{}
+		if err := rows.Scan(&sp.CoingeckoID, &sp.Symbol, &sp.Decimals, &sp.PriceUSD, &sp.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan system token price: %w", err)
+		}
+		prices = append(prices, sp)
+	}
+	return prices, rows.Err()
+}
+
 // Token Price operations
 
 func (d *DB) GetTokenPrice(ctx context.Context, orgID, tokenAddress string) (*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 AND token_address = $2`
 
 	return scanTokenPrice(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(tokenAddress)))
 }
 
 func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice) error {
-	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_usd, updated_by_user_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          ON CONFLICT (org_id, token_address) DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
 	          price_usd = EXCLUDED.price_usd,
+	          coingecko_id = EXCLUDED.coingecko_id,
 	          updated_by_user_id = EXCLUDED.updated_by_user_id,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
 		price.ID, price.OrgID, strings.ToLower(price.TokenAddress),
-		price.Symbol, price.Decimals, price.PriceUSD, price.UpdatedByUserID,
+		price.Symbol, price.Decimals, price.PriceUSD,
+		sql.NullString{String: ptrToString(price.CoingeckoID), Valid: price.CoingeckoID != nil},
+		price.UpdatedByUserID,
 	).Scan(&price.CreatedAt, &price.UpdatedAt)
 }
 
@@ -78,7 +136,7 @@ func (d *DB) DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) e
 }
 
 func (d *DB) ListTokenPrices(ctx context.Context, orgID string) ([]*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -512,11 +570,11 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 
 func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 	price := &compliance.TokenPrice{}
-	var updatedByUserID sql.NullString
+	var updatedByUserID, coingeckoID sql.NullString
 
 	err := row.Scan(
 		&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
-		&price.Decimals, &price.PriceUSD, &updatedByUserID,
+		&price.Decimals, &price.PriceUSD, &coingeckoID, &updatedByUserID,
 		&price.CreatedAt, &price.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -526,6 +584,9 @@ func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 		return nil, fmt.Errorf("failed to scan token price: %w", err)
 	}
 
+	if coingeckoID.Valid {
+		price.CoingeckoID = &coingeckoID.String
+	}
 	if updatedByUserID.Valid {
 		price.UpdatedByUserID = &updatedByUserID.String
 	}
@@ -537,16 +598,19 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 	var prices []*compliance.TokenPrice
 	for rows.Next() {
 		price := &compliance.TokenPrice{}
-		var updatedByUserID sql.NullString
+		var updatedByUserID, coingeckoID sql.NullString
 
 		if err := rows.Scan(
 			&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
-			&price.Decimals, &price.PriceUSD, &updatedByUserID,
+			&price.Decimals, &price.PriceUSD, &coingeckoID, &updatedByUserID,
 			&price.CreatedAt, &price.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan token price: %w", err)
 		}
 
+		if coingeckoID.Valid {
+			price.CoingeckoID = &coingeckoID.String
+		}
 		if updatedByUserID.Valid {
 			price.UpdatedByUserID = &updatedByUserID.String
 		}
@@ -559,6 +623,14 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 	}
 
 	return prices, nil
+}
+
+// ptrToString safely dereferences a *string, returning "" for nil.
+func ptrToString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func scanTravelRuleRecord(row *sql.Row) (*compliance.TravelRuleRecord, error) {

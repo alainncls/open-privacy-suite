@@ -206,7 +206,8 @@ describe('Backend Response Contract Tests', () => {
     renderWithComplianceContext(<TokenPriceList />);
 
     await waitFor(() => {
-      expect(screen.getByText('ETH')).toBeInTheDocument();
+      // ETH appears in both system prices section and per-org table
+      expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
     });
 
     // Verify the token address is displayed (rendered as "native (ETH)")

@@ -223,10 +223,6 @@ export default function ComplianceManager() {
                 <Settings className="w-4 h-4" />
                 <span>Config</span>
               </TabsTrigger>
-              <TabsTrigger value="tokens" className="gap-2">
-                <Coins className="w-4 h-4" />
-                <span>Token Prices</span>
-              </TabsTrigger>
               <TabsTrigger value="travel-rules" className="gap-2">
                 <FileText className="w-4 h-4" />
                 <span>Travel Rules</span>
@@ -242,6 +238,10 @@ export default function ComplianceManager() {
               <TabsTrigger value="logs" className="gap-2">
                 <ScrollText className="w-4 h-4" />
                 <span>Logs</span>
+              </TabsTrigger>
+              <TabsTrigger value="tokens" className="gap-2">
+                <Coins className="w-4 h-4" />
+                <span>Token Prices</span>
               </TabsTrigger>
             </TabsList>
           </Tabs>
