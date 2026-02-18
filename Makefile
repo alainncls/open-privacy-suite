@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-e2e run run-binary dev clean clean-build e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build build-prod test test-unit test-e2e run run-binary dev clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -13,9 +13,13 @@ $(HOOKS_MARKER):
 
 ensure-hooks: $(HOOKS_MARKER)
 
-# Build backend
+# Build backend (dev, with mock auth)
 build: ensure-hooks
-	go build -o bin/privacy-proxy ./cmd/server
+	go build -tags mockauth -o bin/privacy-proxy ./cmd/server
+
+# Build production Docker image (no mock auth, no dev shortcuts)
+build-prod: ensure-hooks
+	docker build -f Dockerfile.backend --target prod -t privacy-proxy:prod .
 
 # Build authproxy
 authproxy: ensure-hooks
