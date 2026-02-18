@@ -303,6 +303,11 @@ func WeiToUSD(amountWei *big.Int, decimals int, priceUSD float64) (float64, erro
 		return 0, nil
 	}
 
+	// Guard against negative amounts — these are invalid and likely a bug upstream
+	if amountWei.Sign() < 0 {
+		return 0, fmt.Errorf("negative amountWei: %s", amountWei.String())
+	}
+
 	// Guard against invalid decimals (EVM tokens use 0-77 range)
 	if decimals < 0 || decimals > 77 {
 		return 0, fmt.Errorf("token decimals %d out of valid range [0, 77]", decimals)

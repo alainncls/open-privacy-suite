@@ -22,7 +22,9 @@ type mockComplianceStore struct {
 	claimedRecord   *TravelRuleRecord
 	claimErr        error
 	logs            []*ComplianceLog
+	logErr          error // if set, CreateComplianceLog returns this error
 	addrOverrides   map[string]*AddressThresholdOverride // key = lowercased address
+	addrOverrideErr error // if set, GetAddressThresholdOverride returns this error
 }
 
 func (m *mockComplianceStore) GetComplianceConfig(_ context.Context, _ string) (*ComplianceConfig, error) {
@@ -105,6 +107,9 @@ func (m *mockComplianceStore) ListSanctionedAddresses(_ context.Context, _ *stri
 }
 
 func (m *mockComplianceStore) GetAddressThresholdOverride(_ context.Context, _ string, address string) (*AddressThresholdOverride, error) {
+	if m.addrOverrideErr != nil {
+		return nil, m.addrOverrideErr
+	}
 	if m.addrOverrides != nil {
 		return m.addrOverrides[strings.ToLower(address)], nil
 	}
@@ -124,6 +129,9 @@ func (m *mockComplianceStore) DeleteAddressThresholdOverride(_ context.Context, 
 }
 
 func (m *mockComplianceStore) CreateComplianceLog(_ context.Context, log *ComplianceLog) (int64, error) {
+	if m.logErr != nil {
+		return 0, m.logErr
+	}
 	m.logs = append(m.logs, log)
 	return int64(len(m.logs)), nil
 }
@@ -726,6 +734,495 @@ func TestWeiToUSD(t *testing.T) {
 			}
 			if math.Abs(got-tt.want) > 0.01 {
 				t.Errorf("WeiToUSD() = %f, want %f", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWeiToUSD_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		amountWei *big.Int
+		decimals  int
+		priceUSD  float64
+		want      float64
+		wantErr   bool
+	}{
+		{
+			name:      "+Inf price",
+			amountWei: big.NewInt(1e18),
+			decimals:  18,
+			priceUSD:  math.Inf(1),
+			wantErr:   true,
+		},
+		{
+			name:      "NaN price",
+			amountWei: big.NewInt(1e18),
+			decimals:  18,
+			priceUSD:  math.NaN(),
+			wantErr:   true,
+		},
+		{
+			name: "very large amountWei that overflows float64",
+			// 10^308 wei with 0 decimals and price $1 would produce 10^308,
+			// which is near the edge of float64. 10^309 should overflow.
+			amountWei: new(big.Int).Exp(big.NewInt(10), big.NewInt(309), nil),
+			decimals:  0,
+			priceUSD:  1,
+			wantErr:   true,
+		},
+		{
+			name:      "price $0 returns $0",
+			amountWei: new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil), // 1 ETH
+			decimals:  18,
+			priceUSD:  0,
+			want:      0,
+		},
+		{
+			name:      "0 decimals token: raw units times price",
+			amountWei: big.NewInt(100), // 100 raw units
+			decimals:  0,
+			priceUSD:  5.0,
+			want:      500,
+		},
+		{
+			name:      "max valid decimals 77 with reasonable amount",
+			amountWei: new(big.Int).Exp(big.NewInt(10), big.NewInt(77), nil), // 10^77 wei
+			decimals:  77,
+			priceUSD:  1.0,
+			want:      1.0, // 10^77 / 10^77 * $1 = $1
+		},
+		{
+			name:      "1 wei at $2000 with 18 decimals (tiny but valid)",
+			amountWei: big.NewInt(1),
+			decimals:  18,
+			priceUSD:  2000,
+			want:      2e-15, // 1 / 1e18 * 2000 = 2e-15
+		},
+		{
+			name:      "negative amountWei is rejected",
+			amountWei: big.NewInt(-1000),
+			decimals:  18,
+			priceUSD:  2000,
+			wantErr:   true,
+		},
+		{
+			name:      "-Inf price",
+			amountWei: big.NewInt(1e18),
+			decimals:  18,
+			priceUSD:  math.Inf(-1),
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := WeiToUSD(tt.amountWei, tt.decimals, tt.priceUSD)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("WeiToUSD() expected error, got %f", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("WeiToUSD() unexpected error: %v", err)
+				return
+			}
+			// Use relative tolerance for very small numbers
+			if tt.want == 0 {
+				if got != 0 {
+					t.Errorf("WeiToUSD() = %e, want 0", got)
+				}
+			} else {
+				relErr := math.Abs((got - tt.want) / tt.want)
+				if relErr > 0.001 {
+					t.Errorf("WeiToUSD() = %e, want %e (relative error: %f)", got, tt.want, relErr)
+				}
+			}
+		})
+	}
+}
+
+func TestWeiToUSD_NegativeWei(t *testing.T) {
+	// Verify that negative amountWei is rejected. Previously, amountWei.Sign() == 0
+	// only caught zero, not negative values, which would have silently produced
+	// a negative USD amount. The fix adds an explicit check for negative sign.
+	amounts := []*big.Int{
+		big.NewInt(-1),
+		big.NewInt(-1000000000000000000), // -1 ETH
+		new(big.Int).Neg(new(big.Int).Exp(big.NewInt(10), big.NewInt(50), nil)), // very large negative
+	}
+
+	for _, amt := range amounts {
+		t.Run(fmt.Sprintf("negative_%s", amt.String()), func(t *testing.T) {
+			_, err := WeiToUSD(amt, 18, 2000)
+			if err == nil {
+				t.Errorf("WeiToUSD(%s, 18, 2000) expected error for negative amount, got nil", amt.String())
+			}
+			if err != nil && !strings.Contains(err.Error(), "negative") {
+				t.Errorf("WeiToUSD() error = %q, expected error mentioning 'negative'", err.Error())
+			}
+		})
+	}
+}
+
+func TestCheckerCheck_DBErrors(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		orgID  = "org-1"
+		userID = "user-1"
+		from   = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		to     = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	hexOneETH := "0xde0b6b3a7640000"
+
+	tests := []struct {
+		name  string
+		store *mockComplianceStore
+		req   *CheckRequest
+	}{
+		{
+			name: "GetComplianceConfig error",
+			store: &mockComplianceStore{
+				configErr: fmt.Errorf("db connection lost"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH,
+			},
+		},
+		{
+			name: "IsAddressSanctioned error on recipient",
+			store: &mockComplianceStore{
+				config:      enabledConfig(1000),
+				sanctionErr: fmt.Errorf("sanctions table unavailable"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH,
+			},
+		},
+		{
+			name: "GetTokenPrice error",
+			store: &mockComplianceStore{
+				config:        enabledConfig(1000),
+				tokenPriceErr: fmt.Errorf("price cache failed"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH,
+			},
+		},
+		{
+			name: "ClaimUnusedTravelRuleRecord error",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				claimErr:   fmt.Errorf("deadlock detected"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH, // 1 ETH * $2000 = $2000 > $1000 threshold
+			},
+		},
+		{
+			name: "GetAddressThresholdOverride error",
+			store: &mockComplianceStore{
+				config:          enabledConfig(1000),
+				tokenPrice:      nativePrice(2000),
+				addrOverrideErr: fmt.Errorf("override table locked"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(tt.store, 24*time.Hour)
+			result, err := checker.Check(ctx, tt.req)
+			if err == nil {
+				t.Fatalf("Check() expected error, got result: Allowed=%v Reason=%q", result.Allowed, result.Reason)
+			}
+		})
+	}
+}
+
+func TestCheckerCheck_AuditLogFailClosed(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		orgID  = "org-1"
+		userID = "user-1"
+		from   = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		to     = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	hexOneTenthETH := "0x16345785d8a0000" // 0.1 ETH
+	hexOneETH := "0xde0b6b3a7640000"      // 1 ETH
+
+	tests := []struct {
+		name        string
+		store       *mockComplianceStore
+		req         *CheckRequest
+		wantAllowed bool
+		wantReason  string // substring match
+	}{
+		{
+			name: "allowed decision + log fails = denial (fail closed)",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				logErr:     fmt.Errorf("audit log unavailable"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneTenthETH, // 0.1 ETH * $2000 = $200 < $1000
+			},
+			wantAllowed: false,
+			wantReason:  "failing closed",
+		},
+		{
+			name: "denied decision + log fails = still denied",
+			store: &mockComplianceStore{
+				config:        enabledConfig(1000),
+				tokenPrice:    nativePrice(2000),
+				claimedRecord: nil, // no record
+				logErr:        fmt.Errorf("audit log unavailable"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH, // 1 ETH * $2000 = $2000 > $1000
+			},
+			wantAllowed: false,
+			wantReason:  "exceeds threshold",
+		},
+		{
+			name: "allowed with record + log fails = denial (fail closed)",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				claimedRecord: &TravelRuleRecord{
+					ID:    "tr-1",
+					OrgID: orgID,
+				},
+				logErr: fmt.Errorf("audit log unavailable"),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexOneETH, // 1 ETH * $2000 = $2000 > $1000, but record exists
+			},
+			wantAllowed: false,
+			wantReason:  "failing closed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(tt.store, 24*time.Hour)
+			result, err := checker.Check(ctx, tt.req)
+			if err != nil {
+				t.Fatalf("Check() returned unexpected error: %v", err)
+			}
+			if result.Allowed != tt.wantAllowed {
+				t.Errorf("Check() Allowed = %v, want %v (reason: %s)", result.Allowed, tt.wantAllowed, result.Reason)
+			}
+			if !strings.Contains(result.Reason, tt.wantReason) {
+				t.Errorf("Check() Reason = %q, want substring %q", result.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		orgID  = "org-1"
+		userID = "user-1"
+		from   = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		to     = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	// 1000 ETH in hex: 1000 * 1e18 = 1e21 = 0xd3c21bcecceda1000000
+	eth1000 := new(big.Int).Mul(new(big.Int).SetInt64(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+	hexThousandETH := "0x" + eth1000.Text(16)
+
+	tests := []struct {
+		name        string
+		store       *mockComplianceStore
+		req         *CheckRequest
+		wantAllowed bool
+		wantReason  string // substring match
+	}{
+		{
+			name: "sanctions block even 1 wei",
+			store: &mockComplianceStore{
+				config:          enabledConfig(1000),
+				tokenPrice:      nativePrice(2000),
+				sanctionedAddrs: map[string]bool{strings.ToLower(to): true},
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: "0x1", // 1 wei
+			},
+			wantAllowed: false,
+			wantReason:  "sanctioned",
+		},
+		{
+			name: "sanctions block even with valid record",
+			store: &mockComplianceStore{
+				config:          enabledConfig(1000),
+				tokenPrice:      nativePrice(2000),
+				sanctionedAddrs: map[string]bool{strings.ToLower(to): true},
+				claimedRecord: &TravelRuleRecord{
+					ID:    "tr-1",
+					OrgID: orgID,
+				},
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: "0xde0b6b3a7640000", // 1 ETH
+			},
+			wantAllowed: false,
+			wantReason:  "sanctioned",
+		},
+		{
+			name: "$0 price allows any amount below threshold (misconfiguration)",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(0), // $0/ETH — misconfiguration
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexThousandETH, // 1000 ETH * $0 = $0 < $1000
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold",
+		},
+		{
+			name: "per-address override + record interaction: above override, record exists = allowed",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				addrOverrides: map[string]*AddressThresholdOverride{
+					strings.ToLower(to): {
+						ID: "override-1", ThresholdUSD: 100, // $100 override
+					},
+				},
+				claimedRecord: &TravelRuleRecord{
+					ID:    "tr-1",
+					OrgID: orgID,
+				},
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: "0x16345785d8a0000", // 0.1 ETH * $2000 = $200 > $100 override
+			},
+			wantAllowed: true,
+			wantReason:  "travel rule record tr-1 applied",
+		},
+		{
+			name: "per-address override + no record: above override = denied",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				addrOverrides: map[string]*AddressThresholdOverride{
+					strings.ToLower(to): {
+						ID: "override-1", ThresholdUSD: 100,
+					},
+				},
+				claimedRecord: nil,
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: "0x16345785d8a0000", // 0.1 ETH * $2000 = $200 > $100 override
+			},
+			wantAllowed: false,
+			wantReason:  "exceeds threshold",
+		},
+		{
+			name: "very large transfer with record",
+			store: &mockComplianceStore{
+				config:     enabledConfig(1000),
+				tokenPrice: nativePrice(2000),
+				claimedRecord: &TravelRuleRecord{
+					ID:    "tr-whale",
+					OrgID: orgID,
+				},
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				Value: hexThousandETH, // 1000 ETH * $2000 = $2,000,000
+			},
+			wantAllowed: true,
+			wantReason:  "travel rule record tr-whale applied",
+		},
+		{
+			name: "floating point just below threshold = allowed",
+			store: &mockComplianceStore{
+				config: enabledConfig(1000),
+				// Price that makes 0.4999 ETH = $999.8 (below $1000)
+				// 0.4999 ETH * $2000 = $999.80
+				tokenPrice: nativePrice(2000),
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				// 0.4999 ETH = 4.999e17 wei = 0x6f0226ea9aa2800 (approximately)
+				Value: "0x" + new(big.Int).SetUint64(499900000000000000).Text(16),
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold",
+		},
+		{
+			name: "floating point just above threshold = denied",
+			store: &mockComplianceStore{
+				config:        enabledConfig(1000),
+				tokenPrice:    nativePrice(2000),
+				claimedRecord: nil,
+			},
+			req: &CheckRequest{
+				OrgID: orgID, UserID: userID,
+				From: from, To: to,
+				// 0.5001 ETH = 5.001e17 wei at $2000/ETH = $1000.20
+				Value: "0x" + new(big.Int).SetUint64(500100000000000000).Text(16),
+			},
+			wantAllowed: false,
+			wantReason:  "exceeds threshold",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(tt.store, 24*time.Hour)
+			result, err := checker.Check(ctx, tt.req)
+			if err != nil {
+				t.Fatalf("Check() returned unexpected error: %v", err)
+			}
+			if result.Allowed != tt.wantAllowed {
+				t.Errorf("Check() Allowed = %v, want %v (reason: %s)", result.Allowed, tt.wantAllowed, result.Reason)
+			}
+			if !strings.Contains(result.Reason, tt.wantReason) {
+				t.Errorf("Check() Reason = %q, want substring %q", result.Reason, tt.wantReason)
 			}
 		})
 	}
