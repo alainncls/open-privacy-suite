@@ -284,6 +284,7 @@ export const mockTravelRuleRecords: TravelRuleRecord[] = [
     id: 'tr-1',
     org_id: 'org-1',
     originator_user_id: 'user-1',
+    originator_external_id: 'did:test:alice',
     originator_data: { name: 'Alice' },
     beneficiary_data: { name: 'Bob' },
     transfer_type: 'eth',
@@ -297,6 +298,7 @@ export const mockTravelRuleRecords: TravelRuleRecord[] = [
     id: 'tr-2',
     org_id: 'org-1',
     originator_user_id: 'user-2',
+    originator_external_id: 'did:test:charlie',
     originator_data: { name: 'Charlie' },
     beneficiary_data: { name: 'Dave' },
     transfer_type: 'erc20',
@@ -336,6 +338,7 @@ export const mockComplianceLogs: ComplianceLog[] = [
     id: 1,
     org_id: 'org-1',
     user_id: 'user-1',
+    user_external_id: 'did:test:alice',
     transfer_type: 'eth',
     from_address: '0x1111111111111111111111111111111111111111',
     to_address: '0x2222222222222222222222222222222222222222',
@@ -350,6 +353,7 @@ export const mockComplianceLogs: ComplianceLog[] = [
     id: 2,
     org_id: 'org-1',
     user_id: 'user-2',
+    user_external_id: 'did:test:bob',
     transfer_type: 'erc20',
     token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
     from_address: '0x3333333333333333333333333333333333333333',
@@ -815,6 +819,10 @@ export const handlers = [
       limit: 25,
       offset: 0,
     });
+  }),
+
+  http.delete('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records/:id', () => {
+    return new HttpResponse(null, { status: 204 });
   }),
 
   http.post('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records', async ({ request, params }) => {

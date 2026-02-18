@@ -67,6 +67,7 @@ const realisticConfig = {
 const realisticTravelRuleRecords = [
   {
     id: 'tr-1', org_id: 'org-1', originator_user_id: 'user-abc-123',
+    originator_external_id: 'did:polygonid:polygon:main:user123',
     originator_data: { name: 'Alice' }, beneficiary_data: { name: 'Bob' },
     transfer_type: 'eth', beneficiary_address: '0xabcdef1234567890abcdef1234567890abcdef12',
     amount_wei: '1000000000000000000', amount_usd: 2500,
@@ -94,6 +95,7 @@ const realisticAddressThresholds = [
 const realisticLogs = [
   {
     id: 1, org_id: 'org-1', user_id: 'user-abc-12345678',
+    user_external_id: 'did:polygonid:polygon:main:user123',
     transfer_type: 'eth', from_address: '0xaaaa00000000000000000000000000000000aaaa',
     to_address: '0xbbbb00000000000000000000000000000000bbbb',
     amount_wei: '5000000000000000000', amount_usd: 12500,
@@ -145,6 +147,9 @@ describe('API Route Path Contract Tests', () => {
       amount_wei: '1000',
     });
     expect(postSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', expect.any(Object));
+
+    await complianceApi.travelRules.delete('org-1', 'tr-1');
+    expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records/tr-1');
 
     await complianceApi.sanctions.list({ limit: 25 });
     expect(getSpy).toHaveBeenCalledWith('/compliance/sanctions', { params: { limit: 25 } });
@@ -251,8 +256,8 @@ describe('Backend Response Contract Tests', () => {
       expect(screen.getByText('Travel Rule Records')).toBeInTheDocument();
     });
 
-    // Verify record data renders: originator user ID is sliced to first 8 chars
-    expect(screen.getByText('user-abc...')).toBeInTheDocument();
+    // Verify record data renders: originator DID (truncated since > 20 chars)
+    expect(screen.getByText('did:polygonid:p...')).toBeInTheDocument();
 
     // Verify the amount USD is displayed
     expect(screen.getByText('$2,500')).toBeInTheDocument();
@@ -333,8 +338,8 @@ describe('Backend Response Contract Tests', () => {
       expect(screen.getByText('Compliance Logs')).toBeInTheDocument();
     });
 
-    // Verify the user ID is sliced (first 8 chars + "...")
-    expect(screen.getByText('user-abc...')).toBeInTheDocument();
+    // Verify the user DID is displayed (truncated since > 20 chars)
+    expect(screen.getByText('did:polygonid:p...')).toBeInTheDocument();
 
     // Verify transfer type badge
     expect(screen.getByText('ETH')).toBeInTheDocument();

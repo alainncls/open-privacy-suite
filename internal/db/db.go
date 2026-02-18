@@ -21,6 +21,12 @@ var ErrAddressAlreadyLinked = errors.New("ETH address is already linked to a dif
 // and the user attempts to re-link it. Requires explicit admin action to un-revoke.
 var ErrAddressLinkRevoked = errors.New("ETH address link has been revoked by an administrator")
 
+// ErrNotFound is returned when the requested resource does not exist.
+var ErrNotFound = errors.New("not found")
+
+// ErrRecordAlreadyUsed is returned when attempting to delete a travel rule record that has already been used.
+var ErrRecordAlreadyUsed = errors.New("travel rule record already used")
+
 type DB struct {
 	conn        *sql.DB
 	databaseURL string

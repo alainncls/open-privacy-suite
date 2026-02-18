@@ -37,6 +37,7 @@ export interface TravelRuleRecord {
   id: string;
   org_id: string;
   originator_user_id: string;
+  originator_external_id?: string;
   originator_data: Record<string, unknown>;
   beneficiary_data: Record<string, unknown>;
   transfer_type: TransferType;
@@ -82,6 +83,7 @@ export interface ComplianceLog {
   id: number;
   org_id: string;
   user_id: string;
+  user_external_id?: string;
   transfer_type: TransferType;
   token_address?: string;
   from_address: string;
@@ -111,7 +113,7 @@ export interface UpsertAddressThresholdInput {
 }
 
 export interface ComplianceLogFilters {
-  user_id?: string;
+  user_search?: string;
   decision?: Decision;
   transfer_type?: TransferType;
   limit?: number;

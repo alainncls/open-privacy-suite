@@ -57,9 +57,9 @@ describe('TravelRuleRecordList', () => {
       renderWithComplianceContext(<TravelRuleRecordList />);
 
       await waitFor(() => {
-        // Should show originator user IDs (truncated)
-        expect(screen.getByText('user-1...')).toBeInTheDocument();
-        expect(screen.getByText('user-2...')).toBeInTheDocument();
+        // Should show originator DIDs (short enough to display fully)
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
+        expect(screen.getByText('did:test:charlie')).toBeInTheDocument();
       });
 
       // Check table headers
@@ -268,6 +268,64 @@ describe('TravelRuleRecordList', () => {
 
       await waitFor(() => {
         expect(screen.getAllByText(/USDT/).length).toBeGreaterThanOrEqual(1);
+      });
+    });
+  });
+
+  describe('Delete Record', () => {
+    it('shows delete button for non-used records and handles deletion', async () => {
+      let deleteCalled = false;
+      server.use(
+        http.delete('/api/v1/admin/orgs/:orgId/compliance/travel-rule-records/:id', () => {
+          deleteCalled = true;
+          return new HttpResponse(null, { status: 204 });
+        })
+      );
+
+      const user = userEvent.setup();
+      renderWithComplianceContext(<TravelRuleRecordList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
+      });
+
+      // Find the trash icon button in the table
+      // lucide-react renders SVG elements inside buttons
+      const tableBody = document.querySelector('tbody');
+      const svgs = tableBody!.querySelectorAll('svg');
+      // Log SVG class names for debugging
+      const trashSvg = Array.from(svgs).find(svg => {
+        // Trash2 icon has a specific path - look for the polyline/path combo
+        return svg.classList.contains('lucide-trash-2') ||
+          svg.querySelector('path[d*="M3 6"]') !== null;
+      });
+
+      // Alternative: find buttons in table cells that are NOT copy buttons
+      const tableCells = tableBody!.querySelectorAll('td');
+      const lastCellButtons: Element[] = [];
+      tableCells.forEach(cell => {
+        const btn = cell.querySelector('button');
+        if (btn && !btn.getAttribute('title')?.includes('Copy')) {
+          lastCellButtons.push(btn);
+        }
+      });
+
+      const trashButton = trashSvg?.closest('button') || lastCellButtons[0];
+      expect(trashButton).toBeTruthy();
+
+      // Click the delete button
+      await user.click(trashButton! as HTMLElement);
+
+      // Confirmation dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Delete Travel Rule Record')).toBeInTheDocument();
+      });
+
+      // Click confirm
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => {
+        expect(deleteCalled).toBe(true);
       });
     });
   });

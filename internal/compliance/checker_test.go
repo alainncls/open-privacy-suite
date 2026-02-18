@@ -65,6 +65,10 @@ func (m *mockComplianceStore) ClaimUnusedTravelRuleRecord(_ context.Context, _, 
 	return m.claimedRecord, m.claimErr
 }
 
+func (m *mockComplianceStore) DeleteTravelRuleRecord(_ context.Context, _, _ string) error {
+	panic("not implemented")
+}
+
 func (m *mockComplianceStore) MarkTravelRuleRecordUsed(_ context.Context, _ string, _ *string) error {
 	panic("not implemented")
 }

@@ -184,12 +184,13 @@ func (d *DB) ListTravelRuleRecords(ctx context.Context, orgID string, limit, off
 		return nil, 0, fmt.Errorf("failed to count travel rule records: %w", err)
 	}
 
-	// Get paginated results
-	query := `SELECT id, org_id, originator_user_id, originator_data, beneficiary_data,
-	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
-	          expires_at, used_at, used_tx_hash, created_at
-	          FROM travel_rule_records WHERE org_id = $1
-	          ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	// Get paginated results with user external_id
+	query := `SELECT tr.id, tr.org_id, tr.originator_user_id, COALESCE(u.external_id, ''), tr.originator_data, tr.beneficiary_data,
+	          tr.transfer_type, tr.token_address, tr.beneficiary_address, tr.amount_wei, tr.amount_usd,
+	          tr.expires_at, tr.used_at, tr.used_tx_hash, tr.created_at
+	          FROM travel_rule_records tr LEFT JOIN users u ON u.id = tr.originator_user_id
+	          WHERE tr.org_id = $1
+	          ORDER BY tr.created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
 	if err != nil {
@@ -203,6 +204,36 @@ func (d *DB) ListTravelRuleRecords(ctx context.Context, orgID string, limit, off
 	}
 
 	return records, total, nil
+}
+
+func (d *DB) DeleteTravelRuleRecord(ctx context.Context, orgID, id string) error {
+	result, err := d.conn.ExecContext(ctx,
+		`DELETE FROM travel_rule_records WHERE id = $1 AND org_id = $2 AND used_at IS NULL`,
+		id, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to delete travel rule record: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		// Distinguish "not found" from "already used" by checking if the record exists at all.
+		var exists bool
+		err := d.conn.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM travel_rule_records WHERE id = $1 AND org_id = $2)`,
+			id, orgID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check travel rule record existence: %w", err)
+		}
+		if exists {
+			return ErrRecordAlreadyUsed
+		}
+		return ErrNotFound
+	}
+
+	return nil
 }
 
 func (d *DB) CleanupExpiredRecords(ctx context.Context) (int64, error) {
@@ -414,23 +445,23 @@ func (d *DB) GetComplianceLog(ctx context.Context, id int64) (*compliance.Compli
 
 func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *compliance.ComplianceLogFilters) ([]*compliance.ComplianceLog, int, error) {
 	// Build WHERE clause
-	where := `WHERE org_id = $1`
+	where := `WHERE cl.org_id = $1`
 	args := []any{orgID}
 	paramIdx := 2
 
 	if filters != nil {
-		if filters.UserID != nil {
-			where += fmt.Sprintf(` AND user_id = $%d`, paramIdx)
-			args = append(args, *filters.UserID)
+		if filters.UserSearch != nil {
+			where += fmt.Sprintf(` AND u.external_id ILIKE '%%' || $%d || '%%'`, paramIdx)
+			args = append(args, *filters.UserSearch)
 			paramIdx++
 		}
 		if filters.Decision != nil {
-			where += fmt.Sprintf(` AND decision = $%d`, paramIdx)
+			where += fmt.Sprintf(` AND cl.decision = $%d`, paramIdx)
 			args = append(args, *filters.Decision)
 			paramIdx++
 		}
 		if filters.TransferType != nil {
-			where += fmt.Sprintf(` AND transfer_type = $%d`, paramIdx)
+			where += fmt.Sprintf(` AND cl.transfer_type = $%d`, paramIdx)
 			args = append(args, *filters.TransferType)
 			paramIdx++
 		}
@@ -438,7 +469,7 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 
 	// Get total count
 	var total int
-	countQuery := `SELECT COUNT(*) FROM compliance_logs ` + where
+	countQuery := `SELECT COUNT(*) FROM compliance_logs cl LEFT JOIN users u ON u.id = cl.user_id ` + where
 	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count compliance logs: %w", err)
 	}
@@ -455,10 +486,11 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 		}
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, user_id, transfer_type, token_address,
-	          from_address, to_address, amount_wei, amount_usd, threshold_usd,
-	          decision, denial_reason, travel_rule_record_id, created_at
-	          FROM compliance_logs %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`,
+	query := fmt.Sprintf(`SELECT cl.id, cl.org_id, cl.user_id, COALESCE(u.external_id, ''), cl.transfer_type, cl.token_address,
+	          cl.from_address, cl.to_address, cl.amount_wei, cl.amount_usd, cl.threshold_usd,
+	          cl.decision, cl.denial_reason, cl.travel_rule_record_id, cl.created_at
+	          FROM compliance_logs cl LEFT JOIN users u ON u.id = cl.user_id
+	          %s ORDER BY cl.created_at DESC LIMIT $%d OFFSET $%d`,
 		where, paramIdx, paramIdx+1)
 	args = append(args, limit, offset)
 
@@ -584,6 +616,7 @@ func scanTravelRuleRecords(rows *sql.Rows) ([]*compliance.TravelRuleRecord, erro
 
 		if err := rows.Scan(
 			&record.ID, &record.OrgID, &record.OriginatorUserID,
+			&record.OriginatorExternalID,
 			&originatorData, &beneficiaryData,
 			&record.TransferType, &tokenAddress, &record.BeneficiaryAddress,
 			&record.AmountWei, &record.AmountUSD,
@@ -730,7 +763,7 @@ func scanComplianceLogs(rows *sql.Rows) ([]*compliance.ComplianceLog, error) {
 		var amountUSD, thresholdUSD sql.NullFloat64
 
 		if err := rows.Scan(
-			&entry.ID, &entry.OrgID, &entry.UserID, &entry.TransferType, &tokenAddress,
+			&entry.ID, &entry.OrgID, &entry.UserID, &entry.UserExternalID, &entry.TransferType, &tokenAddress,
 			&entry.FromAddress, &entry.ToAddress, &entry.AmountWei,
 			&amountUSD, &thresholdUSD,
 			&entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,

@@ -35,9 +35,10 @@ type TokenPrice struct {
 
 // TravelRuleRecord stores IVMS101 compliance data submitted before a transfer.
 type TravelRuleRecord struct {
-	ID                 string                 `json:"id"`
-	OrgID              string                 `json:"org_id"`
-	OriginatorUserID   string                 `json:"originator_user_id"`
+	ID                   string                 `json:"id"`
+	OrgID                string                 `json:"org_id"`
+	OriginatorUserID     string                 `json:"originator_user_id"`
+	OriginatorExternalID string                 `json:"originator_external_id,omitempty"`
 	OriginatorData     map[string]any `json:"originator_data"`
 	BeneficiaryData    map[string]any `json:"beneficiary_data"`
 	TransferType       TransferType           `json:"transfer_type"`
@@ -68,6 +69,7 @@ type ComplianceLog struct {
 	ID                 int64        `json:"id"`
 	OrgID              string       `json:"org_id"`
 	UserID             string       `json:"user_id"`
+	UserExternalID     string       `json:"user_external_id,omitempty"`
 	TransferType       TransferType `json:"transfer_type"`
 	TokenAddress       *string      `json:"token_address,omitempty"`
 	FromAddress        string       `json:"from_address"`
@@ -95,7 +97,7 @@ type AddressThresholdOverride struct {
 
 // ComplianceLogFilters for querying compliance logs.
 type ComplianceLogFilters struct {
-	UserID       *string
+	UserSearch   *string
 	Decision     *string
 	TransferType *TransferType
 	Limit        int

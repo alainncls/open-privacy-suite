@@ -58,9 +58,9 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        // Should show user IDs (truncated)
-        expect(screen.getByText('user-1...')).toBeInTheDocument();
-        expect(screen.getByText('user-2...')).toBeInTheDocument();
+        // Should show user DIDs (short enough to display fully)
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
+        expect(screen.getByText('did:test:bob')).toBeInTheDocument();
       });
 
       // Check table headers
@@ -88,8 +88,17 @@ describe('ComplianceLogList', () => {
       });
     });
 
-    it('shows denial reason for denied logs', async () => {
+    it('shows denial reason in detail dialog', async () => {
+      const user = userEvent.setup();
       renderWithComplianceContext(<ComplianceLogList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('denied')).toBeInTheDocument();
+      });
+
+      // Click the denied row to open detail dialog
+      const deniedRow = screen.getByText('denied').closest('tr')!;
+      await user.click(deniedRow);
 
       await waitFor(() => {
         expect(screen.getByText('sanctioned_address')).toBeInTheDocument();
@@ -114,7 +123,7 @@ describe('ComplianceLogList', () => {
         expect(screen.getByText('Compliance Logs')).toBeInTheDocument();
       });
 
-      expect(screen.getByPlaceholderText('Filter by user ID...')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search by user DID...')).toBeInTheDocument();
     });
 
     it('filters by decision when selecting Denied', async () => {
@@ -138,7 +147,7 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        expect(screen.getByText('user-1...')).toBeInTheDocument();
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
       });
 
       // Click the decision filter trigger
@@ -158,7 +167,7 @@ describe('ComplianceLogList', () => {
       });
     });
 
-    it('filters by user ID with debounce', async () => {
+    it('filters by user search with debounce', async () => {
       let lastParams: URLSearchParams | null = null;
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/compliance/logs', ({ request }) => {
@@ -176,15 +185,15 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        expect(screen.getByText('user-1...')).toBeInTheDocument();
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
       });
 
-      const userIdInput = screen.getByPlaceholderText('Filter by user ID...');
-      await user.type(userIdInput, 'user-1');
+      const userSearchInput = screen.getByPlaceholderText('Search by user DID...');
+      await user.type(userSearchInput, 'did:test');
 
       // Wait for debounce and API call
       await waitFor(() => {
-        expect(lastParams?.get('user_id')).toBe('user-1');
+        expect(lastParams?.get('user_search')).toBe('did:test');
       }, { timeout: 2000 });
     });
   });
@@ -194,7 +203,7 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        expect(screen.getByText('user-1...')).toBeInTheDocument();
+        expect(screen.getByText('did:test:alice')).toBeInTheDocument();
       });
 
       // Logs are read-only — no Add/Create/Delete buttons

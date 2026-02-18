@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log"
 	"math/big"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/db"
 )
 
 // Default travel rule record expiration duration.
@@ -37,6 +39,7 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	orgRoutes.DELETE("/tokens/:token_address", s.deleteTokenPrice)
 	orgRoutes.POST("/travel-rule-records", s.createTravelRuleRecord)
 	orgRoutes.GET("/travel-rule-records", s.listTravelRuleRecords)
+	orgRoutes.DELETE("/travel-rule-records/:id", s.deleteTravelRuleRecord)
 	orgRoutes.GET("/logs", s.listComplianceLogs)
 	orgRoutes.GET("/address-thresholds", s.listAddressThresholdOverrides)
 	orgRoutes.PUT("/address-thresholds/:address", s.upsertAddressThresholdOverride)
@@ -335,6 +338,33 @@ func (s *Server) listTravelRuleRecords(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": records, "total": total, "limit": limit, "offset": offset})
 }
 
+func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
+	orgID := c.Param("org_id")
+	id := c.Param("id")
+
+	// Validate id is a valid UUID
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid record id format"})
+		return
+	}
+
+	err := s.db.DeleteTravelRuleRecord(c.Request.Context(), orgID, id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "travel rule record not found"})
+			return
+		}
+		if errors.Is(err, db.ErrRecordAlreadyUsed) {
+			c.JSON(http.StatusConflict, gin.H{"error": "cannot delete used travel rule record"})
+			return
+		}
+		internalError(c, "failed to delete travel rule record", err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 // Sanctioned Address handlers
 
 func (s *Server) listSanctionedAddresses(c *gin.Context) {
@@ -515,8 +545,8 @@ func (s *Server) listComplianceLogs(c *gin.Context) {
 		Offset: offset,
 	}
 
-	if userID := c.Query("user_id"); userID != "" {
-		filters.UserID = &userID
+	if userSearch := c.Query("user_search"); userSearch != "" {
+		filters.UserSearch = &userSearch
 	}
 	// Whitelist decision values
 	if decision := c.Query("decision"); decision == "allowed" || decision == "denied" {

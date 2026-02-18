@@ -12,7 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import Pagination from '@/components/ui/Pagination';
-import { Loader2, Plus, AlertCircle, FileText } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Loader2, Plus, AlertCircle, FileText, Copy, Check, Trash2 } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { UserSearchInput } from './UserSearchInput';
@@ -56,6 +57,9 @@ export default function TravelRuleRecordList() {
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<TravelRuleRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TravelRuleRecord | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Form state
   const [formOriginatorUserId, setFormOriginatorUserId] = useState('');
@@ -88,6 +92,16 @@ export default function TravelRuleRecordList() {
     }
   }, [formHumanAmount, selectedTokenInfo]);
 
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   const loadRecords = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
@@ -115,6 +129,18 @@ export default function TravelRuleRecordList() {
     setOffset(0);
     loadRecords(0);
   }, [orgId]);
+
+  const handleDelete = async () => {
+    if (!deleteTarget || !orgId) return;
+    try {
+      await complianceApi.travelRules.delete(orgId, deleteTarget.id);
+      setDeleteTarget(null);
+      loadRecords(offset);
+    } catch (err: unknown) {
+      const axiosError = err as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || 'Failed to delete travel rule record');
+    }
+  };
 
   const openCreateForm = async () => {
     setFormOriginatorUserId('');
@@ -231,18 +257,47 @@ export default function TravelRuleRecordList() {
                 <TableHead>Amount (USD)</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {records.map(record => {
                 const status = getRecordStatus(record);
+                const originatorName = record.originator_data?.name as string | undefined;
                 return (
-                  <TableRow key={record.id}>
-                    <TableCell className="font-mono text-xs text-[#6B7280]">
-                      {record.originator_user_id.slice(0, 8)}...
+                  <TableRow
+                    key={record.id}
+                    className="cursor-pointer hover:bg-[#F8FAFC]"
+                    onClick={() => setSelectedRecord(record)}
+                  >
+                    <TableCell className="text-sm text-[#6B7280]">
+                      {record.originator_external_id ? (
+                        <span className="font-mono text-xs">
+                          {record.originator_external_id.length > 20
+                            ? record.originator_external_id.slice(0, 15) + '...'
+                            : record.originator_external_id}
+                        </span>
+                      ) : originatorName || (
+                        <span className="font-mono text-xs">{record.originator_user_id.slice(0, 8)}...</span>
+                      )}
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-[#6B7280]">
-                      {record.beneficiary_address.slice(0, 10)}...{record.beneficiary_address.slice(-6)}
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <span className="font-mono text-xs text-[#6B7280]">
+                          {record.beneficiary_address.slice(0, 10)}...{record.beneficiary_address.slice(-6)}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); copyToClipboard(record.beneficiary_address, `${record.id}-addr`); }}
+                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                          title="Copy address"
+                        >
+                          {copiedKey === `${record.id}-addr` ? (
+                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{record.transfer_type.toUpperCase()}</Badge>
@@ -253,6 +308,17 @@ export default function TravelRuleRecordList() {
                     </TableCell>
                     <TableCell className="text-[#6B7280] text-sm">
                       {new Date(record.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>
+                      {status !== 'used' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(record); }}
+                        >
+                          <Trash2 className="w-4 h-4 text-[#991B1B]" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -267,6 +333,149 @@ export default function TravelRuleRecordList() {
           />
         </>
       )}
+
+      {/* Detail Dialog */}
+      <Dialog open={!!selectedRecord} onOpenChange={open => { if (!open) setSelectedRecord(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Travel Rule Record</DialogTitle>
+          </DialogHeader>
+          {selectedRecord && (() => {
+            const status = getRecordStatus(selectedRecord);
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 text-sm">
+                  <span className="text-[#6B7280] font-medium">Originator</span>
+                  <div>
+                    {selectedRecord.originator_external_id && (
+                      <div className="font-mono text-xs break-all">{selectedRecord.originator_external_id}</div>
+                    )}
+                    {selectedRecord.originator_data?.name ? (
+                      <div className="text-[#374151] mt-1">
+                        {String(selectedRecord.originator_data.name)}
+                      </div>
+                    ) : null}
+                    {selectedRecord.originator_data?.account_ref ? (
+                      <div className="text-[#6B7280] text-xs mt-0.5">
+                        Ref: {String(selectedRecord.originator_data.account_ref)}
+                      </div>
+                    ) : null}
+                    <div className="font-mono text-xs text-[#94A3B8] mt-0.5 break-all">{selectedRecord.originator_user_id}</div>
+                  </div>
+
+                  <span className="text-[#6B7280] font-medium">Beneficiary</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm break-all">{selectedRecord.beneficiary_address}</span>
+                      <button
+                        onClick={() => copyToClipboard(selectedRecord.beneficiary_address, 'detail-beneficiary')}
+                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                        title="Copy address"
+                      >
+                        {copiedKey === 'detail-beneficiary' ? (
+                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    {selectedRecord.beneficiary_data?.name ? (
+                      <div className="text-[#374151] mt-1">
+                        {String(selectedRecord.beneficiary_data.name)}
+                      </div>
+                    ) : null}
+                    {selectedRecord.beneficiary_data?.institution ? (
+                      <div className="text-[#6B7280] text-xs mt-0.5">
+                        Institution: {String(selectedRecord.beneficiary_data.institution)}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <span className="text-[#6B7280] font-medium">Transfer Type</span>
+                  <div>
+                    <Badge variant="outline">{selectedRecord.transfer_type.toUpperCase()}</Badge>
+                  </div>
+
+                  {selectedRecord.transfer_type === 'erc20' && selectedRecord.token_address && (
+                    <>
+                      <span className="text-[#6B7280] font-medium">Token Address</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm break-all">{selectedRecord.token_address}</span>
+                        <button
+                          onClick={() => copyToClipboard(selectedRecord.token_address!, 'detail-token')}
+                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                          title="Copy address"
+                        >
+                          {copiedKey === 'detail-token' ? (
+                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  <span className="text-[#6B7280] font-medium">Amount (wei)</span>
+                  <span className="font-mono text-sm break-all">{selectedRecord.amount_wei}</span>
+
+                  <span className="text-[#6B7280] font-medium">Amount (USD)</span>
+                  <span>${selectedRecord.amount_usd.toLocaleString()}</span>
+
+                  <span className="text-[#6B7280] font-medium">Status</span>
+                  <div>
+                    <Badge variant={statusBadgeVariant[status]}>{status}</Badge>
+                  </div>
+
+                  <span className="text-[#6B7280] font-medium">Expires at</span>
+                  <span>{new Date(selectedRecord.expires_at).toLocaleString()}</span>
+
+                  <span className="text-[#6B7280] font-medium">Created at</span>
+                  <span>{new Date(selectedRecord.created_at).toLocaleString()}</span>
+
+                  {selectedRecord.used_at && (
+                    <>
+                      <span className="text-[#6B7280] font-medium">Used at</span>
+                      <span>{new Date(selectedRecord.used_at).toLocaleString()}</span>
+                    </>
+                  )}
+
+                  {selectedRecord.used_tx_hash && (
+                    <>
+                      <span className="text-[#6B7280] font-medium">Used tx hash</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm break-all">{selectedRecord.used_tx_hash}</span>
+                        <button
+                          onClick={() => copyToClipboard(selectedRecord.used_tx_hash!, 'detail-txhash')}
+                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                          title="Copy tx hash"
+                        >
+                          {copiedKey === 'detail-txhash' ? (
+                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={open => { if (!open) setDeleteTarget(null); }}
+        title="Delete Travel Rule Record"
+        description={`Are you sure you want to delete this travel rule record? This action cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+        variant="destructive"
+      />
 
       {/* Create Dialog */}
       <Dialog open={showForm} onOpenChange={open => { if (!open) setShowForm(false); }}>

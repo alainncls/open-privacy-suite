@@ -23,6 +23,7 @@ type Store interface {
 	// Only matches records where amount_usd >= amountUSD (record must cover the transfer value).
 	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*TravelRuleRecord, error)
 	MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error
+	DeleteTravelRuleRecord(ctx context.Context, orgID, id string) error
 	ListTravelRuleRecords(ctx context.Context, orgID string, limit, offset int) ([]*TravelRuleRecord, int, error)
 	CleanupExpiredRecords(ctx context.Context) (int64, error)
 

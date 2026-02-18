@@ -1,8 +1,8 @@
 # Travel Rule Compliance — Security Audit
 
 **Date:** 2026-02-17
-**Last updated:** 2026-02-17 (C3, M1-M5 fixed)
-**Scope:** `internal/compliance/`, `internal/server/admin_compliance.go`, `internal/server/server.go` (handleTestRequest), `internal/server/jsonrpc_processor.go` (Process, processRawTransaction), `internal/db/compliance_store.go`, migrations `012_travel_rule_compliance.sql`, `013_compliance_check_constraints.sql`
+**Last updated:** 2026-02-18 (second hardening pass, per-address thresholds, delete records, DID display)
+**Scope:** `internal/compliance/`, `internal/server/admin_compliance.go`, `internal/server/server.go` (handleTestRequest), `internal/server/jsonrpc_processor.go` (Process, processRawTransaction), `internal/db/compliance_store.go`, `internal/db/db.go`, migrations `012_travel_rule_compliance.sql`, `013_compliance_check_constraints.sql`, `014_address_threshold_overrides.sql`
 
 ---
 
@@ -64,6 +64,16 @@ CHECK (price_usd > 0)       -- token_prices
 CHECK (threshold_usd >= 0)  -- compliance_config
 ```
 
+### H7. ~~`WeiToUSD` overflow could produce `+Inf` or `NaN`~~ FIXED (was L3)
+**File:** `internal/compliance/checker.go`
+**Issue:** `WeiToUSD` returned a bare `float64` and ignored the `big.Float.Float64()` accuracy flag. Astronomically large `amount_wei` values could overflow to `+Inf`, causing invalid USD amounts in records and compliance decisions.
+**Fixed:** `WeiToUSD` now returns `(float64, error)` with comprehensive input validation:
+- Nil or zero `amountWei` → error
+- Decimals range 0–77 (EVM standard) → error if out of range
+- Negative, `+Inf`, or `NaN` `priceUSD` → error
+- Final result checked for `+Inf` / `NaN` overflow → error
+Promoted from L3 to H7 because unchecked overflow in a financial calculation can produce incorrect compliance decisions.
+
 ## MEDIUM — Design Issues
 
 ### M1. ~~Threshold uses strict `<` — edge case at exactly threshold~~ FIXED
@@ -89,19 +99,67 @@ CHECK (threshold_usd >= 0)  -- compliance_config
 **Issue:** Any localhost process can flood `POST /orgs/:id/compliance/travel-rule-records`.
 **Fixed:** Added comment documenting this as a known limitation. The endpoint is admin-only on localhost. Rate limiting is out of scope for PoC but should be added before production deployment.
 
-## LOW — Edge Cases (all OPEN)
+### M6. ~~`resolveThreshold` silently fell back to org default on DB error~~ FIXED
+**File:** `internal/compliance/checker.go`
+**Issue:** When fetching per-address threshold overrides, a database error was silently ignored and the org-level default threshold was used. This could allow transfers through at the wrong threshold if the DB had transient issues.
+**Fixed:** `resolveThreshold` now returns an error on DB failures, and the caller (`Check`) propagates it — denying the transaction. Fail-closed: any error in threshold resolution blocks the transfer rather than falling back to a potentially higher threshold.
 
-### L1. `parseHexValue("0x0")` returns nil, not zero
+### M7. ~~Internal error messages leaked to API clients~~ FIXED
+**File:** `internal/server/admin_compliance.go`
+**Issue:** Error responses included raw Go error strings (`err.Error()`), potentially leaking internal details like table names, query structure, or stack traces.
+**Fixed:** Added `internalError(c, msg, err)` helper. Logs the full error server-side with `log.Printf`, returns only a generic message to the client (e.g., `"failed to load compliance config"`). Applied to all 500-error paths in compliance handlers.
+
+## LOW — Edge Cases
+
+### L1. `parseHexValue("0x0")` returns nil, not zero — OPEN
 **File:** `internal/compliance/transfer_detector.go`
 **Issue:** Intentional but could confuse debugging.
 
-### L2. Excessive calldata accepted for ERC-20
+### L2. Excessive calldata accepted for ERC-20 — OPEN
 **File:** `internal/compliance/transfer_detector.go`
 **Issue:** Extra trailing bytes silently ignored.
 
-### L3. `weiToUSD` ignores float64 accuracy flag
-**File:** `internal/compliance/checker.go`
-**Issue:** Astronomically large values could overflow to `+Inf`.
+### ~~L3. `weiToUSD` ignores float64 accuracy flag~~ → Promoted to H7
+Moved to H7 and fixed. See H7 above.
+
+## HARDENING — Second Pass (2026-02-18)
+
+Additional security hardening applied across all compliance admin endpoints:
+
+### Pagination limit capping
+**File:** `internal/server/admin_compliance.go`
+A `maxPaginationLimit = 1000` cap prevents memory exhaustion from unbounded `?limit=999999` queries. Applied via `compliancePaginationParams()` to all paginated endpoints (travel rule records, sanctions, address thresholds, compliance logs).
+
+### Input length validation
+**File:** `internal/server/admin_compliance.go`
+- Token `symbol`: max 20 characters
+- Token `decimals`: 0–77 range (matches EVM standard)
+- Sanction `reason`: max 1000 characters
+- Address threshold `note`: max 1000 characters
+
+### Query parameter whitelisting
+**File:** `internal/server/admin_compliance.go`
+Compliance log filters (`decision`, `transfer_type`) use explicit equality checks against allowed values (`"allowed"/"denied"`, `"eth"/"erc20"`). Invalid values are silently ignored rather than passed to the query.
+
+### Per-address threshold overrides
+**File:** `internal/db/migrations/014_address_threshold_overrides.sql`, `internal/compliance/checker.go`
+New feature: per-address threshold overrides allow orgs to set lower thresholds for specific addresses (e.g., high-risk counterparties). Security properties:
+- DB `CHECK (threshold_usd >= 0)` — $0 thresholds are valid (FATF: Japan, EU CASP-to-CASP require records for all transfers)
+- `UNIQUE(org_id, address)` constraint — one override per address per org
+- `resolveThreshold` checks both sender and recipient, selects the **lowest** threshold (strictest wins)
+- Address normalized to lowercase for consistent matching
+
+### Delete travel rule records — audit trail protection
+**File:** `internal/db/compliance_store.go`, `internal/server/admin_compliance.go`
+Admin can delete unused travel rule records. Security properties:
+- `DELETE ... WHERE used_at IS NULL` — used records cannot be deleted (they are part of the audit trail)
+- Sentinel errors (`ErrNotFound`, `ErrRecordAlreadyUsed`) distinguish failure modes
+- HTTP 404 for missing, 409 Conflict for already-used records
+- Record ID validated as UUID before query
+
+### User DID display and search
+**File:** `internal/db/compliance_store.go`, `internal/server/admin_compliance.go`
+Compliance logs and travel rule records now show user DID (`external_id`) via LEFT JOIN. Log filtering changed from exact `user_id` UUID match to `ILIKE` search on `external_id`. This fixes a crash where partial UUID strings caused PostgreSQL type errors (`WHERE user_id = '929'` on a UUID column).
 
 ## POSITIVE FINDINGS
 
@@ -118,6 +176,13 @@ CHECK (threshold_usd >= 0)  -- compliance_config
 - DB CHECK constraints enforce positive amounts at the schema level
 - `amount_wei` validated as positive `big.Int` before storage
 - ERC-20 records require a valid `token_address` — no cross-contamination with native ETH
+- `WeiToUSD` returns error with full input validation (nil, range, overflow)
+- `resolveThreshold` fails closed on DB errors — no silent fallback
+- Error messages sanitized via `internalError` helper — no internal details leaked to clients
+- Pagination capped at 1000 across all endpoints
+- Query parameter whitelisting prevents injection via filter params
+- Used travel rule records protected from deletion (audit trail integrity)
+- Per-address thresholds use lowest-wins logic (strictest threshold applies)
 
 ## SUMMARY
 
@@ -133,11 +198,13 @@ CHECK (threshold_usd >= 0)  -- compliance_config
 | H4 | High | OPEN | originator_user_id not verified against org |
 | H5 | High | **FIXED** | token_address not required for ERC-20 |
 | H6 | High | **FIXED** | No DB CHECK constraints |
+| H7 | High | **FIXED** | WeiToUSD overflow (promoted from L3) |
 | M1 | Medium | **FIXED** | Strict `<` threshold edge case |
 | M2 | Medium | **FIXED** | Compliance log errors swallowed |
 | M3 | Medium | **FIXED** | Log before tx execution |
 | M4 | Medium | **FIXED** | Record consumed regardless of amount gap |
 | M5 | Medium | **FIXED** | No rate limit on record creation |
+| M6 | Medium | **FIXED** | resolveThreshold silent fallback on DB error |
+| M7 | Medium | **FIXED** | Internal error messages leaked to clients |
 | L1 | Low | OPEN | parseHexValue("0x0") returns nil |
 | L2 | Low | OPEN | Excessive ERC-20 calldata ignored |
-| L3 | Low | OPEN | weiToUSD float64 overflow |

@@ -5,10 +5,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import Pagination from '@/components/ui/Pagination';
-import { Loader2, AlertCircle, ScrollText } from 'lucide-react';
+import { Loader2, AlertCircle, ScrollText, Copy, Check } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import type { ComplianceLog, Decision, TransferType } from '@/types/compliance';
@@ -24,17 +27,29 @@ export default function ComplianceLogList() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<ComplianceLog | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Filters
   const [filterDecision, setFilterDecision] = useState<string>('');
   const [filterTransferType, setFilterTransferType] = useState<string>('');
-  const [filterUserId, setFilterUserId] = useState('');
-  const [debouncedUserId, setDebouncedUserId] = useState('');
+  const [filterUserSearch, setFilterUserSearch] = useState('');
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState('');
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedUserId(filterUserId), 300);
+    const timer = setTimeout(() => setDebouncedUserSearch(filterUserSearch), 300);
     return () => clearTimeout(timer);
-  }, [filterUserId]);
+  }, [filterUserSearch]);
+
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   const loadLogs = async (newOffset: number = offset) => {
     if (!orgId) return;
@@ -46,7 +61,7 @@ export default function ComplianceLogList() {
         offset: newOffset,
         decision: (filterDecision && filterDecision !== 'all' ? filterDecision as Decision : undefined),
         transfer_type: (filterTransferType && filterTransferType !== 'all' ? filterTransferType as TransferType : undefined),
-        user_id: debouncedUserId || undefined,
+        user_search: debouncedUserSearch || undefined,
       });
       const page = response.data;
       setLogs(page.data || []);
@@ -68,7 +83,7 @@ export default function ComplianceLogList() {
   useEffect(() => {
     setOffset(0);
     loadLogs(0);
-  }, [orgId, filterDecision, filterTransferType, debouncedUserId]);
+  }, [orgId, filterDecision, filterTransferType, debouncedUserSearch]);
 
   if (loading) {
     return (
@@ -109,9 +124,9 @@ export default function ComplianceLogList() {
         </Select>
 
         <Input
-          value={filterUserId}
-          onChange={e => setFilterUserId(e.target.value)}
-          placeholder="Filter by user ID..."
+          value={filterUserSearch}
+          onChange={e => setFilterUserSearch(e.target.value)}
+          placeholder="Search by user DID..."
           className="max-w-[250px]"
         />
       </div>
@@ -141,26 +156,65 @@ export default function ComplianceLogList() {
                 <TableHead>Time</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead>From → To</TableHead>
+                <TableHead>From</TableHead>
+                <TableHead>To</TableHead>
                 <TableHead>Amount (USD)</TableHead>
                 <TableHead>Decision</TableHead>
-                <TableHead>Reason</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logs.map(log => (
-                <TableRow key={log.id}>
+                <TableRow
+                  key={log.id}
+                  className="cursor-pointer hover:bg-[#F8FAFC]"
+                  onClick={() => setSelectedLog(log)}
+                >
                   <TableCell className="text-[#6B7280] text-xs whitespace-nowrap">
                     {new Date(log.created_at).toLocaleString()}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-[#6B7280]">
-                    {log.user_id.slice(0, 8)}...
+                    {log.user_external_id
+                      ? (log.user_external_id.length > 20 ? log.user_external_id.slice(0, 15) + '...' : log.user_external_id)
+                      : log.user_id.slice(0, 8) + '...'}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{log.transfer_type.toUpperCase()}</Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-[#6B7280]">
-                    {log.from_address.slice(0, 6)}...→{log.to_address.slice(0, 6)}...
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono text-xs text-[#6B7280]">
+                        {log.from_address.slice(0, 6)}...{log.from_address.slice(-4)}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(log.from_address, `${log.id}-from`); }}
+                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        title="Copy address"
+                      >
+                        {copiedKey === `${log.id}-from` ? (
+                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono text-xs text-[#6B7280]">
+                        {log.to_address.slice(0, 6)}...{log.to_address.slice(-4)}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(log.to_address, `${log.id}-to`); }}
+                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        title="Copy address"
+                      >
+                        {copiedKey === `${log.id}-to` ? (
+                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </TableCell>
                   <TableCell>
                     {log.amount_usd != null ? `$${log.amount_usd.toLocaleString()}` : '—'}
@@ -169,9 +223,6 @@ export default function ComplianceLogList() {
                     <Badge variant={log.decision === 'allowed' ? 'success' : 'destructive'}>
                       {log.decision}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-[#6B7280] text-sm max-w-[200px] truncate">
-                    {log.denial_reason || '—'}
                   </TableCell>
                 </TableRow>
               ))}
@@ -185,6 +236,124 @@ export default function ComplianceLogList() {
           />
         </>
       )}
+
+      {/* Detail Dialog */}
+      <Dialog open={!!selectedLog} onOpenChange={open => { if (!open) setSelectedLog(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Compliance Log Detail</DialogTitle>
+          </DialogHeader>
+          {selectedLog && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 text-sm">
+                <span className="text-[#6B7280] font-medium">Time</span>
+                <span>{new Date(selectedLog.created_at).toLocaleString()}</span>
+
+                {selectedLog.user_external_id && (
+                  <>
+                    <span className="text-[#6B7280] font-medium">User (DID)</span>
+                    <span className="font-mono text-xs break-all">{selectedLog.user_external_id}</span>
+                  </>
+                )}
+
+                <span className="text-[#6B7280] font-medium">User ID</span>
+                <span className="font-mono text-xs break-all">{selectedLog.user_id}</span>
+
+                <span className="text-[#6B7280] font-medium">Transfer Type</span>
+                <div>
+                  <Badge variant="outline">{selectedLog.transfer_type.toUpperCase()}</Badge>
+                </div>
+
+                {selectedLog.token_address && (
+                  <>
+                    <span className="text-[#6B7280] font-medium">Token Address</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm break-all">{selectedLog.token_address}</span>
+                      <button
+                        onClick={() => copyToClipboard(selectedLog.token_address!, 'detail-token')}
+                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                        title="Copy address"
+                      >
+                        {copiedKey === 'detail-token' ? (
+                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <span className="text-[#6B7280] font-medium">From Address</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm break-all">{selectedLog.from_address}</span>
+                  <button
+                    onClick={() => copyToClipboard(selectedLog.from_address, 'detail-from')}
+                    className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                    title="Copy address"
+                  >
+                    {copiedKey === 'detail-from' ? (
+                      <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                <span className="text-[#6B7280] font-medium">To Address</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm break-all">{selectedLog.to_address}</span>
+                  <button
+                    onClick={() => copyToClipboard(selectedLog.to_address, 'detail-to')}
+                    className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                    title="Copy address"
+                  >
+                    {copiedKey === 'detail-to' ? (
+                      <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                <span className="text-[#6B7280] font-medium">Amount (wei)</span>
+                <span className="font-mono text-sm break-all">{selectedLog.amount_wei}</span>
+
+                <span className="text-[#6B7280] font-medium">Amount (USD)</span>
+                <span>{selectedLog.amount_usd != null ? `$${selectedLog.amount_usd.toLocaleString()}` : '—'}</span>
+
+                {selectedLog.threshold_usd != null && (
+                  <>
+                    <span className="text-[#6B7280] font-medium">Threshold (USD)</span>
+                    <span>${selectedLog.threshold_usd.toLocaleString()}</span>
+                  </>
+                )}
+
+                <span className="text-[#6B7280] font-medium">Decision</span>
+                <div>
+                  <Badge variant={selectedLog.decision === 'allowed' ? 'success' : 'destructive'}>
+                    {selectedLog.decision}
+                  </Badge>
+                </div>
+
+                {selectedLog.denial_reason && (
+                  <>
+                    <span className="text-[#6B7280] font-medium">Denial Reason</span>
+                    <span className="text-[#991B1B]">{selectedLog.denial_reason}</span>
+                  </>
+                )}
+
+                {selectedLog.travel_rule_record_id && (
+                  <>
+                    <span className="text-[#6B7280] font-medium">Travel Rule ID</span>
+                    <span className="font-mono text-xs break-all">{selectedLog.travel_rule_record_id}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
