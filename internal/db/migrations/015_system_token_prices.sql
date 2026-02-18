@@ -2,7 +2,6 @@
 -- System-wide token price cache populated by CoinGecko background fetcher.
 -- Per-org token_prices can reference system prices via coingecko_id.
 
----- create
 CREATE TABLE IF NOT EXISTS system_token_prices (
     coingecko_id VARCHAR(100) PRIMARY KEY,
     symbol       VARCHAR(20) NOT NULL,
@@ -22,6 +21,7 @@ ON CONFLICT (coingecko_id) DO NOTHING;
 -- Add coingecko_id to per-org token_prices for price source mapping
 ALTER TABLE token_prices ADD COLUMN IF NOT EXISTS coingecko_id VARCHAR(100);
 
----- down
+---- create above / drop below ----
+
 ALTER TABLE token_prices DROP COLUMN IF EXISTS coingecko_id;
 DROP TABLE IF EXISTS system_token_prices;

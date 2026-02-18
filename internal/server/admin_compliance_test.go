@@ -162,17 +162,17 @@ func seedComplianceTestData(t *testing.T, database *db.DB) complianceSeedData {
 		userID)
 	require.NoError(t, err)
 
-	// Create group with allowed methods
+	// Create group
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO groups (id, org_id, slug, name, allowed_methods, rate_limit, created_at, updated_at)
-		 VALUES ($1, $2, 'default', 'Default Group', '["eth_sendTransaction", "eth_blockNumber"]', 0, NOW(), NOW())`,
+		`INSERT INTO groups (id, org_id, slug, name, path, created_at, updated_at)
+		 VALUES ($1, $2, 'default', 'Default Group', 'default', NOW(), NOW())`,
 		groupID, orgID)
 	require.NoError(t, err)
 
-	// Create group access with default claims
+	// Create group access with claims and allowed methods
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO group_access (id, group_id, default_claims, created_at, updated_at)
-		 VALUES ($1, $2, '{read,write}', NOW(), NOW())`,
+		`INSERT INTO group_access (id, group_id, claims, allowed_methods, created_at, updated_at)
+		 VALUES ($1, $2, '{read,write}', '{eth_sendTransaction,eth_blockNumber,eth_call}', NOW(), NOW())`,
 		groupAccessID, groupID)
 	require.NoError(t, err)
 
@@ -348,8 +348,8 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			require.NoError(t, err)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/test-request", bytes.NewReader(jsonBody))
+			req.RemoteAddr = "127.0.0.1:12345"
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Forwarded-For", "127.0.0.1")
 
 			w := httptest.NewRecorder()
 			ts.router.ServeHTTP(w, req)
