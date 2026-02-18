@@ -1324,10 +1324,10 @@ func extractBlockParam(method string, params []any) string {
 	}
 
 	var blockParamIndex int
-	switch method {
+	switch strings.ToLower(method) {
 	case "eth_call":
 		blockParamIndex = 1
-	case "eth_getStorageAt":
+	case "eth_getstorageat":
 		blockParamIndex = 2
 	default:
 		return "latest"
