@@ -295,16 +295,16 @@ export function TestRequestPanel() {
                 ))}
               </SelectGroup>
               <SelectGroup>
-                <SelectLabel>ERC20 Contract Calls</SelectLabel>
-                {ERC20_METHODS.map((m) => (
+                <SelectLabel>Transactions</SelectLabel>
+                {TX_METHODS.map((m) => (
                   <SelectItem key={m.value} value={m.value}>
                     {m.label}
                   </SelectItem>
                 ))}
               </SelectGroup>
               <SelectGroup>
-                <SelectLabel>Transactions</SelectLabel>
-                {TX_METHODS.map((m) => (
+                <SelectLabel>ERC20 Contract Calls</SelectLabel>
+                {ERC20_METHODS.map((m) => (
                   <SelectItem key={m.value} value={m.value}>
                     {m.label}
                   </SelectItem>
