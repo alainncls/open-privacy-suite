@@ -38,6 +38,9 @@ type Config struct {
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
 	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
+
+	// Trusted Proxies for X-Forwarded-For trust
+	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 }
 
 func Load() *Config {
@@ -158,9 +161,26 @@ func Load() *Config {
 		TraceCacheTTL:              traceCacheTTL,
 		TraceTimeout:               traceTimeout,
 		TraceTieredValidation:      traceTiered,
-		EnableTravelRule:    enableTravelRule,
-		TravelRecordExpiry: travelRecordExpiry,
+		EnableTravelRule:           enableTravelRule,
+		TravelRecordExpiry:         travelRecordExpiry,
+		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}
+}
+
+func getSliceEnv(key, sep string) []string {
+	val := os.Getenv(key)
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, sep)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // IsProduction returns true if running in production mode

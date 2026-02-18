@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
@@ -280,15 +281,19 @@ func (s *Server) setupRouter() *gin.Engine {
 	// SECURITY: Only requests FROM these IPs can set X-Forwarded-For headers.
 	// External attackers cannot spoof X-Forwarded-For because their IP won't be trusted.
 	// Trusted proxy IPs that can set X-Forwarded-For headers
-	// Includes Docker networks, private networks, and Tailscale CGNAT range
-	router.SetTrustedProxies([]string{
+	// Includes default private ranges + user-configured trusted proxies
+	trustedProxies := []string{
 		"127.0.0.1",
 		"::1",
 		"172.16.0.0/12",  // Docker bridge networks
 		"192.168.0.0/16", // Docker custom networks / private networks
 		"10.0.0.0/8",     // Private networks
-		"100.64.0.0/10",  // Tailscale CGNAT range
-	})
+		"100.64.0.0/10",  // Tailscale / CGNAT
+	}
+	if len(s.config.TrustedProxies) > 0 {
+		trustedProxies = append(trustedProxies, s.config.TrustedProxies...)
+	}
+	router.SetTrustedProxies(trustedProxies)
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -596,22 +601,39 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 		// Gin's ClientIP() only trusts X-Forwarded-For if remote IP is in trusted proxy list
 		// External attackers cannot spoof because their IP won't be trusted
 		clientIP := c.ClientIP()
+		ip := net.ParseIP(clientIP)
+		if ip == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid client IP"})
+			c.Abort()
+			return
+		}
 
-		// Allow localhost IPv4, IPv6
-		// Also allow Docker network IPs (172.16.0.0/12 and 192.168.0.0/16) - these come from:
-		// - Host accessing via localhost (172.x.x.x gateway)
-		// - Frontend container accessing backend (192.168.x.x or 172.x.x.x)
-		// Also allow Tailscale IPs (100.64.0.0/10 CGNAT range)
-		// Note: Docker networks are isolated by default, so this is safe
-		isAllowed := clientIP == "127.0.0.1" ||
-			clientIP == "::1" ||
-			strings.HasPrefix(clientIP, "172.") || // Docker bridge networks (172.16.0.0/12)
-			strings.HasPrefix(clientIP, "192.168.") || // Docker custom networks (192.168.0.0/16)
-			strings.HasPrefix(clientIP, "100.") // Tailscale CGNAT (100.64.0.0/10)
+		// Allowed private networks:
+		// - 127.0.0.1/32: Localhost IPv4
+		// - ::1/128: Localhost IPv6
+		// - 172.16.0.0/12: Docker bridge networks (RFC1918)
+		// - 192.168.0.0/16: Docker custom networks / WiFi (RFC1918)
+		// - 100.64.0.0/10: Tailscale / CGNAT
+		allowedCIDRs := []string{
+			"127.0.0.1/32",
+			"::1/128",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"100.64.0.0/10",
+		}
+
+		isAllowed := false
+		for _, cidr := range allowedCIDRs {
+			_, subnet, _ := net.ParseCIDR(cidr)
+			if subnet != nil && subnet.Contains(ip) {
+				isAllowed = true
+				break
+			}
+		}
 
 		if !isAllowed {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "management API is only accessible from localhost or Tailscale",
+				"error": "management API is only accessible from localhost, private networks, or Tailscale",
 			})
 			c.Abort()
 			return

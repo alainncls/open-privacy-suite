@@ -278,7 +278,7 @@ func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { 
 func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
 }
-func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
+func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
 	return nil, nil
@@ -373,14 +373,14 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 	store.groupAccess["root"] = &GroupAccess{
 		GroupID:        "root",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-		Claims:  []Claim{ClaimRead, ClaimWrite},
+		Claims:         []Claim{ClaimRead, ClaimWrite},
 	}
 
 	// Child group access - more restrictive (INTERSECTION with parent)
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 
 	// User in child group
@@ -613,13 +613,13 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	store.groupAccess["groupA"] = &GroupAccess{
 		GroupID:        "groupA",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 	// Group B access
 	store.groupAccess["groupB"] = &GroupAccess{
 		GroupID:        "groupB",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:  []Claim{ClaimWrite},
+		Claims:         []Claim{ClaimWrite},
 	}
 
 	// User is member of both groups

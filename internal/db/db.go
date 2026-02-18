@@ -352,6 +352,9 @@ type EthAddressLink struct {
 // If the address is already linked to a different DID, it returns ErrAddressAlreadyLinked.
 // If the address link was revoked by an admin, it returns ErrAddressLinkRevoked.
 func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, messageHash string) error {
+	// If the address is already linked to the SAME DID and NOT revoked, we refresh the signature.
+	// If it's already linked to a DIFFERENT DID, or if it's already REVOKED, the update fails
+	// and we return the appropriate error below.
 	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
 	          VALUES ($1, $2, $3, $4)
 	          ON CONFLICT (eth_address) DO UPDATE SET

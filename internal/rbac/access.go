@@ -16,115 +16,116 @@ import (
 // GlobalBlockedMethods contains methods that are NEVER allowed regardless of RBAC permissions.
 // These methods pose security risks and should never be exposed through the proxy.
 // Using map for O(1) lookup instead of slice.
+// All keys MUST be lowercase for case-insensitive matching in IsMethodBlocked.
 var GlobalBlockedMethods = map[string]bool{
 	// Debug namespace - information disclosure, DoS risk
-	"debug_accountRange":                true,
-	"debug_backtraceAt":                 true,
-	"debug_blockProfile":                true,
-	"debug_chaindbCompact":              true,
-	"debug_chaindbProperty":             true,
-	"debug_cpuProfile":                  true,
-	"debug_dbAncient":                   true,
-	"debug_dbAncients":                  true,
-	"debug_dbGet":                       true,
-	"debug_dumpBlock":                   true,
-	"debug_freeOSMemory":                true,
-	"debug_freezeClient":                true,
-	"debug_gcStats":                     true,
-	"debug_getBadBlocks":                true,
-	"debug_getHeaderRlp":                true,
-	"debug_getModifiedAccountsByHash":   true,
-	"debug_getModifiedAccountsByNumber": true,
-	"debug_goTrace":                     true,
-	"debug_intermediateRoots":           true,
-	"debug_memStats":                    true,
-	"debug_mutexProfile":                true,
+	"debug_accountrange":                true,
+	"debug_backtraceat":                 true,
+	"debug_blockprofile":                true,
+	"debug_chaindbcompact":              true,
+	"debug_chaindbproperty":             true,
+	"debug_cpuprofile":                  true,
+	"debug_dbancient":                   true,
+	"debug_dbancients":                  true,
+	"debug_dbget":                       true,
+	"debug_dumpblock":                   true,
+	"debug_freeosmemory":                true,
+	"debug_freezeclient":                true,
+	"debug_gcstats":                     true,
+	"debug_getbadblocks":                true,
+	"debug_getheaderrlp":                true,
+	"debug_getmodifiedaccountsbyhash":   true,
+	"debug_getmodifiedaccountsbynumber": true,
+	"debug_gotrace":                     true,
+	"debug_intermediateroots":           true,
+	"debug_memstats":                    true,
+	"debug_mutexprofile":                true,
 	"debug_preimage":                    true,
-	"debug_printBlock":                  true,
-	"debug_seedHash":                    true,
-	"debug_setBlockProfileRate":         true,
-	"debug_setGCPercent":                true,
-	"debug_setHead":                     true,
-	"debug_setMutexProfileFraction":     true,
+	"debug_printblock":                  true,
+	"debug_seedhash":                    true,
+	"debug_setblockprofilerate":         true,
+	"debug_setgcpercent":                true,
+	"debug_sethead":                     true,
+	"debug_setmutexprofilefraction":     true,
 	"debug_stacks":                      true,
-	"debug_standardTraceBadBlockToFile": true,
-	"debug_standardTraceBlockToFile":    true,
-	"debug_startCPUProfile":             true,
-	"debug_startGoTrace":                true,
-	"debug_stopCPUProfile":              true,
-	"debug_stopGoTrace":                 true,
-	"debug_storageRangeAt":              true,
+	"debug_standardtracebadblocktofile": true,
+	"debug_standardtraceblocktofile":    true,
+	"debug_startcpuprofile":             true,
+	"debug_startgotrace":                true,
+	"debug_stopcpuprofile":              true,
+	"debug_stopgotrace":                 true,
+	"debug_storagerangeat":              true,
 	"debug_subscribe":                   true,
-	"debug_traceBadBlock":               true,
-	"debug_traceBlock":                  true,
-	"debug_traceBlockByHash":            true,
-	"debug_traceBlockByNumber":          true,
-	"debug_traceBlockFromFile":          true,
-	"debug_traceCall":                   true,
-	"debug_traceChain":                  true,
-	"debug_traceTransaction":            true,
+	"debug_tracebadblock":               true,
+	"debug_traceblock":                  true,
+	"debug_traceblockbyhash":            true,
+	"debug_traceblockbynumber":          true,
+	"debug_traceblockfromfile":          true,
+	"debug_tracecall":                   true,
+	"debug_tracechain":                  true,
+	"debug_tracetransaction":            true,
 	"debug_unsubscribe":                 true,
 	"debug_verbosity":                   true,
 	"debug_vmodule":                     true,
-	"debug_writeBlockProfile":           true,
-	"debug_writeMemProfile":             true,
-	"debug_writeMutexProfile":           true,
+	"debug_writeblockprofile":           true,
+	"debug_writememprofile":             true,
+	"debug_writemutexprofile":           true,
 
 	// Admin namespace - node administration
-	"admin_addPeer":           true,
-	"admin_addTrustedPeer":    true,
-	"admin_clearHistory":      true,
+	"admin_addpeer":           true,
+	"admin_addtrustedpeer":    true,
+	"admin_clearhistory":      true,
 	"admin_datadir":           true,
-	"admin_exportChain":       true,
-	"admin_importChain":       true,
-	"admin_nodeInfo":          true,
+	"admin_exportchain":       true,
+	"admin_importchain":       true,
+	"admin_nodeinfo":          true,
 	"admin_peers":             true,
-	"admin_removePeer":        true,
-	"admin_removeTrustedPeer": true,
+	"admin_removepeer":        true,
+	"admin_removetrustedpeer": true,
 	"admin_sleep":             true,
-	"admin_sleepBlocks":       true,
-	"admin_startHTTP":         true,
-	"admin_startRPC":          true,
-	"admin_startWS":           true,
-	"admin_stopHTTP":          true,
-	"admin_stopRPC":           true,
-	"admin_stopWS":            true,
+	"admin_sleepblocks":       true,
+	"admin_starthttp":         true,
+	"admin_startrpc":          true,
+	"admin_startws":           true,
+	"admin_stophttp":          true,
+	"admin_stoprpc":           true,
+	"admin_stopws":            true,
 
 	// Personal namespace - key exposure risk
-	"personal_deriveAccount":    true,
-	"personal_ecRecover":        true,
-	"personal_importRawKey":     true,
-	"personal_initializeWallet": true,
-	"personal_listAccounts":     true,
-	"personal_listWallets":      true,
-	"personal_lockAccount":      true,
-	"personal_newAccount":       true,
-	"personal_openWallet":       true,
-	"personal_sendTransaction":  true,
+	"personal_deriveaccount":    true,
+	"personal_ecrecover":        true,
+	"personal_importrawkey":     true,
+	"personal_initializewallet": true,
+	"personal_listaccounts":     true,
+	"personal_listwallets":      true,
+	"personal_lockaccount":      true,
+	"personal_newaccount":       true,
+	"personal_openwallet":       true,
+	"personal_sendtransaction":  true,
 	"personal_sign":             true,
-	"personal_signTransaction":  true,
-	"personal_unlockAccount":    true,
+	"personal_signtransaction":  true,
+	"personal_unlockaccount":    true,
 	"personal_unpair":           true,
 
 	// Miner namespace - MEV risk, node control
-	"miner_getHashrate":         true,
-	"miner_setEtherbase":        true,
-	"miner_setExtra":            true,
-	"miner_setGasLimit":         true,
-	"miner_setGasPrice":         true,
-	"miner_setRecommitInterval": true,
+	"miner_gethashrate":         true,
+	"miner_setetherbase":        true,
+	"miner_setextra":            true,
+	"miner_setgaslimit":         true,
+	"miner_setgasprice":         true,
+	"miner_setrecommitinterval": true,
 	"miner_start":               true,
 	"miner_stop":                true,
 
 	// Txpool namespace - MEV risk, information disclosure
 	"txpool_content":     true,
-	"txpool_contentFrom": true,
+	"txpool_contentfrom": true,
 	"txpool_inspect":     true,
 	"txpool_status":      true,
 
 	// Signing methods - key exposure risk
 	"eth_sign":            true,
-	"eth_signTransaction": true,
+	"eth_signtransaction": true,
 
 	// NOTE: eth_sendRawTransaction is handled specially - it's allowed ONLY when
 	// runtime tracing is enabled. The proxy decodes the RLP transaction, extracts
@@ -134,22 +135,22 @@ var GlobalBlockedMethods = map[string]bool{
 
 	// Clique namespace - consensus manipulation
 	"clique_discard":           true,
-	"clique_getSigners":        true,
-	"clique_getSignersAtHash":  true,
-	"clique_getSnapshot":       true,
-	"clique_getSnapshotAtHash": true,
+	"clique_getsigners":        true,
+	"clique_getsignersathash":  true,
+	"clique_getsnapshot":       true,
+	"clique_getsnapshotathash": true,
 	"clique_proposals":         true,
 	"clique_propose":           true,
 	"clique_status":            true,
 
 	// Les namespace - light client control
-	"les_addBalance":         true,
-	"les_clientInfo":         true,
-	"les_latestCheckpoint":   true,
-	"les_priorityClientInfo": true,
-	"les_serverInfo":         true,
-	"les_setClientParams":    true,
-	"les_setDefaultParams":   true,
+	"les_addbalance":         true,
+	"les_clientinfo":         true,
+	"les_latestcheckpoint":   true,
+	"les_priorityclientinfo": true,
+	"les_serverinfo":         true,
+	"les_setclientparams":    true,
+	"les_setdefaultparams":   true,
 
 	// WebSocket subscriptions - not supported, use polling instead
 	// eth_subscribe could bypass eth_getLogs filtering for real-time events
@@ -169,7 +170,10 @@ var blockedMethodPrefixes = []string{
 }
 
 // IsMethodBlocked checks if a method is globally blocked.
+// Case-insensitive matching is used for security.
 func IsMethodBlocked(method string) bool {
+	method = strings.ToLower(strings.TrimSpace(method))
+
 	// Check exact match in map (O(1) lookup)
 	if GlobalBlockedMethods[method] {
 		return true
@@ -344,7 +348,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			Reason:  fmt.Sprintf("user not found: %s", req.UserExternalID),
 		}, nil
 	}
-
 
 	// Check if user is banned
 	if user.Banned {
@@ -1378,8 +1381,21 @@ func isHistoricalBlock(blockParam string) bool {
 // Returns (isHistorical, reason) where reason explains why it was flagged as historical.
 // This is a privacy protection measure to prevent queries at specific past blocks.
 func IsHistoricalStateQuery(method string, params []any) (bool, string) {
-	// Only check methods that accept block parameters for state queries
-	if method != "eth_call" && method != "eth_getStorageAt" {
+	method = strings.ToLower(strings.TrimSpace(method))
+
+	// Only check methods that accept block parameters for state queries.
+	// We include ALL standard methods that accept a block parameter to prevent
+	// leakage of historical state.
+	historicalCheckMethods := map[string]bool{
+		"eth_call":                true,
+		"eth_getstorageat":        true,
+		"eth_getbalance":          true,
+		"eth_getcode":             true,
+		"eth_gettransactioncount": true,
+		"eth_getproof":            true,
+	}
+
+	if !historicalCheckMethods[method] {
 		return false, ""
 	}
 
