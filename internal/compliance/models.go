@@ -50,6 +50,7 @@ type TravelRuleRecord struct {
 	UsedAt             *time.Time             `json:"used_at,omitempty"`
 	UsedTxHash         *string                `json:"used_tx_hash,omitempty"`
 	CreatedAt          time.Time              `json:"created_at"`
+	Warning            string                 `json:"warning,omitempty"` // non-persisted, advisory only
 }
 
 // SanctionedAddress is a blocklisted address (global or per-org).

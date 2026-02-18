@@ -36,7 +36,7 @@ export const complianceApi = {
     list: (orgId: string, params?: { limit?: number; offset?: number }) =>
       api.get<PaginatedResponse<TravelRuleRecord>>(`/orgs/${orgId}/compliance/travel-rule-records`, { params }),
     create: (orgId: string, input: CreateTravelRuleRecordInput) =>
-      api.post<TravelRuleRecord>(`/orgs/${orgId}/compliance/travel-rule-records`, input),
+      api.post<TravelRuleRecord & { warning?: string }>(`/orgs/${orgId}/compliance/travel-rule-records`, input),
     delete: (orgId: string, recordId: string) =>
       api.delete(`/orgs/${orgId}/compliance/travel-rule-records/${recordId}`),
   },

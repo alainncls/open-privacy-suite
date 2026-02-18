@@ -275,9 +275,9 @@ describe('AddressThresholdList', () => {
         expect(screen.getByText('0xabcdef1234567890abcdef1234567890abcdef12')).toBeInTheDocument();
       });
 
-      // Find the first row and click the edit (first) button
+      // Find the first row and click the edit button (index 1; index 0 is the copy button)
       const firstRow = screen.getByText('0xabcdef1234567890abcdef1234567890abcdef12').closest('tr')!;
-      const editButton = firstRow.querySelectorAll('button')[0];
+      const editButton = firstRow.querySelectorAll('button')[1];
       expect(editButton).toBeTruthy();
       await user.click(editButton);
 
@@ -301,10 +301,10 @@ describe('AddressThresholdList', () => {
         expect(screen.getByText('High-risk counterparty')).toBeInTheDocument();
       });
 
-      // Find the first row and click the delete (second) button
+      // Find the first row and click the delete button (index 2; 0=copy, 1=edit, 2=delete)
       const firstRow = screen.getByText('High-risk counterparty').closest('tr')!;
       const rowButtons = firstRow.querySelectorAll('button');
-      const deleteButton = rowButtons[1];
+      const deleteButton = rowButtons[2];
       expect(deleteButton).toBeTruthy();
       await user.click(deleteButton);
 
@@ -330,7 +330,7 @@ describe('AddressThresholdList', () => {
       });
 
       const firstRow = screen.getByText('0xabcdef1234567890abcdef1234567890abcdef12').closest('tr')!;
-      const deleteButton = firstRow.querySelectorAll('button')[1];
+      const deleteButton = firstRow.querySelectorAll('button')[2];
       expect(deleteButton).toBeTruthy();
       await user.click(deleteButton);
 

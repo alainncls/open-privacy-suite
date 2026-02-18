@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
-import { Loader2, Plus, AlertCircle, MapPin, Trash2, Pencil } from 'lucide-react';
+import { Loader2, Plus, AlertCircle, MapPin, Trash2, Pencil, Copy, Check } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import type { AddressThresholdOverride } from '@/types/compliance';
@@ -35,6 +35,17 @@ export default function AddressThresholdList() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   const loadOverrides = async (newOffset: number = offset) => {
     if (!orgId) return;
@@ -181,7 +192,22 @@ export default function AddressThresholdList() {
             <TableBody>
               {overrides.map((o) => (
                 <TableRow key={o.id}>
-                  <TableCell className="font-mono text-xs">{o.address}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono text-xs">{o.address}</span>
+                      <button
+                        onClick={() => copyToClipboard(o.address, o.id)}
+                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        title="Copy address"
+                      >
+                        {copiedId === o.id ? (
+                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {o.threshold_usd === 0 ? (
                       <span className="text-[#DC2626] font-medium">$0 (all transfers)</span>

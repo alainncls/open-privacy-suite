@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"math/big"
 	"net/http"
@@ -320,6 +321,24 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	if err := s.db.CreateTravelRuleRecord(c.Request.Context(), record); err != nil {
 		internalError(c, "failed to create travel rule record", err)
 		return
+	}
+
+	// Check if the record amount is below the applicable threshold for this address.
+	// If so, include a warning — the record may never be claimed.
+	beneficiary := strings.ToLower(input.BeneficiaryAddress)
+	config, err := s.db.GetComplianceConfig(ctx, orgID)
+	if err == nil && config != nil && config.Enabled {
+		threshold := config.ThresholdUSD
+		override, err := s.db.GetAddressThresholdOverride(ctx, orgID, beneficiary)
+		if err == nil && override != nil {
+			threshold = override.ThresholdUSD
+		}
+		if amountUSD < threshold {
+			record.Warning = fmt.Sprintf(
+				"Record amount $%.2f is below the applicable threshold $%.2f for address %s — this record may never be used.",
+				amountUSD, threshold, beneficiary,
+			)
+		}
 	}
 
 	c.JSON(http.StatusCreated, record)

@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/select';
 import Pagination from '@/components/ui/Pagination';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { Loader2, Plus, AlertCircle, FileText, Copy, Check, Trash2 } from 'lucide-react';
+import { Loader2, Plus, AlertCircle, AlertTriangle, FileText, Copy, Check, Trash2 } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { UserSearchInput } from './UserSearchInput';
@@ -75,6 +75,7 @@ export default function TravelRuleRecordList() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
   const [addressError, setAddressError] = useState('');
+  const [createWarning, setCreateWarning] = useState<string | null>(null);
   const [availableTokens, setAvailableTokens] = useState<TokenPrice[]>([]);
 
   const selectedTokenInfo = formTransferType === 'eth'
@@ -192,7 +193,7 @@ export default function TravelRuleRecordList() {
     try {
       setFormSaving(true);
       setFormError(null);
-      await complianceApi.travelRules.create(orgId, {
+      const response = await complianceApi.travelRules.create(orgId, {
         originator_user_id: formOriginatorUserId.trim(),
         originator_data: originatorData,
         beneficiary_data: beneficiaryData,
@@ -202,6 +203,9 @@ export default function TravelRuleRecordList() {
         amount_wei: amountWei,
       });
       setShowForm(false);
+      if (response.data?.warning) {
+        setCreateWarning(response.data.warning);
+      }
       loadRecords(0);
     } catch (err: unknown) {
       const axiosError = err as { response?: { data?: { error?: string } } };
@@ -233,6 +237,16 @@ export default function TravelRuleRecordList() {
         <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
+        </div>
+      )}
+
+      {createWarning && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <span>{createWarning}</span>
+            <button onClick={() => setCreateWarning(null)} className="ml-2 underline text-xs hover:no-underline">dismiss</button>
+          </div>
         </div>
       )}
 
