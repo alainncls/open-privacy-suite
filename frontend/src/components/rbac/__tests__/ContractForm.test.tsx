@@ -89,7 +89,7 @@ describe('ContractForm', () => {
       const { onSave } = renderContractForm({});
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', async ({ request }) => {
           const body = (await request.json()) as { address: string; name?: string };
           return HttpResponse.json({
             ...mockContract,
@@ -121,7 +121,7 @@ describe('ContractForm', () => {
 
       let receivedRequest: { address: string; name?: string } | null = null;
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', async ({ request, params }) => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', async ({ request, params }) => {
           receivedRequest = (await request.json()) as { address: string; name?: string };
           expect(params.orgId).toBe('org-1');
           return HttpResponse.json({
@@ -162,7 +162,7 @@ describe('ContractForm', () => {
       const { onSave } = renderContractForm({});
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json(mockContract);
         })
       );
@@ -186,7 +186,7 @@ describe('ContractForm', () => {
       renderContractForm({});
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json(
             { error: 'Contract already exists' },
             { status: 409 }
@@ -236,7 +236,7 @@ describe('ContractForm', () => {
 
       let receivedRequest: { name?: string } | null = null;
       server.use(
-        http.put('/api/v1/orgs/:orgId/contracts/:address', async ({ request }) => {
+        http.put('/api/v1/admin/orgs/:orgId/contracts/:address', async ({ request }) => {
           receivedRequest = (await request.json()) as { name?: string };
           return HttpResponse.json({
             ...mockContract,
@@ -265,7 +265,7 @@ describe('ContractForm', () => {
 
       let requestParams: { orgId?: string; address?: string } = {};
       server.use(
-        http.put('/api/v1/orgs/:orgId/contracts/:address', async ({ params }) => {
+        http.put('/api/v1/admin/orgs/:orgId/contracts/:address', async ({ params }) => {
           requestParams = params as { orgId?: string; address?: string };
           return HttpResponse.json(mockContract);
         })
@@ -391,7 +391,7 @@ describe('ContractForm', () => {
 
       // Make the request hang
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', async () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', async () => {
           await new Promise(() => {}); // Never resolves
         })
       );
@@ -416,7 +416,7 @@ describe('ContractForm', () => {
 
       // Make the request hang
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', async () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', async () => {
           await new Promise(() => {}); // Never resolves
         })
       );
@@ -455,7 +455,7 @@ describe('ContractForm', () => {
       renderContractForm({});
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({}, { status: 500 });
         })
       );
@@ -481,7 +481,7 @@ describe('ContractForm', () => {
       renderContractForm({});
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/contracts', () => {
+        http.post('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json(
             { error: 'Invalid contract address: not a contract' },
             { status: 400 }

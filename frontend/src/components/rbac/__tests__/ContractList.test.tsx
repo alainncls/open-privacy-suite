@@ -38,7 +38,7 @@ describe('ContractList', () => {
     it('shows loading spinner initially', async () => {
       // Use MSW's delay to simulate slow response - will be cancelled on cleanup
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', async () => {
           await delay('infinite');
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
@@ -62,7 +62,7 @@ describe('ContractList', () => {
 
     it('shows empty state when no contracts', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -80,7 +80,7 @@ describe('ContractList', () => {
 
     it('displays table with headers (Address, Name, Created)', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: mockContracts, total: mockContracts.length, limit: 25, offset: 0 });
         })
       );
@@ -100,7 +100,7 @@ describe('ContractList', () => {
   describe('Data Display', () => {
     it('shows contract address (possibly truncated)', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -115,7 +115,7 @@ describe('ContractList', () => {
 
     it('shows contract name if present', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -129,7 +129,7 @@ describe('ContractList', () => {
 
     it('shows "-" when name is null or undefined', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContractNoName], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -154,7 +154,7 @@ describe('ContractList', () => {
       });
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [contract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -169,7 +169,7 @@ describe('ContractList', () => {
 
     it('shows correct number of rows', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: mockContracts, total: mockContracts.length, limit: 25, offset: 0 });
         })
       );
@@ -191,7 +191,7 @@ describe('ContractList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -218,7 +218,7 @@ describe('ContractList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -250,7 +250,7 @@ describe('ContractList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -277,13 +277,13 @@ describe('ContractList', () => {
 
       let deleted = false;
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           if (deleted) {
             return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
           }
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/contracts/:address', () => {
           deleted = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -314,10 +314,10 @@ describe('ContractList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
         }),
-        http.delete('/api/v1/orgs/:orgId/contracts/:address', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/contracts/:address', () => {
           return HttpResponse.json(
             { error: 'Cannot delete contract' },
             { status: 500 }
@@ -352,7 +352,7 @@ describe('ContractList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/orgs/:orgId/contracts', () => {
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );

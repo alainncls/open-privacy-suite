@@ -72,7 +72,7 @@ describe('GroupList', () => {
     it('shows loading spinner initially', () => {
       // Use a handler that delays response
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', async () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return HttpResponse.json({ data: [{ group: mockGroup, access: mockGroupAccess }], total: 1, limit: 50, offset: 0 });
         })
@@ -94,7 +94,7 @@ describe('GroupList', () => {
 
     it('shows empty state when no groups', async () => {
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 50, offset: 0 });
         })
       );
@@ -127,7 +127,7 @@ describe('GroupList', () => {
         return { group: g, access };
       });
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
@@ -268,7 +268,7 @@ describe('GroupList', () => {
 
       // Setup handler that returns error for delete
       server.use(
-        http.delete('/api/v1/orgs/:orgId/groups/:groupId', () => {
+        http.delete('/api/v1/admin/orgs/:orgId/groups/:groupId', () => {
           return HttpResponse.json(
             { error: 'Cannot delete group with children' },
             { status: 400 }
@@ -321,7 +321,7 @@ describe('GroupList', () => {
     it('shows Org Admin badge for admin groups', async () => {
       const groupsWithAccess = mockGroupHierarchy.map(g => ({ group: g, access: mockGroupAccess }));
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: groupsWithAccess, total: groupsWithAccess.length, limit: 50, offset: 0 });
         })
       );
@@ -342,7 +342,7 @@ describe('GroupList', () => {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
       };
       server.use(
-        http.get('/api/v1/orgs/:orgId/groups', () => {
+        http.get('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json({ data: [{ group: mockGroup, access: accessWith3Methods }], total: 1, limit: 50, offset: 0 });
         })
       );

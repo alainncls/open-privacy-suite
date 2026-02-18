@@ -115,7 +115,7 @@ describe('GroupForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/groups', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             ...mockGroup,
@@ -164,7 +164,7 @@ describe('GroupForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/groups', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             ...mockGroup,
@@ -274,7 +274,7 @@ describe('GroupForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.put('/api/v1/orgs/:orgId/groups/:groupId', async ({ request }) => {
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json({
             ...mockGroup,
@@ -321,7 +321,7 @@ describe('GroupForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/groups', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json(mockGroup);
         })
@@ -358,7 +358,7 @@ describe('GroupForm', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/groups', () => {
+        http.post('/api/v1/admin/orgs/:orgId/groups', () => {
           return HttpResponse.json(
             { error: 'Slug already exists' },
             { status: 400 }
@@ -403,7 +403,7 @@ describe('GroupForm', () => {
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
-        http.post('/api/v1/orgs/:orgId/groups', async ({ request }) => {
+        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
           return HttpResponse.json(mockGroup);
         })

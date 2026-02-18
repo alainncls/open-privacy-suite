@@ -187,7 +187,7 @@ describe('UserDetail', () => {
     it('fetches memberships on mount', async () => {
       let membershipsFetched = false;
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           membershipsFetched = true;
           return HttpResponse.json([mockMembershipWithDetails]);
         })
@@ -204,7 +204,7 @@ describe('UserDetail', () => {
       const specificMemberships = [mockMembershipsWithDetails[0]]; // Just one membership
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(specificMemberships);
         })
       );
@@ -223,7 +223,7 @@ describe('UserDetail', () => {
 
     it('shows group name for each membership', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(mockMembershipsWithDetails);
         })
       );
@@ -239,7 +239,7 @@ describe('UserDetail', () => {
 
     it('shows source badge correctly (admin vs zk_attested)', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json(mockMembershipsWithDetails);
         })
       );
@@ -259,7 +259,7 @@ describe('UserDetail', () => {
     it('does NOT show memberships not in API response', async () => {
       // Return empty memberships
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([]);
         })
       );
@@ -277,7 +277,7 @@ describe('UserDetail', () => {
 
     it('shows empty state when no memberships', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([]);
         })
       );
@@ -303,10 +303,10 @@ describe('UserDetail', () => {
       let deletedMembershipId = '';
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([mockMembershipWithDetails]);
         }),
-        http.delete('/api/v1/users/:userId/memberships/:membershipId', ({ params }) => {
+        http.delete('/api/v1/admin/users/:userId/memberships/:membershipId', ({ params }) => {
           deleteEndpointCalled = true;
           deletedMembershipId = params.membershipId as string;
           return HttpResponse.json({ message: 'Deleted' });
@@ -348,10 +348,10 @@ describe('UserDetail', () => {
       let deleteEndpointCalled = false;
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([mockMembershipWithDetails]);
         }),
-        http.delete('/api/v1/users/:userId/memberships/:membershipId', () => {
+        http.delete('/api/v1/admin/users/:userId/memberships/:membershipId', () => {
           deleteEndpointCalled = true;
           return HttpResponse.json({ message: 'Deleted' });
         })
@@ -389,7 +389,7 @@ describe('UserDetail', () => {
       let addressesFetched = false;
 
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           addressesFetched = true;
           return HttpResponse.json({ addresses: mockLinkedAddresses });
         })
@@ -409,7 +409,7 @@ describe('UserDetail', () => {
       ];
 
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           return HttpResponse.json({ addresses: testAddresses });
         })
       );
@@ -432,7 +432,7 @@ describe('UserDetail', () => {
 
     it('shows "No linked addresses" when empty', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           return HttpResponse.json({ addresses: [] });
         })
       );
@@ -451,7 +451,7 @@ describe('UserDetail', () => {
       ];
 
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           return HttpResponse.json({ addresses: addressesWithTimestamps });
         })
       );
@@ -467,7 +467,7 @@ describe('UserDetail', () => {
 
     it('handles linked addresses API error gracefully', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           return HttpResponse.json({ error: 'Failed to load' }, { status: 500 });
         })
       );
@@ -489,7 +489,7 @@ describe('UserDetail', () => {
       let permissionsFetched = false;
 
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           permissionsFetched = true;
           return HttpResponse.json(mockEffectivePermissions);
         })
@@ -504,7 +504,7 @@ describe('UserDetail', () => {
 
     it('displays allowed_methods list', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
         })
       );
@@ -522,7 +522,7 @@ describe('UserDetail', () => {
 
     it('displays claims list', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
         })
       );
@@ -539,7 +539,7 @@ describe('UserDetail', () => {
 
     it('displays rate limits', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
         })
       );
@@ -556,7 +556,7 @@ describe('UserDetail', () => {
 
     it('shows appropriate message when permissions are empty', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEmptyEffectivePermissions);
         })
       );
@@ -573,7 +573,7 @@ describe('UserDetail', () => {
 
     it('shows message when no permissions in organization', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(null, { status: 404 });
         })
       );
@@ -587,10 +587,10 @@ describe('UserDetail', () => {
 
     it('does not show permissions section when user has no memberships', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([]); // No memberships
         }),
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
         })
       );
@@ -607,7 +607,7 @@ describe('UserDetail', () => {
 
     it('displays more than 10 methods with count badge', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockFullEffectivePermissions);
         })
       );
@@ -628,7 +628,7 @@ describe('UserDetail', () => {
       };
 
       server.use(
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(unlimitedPerms);
         })
       );
@@ -675,7 +675,7 @@ describe('UserDetail', () => {
       let updatePayload: any = null;
 
       server.use(
-        http.put('/api/v1/users/:userId', async ({ request }) => {
+        http.put('/api/v1/admin/users/:userId', async ({ request }) => {
           updateCalled = true;
           updatePayload = await request.json();
           return HttpResponse.json({ ...mockUser, ...updatePayload });
@@ -712,7 +712,7 @@ describe('UserDetail', () => {
 
     it('displays error when update fails', async () => {
       server.use(
-        http.put('/api/v1/users/:userId', () => {
+        http.put('/api/v1/admin/users/:userId', () => {
           return HttpResponse.json(
             { error: 'Failed to update user' },
             { status: 500 }
@@ -780,13 +780,13 @@ describe('UserDetail', () => {
 
     it('groups memberships by organization', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([
             mockMembershipWithDetails, // org-1
             { membership: mockMembership2, group: mockGroup2 }, // org-2
           ]);
         }),
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
         })
       );
@@ -816,13 +816,13 @@ describe('UserDetail', () => {
       };
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([
             mockMembershipWithDetails, // org-1
             { membership: mockMembership2, group: mockGroup2 }, // org-2
           ]);
         }),
-        http.get('/api/v1/users/:userId/effective-permissions', ({ request }) => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', ({ request }) => {
           const url = new URL(request.url);
           const orgSlug = url.searchParams.get('org');
           if (orgSlug === 'globex') {
@@ -854,13 +854,13 @@ describe('UserDetail', () => {
       const orgSlugsRequested: string[] = [];
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([
             mockMembershipWithDetails, // org-1
             { membership: mockMembership2, group: mockGroup2 }, // org-2
           ]);
         }),
-        http.get('/api/v1/users/:userId/effective-permissions', ({ request }) => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', ({ request }) => {
           const url = new URL(request.url);
           const orgSlug = url.searchParams.get('org');
           if (orgSlug) {
@@ -920,7 +920,7 @@ describe('UserDetail', () => {
     it('shows loading spinner while fetching memberships', async () => {
       // Delay the response to observe loading state
       server.use(
-        http.get('/api/v1/users/:userId/memberships', async () => {
+        http.get('/api/v1/admin/users/:userId/memberships', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json([mockMembershipWithDetails]);
         })
@@ -940,7 +940,7 @@ describe('UserDetail', () => {
 
     it('shows loading spinner while fetching linked addresses', async () => {
       server.use(
-        http.get('/api/v1/users/:userId/linked-addresses', async () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json({ addresses: mockLinkedAddresses });
         })
@@ -996,13 +996,13 @@ describe('UserDetail', () => {
       };
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           return HttpResponse.json([specificMembership]);
         }),
-        http.get('/api/v1/users/:userId/linked-addresses', () => {
+        http.get('/api/v1/admin/users/:userId/linked-addresses', () => {
           return HttpResponse.json({ addresses: [specificAddress] });
         }),
-        http.get('/api/v1/users/:userId/effective-permissions', () => {
+        http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json({
             ...mockEffectivePermissions,
             allowed_methods: ['eth_specific_method'],
@@ -1040,7 +1040,7 @@ describe('UserDetail', () => {
       let fetchCount = 0;
 
       server.use(
-        http.get('/api/v1/users/:userId/memberships', () => {
+        http.get('/api/v1/admin/users/:userId/memberships', () => {
           fetchCount++;
           if (fetchCount === 1) {
             return HttpResponse.json([mockMembershipWithDetails]);
@@ -1048,7 +1048,7 @@ describe('UserDetail', () => {
           // After deletion, return empty
           return HttpResponse.json([]);
         }),
-        http.delete('/api/v1/users/:userId/memberships/:membershipId', () => {
+        http.delete('/api/v1/admin/users/:userId/memberships/:membershipId', () => {
           return HttpResponse.json({ message: 'Deleted' });
         })
       );

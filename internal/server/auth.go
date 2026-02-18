@@ -396,24 +396,13 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	var err error
 	var zkClaims *auth.ZKRoleClaims
 
-	// Support mock tokens for testing when explicitly enabled via ALLOW_MOCK_LOGIN=true
-	// Mock token format: mock.{userDID} or mock.jwz.token.{userDID}
-	if s.config.AllowMockLogin && len(jwzToken) > 5 && jwzToken[:5] == "mock." {
-		// Extract DID from mock token
-		parts := strings.Split(jwzToken, ".")
-		if len(parts) >= 2 {
-			// Get the last part which should be the DID
-			userDID = parts[len(parts)-1]
-			// If DID doesn't have expected prefix, it might be the full mock token
-			if !strings.HasPrefix(userDID, "did:") {
-				userDID = "did:privado:" + userDID
-			}
-		}
-		if userDID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mock token format"})
-			return nil, fmt.Errorf("invalid mock token format")
-		}
-	} else {
+	// Support mock tokens for testing - only in non-production builds
+	userDID, err = s.tryMockLogin(c, jwzToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if userDID == "" {
 		// Verify JWZ token against the original authorization request
 		// Use VerifyJWZWithProofData to get both the DID and any ZK credential data
 		verificationResult, verifyErr := s.privadoVerifier.VerifyJWZWithProofData(c.Request.Context(), jwzToken, authRequest, s.config.VerifierID)

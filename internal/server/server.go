@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/evm/create3"
+	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -54,6 +58,8 @@ type Server struct {
 	rateLimiter       RateLimiterInterface
 	authRateLimiter   *AuthRateLimiter
 	disclosureService *disclosure.DefaultService
+	complianceChecker *compliance.Checker
+	priceService      *pricing.Service
 	config            *config.Config
 	ensResolver       *ens.Resolver
 	jsonrpcProcessor  *JSONRPCProcessor
@@ -86,6 +92,9 @@ func (s *Server) Stop() {
 	}
 	if s.rbacAccessCtrl != nil {
 		s.rbacAccessCtrl.Stop()
+	}
+	if s.priceService != nil {
+		s.priceService.Stop()
 	}
 	if s.runtimeTracer != nil {
 		s.runtimeTracer.Stop()
@@ -244,6 +253,21 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
 	}
 
+	// Initialize compliance checker for travel rule enforcement
+	if cfg.EnableTravelRule {
+		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry, cfg.PriceStalenessThreshold)
+		s.complianceChecker = checker
+		s.jsonrpcProcessor.SetComplianceChecker(checker)
+		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
+
+		// Start background CoinGecko price fetcher
+		priceSvc := pricing.NewService(database, cfg.PriceFetchInterval)
+		priceSvc.Start()
+		s.priceService = priceSvc
+	} else {
+		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
+	}
+
 	return s, nil
 }
 
@@ -267,15 +291,19 @@ func (s *Server) setupRouter() *gin.Engine {
 	// SECURITY: Only requests FROM these IPs can set X-Forwarded-For headers.
 	// External attackers cannot spoof X-Forwarded-For because their IP won't be trusted.
 	// Trusted proxy IPs that can set X-Forwarded-For headers
-	// Includes Docker networks, private networks, and Tailscale CGNAT range
-	router.SetTrustedProxies([]string{
+	// Includes default private ranges + user-configured trusted proxies
+	trustedProxies := []string{
 		"127.0.0.1",
 		"::1",
 		"172.16.0.0/12",  // Docker bridge networks
 		"192.168.0.0/16", // Docker custom networks / private networks
 		"10.0.0.0/8",     // Private networks
-		"100.64.0.0/10",  // Tailscale CGNAT range
-	})
+		"100.64.0.0/10",  // Tailscale / CGNAT
+	}
+	if len(s.config.TrustedProxies) > 0 {
+		trustedProxies = append(trustedProxies, s.config.TrustedProxies...)
+	}
+	router.SetTrustedProxies(trustedProxies)
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -384,47 +412,60 @@ func (s *Server) setupRouter() *gin.Engine {
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
 	apiV1 := router.Group("/api/v1")
-	apiV1.Use(s.localhostOnlyMiddleware())
 	{
-		apiV1.GET("/logs", s.getLogs)
-		apiV1.GET("/status", s.getStatus)
-		apiV1.POST("/test-request", s.handleTestRequest)
+		// Admin endpoints - localhost only
+		admin := apiV1.Group("/admin")
+		admin.Use(s.localhostOnlyMiddleware())
+		{
+			admin.GET("/logs", s.getLogs)
+			admin.GET("/status", s.getStatus)
+			admin.POST("/test-request", s.handleTestRequest)
 
-		// RBAC endpoints
-		s.registerRBACRoutes(apiV1)
+			// RBAC endpoints
+			s.registerRBACRoutes(admin)
 
-		// Disclosure admin endpoints
-		s.registerDisclosureRoutes(apiV1)
+			// Disclosure admin endpoints
+			s.registerDisclosureRoutes(admin)
 
-		// Dev-only endpoints (CREATE3 factory deployment)
-		apiV1.GET("/dev/create3-factory", s.getCreate3Factory)
-		apiV1.POST("/dev/create3-factory", s.deployCreate3Factory)
-		apiV1.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-		apiV1.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
-		apiV1.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
+			// Compliance endpoints (travel rule)
+			s.registerComplianceRoutes(admin)
+
+			// Dev-only endpoints (CREATE3 factory deployment)
+			admin.GET("/dev/create3-factory", s.getCreate3Factory)
+			admin.POST("/dev/create3-factory", s.deployCreate3Factory)
+			admin.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+			admin.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+			admin.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
+		}
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
 	// Adds X-Deprecated header to responses
 	api := router.Group("/api")
-	api.Use(s.localhostOnlyMiddleware())
-	api.Use(s.deprecationMiddleware("/api", "/api/v1"))
 	{
-		api.GET("/logs", s.getLogs)
-		api.GET("/status", s.getStatus)
-		api.POST("/test-request", s.handleTestRequest)
+		adminLegacy := api.Group("/admin")
+		adminLegacy.Use(s.localhostOnlyMiddleware())
+		adminLegacy.Use(s.deprecationMiddleware("/api/admin", "/api/v1/admin"))
+		{
+			adminLegacy.GET("/logs", s.getLogs)
+			adminLegacy.GET("/status", s.getStatus)
+			adminLegacy.POST("/test-request", s.handleTestRequest)
 
-		// RBAC endpoints
-		s.registerRBACRoutes(api)
+			// RBAC endpoints
+			s.registerRBACRoutes(adminLegacy)
 
-		// Disclosure admin endpoints
-		s.registerDisclosureRoutes(api)
+			// Disclosure admin endpoints
+			s.registerDisclosureRoutes(adminLegacy)
 
-		// Dev-only endpoints (CREATE3 factory deployment)
-		api.GET("/dev/create3-factory", s.getCreate3Factory)
-		api.POST("/dev/create3-factory", s.deployCreate3Factory)
-		api.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-		api.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+			// Compliance endpoints (travel rule)
+			s.registerComplianceRoutes(adminLegacy)
+
+			// Dev-only endpoints (CREATE3 factory deployment)
+			adminLegacy.GET("/dev/create3-factory", s.getCreate3Factory)
+			adminLegacy.POST("/dev/create3-factory", s.deployCreate3Factory)
+			adminLegacy.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
+			adminLegacy.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+		}
 	}
 
 	return router
@@ -570,22 +611,40 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 		// Gin's ClientIP() only trusts X-Forwarded-For if remote IP is in trusted proxy list
 		// External attackers cannot spoof because their IP won't be trusted
 		clientIP := c.ClientIP()
+		ip := net.ParseIP(clientIP)
+		if ip == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid client IP"})
+			c.Abort()
+			return
+		}
 
-		// Allow localhost IPv4, IPv6
-		// Also allow Docker network IPs (172.16.0.0/12 and 192.168.0.0/16) - these come from:
-		// - Host accessing via localhost (172.x.x.x gateway)
-		// - Frontend container accessing backend (192.168.x.x or 172.x.x.x)
-		// Also allow Tailscale IPs (100.64.0.0/10 CGNAT range)
-		// Note: Docker networks are isolated by default, so this is safe
-		isAllowed := clientIP == "127.0.0.1" ||
-			clientIP == "::1" ||
-			strings.HasPrefix(clientIP, "172.") || // Docker bridge networks (172.16.0.0/12)
-			strings.HasPrefix(clientIP, "192.168.") || // Docker custom networks (192.168.0.0/16)
-			strings.HasPrefix(clientIP, "100.") // Tailscale CGNAT (100.64.0.0/10)
+		// Allowed private networks:
+		// - 127.0.0.1/32: Localhost IPv4
+		// - ::1/128: Localhost IPv6
+		// - 172.16.0.0/12: Docker bridge networks (RFC1918)
+		// - 192.168.0.0/16: Docker custom networks / WiFi (RFC1918)
+		// - 100.64.0.0/10: Tailscale / CGNAT
+		allowedCIDRs := []string{
+			"127.0.0.1/32",
+			"::1/128",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"10.0.0.0/8",
+			"100.64.0.0/10",
+		}
+
+		isAllowed := false
+		for _, cidr := range allowedCIDRs {
+			_, subnet, _ := net.ParseCIDR(cidr)
+			if subnet != nil && subnet.Contains(ip) {
+				isAllowed = true
+				break
+			}
+		}
 
 		if !isAllowed {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "management API is only accessible from localhost or Tailscale",
+				"error": "management API is only accessible from localhost, private networks, or Tailscale",
 			})
 			c.Abort()
 			return
@@ -611,6 +670,7 @@ type ProxyStatus struct {
 // SecurityStatus represents the security configuration status
 type SecurityStatus struct {
 	RuntimeTracingEnabled bool `json:"runtime_tracing_enabled"`
+	TravelRuleEnabled     bool `json:"travel_rule_enabled"`
 }
 
 // NodeStatus represents the node status
@@ -641,6 +701,7 @@ func (s *Server) getStatus(c *gin.Context) {
 		},
 		Security: SecurityStatus{
 			RuntimeTracingEnabled: runtimeTracingEnabled,
+			TravelRuleEnabled:     s.complianceChecker != nil,
 		},
 	}
 
@@ -709,6 +770,63 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 			Identity: testIdentity,
 		})
 		return
+	}
+
+	// Travel rule compliance check for eth_sendTransaction and eth_sendRawTransaction
+	if s.complianceChecker != nil {
+		var compFrom, compTo, compData, compValue string
+		var needsCheck bool
+
+		switch input.Method {
+		case "eth_sendTransaction":
+			compFrom, compTo, compData, compValue = extractTxParams(input.Params)
+			needsCheck = true
+		case "eth_sendRawTransaction":
+			rawTxHex, extractErr := extractRawTxHex(input.Params)
+			if extractErr != nil {
+				c.JSON(http.StatusBadRequest, TestRequestResponse{
+					Error:    "failed to extract raw transaction: " + extractErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			var decodeErr error
+			compFrom, compTo, compData, compValue, decodeErr = decodeRawTransaction(rawTxHex)
+			if decodeErr != nil {
+				c.JSON(http.StatusBadRequest, TestRequestResponse{
+					Error:    "failed to decode raw transaction: " + decodeErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			needsCheck = true
+		}
+
+		if needsCheck {
+			compResult, compErr := s.complianceChecker.Check(c.Request.Context(), &compliance.CheckRequest{
+				OrgID:  result.OrgID,
+				UserID: result.UserID,
+				From:   compFrom,
+				To:     compTo,
+				Data:   compData,
+				Value:  compValue,
+			})
+			if compErr != nil {
+				c.JSON(http.StatusInternalServerError, TestRequestResponse{
+					Error:    "compliance check failed: " + compErr.Error(),
+					Identity: testIdentity,
+				})
+				return
+			}
+			if !compResult.Allowed {
+				s.db.LogAccess(c.Request.Context(), testIdentity, input.Method, http.StatusForbidden, c.ClientIP())
+				c.JSON(http.StatusForbidden, TestRequestResponse{
+					Error:    "compliance denied: " + compResult.Reason,
+					Identity: testIdentity,
+				})
+				return
+			}
+		}
 	}
 
 	// Build JSON-RPC request

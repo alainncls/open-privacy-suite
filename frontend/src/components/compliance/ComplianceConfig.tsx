@@ -1,0 +1,162 @@
+import { useState, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
+import { complianceApi } from '@/api/compliance';
+import { useComplianceOrgContext } from './ComplianceManager';
+import type { ComplianceConfig as ComplianceConfigType } from '@/types/compliance';
+
+export default function ComplianceConfig() {
+  const { selectedOrg } = useComplianceOrgContext();
+  const orgId = selectedOrg?.id;
+
+  const [config, setConfig] = useState<ComplianceConfigType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const [enabled, setEnabled] = useState(false);
+  const [thresholdUsd, setThresholdUsd] = useState('1000');
+
+  const loadConfig = async () => {
+    if (!orgId) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await complianceApi.config.get(orgId);
+      const cfg = response.data;
+      setConfig(cfg);
+      setEnabled(cfg.enabled);
+      setThresholdUsd(String(cfg.threshold_usd));
+    } catch (err: unknown) {
+      const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
+      if (axiosError.response?.status === 404) {
+        // No config yet — show defaults
+        setConfig(null);
+        setEnabled(false);
+        setThresholdUsd('1000');
+      } else {
+        setError(axiosError.response?.data?.error || 'Failed to load compliance config');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConfig();
+  }, [orgId]);
+
+  const handleSave = async () => {
+    if (!orgId) return;
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(false);
+      const response = await complianceApi.config.update(orgId, {
+        enabled,
+        threshold_usd: parseFloat(thresholdUsd) || 0,
+      });
+      setConfig(response.data);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: unknown) {
+      const axiosError = err as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || 'Failed to save config');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-medium text-[#374151]">Compliance Configuration</h3>
+        <Badge variant={enabled ? 'success' : 'secondary'}>
+          {enabled ? 'Enabled' : 'Disabled'}
+        </Badge>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#DCFCE7] border border-[#BBF7D0] text-[#166534] text-sm">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          Configuration saved successfully
+        </div>
+      )}
+
+      <div className="max-w-md space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-[#374151] mb-1.5">
+            Enforcement
+          </label>
+          <Button
+            variant={enabled ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setEnabled(!enabled)}
+          >
+            {enabled ? 'Enabled' : 'Disabled'} — Click to {enabled ? 'disable' : 'enable'}
+          </Button>
+          <p className="text-xs text-[#94A3B8] mt-1">
+            When enabled, transfers above the threshold require a travel rule record
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-[#374151] mb-1.5">
+            Threshold (USD)
+          </label>
+          <Input
+            type="number"
+            value={thresholdUsd}
+            onChange={e => setThresholdUsd(e.target.value)}
+            placeholder="1000"
+            min="0"
+            step="0.01"
+          />
+          <p className="text-xs text-[#94A3B8] mt-1">
+            Transfers above this USD value will require travel rule compliance
+          </p>
+        </div>
+
+        <Button onClick={handleSave} disabled={saving}>
+          {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Save Configuration
+        </Button>
+      </div>
+
+      {config && (
+        <div className="pt-4 border-t border-[#E2E8F0]">
+          <p className="text-xs text-[#94A3B8]">
+            Last updated: {new Date(config.updated_at).toLocaleString()}
+          </p>
+        </div>
+      )}
+
+      {!config && (
+        <div className="pt-4 border-t border-[#E2E8F0]">
+          <div className="flex items-center gap-2 text-sm text-[#6B7280]">
+            <Settings className="w-4 h-4" />
+            No configuration saved yet. Save to create the initial config.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

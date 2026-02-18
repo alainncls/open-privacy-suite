@@ -92,10 +92,7 @@ export default function RBACManager() {
         }
       }
 
-      // Auto-select first org if none selected
-      if (!selectedOrg && orgs.length > 0) {
-        setSelectedOrg(orgs[0]);
-      } else if (selectedOrg) {
+      if (selectedOrg) {
         // Refresh the selected org data
         const updatedOrg = orgs.find(o => o.id === selectedOrg.id);
         if (updatedOrg) {
@@ -216,42 +213,49 @@ export default function RBACManager() {
                   No organizations
                 </Badge>
               ) : (
-                <Select
-                  value={selectedOrg?.id || '__all__'}
-                  onValueChange={handleOrgChange}
-                >
-                  <SelectTrigger className="w-[280px]" aria-label="Select organization scope" data-testid="org-selector">
-                    {selectedOrg ? (
-                      <SelectValue placeholder="Select organization" />
-                    ) : (
-                      <div className="flex items-center gap-2 whitespace-nowrap">
-                        <Globe className="w-4 h-4 text-[#94A3B8] shrink-0" />
-                        <span className="text-sm">All organizations</span>
-                      </div>
-                    )}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {!blockedWithoutOrg && (
-                      <SelectItem value="__all__">
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedOrg?.id || '__all__'}
+                    onValueChange={handleOrgChange}
+                  >
+                    <SelectTrigger className={`w-[280px] ${blockedWithoutOrg ? 'border-[#EF4444] ring-1 ring-[#EF4444]/20' : ''}`} aria-label="Select organization scope" data-testid="org-selector">
+                      {selectedOrg ? (
+                        <SelectValue placeholder="Select organization" />
+                      ) : (
                         <div className="flex items-center gap-2 whitespace-nowrap">
                           <Globe className="w-4 h-4 text-[#94A3B8] shrink-0" />
-                          <span>All organizations</span>
+                          <span className="text-sm">All organizations</span>
                         </div>
-                      </SelectItem>
-                    )}
-                    {organizations.map(org => (
-                      <SelectItem key={org.id} value={org.id}>
-                        <div className="flex items-center gap-2 whitespace-nowrap">
-                          <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
-                          <span className="truncate">{org.name}</span>
-                          <span className="text-[#94A3B8] text-xs shrink-0">
-                            ({org.slug})
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      )}
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!blockedWithoutOrg && (
+                        <SelectItem value="__all__">
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <Globe className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                            <span>All organizations</span>
+                          </div>
+                        </SelectItem>
+                      )}
+                      {organizations.map(org => (
+                        <SelectItem key={org.id} value={org.id}>
+                          <div className="flex items-center gap-2 whitespace-nowrap">
+                            <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                            <span className="truncate">{org.name}</span>
+                            <span className="text-[#94A3B8] text-xs shrink-0">
+                              ({org.slug})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {blockedWithoutOrg && (
+                    <span className="text-xs text-[#EF4444] whitespace-nowrap">
+                      Select an org
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </div>

@@ -54,6 +54,7 @@ services:
       - ALLOW_MOCK_LOGIN=true  # Allow mock JWZ tokens for dev/testing (never enable in production)
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
       - ENABLE_RUNTIME_TRACING=true  # Enable runtime tracing for cross-org isolation validation (validates dynamic calls at execution time)
+      - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
     depends_on:
       postgres:
         condition: service_healthy

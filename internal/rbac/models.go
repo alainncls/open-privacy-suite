@@ -236,6 +236,8 @@ type AccessCheckRequest struct {
 type AccessCheckResult struct {
 	Allowed           bool               `json:"allowed"`
 	Reason            string             `json:"reason,omitempty"`
+	OrgID             string             `json:"org_id,omitempty"`              // Resolved organization ID
+	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)
 	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`
 	Claims            []Claim            `json:"claims,omitempty"`

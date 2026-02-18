@@ -22,6 +22,13 @@ import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
 import PreregisteredAddressList from './components/rbac/PreregisteredAddressList';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
+import ComplianceManager from './components/compliance/ComplianceManager';
+import ComplianceConfig from './components/compliance/ComplianceConfig';
+import TokenPriceList from './components/compliance/TokenPriceList';
+import TravelRuleRecordList from './components/compliance/TravelRuleRecordList';
+import SanctionsList from './components/compliance/SanctionsList';
+import ComplianceLogList from './components/compliance/ComplianceLogList';
+import AddressThresholdList from './components/compliance/AddressThresholdList';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -62,6 +69,15 @@ function Root() {
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
                     <Route path="preregistered" element={<PreregisteredAddressList />} />
+                  </Route>
+                  <Route path="compliance" element={<ComplianceManager />}>
+                    <Route index element={<Navigate to="config" replace />} />
+                    <Route path="config" element={<ComplianceConfig />} />
+                    <Route path="tokens" element={<TokenPriceList />} />
+                    <Route path="travel-rules" element={<TravelRuleRecordList />} />
+                    <Route path="address-thresholds" element={<AddressThresholdList />} />
+                    <Route path="sanctions" element={<SanctionsList />} />
+                    <Route path="logs" element={<ComplianceLogList />} />
                   </Route>
                   <Route path="disclosure" element={<AdminDisclosureDashboard />} />
                 </Route>

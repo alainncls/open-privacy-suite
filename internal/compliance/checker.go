@@ -1,0 +1,401 @@
+package compliance
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math"
+	"math/big"
+	"strings"
+	"time"
+)
+
+// Checker performs compliance checks on value transfers.
+type Checker struct {
+	store                   Store
+	recordExpiry            time.Duration // how long travel rule records stay valid
+	priceStalenessThreshold time.Duration // after this duration, system prices are considered stale
+}
+
+// NewChecker creates a new compliance checker.
+func NewChecker(store Store, recordExpiry time.Duration, priceStalenessThreshold time.Duration) *Checker {
+	return &Checker{
+		store:                   store,
+		recordExpiry:            recordExpiry,
+		priceStalenessThreshold: priceStalenessThreshold,
+	}
+}
+
+// CheckRequest contains the parameters for a compliance check.
+type CheckRequest struct {
+	OrgID  string
+	UserID string // internal user UUID
+	From   string // sender address (hex)
+	To     string // recipient address (hex)
+	Data   string // calldata (hex)
+	Value  string // transfer value (hex)
+}
+
+// CheckResult is the outcome of a compliance check.
+type CheckResult struct {
+	Allowed      bool
+	Reason       string
+	TransferInfo *TransferInfo
+}
+
+// Check performs a compliance check on the given transaction.
+func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, error) {
+	// Step 1: Detect if this is a value transfer
+	info := DetectTransfer(req.From, req.To, req.Data, req.Value)
+	if info == nil {
+		return &CheckResult{
+			Allowed: true,
+			Reason:  "not a value transfer",
+		}, nil
+	}
+
+	// Step 2: Check if compliance is enabled for this org
+	config, err := c.store.GetComplianceConfig(ctx, req.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get compliance config: %w", err)
+	}
+	if config == nil || !config.Enabled {
+		return &CheckResult{
+			Allowed:      true,
+			Reason:       "compliance not enabled for org",
+			TransferInfo: info,
+		}, nil
+	}
+
+	// Step 3: Sanctions check (sender, recipient, and tx originator if different)
+
+	// For transferFrom, info.FromAddress is the allowance owner, but req.From is the
+	// actual spender (msg.sender). Check the spender first if they differ.
+	if req.From != "" && strings.ToLower(req.From) != strings.ToLower(info.FromAddress) {
+		sanctionedSpender, err := c.store.IsAddressSanctioned(ctx, req.OrgID, req.From)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check sanctions for spender address: %w", err)
+		}
+		if sanctionedSpender {
+			reason := fmt.Sprintf("transaction sender %s is sanctioned", req.From)
+			log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+			// M2: Denial decisions — warn on log failure but still deny. The tx is already
+			// blocked, so a missing audit entry is less severe than letting it through.
+			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+				log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			}
+			return &CheckResult{
+				Allowed:      false,
+				Reason:       reason,
+				TransferInfo: info,
+			}, nil
+		}
+	}
+
+	sanctionedTo, err := c.store.IsAddressSanctioned(ctx, req.OrgID, info.ToAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check sanctions for to address: %w", err)
+	}
+	if sanctionedTo {
+		reason := fmt.Sprintf("recipient address %s is sanctioned", info.ToAddress)
+		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		// M2: Denial — warn on log failure, still deny.
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		}
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       reason,
+			TransferInfo: info,
+		}, nil
+	}
+
+	sanctionedFrom, err := c.store.IsAddressSanctioned(ctx, req.OrgID, info.FromAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check sanctions for from address: %w", err)
+	}
+	if sanctionedFrom {
+		reason := fmt.Sprintf("sender address %s is sanctioned", info.FromAddress)
+		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		// M2: Denial — warn on log failure, still deny.
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		}
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       reason,
+			TransferInfo: info,
+		}, nil
+	}
+
+	// Step 4: Calculate fiat value
+	tokenAddr := "native"
+	if info.TokenAddress != nil {
+		tokenAddr = strings.ToLower(*info.TokenAddress)
+	}
+
+	// Resolve token price with fallback chain:
+	// 1. Per-org token_prices entry with coingecko_id → system price
+	// 2. Per-org token_prices entry without coingecko_id → manual price
+	// 3. No per-org entry + native token → auto-resolve from system "ethereum" price
+	// 4. No entry → fail closed
+	priceUSD, decimals, err := c.resolveTokenPrice(ctx, req.OrgID, tokenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve token price: %w", err)
+	}
+	if priceUSD < 0 {
+		// Sentinel: price unavailable
+		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
+		log.Printf("Compliance denied (fail closed): org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		}
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       reason,
+			TransferInfo: info,
+		}, nil
+	}
+
+	// Convert amountWei to USD: amountWei / 10^decimals * priceUSD
+	amountUSD, err := WeiToUSD(info.AmountWei, decimals, priceUSD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate USD value: %w", err)
+	}
+
+	// Determine threshold: per-address overrides take precedence over org config.
+	threshold, err := c.resolveThreshold(ctx, req.OrgID, config, info.FromAddress, info.ToAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve threshold: %w", err)
+	}
+
+	// Step 5: Below threshold -> allow
+	// M1: Strict `<` is intentional per FATF guidance. The threshold is the ceiling
+	// below which no travel rule record is needed. A transfer of exactly the threshold
+	// amount requires a record. Example: threshold $1000, transfer $1000 -> record needed.
+	if amountUSD < threshold {
+		reason := fmt.Sprintf("transfer value $%.2f below threshold $%.2f", amountUSD, threshold)
+		log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		// M2: Allowed decision — fail closed on log failure. Allowing a transaction
+		// without an audit trail is a compliance violation. Deny instead.
+		if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "allowed", "", nil); err != nil {
+			log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			return &CheckResult{
+				Allowed:      false,
+				Reason:       "compliance audit log unavailable, failing closed",
+				TransferInfo: info,
+			}, nil
+		}
+		return &CheckResult{
+			Allowed:      true,
+			Reason:       reason,
+			TransferInfo: info,
+		}, nil
+	}
+
+	// Step 6: Above threshold -> atomically claim a travel rule record
+	// Uses ClaimUnusedTravelRuleRecord which does UPDATE ... FOR UPDATE SKIP LOCKED
+	// in a single query to prevent TOCTOU race conditions.
+	// The record must cover the transfer amount (amount_usd >= amountUSD).
+	record, err := c.store.ClaimUnusedTravelRuleRecord(ctx, req.OrgID, req.UserID, info.ToAddress, tokenAddr, amountUSD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim travel rule record: %w", err)
+	}
+	if record == nil {
+		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountUSD, threshold)
+		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		// M2: Denial — warn on log failure, still deny.
+		if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "denied", reason, nil); err != nil {
+			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		}
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       reason,
+			TransferInfo: info,
+		}, nil
+	}
+
+	// M4: Record consumed even if transfer amount is much less than record amount.
+	// This is intentional per travel rule semantics — each transfer above threshold needs
+	// its own authorization. The record covers a specific planned transfer, not a balance.
+	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountUSD, threshold, record.ID)
+	log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+	// M2: Allowed decision — fail closed on log failure.
+	if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "allowed", "", &record.ID); err != nil {
+		log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		return &CheckResult{
+			Allowed:      false,
+			Reason:       "compliance audit log unavailable, failing closed",
+			TransferInfo: info,
+		}, nil
+	}
+	return &CheckResult{
+		Allowed:      true,
+		Reason:       reason,
+		TransferInfo: info,
+	}, nil
+}
+
+// resolveTokenPrice implements the price fallback chain.
+// Returns (priceUSD, decimals, error). A negative priceUSD signals "not found".
+func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string) (float64, int, error) {
+	// Step 1: Check per-org token_prices
+	tokenPrice, err := c.store.GetTokenPrice(ctx, orgID, tokenAddr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get token price: %w", err)
+	}
+
+	if tokenPrice != nil {
+		// Step 2a: Has coingecko_id → resolve from system price
+		if tokenPrice.CoingeckoID != nil && *tokenPrice.CoingeckoID != "" {
+			sysPrice, err := c.store.GetSystemTokenPrice(ctx, *tokenPrice.CoingeckoID)
+			if err != nil {
+				return 0, 0, fmt.Errorf("failed to get system token price: %w", err)
+			}
+			if sysPrice != nil && sysPrice.PriceUSD > 0 {
+				// Check staleness: if system price is too old, fall through to manual
+				if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
+					log.Printf("WARNING: system price for %s is stale (updated %s ago, threshold %s), falling back to manual price",
+						*tokenPrice.CoingeckoID, time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+				} else {
+					return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+				}
+			}
+			// System price unavailable, zero, or stale — fall back to manual price on the per-org entry
+			if tokenPrice.PriceUSD > 0 {
+				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+			}
+			// Both system and manual are zero/unavailable — fail closed
+			return -1, 0, nil
+		}
+		// Step 2b: No coingecko_id → use manual price
+		return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+	}
+
+	// Step 3: No per-org entry — auto-resolve native token from system "ethereum" price
+	if tokenAddr == "native" {
+		sysPrice, err := c.store.GetSystemTokenPrice(ctx, "ethereum")
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to get system ethereum price: %w", err)
+		}
+		if sysPrice != nil && sysPrice.PriceUSD > 0 {
+			// Check staleness: if system price is too old, fail closed (no manual fallback for auto-resolve)
+			if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
+				log.Printf("WARNING: system ethereum price is stale (updated %s ago, threshold %s), failing closed",
+					time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+				return -1, 0, nil
+			}
+			return sysPrice.PriceUSD, sysPrice.Decimals, nil
+		}
+	}
+
+	// Step 4: Not found → fail closed (signaled by negative price)
+	return -1, 0, nil
+}
+
+// logDecision creates a compliance log entry for an allow or deny decision.
+// M3: The log records the compliance *decision* (allow/deny), not the transaction outcome.
+// The transaction may still fail at the node (bad nonce, revert, etc.). The actual tx
+// result is captured separately in the RPC access log. This is a deliberate design
+// trade-off: we log the decision at check time because we need the audit trail before
+// forwarding the transaction to the node.
+func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *TransferInfo,
+	amountUSD *float64, thresholdUSD *float64, decision, denialReason string, recordID *string) error {
+
+	var denialReasonPtr *string
+	if denialReason != "" {
+		denialReasonPtr = &denialReason
+	}
+
+	entry := &ComplianceLog{
+		OrgID:              req.OrgID,
+		UserID:             req.UserID,
+		TransferType:       info.Type,
+		TokenAddress:       info.TokenAddress,
+		FromAddress:        info.FromAddress,
+		ToAddress:          info.ToAddress,
+		AmountWei:          info.AmountWei.String(),
+		AmountUSD:          amountUSD,
+		ThresholdUSD:       thresholdUSD,
+		Decision:           decision,
+		DenialReason:       denialReasonPtr,
+		TravelRuleRecordID: recordID,
+	}
+
+	_, err := c.store.CreateComplianceLog(ctx, entry)
+	if err != nil {
+		log.Printf("Warning: failed to create compliance log: %v", err)
+	}
+	return err
+}
+
+// resolveThreshold determines the applicable threshold for a transfer.
+// Per-address overrides (checked for both sender and recipient) take precedence over
+// the org-level config. If multiple address overrides match, the lowest threshold wins.
+// Returns an error if any database lookup fails (fail-closed: caller should deny).
+func (c *Checker) resolveThreshold(ctx context.Context, orgID string, config *ComplianceConfig, fromAddr, toAddr string) (float64, error) {
+	var lowestOverride *AddressThresholdOverride
+
+	for _, addr := range []string{fromAddr, toAddr} {
+		if addr == "" {
+			continue
+		}
+		// Normalize to lowercase for consistent lookup
+		addr = strings.ToLower(addr)
+		override, err := c.store.GetAddressThresholdOverride(ctx, orgID, addr)
+		if err != nil {
+			// Fail closed: if we can't check overrides, we can't make a safe decision
+			return 0, fmt.Errorf("failed to get address threshold override for %s: %w", addr, err)
+		}
+		if override != nil && (lowestOverride == nil || override.ThresholdUSD < lowestOverride.ThresholdUSD) {
+			lowestOverride = override
+		}
+	}
+
+	if lowestOverride != nil {
+		return lowestOverride.ThresholdUSD, nil
+	}
+	return config.ThresholdUSD, nil
+}
+
+// WeiToUSD converts a wei amount to USD given the token decimals and price.
+// Returns the USD value and an error if the inputs are out of range or produce
+// an invalid result (Inf/NaN).
+func WeiToUSD(amountWei *big.Int, decimals int, priceUSD float64) (float64, error) {
+	if amountWei == nil || amountWei.Sign() == 0 {
+		return 0, nil
+	}
+
+	// Guard against negative amounts — these are invalid and likely a bug upstream
+	if amountWei.Sign() < 0 {
+		return 0, fmt.Errorf("negative amountWei: %s", amountWei.String())
+	}
+
+	// Guard against invalid decimals (EVM tokens use 0-77 range)
+	if decimals < 0 || decimals > 77 {
+		return 0, fmt.Errorf("token decimals %d out of valid range [0, 77]", decimals)
+	}
+
+	// Guard against invalid price
+	if priceUSD < 0 || math.IsInf(priceUSD, 0) || math.IsNaN(priceUSD) {
+		return 0, fmt.Errorf("invalid price_usd: %v", priceUSD)
+	}
+
+	// Use big.Float for precision during the division
+	amountFloat := new(big.Float).SetInt(amountWei)
+	divisor := new(big.Float).SetFloat64(math.Pow10(decimals))
+	tokenAmount := new(big.Float).Quo(amountFloat, divisor)
+
+	// Multiply by price
+	price := new(big.Float).SetFloat64(priceUSD)
+	usdValue := new(big.Float).Mul(tokenAmount, price)
+
+	result, _ := usdValue.Float64()
+
+	// Guard against overflow producing Inf/NaN
+	if math.IsInf(result, 0) || math.IsNaN(result) {
+		return 0, fmt.Errorf("USD calculation overflow: wei=%s decimals=%d price=%f", amountWei.String(), decimals, priceUSD)
+	}
+
+	return result, nil
+}

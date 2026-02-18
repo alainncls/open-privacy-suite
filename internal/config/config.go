@@ -34,6 +34,17 @@ type Config struct {
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
 	TraceTimeout          time.Duration // Timeout for debug_traceCall requests (default: 30s)
 	TraceTieredValidation bool          // If true, skip trace for known org addresses (default: true)
+
+	// Travel rule compliance configuration
+	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
+	TravelRecordExpiry time.Duration // How long travel rule records stay valid (default: 24h)
+
+	// Token price fetching configuration
+	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
+	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
+
+	// Trusted Proxies for X-Forwarded-For trust
+	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 }
 
 func Load() *Config {
@@ -121,6 +132,32 @@ func Load() *Config {
 	}
 	traceTiered := getEnv("TRACE_TIERED_VALIDATION", "true") != "false"
 
+	// Travel rule compliance configuration
+	enableTravelRule := getEnv("ENABLE_TRAVEL_RULE", "false") == "true"
+	travelRecordExpiry := 24 * time.Hour
+	if expiryStr := getEnv("TRAVEL_RECORD_EXPIRY", ""); expiryStr != "" {
+		if d, err := time.ParseDuration(expiryStr); err == nil {
+			travelRecordExpiry = d
+		}
+	}
+
+	// Token price fetching configuration
+	priceFetchInterval := 5 * time.Minute
+	if intervalStr := getEnv("PRICE_FETCH_INTERVAL", ""); intervalStr != "" {
+		if d, err := time.ParseDuration(intervalStr); err == nil {
+			priceFetchInterval = d
+		}
+	}
+	if priceFetchInterval < 1*time.Minute {
+		priceFetchInterval = 1 * time.Minute
+	}
+	priceStalenessThreshold := 15 * time.Minute
+	if staleStr := getEnv("PRICE_STALENESS_THRESHOLD", ""); staleStr != "" {
+		if d, err := time.ParseDuration(staleStr); err == nil {
+			priceStalenessThreshold = d
+		}
+	}
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -145,7 +182,28 @@ func Load() *Config {
 		TraceCacheTTL:              traceCacheTTL,
 		TraceTimeout:               traceTimeout,
 		TraceTieredValidation:      traceTiered,
+		EnableTravelRule:           enableTravelRule,
+		TravelRecordExpiry:         travelRecordExpiry,
+		PriceFetchInterval:         priceFetchInterval,
+		PriceStalenessThreshold:    priceStalenessThreshold,
+		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}
+}
+
+func getSliceEnv(key, sep string) []string {
+	val := os.Getenv(key)
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, sep)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // IsProduction returns true if running in production mode

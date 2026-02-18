@@ -33,7 +33,7 @@ describe('ContractInfoPanel', () => {
 
       // Delay the contract lookup response so the loading state is visible
       server.use(
-        http.get('/api/v1/contracts/by-address/:address', async () => {
+        http.get('/api/v1/admin/contracts/by-address/:address', async () => {
           await new Promise((resolve) => setTimeout(resolve, 5000));
           return HttpResponse.json({ error: 'contract not found' }, { status: 404 });
         })
@@ -111,7 +111,7 @@ describe('ContractInfoPanel', () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
 
       server.use(
-        http.get('/api/v1/contracts/by-address/:address', ({ params }) => {
+        http.get('/api/v1/admin/contracts/by-address/:address', ({ params }) => {
           if (params.address === VALID_ADDRESS.toLowerCase()) {
             return HttpResponse.json({
               contract: {

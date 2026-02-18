@@ -47,7 +47,7 @@ describe('UserList', () => {
     it('shows loading spinner initially', async () => {
       // Set up a delayed response to see the loading state
       server.use(
-        http.get('/api/v1/users', async () => {
+        http.get('/api/v1/admin/users', async () => {
           await new Promise(resolve => setTimeout(resolve, 100));
           return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
         })
@@ -62,7 +62,7 @@ describe('UserList', () => {
 
     it('shows "Users" heading', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -76,7 +76,7 @@ describe('UserList', () => {
 
     it('shows empty state when no users', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -94,7 +94,7 @@ describe('UserList', () => {
 
     it('displays table with headers (External ID, KYC, Status, Created, Note, Actions)', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -116,7 +116,7 @@ describe('UserList', () => {
   describe('Data Display', () => {
     it('shows user external_id (DID) in row', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -138,7 +138,7 @@ describe('UserList', () => {
       });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [userWithLongDid], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -156,7 +156,7 @@ describe('UserList', () => {
 
     it('shows correct number of rows', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: mockUsers, total: mockUsers.length, limit: 25, offset: 0 });
         })
       );
@@ -175,7 +175,7 @@ describe('UserList', () => {
   describe('Status Badges', () => {
     it('KYC true shows "Verified" with checkmark', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -189,7 +189,7 @@ describe('UserList', () => {
 
     it('KYC false shows "No" indicator', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserNoKyc], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -203,7 +203,7 @@ describe('UserList', () => {
 
     it('Banned user shows red "Banned" badge', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserBanned], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -217,7 +217,7 @@ describe('UserList', () => {
 
     it('Non-banned users show "Active" badge', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -231,7 +231,7 @@ describe('UserList', () => {
 
     it('shows both KYC and ban status correctly for multiple users', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull, mockUserNoKyc, mockUserBanned], total: 3, limit: 25, offset: 0 });
         })
       );
@@ -255,7 +255,7 @@ describe('UserList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -280,12 +280,12 @@ describe('UserList', () => {
 
       let currentBanned = false;
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [
             { ...mockUserFull, banned: currentBanned },
           ], total: 1, limit: 25, offset: 0 });
         }),
-        http.put('/api/v1/users/:userId', async ({ request }) => {
+        http.put('/api/v1/admin/users/:userId', async ({ request }) => {
           const body = (await request.json()) as { banned: boolean };
           currentBanned = body.banned;
           return HttpResponse.json({ ...mockUserFull, banned: currentBanned });
@@ -310,7 +310,7 @@ describe('UserList', () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUserFull], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -335,7 +335,7 @@ describe('UserList', () => {
       });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [userWithDate], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -352,7 +352,7 @@ describe('UserList', () => {
   describe('Error Handling', () => {
     it('shows empty list when API returns error', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json(
             { error: 'Internal server error' },
             { status: 500 }
@@ -376,7 +376,7 @@ describe('UserList', () => {
       });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [userWithNote], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -395,7 +395,7 @@ describe('UserList', () => {
       });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [userWithoutNote], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -412,7 +412,7 @@ describe('UserList', () => {
   describe('Ban/Unban Button States', () => {
     it('shows "Ban" button for active users', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [{ ...mockUserFull, banned: false }], total: 1, limit: 25, offset: 0 });
         })
       );
@@ -428,7 +428,7 @@ describe('UserList', () => {
 
     it('shows "Unban" button for banned users', async () => {
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [{ ...mockUserBanned, banned: true }], total: 1, limit: 25, offset: 0 });
         })
       );

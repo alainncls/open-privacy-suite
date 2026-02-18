@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -21,12 +22,13 @@ import (
 // It separates concerns from HTTP handling, making the logic testable
 // and reusable.
 type JSONRPCProcessor struct {
-	rbacAccessCtrl  *rbac.AccessController
-	rateLimiter     RateLimiterInterface
-	proxy           *proxy.Proxy
-	accessLogger    AccessLogger
-	runtimeTracer   *tracer.RuntimeTracer
-	traceValidator  *rbac.TraceValidator
+	rbacAccessCtrl    *rbac.AccessController
+	rateLimiter       RateLimiterInterface
+	proxy             *proxy.Proxy
+	accessLogger      AccessLogger
+	runtimeTracer     *tracer.RuntimeTracer
+	traceValidator    *rbac.TraceValidator
+	complianceChecker *compliance.Checker
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -74,6 +76,11 @@ func NewJSONRPCProcessor(
 		proxy:          proxyClient,
 		accessLogger:   logger,
 	}
+}
+
+// SetComplianceChecker sets the compliance checker for travel rule enforcement.
+func (p *JSONRPCProcessor) SetComplianceChecker(checker *compliance.Checker) {
+	p.complianceChecker = checker
 }
 
 // NewJSONRPCProcessorWithTracing creates a new processor with runtime tracing support.
@@ -178,6 +185,14 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
 		return &ProcessResult{
 			Error: traceErr,
+		}
+	}
+
+	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
+	if req.Method == "eth_sendTransaction" {
+		from, to, data, value := extractTxParams(req.Params)
+		if compErr := p.checkCompliance(ctx, req, result.OrgID, result.UserID, from, to, data, value); compErr != nil {
+			return compErr
 		}
 	}
 
@@ -399,6 +414,44 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	return nil
 }
 
+// checkCompliance runs travel rule compliance checks if the checker is configured.
+// Called from both eth_sendTransaction and eth_sendRawTransaction paths.
+// Returns nil if compliance passes or is disabled, or a ProcessResult with an error.
+func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequest, orgID, userID, from, to, data, value string) *ProcessResult {
+	if p.complianceChecker == nil {
+		return nil
+	}
+
+	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
+		OrgID:  orgID,
+		UserID: userID,
+		From:   from,
+		To:     to,
+		Data:   data,
+		Value:  value,
+	})
+	if compErr != nil {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "compliance check failed: " + compErr.Error(),
+			},
+		}
+	}
+	if !compResult.Allowed {
+		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "compliance denied: " + compResult.Reason,
+			},
+		}
+	}
+
+	return nil
+}
+
 // isSimpleValueTransfer returns true if the transaction has no calldata.
 // Note: this alone is NOT sufficient to skip tracing - the caller must also
 // verify the target is an EOA (not a contract) via eth_getCode, because
@@ -511,6 +564,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				}
 			}
 		}
+	}
+
+	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
+	if compErr := p.checkCompliance(ctx, req, result.OrgID, result.UserID, from, to, data, value); compErr != nil {
+		return compErr
 	}
 
 	// Check rate limits

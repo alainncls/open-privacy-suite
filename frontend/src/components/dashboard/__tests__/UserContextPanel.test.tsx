@@ -31,7 +31,7 @@ describe('UserContextPanel', () => {
 
       // Delay the user search response so the loading state is visible
       server.use(
-        http.get('/api/v1/users', async () => {
+        http.get('/api/v1/admin/users', async () => {
           await new Promise((resolve) => setTimeout(resolve, 5000));
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
@@ -149,7 +149,7 @@ describe('UserContextPanel', () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [], total: 0, limit: 25, offset: 0 });
         })
       );
@@ -169,7 +169,7 @@ describe('UserContextPanel', () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
 
       server.use(
-        http.get('/api/v1/users', () => {
+        http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({
             data: [{
               id: 'user-1',

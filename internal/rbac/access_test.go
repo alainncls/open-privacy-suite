@@ -2323,13 +2323,44 @@ func TestExtractBlockParam(t *testing.T) {
 			params:   []any{"0x1234", "0x0", nil},
 			expected: "latest",
 		},
-		// Other methods - should return latest
+		// Other state-query methods - block param at index 1
 		{
-			name:     "eth_getBalance - not applicable, returns latest",
+			name:     "eth_getBalance with historical block",
 			method:   "eth_getBalance",
 			params:   []any{"0x1234", "0x100"},
+			expected: "0x100",
+		},
+		{
+			name:     "eth_getBalance with latest",
+			method:   "eth_getBalance",
+			params:   []any{"0x1234", "latest"},
 			expected: "latest",
 		},
+		{
+			name:     "eth_getBalance without block param",
+			method:   "eth_getBalance",
+			params:   []any{"0x1234"},
+			expected: "latest",
+		},
+		{
+			name:     "eth_getCode with historical block",
+			method:   "eth_getCode",
+			params:   []any{"0x1234", "0x5678"},
+			expected: "0x5678",
+		},
+		{
+			name:     "eth_getTransactionCount with historical block",
+			method:   "eth_getTransactionCount",
+			params:   []any{"0x1234", "0xabc"},
+			expected: "0xabc",
+		},
+		{
+			name:     "eth_getProof with historical block",
+			method:   "eth_getProof",
+			params:   []any{"0x1234", []any{"0x0"}, "0x999"},
+			expected: "0x999",
+		},
+		// Methods not in historicalCheckMethods - should return latest
 		{
 			name:     "eth_blockNumber - not applicable, returns latest",
 			method:   "eth_blockNumber",
@@ -2519,12 +2550,40 @@ func TestIsHistoricalStateQuery(t *testing.T) {
 			expectBlocked:  true,
 			expectedReason: "historical state queries not permitted",
 		},
-		// Other methods - not checked
+		// Other state-query methods - now checked
 		{
-			name:          "eth_getBalance - not checked",
+			name:           "eth_getBalance with historical block - blocked",
+			method:         "eth_getBalance",
+			params:         []any{"0x1234", "0x1234"},
+			expectBlocked:  true,
+			expectedReason: "historical state queries not permitted",
+		},
+		{
+			name:          "eth_getBalance with latest - allowed",
 			method:        "eth_getBalance",
-			params:        []any{"0x1234", "0x1234"},
+			params:        []any{"0x1234", "latest"},
 			expectBlocked: false,
+		},
+		{
+			name:           "eth_getCode with historical block - blocked",
+			method:         "eth_getCode",
+			params:         []any{"0x1234", "0x5678"},
+			expectBlocked:  true,
+			expectedReason: "historical state queries not permitted",
+		},
+		{
+			name:           "eth_getTransactionCount with historical block - blocked",
+			method:         "eth_getTransactionCount",
+			params:         []any{"0x1234", "0xabc"},
+			expectBlocked:  true,
+			expectedReason: "historical state queries not permitted",
+		},
+		{
+			name:           "eth_getProof with historical block - blocked",
+			method:         "eth_getProof",
+			params:         []any{"0x1234", []any{"0x0"}, "0x999"},
+			expectBlocked:  true,
+			expectedReason: "historical state queries not permitted",
 		},
 		{
 			name:          "eth_blockNumber - not checked",
