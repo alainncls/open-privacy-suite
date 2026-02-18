@@ -67,6 +67,10 @@ function App() {
   const activeTab = getActiveTab();
 
   const handleTabChange = (value: string) => {
+    // Preserve org selection across tab switches
+    const orgParam = new URLSearchParams(location.search).get('org');
+    const suffix = orgParam ? `?org=${orgParam}` : '';
+
     switch (value) {
       case 'dashboard':
         navigate('/admin/dashboard');
@@ -75,13 +79,13 @@ function App() {
         navigate('/admin/logs');
         break;
       case 'rbac':
-        navigate('/admin/rbac');
+        navigate('/admin/rbac' + suffix);
         break;
       case 'compliance':
-        navigate('/admin/compliance');
+        navigate('/admin/compliance' + suffix);
         break;
       case 'disclosure':
-        navigate('/admin/disclosure');
+        navigate('/admin/disclosure' + suffix);
         break;
     }
   };

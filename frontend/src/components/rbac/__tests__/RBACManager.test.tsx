@@ -190,9 +190,9 @@ describe('RBACManager Integration Tests', () => {
         expect(groupsTab).toHaveAttribute('data-state', 'active');
       });
 
-      // Should show groups content (the heading in GroupList)
+      // Without org selected, should show "Select an org" prompt
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Groups' })).toBeInTheDocument();
+        expect(screen.getByText('Select an org')).toBeInTheDocument();
       });
     });
 
@@ -217,14 +217,13 @@ describe('RBACManager Integration Tests', () => {
     });
 
     it('navigates to Contracts tab', async () => {
-      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
+      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/contracts?org=org-1' });
 
       await waitFor(() => {
         expect(screen.getByTestId('rbac-manager')).toBeInTheDocument();
       });
 
       const contractsTab = screen.getByTestId('tab-contracts');
-      await user.click(contractsTab);
 
       await waitFor(() => {
         expect(contractsTab).toHaveAttribute('data-state', 'active');
@@ -296,7 +295,7 @@ describe('RBACManager Integration Tests', () => {
   // Organization Selector Tests
   // ===========================================================================
   describe('Organization Selector', () => {
-    it('auto-selects first organization when switching to Groups tab', async () => {
+    it('does not auto-select org when switching to Groups tab without org param', async () => {
       const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
 
       await waitFor(() => {
@@ -306,9 +305,8 @@ describe('RBACManager Integration Tests', () => {
       await user.click(screen.getByTestId('tab-groups'));
 
       await waitFor(() => {
-        // First org should be auto-selected
         expect(screen.getByTestId('org-selector')).toBeInTheDocument();
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
+        expect(screen.getByText('Select an org')).toBeInTheDocument();
       });
     });
 

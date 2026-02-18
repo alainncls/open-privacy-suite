@@ -1305,3 +1305,148 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 	})
 }
 
+// TestCheckAccessEOAValueTransfer tests that eth_sendTransaction to an unregistered
+// EOA address (no calldata) is allowed with just the write claim, without requiring
+// contract-level access grants.
+func TestCheckAccessEOAValueTransfer(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// User with write claim
+	writeUser := &User{ID: "write-user", ExternalID: "did:test:writer", KYC: true, Banned: false}
+	store.users["did:test:writer"] = writeUser
+
+	// User with only read claim
+	readUser := &User{ID: "read-user", ExternalID: "did:test:reader", KYC: true, Banned: false}
+	store.users["did:test:reader"] = readUser
+
+	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+	groupB := &Group{ID: "group-b", OrgID: "org-a", Slug: "group-b", Name: "Group B"}
+
+	store.memberships["write-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "m1", UserID: "write-user", GroupID: "group-a"}, Group: groupA},
+	}
+	store.memberships["read-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "m2", UserID: "read-user", GroupID: "group-b"}, Group: groupB},
+	}
+
+	store.groupAccess["group-a"] = &GroupAccess{
+		ID: "ga-a", GroupID: "group-a",
+		Claims:         []Claim{ClaimRead, ClaimWrite},
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+	}
+	store.groupAccess["group-b"] = &GroupAccess{
+		ID: "ga-b", GroupID: "group-b",
+		Claims:         []Claim{ClaimRead},
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+	}
+
+	store.cachedPermissions["write-user:org-a"] = &EffectivePermissions{
+		ID:             "perms-writer",
+		UserID:         "write-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimRead, ClaimWrite},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+	store.cachedPermissions["read-user:org-a"] = &EffectivePermissions{
+		ID:             "perms-reader",
+		UserID:         "read-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimRead},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	// An unregistered EOA address (not in contractOwners, not registered anywhere)
+	eoaAddress := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+	t.Run("EOA-001: User with write claim can send ETH to EOA", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:writer",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000"}},
+			TargetAddress:  strings.ToLower(eoaAddress),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected write user to send ETH to EOA, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("EOA-002: User with only read claim cannot send ETH to EOA", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:reader",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x2222222222222222222222222222222222222222", "value": "0xde0b6b3a7640000"}},
+			TargetAddress:  strings.ToLower(eoaAddress),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected read-only user to be denied sending ETH")
+		}
+		if !strings.Contains(result.Reason, "write") {
+			t.Errorf("expected denial to mention write claim, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("EOA-003: Value transfer with calldata is NOT treated as EOA transfer", func(t *testing.T) {
+		// If there's calldata, it could be a contract call — must go through contract access check
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:writer",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000", "data": "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001"}},
+			TargetAddress:  strings.ToLower(eoaAddress),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be denied because unregistered address with calldata goes through contract check
+		// and write-only user doesn't have deploy/admin claims for unregistered contracts
+		if result.Allowed {
+			t.Error("expected tx with calldata to unregistered address to be denied (not treated as EOA transfer)")
+		}
+	})
+
+	t.Run("EOA-004: Value transfer to registered contract goes through contract check", func(t *testing.T) {
+		// Register the address as a contract owned by org-a
+		contractAddr := "0xaaaa000000000000000000000000000000000001"
+		store.contractOwners[strings.ToLower(contractAddr)] = "org-a"
+
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:writer",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": contractAddr, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000"}},
+			TargetAddress:  strings.ToLower(contractAddr),
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should be denied because user has no explicit grant for this contract
+		if result.Allowed {
+			t.Error("expected value transfer to registered contract to go through contract access check and be denied")
+		}
+	})
+}
+

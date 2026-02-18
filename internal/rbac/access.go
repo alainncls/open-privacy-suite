@@ -494,6 +494,39 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Track factory deploy info for auto-registration after successful tx
 	var factoryDeployInfo *FactoryDeployInfo
 
+	// Simple value transfers (eth_sendTransaction with no calldata) to unregistered
+	// addresses are treated as EOA transfers. They only require the 'write' claim —
+	// no contract-level access check is needed since EOAs don't have code to execute.
+	if req.Method == "eth_sendTransaction" && req.TargetAddress != "" && isValueTransferParams(req.Params) {
+		addr := strings.ToLower(req.TargetAddress)
+		// Check if this address is registered as a contract or preregistered address
+		if !perms.IsContractRegistered(addr) {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID == "" {
+				// Address is not a known contract — treat as EOA value transfer.
+				// Just verify user has the required write claim.
+				if requiredClaim != "" && !containsClaim(perms.Claims, requiredClaim) {
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("missing %s claim for value transfer to %s", requiredClaim, req.TargetAddress),
+					}, nil
+				}
+				allClaims := collectAllClaims(perms)
+				return &AccessCheckResult{
+					Allowed:        true,
+					OrgID:          org.ID,
+					UserID:         user.ID,
+					RateLimitRPS:   perms.RateLimitRPS,
+					RateLimitDaily: perms.RateLimitDaily,
+					Claims:         allClaims,
+				}, nil
+			}
+		}
+	}
+
 	// Check contract access if target address is specified
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
@@ -1217,6 +1250,34 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 	}
 
 	return org, nil
+}
+
+// isValueTransferParams checks if eth_sendTransaction params represent a simple
+// value transfer (no calldata). Returns true if the tx object has no "data"/"input"
+// field or if it's empty/0x.
+func isValueTransferParams(params []any) bool {
+	if len(params) == 0 {
+		return false
+	}
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		return false
+	}
+	// Check "data" field
+	if data, ok := txObj["data"].(string); ok {
+		d := strings.TrimSpace(data)
+		if d != "" && d != "0x" && d != "0X" {
+			return false // has calldata
+		}
+	}
+	// Check "input" field (some clients use this instead of "data")
+	if input, ok := txObj["input"].(string); ok {
+		d := strings.TrimSpace(input)
+		if d != "" && d != "0x" && d != "0X" {
+			return false // has calldata
+		}
+	}
+	return true
 }
 
 // GetTargetAddress extracts the target address from JSON-RPC params.

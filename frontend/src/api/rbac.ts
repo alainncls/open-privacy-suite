@@ -162,7 +162,7 @@ export const rbacApi = {
       api.get<{
         proxy: { status: string; port: string };
         node: { status: string; url: string; latency_ms: number; error?: string };
-        security: { runtime_tracing_enabled: boolean };
+        security: { runtime_tracing_enabled: boolean; travel_rule_enabled: boolean };
       }>('/status'),
   },
 
