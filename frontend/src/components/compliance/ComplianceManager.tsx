@@ -134,9 +134,9 @@ export default function ComplianceManager() {
     }
   };
 
-  // Sanctions tab is global, all others need an org
-  const needsOrg = activeTab !== 'sanctions';
-  const blockedWithoutOrg = needsOrg && !selectedOrg;
+  // Sanctions is global-only; Token Prices shows system prices without org but still has per-org section
+  const showOrgSelector = activeTab !== 'sanctions';
+  const blockedWithoutOrg = showOrgSelector && activeTab !== 'tokens' && !selectedOrg;
 
   return (
     <ComplianceOrgContext.Provider
@@ -164,7 +164,7 @@ export default function ComplianceManager() {
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm">Loading...</span>
                 </div>
-              ) : !needsOrg ? (
+              ) : !showOrgSelector ? (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#F1F5F9] text-[#6B7280]">
                   <Globe className="w-4 h-4" />
                   <span className="text-sm">Global (all organizations)</span>

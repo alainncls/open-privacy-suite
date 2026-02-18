@@ -16,11 +16,12 @@ type SystemPriceStore interface {
 
 // Service fetches token prices from CoinGecko on a schedule and updates the system_token_prices table.
 type Service struct {
-	store    SystemPriceStore
-	fetcher  *Fetcher
-	interval time.Duration
-	cancel   context.CancelFunc
-	done     chan struct{}
+	store               SystemPriceStore
+	fetcher             *Fetcher
+	interval            time.Duration
+	cancel              context.CancelFunc
+	done                chan struct{}
+	consecutiveFailures int
 }
 
 // NewService creates a new pricing service.
@@ -92,9 +93,15 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 	// Fetch from CoinGecko
 	prices, err := s.fetcher.Fetch(ctx, ids)
 	if err != nil {
-		log.Printf("WARNING: CoinGecko fetch failed, keeping existing prices: %v", err)
+		s.consecutiveFailures++
+		if s.consecutiveFailures >= 3 {
+			log.Printf("ERROR: CoinGecko fetch failed %d consecutive times, prices may be stale: %v", s.consecutiveFailures, err)
+		} else {
+			log.Printf("WARNING: CoinGecko fetch failed, keeping existing prices: %v", err)
+		}
 		return
 	}
+	s.consecutiveFailures = 0
 
 	// Upsert each result
 	updated := 0

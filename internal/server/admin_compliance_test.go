@@ -101,7 +101,7 @@ func setupTestServerForCompliance(t *testing.T) *testServerCompliance {
 	require.NoError(t, err)
 
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
-	checker := compliance.NewChecker(database, 24*time.Hour)
+	checker := compliance.NewChecker(database, 24*time.Hour, 15*time.Minute)
 
 	// Mock node that returns a canned JSON-RPC response
 	mockNode := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -319,7 +319,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			},
 			teardown: func(t *testing.T) {
 				t.Helper()
-				ts.complianceChecker = compliance.NewChecker(ts.db, 24*time.Hour)
+				ts.complianceChecker = compliance.NewChecker(ts.db, 24*time.Hour, 15*time.Minute)
 			},
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",

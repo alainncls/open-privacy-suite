@@ -255,7 +255,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
-		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry)
+		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry, cfg.PriceStalenessThreshold)
 		s.complianceChecker = checker
 		s.jsonrpcProcessor.SetComplianceChecker(checker)
 		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)

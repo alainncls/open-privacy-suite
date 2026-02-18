@@ -508,7 +508,7 @@ func TestCheckerCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewChecker(tt.store, 24*time.Hour)
+			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
 			if err != nil {
 				t.Fatalf("Check() returned unexpected error: %v", err)
@@ -653,7 +653,7 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewChecker(tt.store, 24*time.Hour)
+			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
 			if err != nil {
 				t.Fatalf("Check() returned unexpected error: %v", err)
@@ -964,7 +964,7 @@ func TestCheckerCheck_DBErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewChecker(tt.store, 24*time.Hour)
+			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
 			if err == nil {
 				t.Fatalf("Check() expected error, got result: Allowed=%v Reason=%q", result.Allowed, result.Reason)
@@ -1047,7 +1047,7 @@ func TestCheckerCheck_AuditLogFailClosed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewChecker(tt.store, 24*time.Hour)
+			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
 			if err != nil {
 				t.Fatalf("Check() returned unexpected error: %v", err)
@@ -1229,7 +1229,7 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewChecker(tt.store, 24*time.Hour)
+			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
 			if err != nil {
 				t.Fatalf("Check() returned unexpected error: %v", err)

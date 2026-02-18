@@ -12,15 +12,17 @@ import (
 
 // Checker performs compliance checks on value transfers.
 type Checker struct {
-	store        Store
-	recordExpiry time.Duration // how long travel rule records stay valid
+	store                   Store
+	recordExpiry            time.Duration // how long travel rule records stay valid
+	priceStalenessThreshold time.Duration // after this duration, system prices are considered stale
 }
 
 // NewChecker creates a new compliance checker.
-func NewChecker(store Store, recordExpiry time.Duration) *Checker {
+func NewChecker(store Store, recordExpiry time.Duration, priceStalenessThreshold time.Duration) *Checker {
 	return &Checker{
-		store:        store,
-		recordExpiry: recordExpiry,
+		store:                   store,
+		recordExpiry:            recordExpiry,
+		priceStalenessThreshold: priceStalenessThreshold,
 	}
 }
 
@@ -251,13 +253,19 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 				return 0, 0, fmt.Errorf("failed to get system token price: %w", err)
 			}
 			if sysPrice != nil && sysPrice.PriceUSD > 0 {
-				return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+				// Check staleness: if system price is too old, fall through to manual
+				if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
+					log.Printf("WARNING: system price for %s is stale (updated %s ago, threshold %s), falling back to manual price",
+						*tokenPrice.CoingeckoID, time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+				} else {
+					return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+				}
 			}
-			// System price unavailable or zero — fall back to manual price on the per-org entry
+			// System price unavailable, zero, or stale — fall back to manual price on the per-org entry
 			if tokenPrice.PriceUSD > 0 {
 				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
 			}
-			// Both system and manual are zero/unavailable
+			// Both system and manual are zero/unavailable — fail closed
 			return -1, 0, nil
 		}
 		// Step 2b: No coingecko_id → use manual price
@@ -271,6 +279,12 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 			return 0, 0, fmt.Errorf("failed to get system ethereum price: %w", err)
 		}
 		if sysPrice != nil && sysPrice.PriceUSD > 0 {
+			// Check staleness: if system price is too old, fail closed (no manual fallback for auto-resolve)
+			if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
+				log.Printf("WARNING: system ethereum price is stale (updated %s ago, threshold %s), failing closed",
+					time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+				return -1, 0, nil
+			}
 			return sysPrice.PriceUSD, sysPrice.Decimals, nil
 		}
 	}

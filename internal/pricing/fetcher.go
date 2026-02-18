@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -36,9 +37,12 @@ func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, 
 		return nil, nil
 	}
 
-	url := fmt.Sprintf("%s?ids=%s&vs_currencies=usd", coingeckoBaseURL, strings.Join(ids, ","))
+	params := url.Values{}
+	params.Set("ids", strings.Join(ids, ","))
+	params.Set("vs_currencies", "usd")
+	fetchURL := coingeckoBaseURL + "?" + params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -57,7 +61,7 @@ func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, 
 
 	// Response format: {"ethereum":{"usd":2500.42},"tether":{"usd":1.0}}
 	var result map[string]map[string]float64
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode CoinGecko response: %w", err)
 	}
 

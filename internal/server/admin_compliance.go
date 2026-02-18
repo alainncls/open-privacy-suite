@@ -165,6 +165,12 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	// When using CoinGecko source, price_usd=0 is OK (will be resolved from system table).
 	// For manual pricing, require price > 0.
 	isCoingecko := input.CoingeckoID != nil && *input.CoingeckoID != ""
+	// Validate coingecko_id against whitelist to prevent arbitrary external API calls
+	validCoingeckoIDs := map[string]bool{"ethereum": true, "tether": true, "usd-coin": true}
+	if isCoingecko && !validCoingeckoIDs[*input.CoingeckoID] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coingecko_id; valid values are: ethereum, tether, usd-coin"})
+		return
+	}
 	if !isCoingecko && input.PriceUSD <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "price_usd must be greater than 0 for manual pricing"})
 		return

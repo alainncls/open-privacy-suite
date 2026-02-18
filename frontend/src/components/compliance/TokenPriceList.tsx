@@ -44,7 +44,7 @@ export default function TokenPriceList() {
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
   const [systemPrices, setSystemPrices] = useState<SystemTokenPrice[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!orgId);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<TokenPrice | null>(null);
@@ -70,7 +70,11 @@ export default function TokenPriceList() {
   };
 
   const loadTokens = async () => {
-    if (!orgId) return;
+    if (!orgId) {
+      setTokens([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
@@ -271,11 +275,20 @@ export default function TokenPriceList() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-medium text-[#374151]">Per-Organization Token Prices</h3>
-          <Button size="sm" onClick={openCreateForm}>
-            <Plus className="w-4 h-4 mr-1" />
-            Add Token
-          </Button>
+          {orgId && (
+            <Button size="sm" onClick={openCreateForm}>
+              <Plus className="w-4 h-4 mr-1" />
+              Add Token
+            </Button>
+          )}
         </div>
+
+        {!orgId ? (
+          <div className="text-center py-8 text-[#6B7280] text-sm">
+            Select an organization above to manage per-org token prices.
+          </div>
+        ) : (
+        <>
 
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
@@ -369,6 +382,7 @@ export default function TokenPriceList() {
             </TableBody>
           </Table>
         )}
+        </>)}
       </div>
 
       {/* Create/Edit Dialog */}

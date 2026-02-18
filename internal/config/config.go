@@ -148,6 +148,9 @@ func Load() *Config {
 			priceFetchInterval = d
 		}
 	}
+	if priceFetchInterval < 1*time.Minute {
+		priceFetchInterval = 1 * time.Minute
+	}
 	priceStalenessThreshold := 15 * time.Minute
 	if staleStr := getEnv("PRICE_STALENESS_THRESHOLD", ""); staleStr != "" {
 		if d, err := time.ParseDuration(staleStr); err == nil {
