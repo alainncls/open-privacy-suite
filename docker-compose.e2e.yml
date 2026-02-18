@@ -47,6 +47,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      target: dev
     # No port mapping - only playwright container needs access
     environment:
       - NODE_URL=http://anvil:8545
