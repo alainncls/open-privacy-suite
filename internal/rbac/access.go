@@ -1325,9 +1325,11 @@ func extractBlockParam(method string, params []any) string {
 
 	var blockParamIndex int
 	switch strings.ToLower(method) {
-	case "eth_call":
+	case "eth_call", "eth_getbalance", "eth_getcode", "eth_gettransactioncount":
 		blockParamIndex = 1
-	case "eth_getstorageat":
+	case "eth_getstorageat", "eth_getproof":
+		// eth_getStorageAt: [address, slot, block]
+		// eth_getProof: [address, storageKeys[], block]
 		blockParamIndex = 2
 	default:
 		return "latest"
