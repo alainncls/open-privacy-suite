@@ -44,6 +44,21 @@ const COMMON_SELECTORS: Record<string, string> = {
   '0x313ce567': 'decimals()',
 };
 
+// Known parameter info for common selectors (used when ABI is not available)
+const COMMON_SELECTOR_PARAMS: Record<string, AbiFunctionInput[]> = {
+  '0x70a08231': [{ index: 0, name: 'account', type: 'address' }],
+  '0xa9059cbb': [{ index: 0, name: 'to', type: 'address' }],
+  '0x23b872dd': [
+    { index: 0, name: 'from', type: 'address' },
+    { index: 1, name: 'to', type: 'address' },
+  ],
+  '0x095ea7b3': [{ index: 0, name: 'spender', type: 'address' }],
+  '0xdd62ed3e': [
+    { index: 0, name: 'owner', type: 'address' },
+    { index: 1, name: 'spender', type: 'address' },
+  ],
+};
+
 // Validate function selector format (0x + 8 hex chars)
 const isValidSelector = (selector: string): boolean => {
   return /^0x[a-fA-F0-9]{8}$/.test(selector);
@@ -320,6 +335,15 @@ export default function ContractGrantForm({
         {/* Function selector input (shown when specific mode) */}
         {functionMode === 'specific' && (
           <div className="space-y-3 pt-2">
+            {/* Warning when no ABI is available */}
+            {!contractAbi && (
+              <div className="p-4 rounded-lg bg-[#FEF9C3] border border-[#FDE68A] flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-[#92400E] flex-shrink-0 mt-0.5" />
+                <span className="text-[#92400E] text-sm">
+                  No ABI uploaded for this contract. Function names shown are based on common ERC20 selectors and may not match this contract's actual interface.
+                </span>
+              </div>
+            )}
             {/* Current selectors */}
             {functions.length > 0 && (
               <div className="space-y-3">
@@ -334,7 +358,7 @@ export default function ContractGrantForm({
                     );
                     const addressParams = abiFunc
                       ? abiFunc.inputs.filter(inp => inp.type === 'address')
-                      : [];
+                      : (COMMON_SELECTOR_PARAMS[rule.selector.toLowerCase()] || []);
 
                     return (
                       <div
