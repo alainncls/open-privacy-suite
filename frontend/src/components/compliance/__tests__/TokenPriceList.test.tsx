@@ -117,7 +117,7 @@ describe('TokenPriceList', () => {
             token_address: 'native',
             symbol: 'ETH',
             decimals: 18,
-            price_usd: 3000,
+            price_fiat: 3000,
             created_at: '2024-01-01T00:00:00Z',
             updated_at: new Date().toISOString(),
           });

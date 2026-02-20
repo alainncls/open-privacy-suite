@@ -5,10 +5,12 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import type { ComplianceConfig as ComplianceConfigType } from '@/types/compliance';
 
 export default function ComplianceConfig() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [config, setConfig] = useState<ComplianceConfigType | null>(null);
@@ -18,7 +20,7 @@ export default function ComplianceConfig() {
   const [success, setSuccess] = useState(false);
 
   const [enabled, setEnabled] = useState(false);
-  const [thresholdUsd, setThresholdUsd] = useState('1000');
+  const [thresholdFiat, setThresholdFiat] = useState('1000');
 
   const loadConfig = async () => {
     if (!orgId) return;
@@ -29,14 +31,14 @@ export default function ComplianceConfig() {
       const cfg = response.data;
       setConfig(cfg);
       setEnabled(cfg.enabled);
-      setThresholdUsd(String(cfg.threshold_usd));
+      setThresholdFiat(String(cfg.threshold_fiat));
     } catch (err: unknown) {
       const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
       if (axiosError.response?.status === 404) {
         // No config yet — show defaults
         setConfig(null);
         setEnabled(false);
-        setThresholdUsd('1000');
+        setThresholdFiat('1000');
       } else {
         setError(axiosError.response?.data?.error || 'Failed to load compliance config');
       }
@@ -57,7 +59,7 @@ export default function ComplianceConfig() {
       setSuccess(false);
       const response = await complianceApi.config.update(orgId, {
         enabled,
-        threshold_usd: parseFloat(thresholdUsd) || 0,
+        threshold_fiat: parseFloat(thresholdFiat) || 0,
       });
       setConfig(response.data);
       setSuccess(true);
@@ -120,18 +122,18 @@ export default function ComplianceConfig() {
 
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-            Threshold (USD)
+            Threshold ({currencyLabel})
           </label>
           <Input
             type="number"
-            value={thresholdUsd}
-            onChange={e => setThresholdUsd(e.target.value)}
+            value={thresholdFiat}
+            onChange={e => setThresholdFiat(e.target.value)}
             placeholder="1000"
             min="0"
             step="0.01"
           />
           <p className="text-xs text-neutral-400 mt-1">
-            Transfers above this USD value will require travel rule compliance
+            Transfers above this value will require travel rule compliance
           </p>
         </div>
 

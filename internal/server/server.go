@@ -275,7 +275,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
 
 		// Start background CoinGecko price fetcher
-		priceSvc := pricing.NewService(database, cfg.PriceFetchInterval)
+		priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
 		priceSvc.Start()
 		s.priceService = priceSvc
 	} else {
@@ -459,6 +459,9 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// User profile endpoints - protected by JWT but accessible from external IPs
 	s.registerUserProfileRoutes(router)
+
+	// External rates API - authenticated via API keys (separate from JWT/localhost)
+	s.registerExternalRatesRoutes(router)
 
 	// Explorer API endpoints - internal APIs for block explorer integration
 	// Protected by localhost-only middleware (called by explorer backend)

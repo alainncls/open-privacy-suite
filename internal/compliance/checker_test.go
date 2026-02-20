@@ -26,6 +26,7 @@ type mockComplianceStore struct {
 	addrOverrides   map[string]*AddressThresholdOverride // key = lowercased address
 	addrOverrideErr error // if set, GetAddressThresholdOverride returns this error
 	systemPrices    map[string]*SystemTokenPrice // key = coingecko_id
+	systemPricesByAddr map[string]*SystemTokenPrice // key = token_address
 }
 
 func (m *mockComplianceStore) GetComplianceConfig(_ context.Context, _ string) (*ComplianceConfig, error) {
@@ -152,7 +153,18 @@ func (m *mockComplianceStore) GetSystemTokenPrice(_ context.Context, coingeckoID
 	return nil, nil
 }
 
+func (m *mockComplianceStore) GetSystemTokenPriceByAddress(_ context.Context, tokenAddress string) (*SystemTokenPrice, error) {
+	if m.systemPricesByAddr != nil {
+		return m.systemPricesByAddr[tokenAddress], nil
+	}
+	return nil, nil
+}
+
 func (m *mockComplianceStore) UpsertSystemTokenPrice(_ context.Context, _ *SystemTokenPrice) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) CreateSystemTokenPrice(_ context.Context, _ *SystemTokenPrice) error {
 	panic("not implemented")
 }
 
@@ -160,37 +172,69 @@ func (m *mockComplianceStore) ListSystemTokenPrices(_ context.Context) ([]*Syste
 	panic("not implemented")
 }
 
+func (m *mockComplianceStore) GetSystemSetting(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (m *mockComplianceStore) SetSystemSetting(_ context.Context, _, _ string) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) CreateAPIKey(_ context.Context, _ *APIKey, _ string) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) GetAPIKeyByHash(_ context.Context, _ string) (*APIKey, error) {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) ListAPIKeys(_ context.Context) ([]*APIKey, error) {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) RevokeAPIKey(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) DeleteAPIKey(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
+func (m *mockComplianceStore) UpdateAPIKeyLastUsed(_ context.Context, _ string) error {
+	panic("not implemented")
+}
+
 // enabledConfig returns a ComplianceConfig with compliance enabled and the given threshold.
 func enabledConfig(threshold float64) *ComplianceConfig {
 	return &ComplianceConfig{
-		ID:           "cfg-1",
-		OrgID:        "org-1",
-		Enabled:      true,
-		ThresholdUSD: threshold,
+		ID:            "cfg-1",
+		OrgID:         "org-1",
+		Enabled:       true,
+		ThresholdFiat: threshold,
 	}
 }
 
 // nativePrice returns a TokenPrice for native ETH with the given price.
-func nativePrice(priceUSD float64) *TokenPrice {
+func nativePrice(priceFiat float64) *TokenPrice {
 	return &TokenPrice{
 		ID:           "tp-1",
 		OrgID:        "org-1",
 		TokenAddress: "native",
 		Symbol:       "ETH",
 		Decimals:     18,
-		PriceUSD:     priceUSD,
+		PriceFiat:    priceFiat,
 	}
 }
 
 // erc20Price returns a TokenPrice for an ERC20 token.
-func erc20Price(addr, symbol string, decimals int, priceUSD float64) *TokenPrice {
+func erc20Price(addr, symbol string, decimals int, priceFiat float64) *TokenPrice {
 	return &TokenPrice{
 		ID:           "tp-2",
 		OrgID:        "org-1",
 		TokenAddress: strings.ToLower(addr),
 		Symbol:       symbol,
 		Decimals:     decimals,
-		PriceUSD:     priceUSD,
+		PriceFiat:    priceFiat,
 	}
 }
 
@@ -471,7 +515,7 @@ func TestCheckerCheck(t *testing.T) {
 			store: &mockComplianceStore{
 				config:        enabledConfig(1000),
 				tokenPrice:    nativePrice(2000),
-				claimedRecord: nil, // DB returns nil because record amount_usd < transfer amount
+				claimedRecord: nil, // DB returns nil because record amount_fiat < transfer amount
 			},
 			req: &CheckRequest{
 				OrgID:  orgID,
@@ -498,7 +542,7 @@ func TestCheckerCheck(t *testing.T) {
 				Data:   "",
 				Value:  hexHalfETH, // 0.5 ETH * $2000 = $1000 exactly
 			},
-			// amountUSD < threshold uses strict less-than, so $1000 is NOT < $1000
+			// amountFiat < threshold uses strict less-than, so $1000 is NOT < $1000
 			// This means it falls through to the travel rule check path.
 			// With no record configured, it should be denied.
 			wantAllowed: false,
@@ -543,7 +587,7 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-						ID: "override-1", ThresholdUSD: 100, // address-specific: $100
+						ID: "override-1", ThresholdFiat: 100, // address-specific: $100
 					},
 				},
 			},
@@ -563,7 +607,7 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-						ID: "override-1", ThresholdUSD: 500,
+						ID: "override-1", ThresholdFiat: 500,
 					},
 				},
 			},
@@ -613,7 +657,7 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-						ID: "override-1", ThresholdUSD: 0, // $0 for this address
+						ID: "override-1", ThresholdFiat: 0, // $0 for this address
 					},
 				},
 			},
@@ -633,10 +677,10 @@ func TestCheckerPerAddressThreshold(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-						ID: "override-sender", ThresholdUSD: 50, // sender override: $50
+						ID: "override-sender", ThresholdFiat: 50, // sender override: $50
 					},
 					"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-						ID: "override-recipient", ThresholdUSD: 300, // recipient override: $300
+						ID: "override-recipient", ThresholdFiat: 300, // recipient override: $300
 					},
 				},
 			},
@@ -856,6 +900,18 @@ func TestWeiToUSD_EdgeCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWeiToFiat(t *testing.T) {
+	// WeiToFiat delegates to WeiToUSD — just verify delegation works.
+	amount := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil) // 1e18
+	got, err := WeiToFiat(amount, 18, 2500)
+	if err != nil {
+		t.Fatalf("WeiToFiat() unexpected error: %v", err)
+	}
+	if math.Abs(got-2500) > 0.01 {
+		t.Errorf("WeiToFiat() = %f, want 2500", got)
 	}
 }
 
@@ -1138,7 +1194,7 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					strings.ToLower(to): {
-						ID: "override-1", ThresholdUSD: 100, // $100 override
+						ID: "override-1", ThresholdFiat: 100, // $100 override
 					},
 				},
 				claimedRecord: &TravelRuleRecord{
@@ -1161,7 +1217,7 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 				tokenPrice: nativePrice(2000),
 				addrOverrides: map[string]*AddressThresholdOverride{
 					strings.ToLower(to): {
-						ID: "override-1", ThresholdUSD: 100,
+						ID: "override-1", ThresholdFiat: 100,
 					},
 				},
 				claimedRecord: nil,

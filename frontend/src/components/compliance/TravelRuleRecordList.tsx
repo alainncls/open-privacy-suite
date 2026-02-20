@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Loader2, Plus, AlertCircle, AlertTriangle, FileText, Copy, Check, Trash2 } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import { UserSearchInput } from './UserSearchInput';
 import type { TravelRuleRecord, TransferType, TokenPrice } from '@/types/compliance';
 
@@ -49,6 +50,7 @@ function humanToWei(amount: string, decimals: number): string {
 
 export default function TravelRuleRecordList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [records, setRecords] = useState<TravelRuleRecord[]>([]);
@@ -86,7 +88,7 @@ export default function TravelRuleRecordList() {
 
   useEffect(() => {
     if (selectedTokenInfo && formHumanAmount && !isNaN(parseFloat(formHumanAmount))) {
-      const usd = parseFloat(formHumanAmount) * selectedTokenInfo.price_usd;
+      const usd = parseFloat(formHumanAmount) * selectedTokenInfo.price_fiat;
       setFormEstimatedUsd(usd.toFixed(2));
     } else {
       setFormEstimatedUsd('');
@@ -184,7 +186,7 @@ export default function TravelRuleRecordList() {
       ...(formBeneficiaryInstitution.trim() && { institution: formBeneficiaryInstitution.trim() }),
     };
 
-    // C3: amount_usd is computed server-side from amount_wei and token price.
+    // C3: amount_fiat is computed server-side from amount_wei and token price.
     // We only send amount_wei; the server looks up the token price and calculates USD.
     const amountWei = selectedTokenInfo
       ? humanToWei(formHumanAmount, selectedTokenInfo.decimals)
@@ -268,7 +270,7 @@ export default function TravelRuleRecordList() {
                 <TableHead>Originator</TableHead>
                 <TableHead>Beneficiary</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead>Amount (USD)</TableHead>
+                <TableHead>Amount ({currencyLabel})</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
@@ -316,7 +318,7 @@ export default function TravelRuleRecordList() {
                     <TableCell>
                       <Badge variant="outline">{record.transfer_type.toUpperCase()}</Badge>
                     </TableCell>
-                    <TableCell>${record.amount_usd.toLocaleString()}</TableCell>
+                    <TableCell>{formatAmount(record.amount_fiat)}</TableCell>
                     <TableCell>
                       <Badge variant={statusBadgeVariant[status]}>{status}</Badge>
                     </TableCell>
@@ -433,8 +435,8 @@ export default function TravelRuleRecordList() {
                   <span className="text-neutral-500 font-medium">Amount (wei)</span>
                   <span className="font-mono text-sm break-all">{selectedRecord.amount_wei}</span>
 
-                  <span className="text-neutral-500 font-medium">Amount (USD)</span>
-                  <span>${selectedRecord.amount_usd.toLocaleString()}</span>
+                  <span className="text-neutral-500 font-medium">Amount ({currencyLabel})</span>
+                  <span>{formatAmount(selectedRecord.amount_fiat)}</span>
 
                   <span className="text-neutral-500 font-medium">Status</span>
                   <div>

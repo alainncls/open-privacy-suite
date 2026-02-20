@@ -185,14 +185,14 @@ func seedComplianceTestData(t *testing.T, database *db.DB) complianceSeedData {
 
 	// Enable compliance for the org
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO compliance_config (id, org_id, enabled, threshold_usd, created_at, updated_at)
+		`INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat, created_at, updated_at)
 		 VALUES ($1, $2, true, 1000, NOW(), NOW())`,
 		uuid.New().String(), orgID)
 	require.NoError(t, err)
 
 	// Create native ETH token price: symbol "ETH", decimals 18, price $2000
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_usd, created_at, updated_at)
+		`INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_fiat, created_at, updated_at)
 		 VALUES ($1, $2, 'native', 'ETH', 18, 2000, NOW(), NOW())`,
 		uuid.New().String(), orgID)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 				_, err := ts.db.Conn().ExecContext(ctx,
 					`INSERT INTO travel_rule_records
 					 (id, org_id, originator_user_id, originator_data, beneficiary_data,
-					  transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
+					  transfer_type, token_address, beneficiary_address, amount_wei, amount_fiat,
 					  expires_at, created_at)
 					 VALUES ($1, $2, $3, '{}', '{}', 'eth', NULL, $4, '1000000000000000000', 2000, $5, NOW())`,
 					uuid.New().String(), seed.orgID, seed.userID, toAddr, time.Now().Add(24*time.Hour))

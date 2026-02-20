@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Loader2, Plus, AlertCircle, Pencil, Trash2, Coins, AlertTriangle, RefreshCw } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import type { TokenPrice, UpsertTokenPriceInput, SystemTokenPrice } from '@/types/compliance';
 
 // CoinGecko source options
@@ -40,6 +41,7 @@ function timeAgo(dateStr: string): string {
 
 export default function TokenPriceList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
@@ -116,7 +118,7 @@ export default function TokenPriceList() {
     setFormAddress(token.token_address);
     setFormSymbol(token.symbol);
     setFormDecimals(String(token.decimals));
-    setFormPrice(String(token.price_usd));
+    setFormPrice(String(token.price_fiat));
     setFormSource(token.coingecko_id || 'manual');
     setFormError(null);
     setShowForm(true);
@@ -148,7 +150,7 @@ export default function TokenPriceList() {
     const input: UpsertTokenPriceInput = {
       symbol: formSymbol.trim(),
       decimals: parseInt(formDecimals) || 18,
-      price_usd: parseFloat(formPrice) || 0,
+      price_fiat: parseFloat(formPrice) || 0,
       coingecko_id: isCoingecko ? formSource : null,
     };
 
@@ -156,7 +158,7 @@ export default function TokenPriceList() {
       setFormError('Symbol is required');
       return;
     }
-    if (!isCoingecko && input.price_usd <= 0) {
+    if (!isCoingecko && input.price_fiat <= 0) {
       setFormError('Price must be greater than 0 for manual pricing');
       return;
     }
@@ -191,12 +193,12 @@ export default function TokenPriceList() {
   const getResolvedPrice = (token: TokenPrice): { price: number; stale: boolean; updatedAt: string | null } => {
     if (token.coingecko_id) {
       const sys = systemPrices.find(s => s.coingecko_id === token.coingecko_id);
-      if (sys && sys.price_usd > 0) {
-        return { price: sys.price_usd, stale: sys.is_stale, updatedAt: sys.updated_at };
+      if (sys && sys.price_fiat > 0) {
+        return { price: sys.price_fiat, stale: sys.is_stale, updatedAt: sys.updated_at };
       }
       return { price: 0, stale: false, updatedAt: null };
     }
-    return { price: token.price_usd, stale: false, updatedAt: token.updated_at };
+    return { price: token.price_fiat, stale: false, updatedAt: token.updated_at };
   };
 
   if (loading) {
@@ -229,9 +231,9 @@ export default function TokenPriceList() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {systemPrices.map(sp => (
               <div
-                key={sp.coingecko_id}
+                key={sp.id}
                 className={`p-4 rounded-lg border ${
-                  sp.price_usd === 0
+                  sp.price_fiat === 0
                     ? 'bg-red-50 border-error/30'
                     : sp.is_stale
                     ? 'bg-amber-50 border-amber-200'
@@ -239,19 +241,26 @@ export default function TokenPriceList() {
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-neutral-700">{sp.symbol}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-neutral-700">{sp.symbol}</span>
+                    {sp.source && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                        {sp.source}
+                      </Badge>
+                    )}
+                  </div>
                   <Badge
-                    variant={sp.price_usd === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
+                    variant={sp.price_fiat === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
                     className="text-xs"
                   >
-                    {sp.price_usd === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
+                    {sp.price_fiat === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
                   </Badge>
                 </div>
                 <div className="text-xl font-semibold text-neutral-800">
-                  {sp.price_usd === 0 ? '—' : `$${sp.price_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  {sp.price_fiat === 0 ? '—' : formatAmount(sp.price_fiat)}
                 </div>
                 <div className="text-xs text-neutral-400 mt-1">
-                  {sp.price_usd === 0 ? (
+                  {sp.price_fiat === 0 ? (
                     <span className="text-error-dark flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />
                       Price unavailable — add manual override
@@ -315,7 +324,7 @@ export default function TokenPriceList() {
                 <TableHead>Token Address</TableHead>
                 <TableHead>Symbol</TableHead>
                 <TableHead>Source</TableHead>
-                <TableHead>Price (USD)</TableHead>
+                <TableHead>Price ({currencyLabel})</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead className="w-[80px]"></TableHead>
               </TableRow>
@@ -350,7 +359,7 @@ export default function TokenPriceList() {
                         </span>
                       ) : (
                         <span className="flex items-center gap-1">
-                          ${resolved.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {formatAmount(resolved.price)}
                           {resolved.stale && (
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                           )}
@@ -455,7 +464,7 @@ export default function TokenPriceList() {
             {formSource === 'manual' && (
               <div>
                 <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                  Price (USD)
+                  Price ({currencyLabel})
                 </label>
                 <Input
                   type="number"

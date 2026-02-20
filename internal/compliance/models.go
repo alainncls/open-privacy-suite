@@ -1,6 +1,61 @@
 package compliance
 
-import "time"
+import (
+	"math/big"
+	"time"
+)
+
+// SupportedCurrency represents a fiat currency code.
+type SupportedCurrency string
+
+const (
+	CurrencyUSD SupportedCurrency = "usd"
+	CurrencyEUR SupportedCurrency = "eur"
+	CurrencyCHF SupportedCurrency = "chf"
+	CurrencyGBP SupportedCurrency = "gbp"
+	CurrencyAED SupportedCurrency = "aed"
+)
+
+// ValidCurrencies maps currency codes to their display names.
+var ValidCurrencies = map[SupportedCurrency]string{
+	CurrencyUSD: "US Dollar",
+	CurrencyEUR: "Euro",
+	CurrencyCHF: "Swiss Franc",
+	CurrencyGBP: "British Pound",
+	CurrencyAED: "UAE Dirham",
+}
+
+// CurrencySymbols maps currency codes to their display symbols.
+var CurrencySymbols = map[SupportedCurrency]string{
+	CurrencyUSD: "$",
+	CurrencyEUR: "€",
+	CurrencyCHF: "CHF ",
+	CurrencyGBP: "£",
+	CurrencyAED: "AED ",
+}
+
+// IsValidCurrency returns true if the given currency is supported.
+func IsValidCurrency(c string) bool {
+	_, ok := ValidCurrencies[SupportedCurrency(c)]
+	return ok
+}
+
+// APIKey represents an API key for external rate push authentication.
+type APIKey struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	KeyPrefix   string     `json:"key_prefix"`
+	Permissions []string   `json:"permissions"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// WeiToFiat converts a wei amount to fiat given the token decimals and price.
+func WeiToFiat(amountWei *big.Int, decimals int, priceFiat float64) (float64, error) {
+	return WeiToUSD(amountWei, decimals, priceFiat)
+}
 
 // TransferType indicates the type of value transfer.
 type TransferType string
@@ -12,12 +67,12 @@ const (
 
 // ComplianceConfig stores per-org compliance settings.
 type ComplianceConfig struct {
-	ID           string    `json:"id"`
-	OrgID        string    `json:"org_id"`
-	Enabled      bool      `json:"enabled"`
-	ThresholdUSD float64   `json:"threshold_usd"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id"`
+	Enabled       bool      `json:"enabled"`
+	ThresholdFiat float64   `json:"threshold_fiat"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // TokenPrice stores admin-configured fiat valuation for a token.
@@ -27,20 +82,23 @@ type TokenPrice struct {
 	TokenAddress    string    `json:"token_address"` // "native" for ETH, or lowercase 0x-prefixed contract address
 	Symbol          string    `json:"symbol"`
 	Decimals        int       `json:"decimals"`
-	PriceUSD        float64   `json:"price_usd"`
+	PriceFiat       float64   `json:"price_fiat"`
 	CoingeckoID     *string   `json:"coingecko_id,omitempty"` // when set, price resolves from system_token_prices
 	UpdatedByUserID *string   `json:"updated_by_user_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// SystemTokenPrice is a global price cache entry populated by the CoinGecko fetcher.
+// SystemTokenPrice is a global price cache entry populated by CoinGecko or external push.
 type SystemTokenPrice struct {
-	CoingeckoID string    `json:"coingecko_id"`
-	Symbol      string    `json:"symbol"`
-	Decimals    int       `json:"decimals"`
-	PriceUSD    float64   `json:"price_usd"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           int       `json:"id"`
+	CoingeckoID  *string   `json:"coingecko_id,omitempty"`
+	Symbol       string    `json:"symbol"`
+	Decimals     int       `json:"decimals"`
+	PriceFiat    float64   `json:"price_fiat"`
+	Source       string    `json:"source"`
+	TokenAddress *string   `json:"token_address,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // TravelRuleRecord stores IVMS101 compliance data submitted before a transfer.
@@ -55,7 +113,8 @@ type TravelRuleRecord struct {
 	TokenAddress       *string                `json:"token_address,omitempty"`
 	BeneficiaryAddress string                 `json:"beneficiary_address"`
 	AmountWei          string                 `json:"amount_wei"`
-	AmountUSD          float64                `json:"amount_usd"`
+	AmountFiat         float64                `json:"amount_fiat"`
+	Currency           string                 `json:"currency"`
 	ExpiresAt          time.Time              `json:"expires_at"`
 	UsedAt             *time.Time             `json:"used_at,omitempty"`
 	UsedTxHash         *string                `json:"used_tx_hash,omitempty"`
@@ -86,8 +145,9 @@ type ComplianceLog struct {
 	FromAddress        string       `json:"from_address"`
 	ToAddress          string       `json:"to_address"`
 	AmountWei          string       `json:"amount_wei"`
-	AmountUSD          *float64     `json:"amount_usd,omitempty"`
-	ThresholdUSD       *float64     `json:"threshold_usd,omitempty"`
+	AmountFiat         *float64     `json:"amount_fiat,omitempty"`
+	ThresholdFiat      *float64     `json:"threshold_fiat,omitempty"`
+	Currency           string       `json:"currency,omitempty"`
 	Decision           string       `json:"decision"` // "allowed" or "denied"
 	DenialReason       *string      `json:"denial_reason,omitempty"`
 	TravelRuleRecordID *string      `json:"travel_rule_record_id,omitempty"`
@@ -98,13 +158,13 @@ type ComplianceLog struct {
 // AddressThresholdOverride stores per-address threshold overrides for risk-based compliance.
 // When set, the address-specific threshold takes precedence over the org-level threshold.
 type AddressThresholdOverride struct {
-	ID           string    `json:"id"`
-	OrgID        string    `json:"org_id"`
-	Address      string    `json:"address"` // lowercased 0x-prefixed
-	ThresholdUSD float64   `json:"threshold_usd"`
-	Note         string    `json:"note,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id"`
+	Address       string    `json:"address"` // lowercased 0x-prefixed
+	ThresholdFiat float64   `json:"threshold_fiat"`
+	Note          string    `json:"note,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // ComplianceLogFilters for querying compliance logs.

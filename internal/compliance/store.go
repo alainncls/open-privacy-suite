@@ -14,19 +14,21 @@ type Store interface {
 	DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) error
 	ListTokenPrices(ctx context.Context, orgID string) ([]*TokenPrice, error)
 
-	// System token prices (CoinGecko cache)
+	// System token prices (CoinGecko cache + external)
 	GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*SystemTokenPrice, error)
+	GetSystemTokenPriceByAddress(ctx context.Context, tokenAddress string) (*SystemTokenPrice, error)
 	UpsertSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
+	CreateSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
 	ListSystemTokenPrices(ctx context.Context) ([]*SystemTokenPrice, error)
 
 	// Travel rule records
 	CreateTravelRuleRecord(ctx context.Context, record *TravelRuleRecord) error
 	GetTravelRuleRecord(ctx context.Context, id string) (*TravelRuleRecord, error)
-	FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*TravelRuleRecord, error)
+	FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountFiat float64) (*TravelRuleRecord, error)
 	// ClaimUnusedTravelRuleRecord atomically finds an unused record and marks it as used.
 	// This prevents TOCTOU race conditions where two concurrent requests could claim the same record.
-	// Only matches records where amount_usd >= amountUSD (record must cover the transfer value).
-	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*TravelRuleRecord, error)
+	// Only matches records where amount_fiat >= amountFiat (record must cover the transfer value).
+	ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountFiat float64) (*TravelRuleRecord, error)
 	MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error
 	DeleteTravelRuleRecord(ctx context.Context, orgID, id string) error
 	ListTravelRuleRecords(ctx context.Context, orgID string, limit, offset int) ([]*TravelRuleRecord, int, error)
@@ -49,4 +51,16 @@ type Store interface {
 	CreateComplianceLog(ctx context.Context, log *ComplianceLog) (int64, error)
 	GetComplianceLog(ctx context.Context, id int64) (*ComplianceLog, error)
 	ListComplianceLogs(ctx context.Context, orgID string, filters *ComplianceLogFilters) ([]*ComplianceLog, int, error)
+
+	// System settings
+	GetSystemSetting(ctx context.Context, key string) (string, error)
+	SetSystemSetting(ctx context.Context, key, value string) error
+
+	// API keys
+	CreateAPIKey(ctx context.Context, key *APIKey, keyHash string) error
+	GetAPIKeyByHash(ctx context.Context, keyHash string) (*APIKey, error)
+	ListAPIKeys(ctx context.Context) ([]*APIKey, error)
+	RevokeAPIKey(ctx context.Context, id string) error
+	DeleteAPIKey(ctx context.Context, id string) error
+	UpdateAPIKeyLastUsed(ctx context.Context, id string) error
 }

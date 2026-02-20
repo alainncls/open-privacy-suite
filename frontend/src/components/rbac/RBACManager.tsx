@@ -54,7 +54,7 @@ export default function RBACManager() {
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
-  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(false);
+  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(true);
 
   // Derive active tab from URL
   const getActiveTab = (): RBACTab => {
@@ -119,8 +119,7 @@ export default function RBACManager() {
         const response = await rbacApi.status.get();
         setRuntimeTracingEnabled(response.data?.security?.runtime_tracing_enabled ?? false);
       } catch {
-        // If we can't check, assume runtime tracing is disabled (show preregistration)
-        setRuntimeTracingEnabled(false);
+        // If we can't check, keep default (runtime tracing enabled, hide preregistration)
       }
     };
     loadStatus();

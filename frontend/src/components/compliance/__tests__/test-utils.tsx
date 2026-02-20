@@ -4,6 +4,7 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { expect } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { CurrencyProvider } from '../CurrencyContext';
 import type { Organization } from '@/types/rbac';
 import { mockOrganization } from '@/test/mocks/handlers';
 
@@ -80,12 +81,14 @@ export function renderWithComplianceContext(
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialRoute]}>
-            <MockComplianceOrgProvider
-              initialOrg={initialOrg}
-              organizations={organizations}
-            >
-              {children}
-            </MockComplianceOrgProvider>
+            <CurrencyProvider>
+              <MockComplianceOrgProvider
+                initialOrg={initialOrg}
+                organizations={organizations}
+              >
+                {children}
+              </MockComplianceOrgProvider>
+            </CurrencyProvider>
           </MemoryRouter>
         </AuthProvider>
       </QueryClientProvider>

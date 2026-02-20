@@ -14,6 +14,9 @@ import type {
   ComplianceLog,
   ComplianceLogFilters,
   PaginatedResponse,
+  CurrencyConfig,
+  APIKey,
+  CreateAPIKeyResponse,
 } from '../types/compliance';
 
 export const complianceApi = {
@@ -68,5 +71,24 @@ export const complianceApi = {
   logs: {
     list: (orgId: string, params?: ComplianceLogFilters) =>
       api.get<PaginatedResponse<ComplianceLog>>(`/orgs/${orgId}/compliance/logs`, { params }),
+  },
+
+  currency: {
+    get: () =>
+      api.get<CurrencyConfig>('/compliance/currency'),
+    set: (currency: string) =>
+      api.put<{ currency: string; message: string }>('/compliance/currency', { currency }),
+  },
+
+  apiKeys: {
+    list: () =>
+      api.get<{ data: APIKey[] }>('/compliance/api-keys'),
+    create: (name: string, expiresInDays?: number) =>
+      api.post<CreateAPIKeyResponse>('/compliance/api-keys', {
+        name,
+        expires_in_days: expiresInDays || undefined,
+      }),
+    revoke: (id: string) =>
+      api.delete(`/compliance/api-keys/${id}`),
   },
 };

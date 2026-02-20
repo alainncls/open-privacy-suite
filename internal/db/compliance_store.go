@@ -13,12 +13,12 @@ import (
 // Compliance Config operations
 
 func (d *DB) GetComplianceConfig(ctx context.Context, orgID string) (*compliance.ComplianceConfig, error) {
-	query := `SELECT id, org_id, enabled, threshold_usd, created_at, updated_at
+	query := `SELECT id, org_id, enabled, threshold_fiat, created_at, updated_at
 	          FROM compliance_config WHERE org_id = $1`
 
 	config := &compliance.ComplianceConfig{}
 	err := d.conn.QueryRowContext(ctx, query, orgID).Scan(
-		&config.ID, &config.OrgID, &config.Enabled, &config.ThresholdUSD,
+		&config.ID, &config.OrgID, &config.Enabled, &config.ThresholdFiat,
 		&config.CreatedAt, &config.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -31,28 +31,30 @@ func (d *DB) GetComplianceConfig(ctx context.Context, orgID string) (*compliance
 }
 
 func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.ComplianceConfig) error {
-	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_usd)
+	query := `INSERT INTO compliance_config (id, org_id, enabled, threshold_fiat)
 	          VALUES ($1, $2, $3, $4)
 	          ON CONFLICT (org_id) DO UPDATE SET
 	          enabled = EXCLUDED.enabled,
-	          threshold_usd = EXCLUDED.threshold_usd,
+	          threshold_fiat = EXCLUDED.threshold_fiat,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
-		config.ID, config.OrgID, config.Enabled, config.ThresholdUSD,
+		config.ID, config.OrgID, config.Enabled, config.ThresholdFiat,
 	).Scan(&config.CreatedAt, &config.UpdatedAt)
 }
 
 // System Token Price operations
 
 func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*compliance.SystemTokenPrice, error) {
-	query := `SELECT coingecko_id, symbol, decimals, price_usd, updated_at
+	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at
 	          FROM system_token_prices WHERE coingecko_id = $1`
 
 	sp := &compliance.SystemTokenPrice{}
+	var coingecko sql.NullString
+	var tokenAddr sql.NullString
 	err := d.conn.QueryRowContext(ctx, query, coingeckoID).Scan(
-		&sp.CoingeckoID, &sp.Symbol, &sp.Decimals, &sp.PriceUSD, &sp.UpdatedAt,
+		&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &sp.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -60,27 +62,72 @@ func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*comp
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system token price: %w", err)
 	}
+	if coingecko.Valid {
+		sp.CoingeckoID = &coingecko.String
+	}
+	if tokenAddr.Valid {
+		sp.TokenAddress = &tokenAddr.String
+	}
+	return sp, nil
+}
+
+func (d *DB) GetSystemTokenPriceByAddress(ctx context.Context, tokenAddress string) (*compliance.SystemTokenPrice, error) {
+	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at
+	          FROM system_token_prices WHERE token_address = $1`
+
+	sp := &compliance.SystemTokenPrice{}
+	var coingecko sql.NullString
+	var tokenAddr sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, tokenAddress).Scan(
+		&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &sp.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system token price by address: %w", err)
+	}
+	if coingecko.Valid {
+		sp.CoingeckoID = &coingecko.String
+	}
+	if tokenAddr.Valid {
+		sp.TokenAddress = &tokenAddr.String
+	}
 	return sp, nil
 }
 
 func (d *DB) UpsertSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error {
-	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_usd, updated_at)
-	          VALUES ($1, $2, $3, $4, $5)
-	          ON CONFLICT (coingecko_id) DO UPDATE SET
+	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	          ON CONFLICT (coingecko_id) WHERE coingecko_id IS NOT NULL DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
-	          price_usd = EXCLUDED.price_usd,
+	          price_fiat = EXCLUDED.price_fiat,
+	          source = EXCLUDED.source,
+	          token_address = EXCLUDED.token_address,
 	          updated_at = EXCLUDED.updated_at`
 
 	_, err := d.conn.ExecContext(ctx, query,
-		price.CoingeckoID, price.Symbol, price.Decimals, price.PriceUSD, price.UpdatedAt,
+		price.CoingeckoID, price.Symbol, price.Decimals, price.PriceFiat,
+		price.Source, price.TokenAddress, price.UpdatedAt,
 	)
 	return err
 }
 
+func (d *DB) CreateSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error {
+	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	          RETURNING id`
+
+	return d.conn.QueryRowContext(ctx, query,
+		price.CoingeckoID, price.Symbol, price.Decimals, price.PriceFiat,
+		price.Source, price.TokenAddress, price.UpdatedAt,
+	).Scan(&price.ID)
+}
+
 func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTokenPrice, error) {
-	query := `SELECT coingecko_id, symbol, decimals, price_usd, updated_at
-	          FROM system_token_prices ORDER BY coingecko_id`
+	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at
+	          FROM system_token_prices ORDER BY symbol`
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
@@ -91,8 +138,16 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 	var prices []*compliance.SystemTokenPrice
 	for rows.Next() {
 		sp := &compliance.SystemTokenPrice{}
-		if err := rows.Scan(&sp.CoingeckoID, &sp.Symbol, &sp.Decimals, &sp.PriceUSD, &sp.UpdatedAt); err != nil {
+		var coingecko sql.NullString
+		var tokenAddr sql.NullString
+		if err := rows.Scan(&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &sp.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan system token price: %w", err)
+		}
+		if coingecko.Valid {
+			sp.CoingeckoID = &coingecko.String
+		}
+		if tokenAddr.Valid {
+			sp.TokenAddress = &tokenAddr.String
 		}
 		prices = append(prices, sp)
 	}
@@ -102,19 +157,19 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 // Token Price operations
 
 func (d *DB) GetTokenPrice(ctx context.Context, orgID, tokenAddress string) (*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 AND token_address = $2`
 
 	return scanTokenPrice(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(tokenAddress)))
 }
 
 func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice) error {
-	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id)
+	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          ON CONFLICT (org_id, token_address) DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
-	          price_usd = EXCLUDED.price_usd,
+	          price_fiat = EXCLUDED.price_fiat,
 	          coingecko_id = EXCLUDED.coingecko_id,
 	          updated_by_user_id = EXCLUDED.updated_by_user_id,
 	          updated_at = CURRENT_TIMESTAMP
@@ -122,7 +177,7 @@ func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice)
 
 	return d.conn.QueryRowContext(ctx, query,
 		price.ID, price.OrgID, strings.ToLower(price.TokenAddress),
-		price.Symbol, price.Decimals, price.PriceUSD,
+		price.Symbol, price.Decimals, price.PriceFiat,
 		sql.NullString{String: ptrToString(price.CoingeckoID), Valid: price.CoingeckoID != nil},
 		price.UpdatedByUserID,
 	).Scan(&price.CreatedAt, &price.UpdatedAt)
@@ -136,7 +191,7 @@ func (d *DB) DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) e
 }
 
 func (d *DB) ListTokenPrices(ctx context.Context, orgID string) ([]*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_usd, coingecko_id, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -162,8 +217,8 @@ func (d *DB) CreateTravelRuleRecord(ctx context.Context, record *compliance.Trav
 	}
 
 	query := `INSERT INTO travel_rule_records (id, org_id, originator_user_id, originator_data, beneficiary_data,
-	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd, expires_at)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	          transfer_type, token_address, beneficiary_address, amount_wei, amount_fiat, currency, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	          RETURNING created_at`
 
 	return d.conn.QueryRowContext(ctx, query,
@@ -171,59 +226,59 @@ func (d *DB) CreateTravelRuleRecord(ctx context.Context, record *compliance.Trav
 		originatorData, beneficiaryData,
 		record.TransferType, record.TokenAddress,
 		strings.ToLower(record.BeneficiaryAddress),
-		record.AmountWei, record.AmountUSD, record.ExpiresAt,
+		record.AmountWei, record.AmountFiat, record.Currency, record.ExpiresAt,
 	).Scan(&record.CreatedAt)
 }
 
 func (d *DB) GetTravelRuleRecord(ctx context.Context, id string) (*compliance.TravelRuleRecord, error) {
 	query := `SELECT id, org_id, originator_user_id, originator_data, beneficiary_data,
-	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
-	          expires_at, used_at, used_tx_hash, created_at
+	          transfer_type, token_address, beneficiary_address, amount_wei, amount_fiat,
+	          currency, expires_at, used_at, used_tx_hash, created_at
 	          FROM travel_rule_records WHERE id = $1`
 
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query, id))
 }
 
-func (d *DB) FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*compliance.TravelRuleRecord, error) {
+func (d *DB) FindUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountFiat float64) (*compliance.TravelRuleRecord, error) {
 	// Use COALESCE to handle NULL token_address (native ETH) matching "native" string.
-	// Only match records where amount_usd >= the transfer amount (record must cover the transfer value).
+	// Only match records where amount_fiat >= the transfer amount (record must cover the transfer value).
 	query := `SELECT id, org_id, originator_user_id, originator_data, beneficiary_data,
-	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
-	          expires_at, used_at, used_tx_hash, created_at
+	          transfer_type, token_address, beneficiary_address, amount_wei, amount_fiat,
+	          currency, expires_at, used_at, used_tx_hash, created_at
 	          FROM travel_rule_records
 	          WHERE org_id = $1 AND originator_user_id = $2
 	          AND beneficiary_address = $3 AND COALESCE(token_address, 'native') = $4
-	          AND amount_usd >= $5
+	          AND amount_fiat >= $5
 	          AND used_at IS NULL AND expires_at > NOW()
 	          ORDER BY created_at DESC
 	          LIMIT 1`
 
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query,
-		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountUSD))
+		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountFiat))
 }
 
-func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountUSD float64) (*compliance.TravelRuleRecord, error) {
+func (d *DB) ClaimUnusedTravelRuleRecord(ctx context.Context, orgID, userID, beneficiaryAddr, tokenAddr string, amountFiat float64) (*compliance.TravelRuleRecord, error) {
 	// Atomically find and claim (mark as used) in a single UPDATE ... RETURNING.
 	// This prevents TOCTOU race conditions: only one concurrent caller can claim a given record.
-	// Only match records where amount_usd >= the transfer amount (record must cover the transfer value).
+	// Only match records where amount_fiat >= the transfer amount (record must cover the transfer value).
 	query := `UPDATE travel_rule_records
 	          SET used_at = NOW()
 	          WHERE id = (
 	              SELECT id FROM travel_rule_records
 	              WHERE org_id = $1 AND originator_user_id = $2
 	              AND beneficiary_address = $3 AND COALESCE(token_address, 'native') = $4
-	              AND amount_usd >= $5
+	              AND amount_fiat >= $5
 	              AND used_at IS NULL AND expires_at > NOW()
 	              ORDER BY created_at DESC
 	              LIMIT 1
 	              FOR UPDATE SKIP LOCKED
 	          )
 	          RETURNING id, org_id, originator_user_id, originator_data, beneficiary_data,
-	          transfer_type, token_address, beneficiary_address, amount_wei, amount_usd,
-	          expires_at, used_at, used_tx_hash, created_at`
+	          transfer_type, token_address, beneficiary_address, amount_wei, amount_fiat,
+	          currency, expires_at, used_at, used_tx_hash, created_at`
 
 	return scanTravelRuleRecord(d.conn.QueryRowContext(ctx, query,
-		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountUSD))
+		orgID, userID, strings.ToLower(beneficiaryAddr), strings.ToLower(tokenAddr), amountFiat))
 }
 
 func (d *DB) MarkTravelRuleRecordUsed(ctx context.Context, id string, txHash *string) error {
@@ -244,8 +299,8 @@ func (d *DB) ListTravelRuleRecords(ctx context.Context, orgID string, limit, off
 
 	// Get paginated results with user external_id
 	query := `SELECT tr.id, tr.org_id, tr.originator_user_id, COALESCE(u.external_id, ''), tr.originator_data, tr.beneficiary_data,
-	          tr.transfer_type, tr.token_address, tr.beneficiary_address, tr.amount_wei, tr.amount_usd,
-	          tr.expires_at, tr.used_at, tr.used_tx_hash, tr.created_at
+	          tr.transfer_type, tr.token_address, tr.beneficiary_address, tr.amount_wei, tr.amount_fiat,
+	          tr.currency, tr.expires_at, tr.used_at, tr.used_tx_hash, tr.created_at
 	          FROM travel_rule_records tr LEFT JOIN users u ON u.id = tr.originator_user_id
 	          WHERE tr.org_id = $1
 	          ORDER BY tr.created_at DESC LIMIT $2 OFFSET $3`
@@ -306,13 +361,13 @@ func (d *DB) CleanupExpiredRecords(ctx context.Context) (int64, error) {
 // Address Threshold Override operations
 
 func (d *DB) GetAddressThresholdOverride(ctx context.Context, orgID, address string) (*compliance.AddressThresholdOverride, error) {
-	query := `SELECT id, org_id, address, threshold_usd, note, created_at, updated_at
+	query := `SELECT id, org_id, address, threshold_fiat, note, created_at, updated_at
 	          FROM address_threshold_overrides WHERE org_id = $1 AND address = $2`
 
 	override := &compliance.AddressThresholdOverride{}
 	var note sql.NullString
 	err := d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)).Scan(
-		&override.ID, &override.OrgID, &override.Address, &override.ThresholdUSD,
+		&override.ID, &override.OrgID, &override.Address, &override.ThresholdFiat,
 		&note, &override.CreatedAt, &override.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -334,7 +389,7 @@ func (d *DB) ListAddressThresholdOverrides(ctx context.Context, orgID string, li
 		return nil, 0, fmt.Errorf("failed to count address threshold overrides: %w", err)
 	}
 
-	query := `SELECT id, org_id, address, threshold_usd, note, created_at, updated_at
+	query := `SELECT id, org_id, address, threshold_fiat, note, created_at, updated_at
 	          FROM address_threshold_overrides WHERE org_id = $1
 	          ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
@@ -348,7 +403,7 @@ func (d *DB) ListAddressThresholdOverrides(ctx context.Context, orgID string, li
 	for rows.Next() {
 		o := &compliance.AddressThresholdOverride{}
 		var note sql.NullString
-		if err := rows.Scan(&o.ID, &o.OrgID, &o.Address, &o.ThresholdUSD,
+		if err := rows.Scan(&o.ID, &o.OrgID, &o.Address, &o.ThresholdFiat,
 			&note, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan address threshold override: %w", err)
 		}
@@ -365,17 +420,17 @@ func (d *DB) ListAddressThresholdOverrides(ctx context.Context, orgID string, li
 }
 
 func (d *DB) UpsertAddressThresholdOverride(ctx context.Context, override *compliance.AddressThresholdOverride) error {
-	query := `INSERT INTO address_threshold_overrides (id, org_id, address, threshold_usd, note)
+	query := `INSERT INTO address_threshold_overrides (id, org_id, address, threshold_fiat, note)
 	          VALUES ($1, $2, $3, $4, $5)
 	          ON CONFLICT (org_id, address) DO UPDATE SET
-	          threshold_usd = EXCLUDED.threshold_usd,
+	          threshold_fiat = EXCLUDED.threshold_fiat,
 	          note = EXCLUDED.note,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
 		override.ID, override.OrgID, strings.ToLower(override.Address),
-		override.ThresholdUSD, sql.NullString{String: override.Note, Valid: override.Note != ""},
+		override.ThresholdFiat, sql.NullString{String: override.Note, Valid: override.Note != ""},
 	).Scan(&override.CreatedAt, &override.UpdatedAt)
 }
 
@@ -474,9 +529,9 @@ func (d *DB) ListSanctionedAddresses(ctx context.Context, orgID *string, limit, 
 
 func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.ComplianceLog) (int64, error) {
 	query := `INSERT INTO compliance_logs (org_id, user_id, transfer_type, token_address,
-	          from_address, to_address, amount_wei, amount_usd, threshold_usd,
-	          decision, denial_reason, travel_rule_record_id, correlation_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	          from_address, to_address, amount_wei, amount_fiat, threshold_fiat,
+	          currency, decision, denial_reason, travel_rule_record_id, correlation_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	          RETURNING id, created_at`
 
 	var corrID *string
@@ -487,8 +542,8 @@ func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.Complian
 	err := d.conn.QueryRowContext(ctx, query,
 		entry.OrgID, entry.UserID, entry.TransferType, entry.TokenAddress,
 		strings.ToLower(entry.FromAddress), strings.ToLower(entry.ToAddress),
-		entry.AmountWei, entry.AmountUSD, entry.ThresholdUSD,
-		entry.Decision, entry.DenialReason, entry.TravelRuleRecordID,
+		entry.AmountWei, entry.AmountFiat, entry.ThresholdFiat,
+		entry.Currency, entry.Decision, entry.DenialReason, entry.TravelRuleRecordID,
 		corrID,
 	).Scan(&entry.ID, &entry.CreatedAt)
 	if err != nil {
@@ -500,8 +555,8 @@ func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.Complian
 
 func (d *DB) GetComplianceLog(ctx context.Context, id int64) (*compliance.ComplianceLog, error) {
 	query := `SELECT id, org_id, user_id, transfer_type, token_address,
-	          from_address, to_address, amount_wei, amount_usd, threshold_usd,
-	          decision, denial_reason, travel_rule_record_id, created_at
+	          from_address, to_address, amount_wei, amount_fiat, threshold_fiat,
+	          currency, decision, denial_reason, travel_rule_record_id, created_at
 	          FROM compliance_logs WHERE id = $1`
 
 	return scanComplianceLog(d.conn.QueryRowContext(ctx, query, id))
@@ -551,8 +606,8 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 	}
 
 	query := fmt.Sprintf(`SELECT cl.id, cl.org_id, cl.user_id, COALESCE(u.external_id, ''), cl.transfer_type, cl.token_address,
-	          cl.from_address, cl.to_address, cl.amount_wei, cl.amount_usd, cl.threshold_usd,
-	          cl.decision, cl.denial_reason, cl.travel_rule_record_id, cl.created_at
+	          cl.from_address, cl.to_address, cl.amount_wei, cl.amount_fiat, cl.threshold_fiat,
+	          cl.currency, cl.decision, cl.denial_reason, cl.travel_rule_record_id, cl.created_at
 	          FROM compliance_logs cl LEFT JOIN users u ON u.id = cl.user_id
 	          %s ORDER BY cl.created_at DESC LIMIT $%d OFFSET $%d`,
 		where, paramIdx, paramIdx+1)
@@ -580,7 +635,7 @@ func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 
 	err := row.Scan(
 		&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
-		&price.Decimals, &price.PriceUSD, &coingeckoID, &updatedByUserID,
+		&price.Decimals, &price.PriceFiat, &coingeckoID, &updatedByUserID,
 		&price.CreatedAt, &price.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -608,7 +663,7 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 
 		if err := rows.Scan(
 			&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
-			&price.Decimals, &price.PriceUSD, &coingeckoID, &updatedByUserID,
+			&price.Decimals, &price.PriceFiat, &coingeckoID, &updatedByUserID,
 			&price.CreatedAt, &price.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan token price: %w", err)
@@ -650,8 +705,8 @@ func scanTravelRuleRecord(row *sql.Row) (*compliance.TravelRuleRecord, error) {
 		&record.ID, &record.OrgID, &record.OriginatorUserID,
 		&originatorData, &beneficiaryData,
 		&record.TransferType, &tokenAddress, &record.BeneficiaryAddress,
-		&record.AmountWei, &record.AmountUSD,
-		&record.ExpiresAt, &usedAt, &usedTxHash, &record.CreatedAt,
+		&record.AmountWei, &record.AmountFiat,
+		&record.Currency, &record.ExpiresAt, &usedAt, &usedTxHash, &record.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -697,8 +752,8 @@ func scanTravelRuleRecords(rows *sql.Rows) ([]*compliance.TravelRuleRecord, erro
 			&record.OriginatorExternalID,
 			&originatorData, &beneficiaryData,
 			&record.TransferType, &tokenAddress, &record.BeneficiaryAddress,
-			&record.AmountWei, &record.AmountUSD,
-			&record.ExpiresAt, &usedAt, &usedTxHash, &record.CreatedAt,
+			&record.AmountWei, &record.AmountFiat,
+			&record.Currency, &record.ExpiresAt, &usedAt, &usedTxHash, &record.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan travel rule record: %w", err)
 		}
@@ -799,13 +854,13 @@ func scanSanctionedAddresses(rows *sql.Rows) ([]*compliance.SanctionedAddress, e
 func scanComplianceLog(row *sql.Row) (*compliance.ComplianceLog, error) {
 	entry := &compliance.ComplianceLog{}
 	var tokenAddress, denialReason, travelRuleRecordID sql.NullString
-	var amountUSD, thresholdUSD sql.NullFloat64
+	var amountFiat, thresholdFiat sql.NullFloat64
 
 	err := row.Scan(
 		&entry.ID, &entry.OrgID, &entry.UserID, &entry.TransferType, &tokenAddress,
 		&entry.FromAddress, &entry.ToAddress, &entry.AmountWei,
-		&amountUSD, &thresholdUSD,
-		&entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
+		&amountFiat, &thresholdFiat,
+		&entry.Currency, &entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -817,11 +872,11 @@ func scanComplianceLog(row *sql.Row) (*compliance.ComplianceLog, error) {
 	if tokenAddress.Valid {
 		entry.TokenAddress = &tokenAddress.String
 	}
-	if amountUSD.Valid {
-		entry.AmountUSD = &amountUSD.Float64
+	if amountFiat.Valid {
+		entry.AmountFiat = &amountFiat.Float64
 	}
-	if thresholdUSD.Valid {
-		entry.ThresholdUSD = &thresholdUSD.Float64
+	if thresholdFiat.Valid {
+		entry.ThresholdFiat = &thresholdFiat.Float64
 	}
 	if denialReason.Valid {
 		entry.DenialReason = &denialReason.String
@@ -833,18 +888,193 @@ func scanComplianceLog(row *sql.Row) (*compliance.ComplianceLog, error) {
 	return entry, nil
 }
 
+// System Settings operations
+
+func (d *DB) GetSystemSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT value FROM system_settings WHERE key = $1`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get system setting %s: %w", key, err)
+	}
+	return value, nil
+}
+
+func (d *DB) SetSystemSetting(ctx context.Context, key, value string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+		key, value)
+	return err
+}
+
+// API Key operations
+
+func (d *DB) CreateAPIKey(ctx context.Context, key *compliance.APIKey, keyHash string) error {
+	query := `INSERT INTO api_keys (id, name, key_hash, key_prefix, permissions, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6)
+	          RETURNING created_at`
+
+	return d.conn.QueryRowContext(ctx, query,
+		key.ID, key.Name, keyHash, key.KeyPrefix, key.Permissions, key.ExpiresAt,
+	).Scan(&key.CreatedAt)
+}
+
+func (d *DB) GetAPIKeyByHash(ctx context.Context, keyHash string) (*compliance.APIKey, error) {
+	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, created_at
+	          FROM api_keys WHERE key_hash = $1`
+
+	key := &compliance.APIKey{}
+	var expiresAt, revokedAt, lastUsedAt sql.NullTime
+	var permissions []string
+
+	err := d.conn.QueryRowContext(ctx, query, keyHash).Scan(
+		&key.ID, &key.Name, &key.KeyPrefix,
+		(*stringSlice)(&permissions),
+		&expiresAt, &revokedAt, &lastUsedAt, &key.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get API key by hash: %w", err)
+	}
+
+	key.Permissions = permissions
+	if expiresAt.Valid {
+		key.ExpiresAt = &expiresAt.Time
+	}
+	if revokedAt.Valid {
+		key.RevokedAt = &revokedAt.Time
+	}
+	if lastUsedAt.Valid {
+		key.LastUsedAt = &lastUsedAt.Time
+	}
+
+	return key, nil
+}
+
+func (d *DB) ListAPIKeys(ctx context.Context) ([]*compliance.APIKey, error) {
+	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, created_at
+	          FROM api_keys ORDER BY created_at DESC`
+
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list API keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []*compliance.APIKey
+	for rows.Next() {
+		key := &compliance.APIKey{}
+		var expiresAt, revokedAt, lastUsedAt sql.NullTime
+		var permissions []string
+
+		if err := rows.Scan(
+			&key.ID, &key.Name, &key.KeyPrefix,
+			(*stringSlice)(&permissions),
+			&expiresAt, &revokedAt, &lastUsedAt, &key.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan API key: %w", err)
+		}
+
+		key.Permissions = permissions
+		if expiresAt.Valid {
+			key.ExpiresAt = &expiresAt.Time
+		}
+		if revokedAt.Valid {
+			key.RevokedAt = &revokedAt.Time
+		}
+		if lastUsedAt.Valid {
+			key.LastUsedAt = &lastUsedAt.Time
+		}
+
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (d *DB) RevokeAPIKey(ctx context.Context, id string) error {
+	result, err := d.conn.ExecContext(ctx,
+		`UPDATE api_keys SET revoked_at = CURRENT_TIMESTAMP WHERE id = $1 AND revoked_at IS NULL`, id)
+	if err != nil {
+		return fmt.Errorf("failed to revoke API key: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (d *DB) DeleteAPIKey(ctx context.Context, id string) error {
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM api_keys WHERE id = $1`, id)
+	return err
+}
+
+func (d *DB) UpdateAPIKeyLastUsed(ctx context.Context, id string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`, id)
+	return err
+}
+
+// stringSlice is a helper for scanning PostgreSQL text[] into []string via pgx.
+type stringSlice []string
+
+func (s *stringSlice) Scan(src interface{}) error {
+	if src == nil {
+		*s = nil
+		return nil
+	}
+	switch v := src.(type) {
+	case []byte:
+		return scanPGTextArray(v, s)
+	case string:
+		return scanPGTextArray([]byte(v), s)
+	default:
+		return fmt.Errorf("unsupported type for stringSlice: %T", src)
+	}
+}
+
+func scanPGTextArray(data []byte, result *stringSlice) error {
+	str := string(data)
+	if str == "{}" || str == "" {
+		*result = nil
+		return nil
+	}
+	// Strip surrounding braces
+	if len(str) >= 2 && str[0] == '{' && str[len(str)-1] == '}' {
+		str = str[1 : len(str)-1]
+	}
+	parts := strings.Split(str, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		// Strip quotes if present
+		p = strings.TrimSpace(p)
+		if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+			p = p[1 : len(p)-1]
+		}
+		out = append(out, p)
+	}
+	*result = out
+	return nil
+}
+
 func scanComplianceLogs(rows *sql.Rows) ([]*compliance.ComplianceLog, error) {
 	var logs []*compliance.ComplianceLog
 	for rows.Next() {
 		entry := &compliance.ComplianceLog{}
 		var tokenAddress, denialReason, travelRuleRecordID sql.NullString
-		var amountUSD, thresholdUSD sql.NullFloat64
+		var amountFiat, thresholdFiat sql.NullFloat64
 
 		if err := rows.Scan(
 			&entry.ID, &entry.OrgID, &entry.UserID, &entry.UserExternalID, &entry.TransferType, &tokenAddress,
 			&entry.FromAddress, &entry.ToAddress, &entry.AmountWei,
-			&amountUSD, &thresholdUSD,
-			&entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
+			&amountFiat, &thresholdFiat,
+			&entry.Currency, &entry.Decision, &denialReason, &travelRuleRecordID, &entry.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan compliance log: %w", err)
 		}
@@ -852,11 +1082,11 @@ func scanComplianceLogs(rows *sql.Rows) ([]*compliance.ComplianceLog, error) {
 		if tokenAddress.Valid {
 			entry.TokenAddress = &tokenAddress.String
 		}
-		if amountUSD.Valid {
-			entry.AmountUSD = &amountUSD.Float64
+		if amountFiat.Valid {
+			entry.AmountFiat = &amountFiat.Float64
 		}
-		if thresholdUSD.Valid {
-			entry.ThresholdUSD = &thresholdUSD.Float64
+		if thresholdFiat.Valid {
+			entry.ThresholdFiat = &thresholdFiat.Float64
 		}
 		if denialReason.Valid {
 			entry.DenialReason = &denialReason.String

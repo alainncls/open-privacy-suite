@@ -30,16 +30,20 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-// Fetch retrieves USD prices for the given CoinGecko IDs.
-// Returns a map of coingecko_id -> price_usd.
-func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, error) {
+// Fetch retrieves fiat prices for the given CoinGecko IDs in the specified currency.
+// Returns a map of coingecko_id -> price.
+func (f *Fetcher) Fetch(ctx context.Context, ids []string, currency string) (map[string]float64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 
+	if currency == "" {
+		currency = "usd"
+	}
+
 	params := url.Values{}
 	params.Set("ids", strings.Join(ids, ","))
-	params.Set("vs_currencies", "usd")
+	params.Set("vs_currencies", currency)
 	fetchURL := coingeckoBaseURL + "?" + params.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
@@ -67,8 +71,8 @@ func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, 
 
 	prices := make(map[string]float64, len(result))
 	for id, currencies := range result {
-		if usd, ok := currencies["usd"]; ok {
-			prices[id] = usd
+		if price, ok := currencies[currency]; ok {
+			prices[id] = price
 		}
 	}
 

@@ -20,7 +20,7 @@ const mockOverrides = [
     id: 'ato-1',
     org_id: 'org-1',
     address: '0xabcdef1234567890abcdef1234567890abcdef12',
-    threshold_usd: 100,
+    threshold_fiat: 100,
     note: 'High-risk counterparty',
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-15T00:00:00Z',
@@ -29,7 +29,7 @@ const mockOverrides = [
     id: 'ato-2',
     org_id: 'org-1',
     address: '0x1111111111111111111111111111111111111111',
-    threshold_usd: 0,
+    threshold_fiat: 0,
     note: null,
     created_at: '2024-01-10T00:00:00Z',
     updated_at: '2024-01-10T00:00:00Z',
@@ -104,10 +104,10 @@ describe('AddressThresholdList', () => {
       renderWithComplianceContext(<AddressThresholdList />);
 
       await waitFor(() => {
-        expect(screen.getByText('$0 (all transfers)')).toBeInTheDocument();
+        expect(screen.getByText('$0.00 (all transfers)')).toBeInTheDocument();
       });
 
-      const zeroSpan = screen.getByText('$0 (all transfers)');
+      const zeroSpan = screen.getByText('$0.00 (all transfers)');
       expect(zeroSpan).toHaveClass('text-red-600', 'font-medium');
     });
 
@@ -180,7 +180,7 @@ describe('AddressThresholdList', () => {
             id: 'ato-new',
             org_id: 'org-1',
             address: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-            threshold_usd: 500,
+            threshold_fiat: 500,
             note: 'Test note',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),

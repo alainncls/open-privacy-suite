@@ -5,14 +5,14 @@ export interface ComplianceConfig {
   id: string;
   org_id: string;
   enabled: boolean;
-  threshold_usd: number;
+  threshold_fiat: number;
   created_at: string;
   updated_at: string;
 }
 
 export interface UpdateComplianceConfigInput {
   enabled?: boolean;
-  threshold_usd?: number;
+  threshold_fiat?: number;
 }
 
 export interface TokenPrice {
@@ -21,7 +21,7 @@ export interface TokenPrice {
   token_address: string;
   symbol: string;
   decimals: number;
-  price_usd: number;
+  price_fiat: number;
   coingecko_id?: string;
   updated_by_user_id?: string;
   created_at: string;
@@ -31,15 +31,18 @@ export interface TokenPrice {
 export interface UpsertTokenPriceInput {
   symbol: string;
   decimals: number;
-  price_usd: number;
+  price_fiat: number;
   coingecko_id?: string | null;
 }
 
 export interface SystemTokenPrice {
-  coingecko_id: string;
+  id: number;
+  coingecko_id?: string;
+  source: string;
+  token_address?: string;
   symbol: string;
   decimals: number;
-  price_usd: number;
+  price_fiat: number;
   updated_at: string;
   is_stale: boolean;
 }
@@ -55,7 +58,8 @@ export interface TravelRuleRecord {
   token_address?: string;
   beneficiary_address: string;
   amount_wei: string;
-  amount_usd: number;
+  amount_fiat: number;
+  currency: string;
   expires_at: string;
   used_at?: string;
   used_tx_hash?: string;
@@ -100,8 +104,9 @@ export interface ComplianceLog {
   from_address: string;
   to_address: string;
   amount_wei: string;
-  amount_usd?: number;
-  threshold_usd?: number;
+  amount_fiat?: number;
+  threshold_fiat?: number;
+  currency?: string;
   decision: Decision;
   denial_reason?: string;
   travel_rule_record_id?: string;
@@ -112,14 +117,14 @@ export interface AddressThresholdOverride {
   id: string;
   org_id: string;
   address: string;
-  threshold_usd: number;
+  threshold_fiat: number;
   note?: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface UpsertAddressThresholdInput {
-  threshold_usd: number;
+  threshold_fiat: number;
   note?: string;
 }
 
@@ -136,4 +141,38 @@ export interface PaginatedResponse<T> {
   total: number;
   limit: number;
   offset: number;
+}
+
+export type SupportedCurrency = 'usd' | 'eur' | 'chf' | 'gbp' | 'aed';
+
+export interface CurrencyInfo {
+  code: string;
+  name: string;
+  symbol: string;
+}
+
+export interface CurrencyConfig {
+  currency: string;
+  all_currencies: CurrencyInfo[];
+}
+
+export interface APIKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  permissions: string[];
+  expires_at?: string;
+  revoked_at?: string;
+  last_used_at?: string;
+  created_at: string;
+}
+
+export interface CreateAPIKeyResponse {
+  key: string;
+  id: string;
+  name: string;
+  key_prefix: string;
+  permissions: string[];
+  expires_at?: string;
+  created_at: string;
 }
