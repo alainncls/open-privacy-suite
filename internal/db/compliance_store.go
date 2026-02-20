@@ -934,17 +934,18 @@ func (d *DB) CreateAPIKey(ctx context.Context, key *compliance.APIKey, keyHash s
 }
 
 func (d *DB) GetAPIKeyByHash(ctx context.Context, keyHash string) (*compliance.APIKey, error) {
-	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, created_at
+	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, last_ip, created_at
 	          FROM api_keys WHERE key_hash = $1`
 
 	key := &compliance.APIKey{}
 	var expiresAt, revokedAt, lastUsedAt sql.NullTime
+	var lastIP sql.NullString
 	var permissions []string
 
 	err := d.conn.QueryRowContext(ctx, query, keyHash).Scan(
 		&key.ID, &key.Name, &key.KeyPrefix,
 		(*stringSlice)(&permissions),
-		&expiresAt, &revokedAt, &lastUsedAt, &key.CreatedAt,
+		&expiresAt, &revokedAt, &lastUsedAt, &lastIP, &key.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -963,12 +964,15 @@ func (d *DB) GetAPIKeyByHash(ctx context.Context, keyHash string) (*compliance.A
 	if lastUsedAt.Valid {
 		key.LastUsedAt = &lastUsedAt.Time
 	}
+	if lastIP.Valid {
+		key.LastIP = &lastIP.String
+	}
 
 	return key, nil
 }
 
 func (d *DB) ListAPIKeys(ctx context.Context) ([]*compliance.APIKey, error) {
-	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, created_at
+	query := `SELECT id, name, key_prefix, permissions, expires_at, revoked_at, last_used_at, last_ip, created_at
 	          FROM api_keys ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query)
@@ -981,12 +985,13 @@ func (d *DB) ListAPIKeys(ctx context.Context) ([]*compliance.APIKey, error) {
 	for rows.Next() {
 		key := &compliance.APIKey{}
 		var expiresAt, revokedAt, lastUsedAt sql.NullTime
+		var lastIP sql.NullString
 		var permissions []string
 
 		if err := rows.Scan(
 			&key.ID, &key.Name, &key.KeyPrefix,
 			(*stringSlice)(&permissions),
-			&expiresAt, &revokedAt, &lastUsedAt, &key.CreatedAt,
+			&expiresAt, &revokedAt, &lastUsedAt, &lastIP, &key.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan API key: %w", err)
 		}
@@ -1000,6 +1005,9 @@ func (d *DB) ListAPIKeys(ctx context.Context) ([]*compliance.APIKey, error) {
 		}
 		if lastUsedAt.Valid {
 			key.LastUsedAt = &lastUsedAt.Time
+		}
+		if lastIP.Valid {
+			key.LastIP = &lastIP.String
 		}
 
 		keys = append(keys, key)
@@ -1029,6 +1037,75 @@ func (d *DB) UpdateAPIKeyLastUsed(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx,
 		`UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`, id)
 	return err
+}
+
+func (d *DB) UpdateAPIKeyLastIP(ctx context.Context, id, ip string) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE api_keys SET last_ip = $2 WHERE id = $1`, id, ip)
+	return err
+}
+
+func (d *DB) GetAPIKeyLastIP(ctx context.Context, id string) (*string, error) {
+	var lastIP sql.NullString
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT last_ip FROM api_keys WHERE id = $1`, id).Scan(&lastIP)
+	if err != nil {
+		return nil, err
+	}
+	if lastIP.Valid {
+		return &lastIP.String, nil
+	}
+	return nil, nil
+}
+
+func (d *DB) CreatePriceChangeLog(ctx context.Context, entry *compliance.PriceChangeLog) error {
+	query := `INSERT INTO price_change_log
+	          (api_key_id, api_key_name, token_address, symbol, old_price, new_price, deviation_pct, ip_address, ip_changed)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	          RETURNING id, created_at`
+	return d.conn.QueryRowContext(ctx, query,
+		entry.APIKeyID, entry.APIKeyName, entry.TokenAddress, entry.Symbol,
+		entry.OldPrice, entry.NewPrice, entry.DeviationPct, entry.IPAddress, entry.IPChanged,
+	).Scan(&entry.ID, &entry.CreatedAt)
+}
+
+func (d *DB) ListPriceChangeLogs(ctx context.Context, limit, offset int) ([]*compliance.PriceChangeLog, int, error) {
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM price_change_log`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count price change logs: %w", err)
+	}
+
+	query := `SELECT id, api_key_id, api_key_name, token_address, symbol,
+	          old_price, new_price, deviation_pct, ip_address, ip_changed, created_at
+	          FROM price_change_log ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := d.conn.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list price change logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*compliance.PriceChangeLog
+	for rows.Next() {
+		entry := &compliance.PriceChangeLog{}
+		var oldPrice, deviationPct sql.NullFloat64
+
+		if err := rows.Scan(
+			&entry.ID, &entry.APIKeyID, &entry.APIKeyName, &entry.TokenAddress, &entry.Symbol,
+			&oldPrice, &entry.NewPrice, &deviationPct, &entry.IPAddress, &entry.IPChanged, &entry.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan price change log: %w", err)
+		}
+
+		if oldPrice.Valid {
+			entry.OldPrice = &oldPrice.Float64
+		}
+		if deviationPct.Valid {
+			entry.DeviationPct = &deviationPct.Float64
+		}
+		logs = append(logs, entry)
+	}
+
+	return logs, total, nil
 }
 
 // stringSlice is a helper for scanning PostgreSQL text[] into []string via pgx.

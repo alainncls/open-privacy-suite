@@ -209,6 +209,22 @@ func (m *mockComplianceStore) UpdateAPIKeyLastUsed(_ context.Context, _ string) 
 	panic("not implemented")
 }
 
+func (m *mockComplianceStore) UpdateAPIKeyLastIP(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockComplianceStore) GetAPIKeyLastIP(_ context.Context, _ string) (*string, error) {
+	return nil, nil
+}
+
+func (m *mockComplianceStore) CreatePriceChangeLog(_ context.Context, _ *PriceChangeLog) error {
+	return nil
+}
+
+func (m *mockComplianceStore) ListPriceChangeLogs(_ context.Context, _, _ int) ([]*PriceChangeLog, int, error) {
+	return nil, 0, nil
+}
+
 // enabledConfig returns a ComplianceConfig with compliance enabled and the given threshold.
 func enabledConfig(threshold float64) *ComplianceConfig {
 	return &ComplianceConfig{

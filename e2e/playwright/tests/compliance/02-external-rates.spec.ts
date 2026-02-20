@@ -13,6 +13,11 @@ test.describe.serial('External Rates API', () => {
   let apiKeyId: string;
 
   test.beforeAll(async ({ request }) => {
+    // Disable cooldown for E2E tests (default 1440 min would block rapid updates)
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { price_update_cooldown_minutes: 0, max_price_deviation_pct: 500 },
+    });
+
     const response = await request.post(`${ADMIN_URL}/api/v1/admin/compliance/api-keys`, {
       data: { name: 'E2E External Rates Test Key' },
     });
@@ -166,6 +171,134 @@ test.describe.serial('External Rates API', () => {
       },
     });
     expect(response.status()).toBe(409);
+  });
+
+  // ── Settings CRUD ───────────────────────────────────────────────────
+
+  test('GET external-rates-settings returns current values', async ({ request }) => {
+    const response = await request.get(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`);
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    // These were set in beforeAll to permissive values for E2E tests
+    expect(typeof body.max_price_deviation_pct).toBe('number');
+    expect(typeof body.price_update_cooldown_minutes).toBe('number');
+  });
+
+  test('PUT external-rates-settings updates settings', async ({ request }) => {
+    // Set cooldown to 0 and deviation to 200 for subsequent tests
+    const response = await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { max_price_deviation_pct: 200, price_update_cooldown_minutes: 0 },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.max_price_deviation_pct).toBe(200);
+    expect(body.price_update_cooldown_minutes).toBe(0);
+  });
+
+  // ── Batch endpoint ─────────────────────────────────────────────────
+
+  test('PUT /external/rates/batch creates multiple tokens', async ({ request }) => {
+    const response = await request.put(`${ADMIN_URL}/api/v1/external/rates/batch`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      data: {
+        prices: [
+          { token_address: '0x2222222222222222222222222222222222222222', price: 10, symbol: 'BATCH1', decimals: 18 },
+          { token_address: '0x3333333333333333333333333333333333333333', price: 20, symbol: 'BATCH2', decimals: 8 },
+        ],
+      },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0].status).toBe('ok');
+    expect(body.results[1].status).toBe('ok');
+  });
+
+  test('PUT /external/rates/batch handles partial failures', async ({ request }) => {
+    const response = await request.put(`${ADMIN_URL}/api/v1/external/rates/batch`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      data: {
+        prices: [
+          { token_address: '0x2222222222222222222222222222222222222222', price: 15 },  // update existing
+          { token_address: '0xINVALID', price: 10, symbol: 'BAD', decimals: 18 },      // bad address
+        ],
+      },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0].status).toBe('ok');
+    expect(body.results[1].status).toBe('error');
+  });
+
+  test('PUT /external/rates/batch rejects empty array', async ({ request }) => {
+    const response = await request.put(`${ADMIN_URL}/api/v1/external/rates/batch`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      data: { prices: [] },
+    });
+    expect(response.status()).toBe(400);
+  });
+
+  // ── Bounds checking ────────────────────────────────────────────────
+
+  test('bounds check: rejects price change exceeding max deviation', async ({ request }) => {
+    // Set tight max deviation for this test
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { max_price_deviation_pct: 10 },
+    });
+
+    // Try to change BATCH1 price from 15 to 100 (>>10% deviation)
+    const response = await request.put(`${ADMIN_URL}/api/v1/external/rates`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      data: { token_address: '0x2222222222222222222222222222222222222222', price: 100 },
+    });
+    expect(response.status()).toBe(422);
+    const body = await response.json();
+    expect(body.error).toContain('exceeds maximum allowed deviation');
+
+    // Reset deviation to a permissive value
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { max_price_deviation_pct: 500 },
+    });
+  });
+
+  // ── Cooldown enforcement ───────────────────────────────────────────
+
+  test('cooldown check: rejects rapid price updates', async ({ request }) => {
+    // Set 60-minute cooldown
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { price_update_cooldown_minutes: 60 },
+    });
+
+    // Try the test token that was just created - it should be in cooldown
+    const response = await request.put(`${ADMIN_URL}/api/v1/external/rates`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      data: { token_address: '0x2222222222222222222222222222222222222222', price: 16 },
+    });
+    expect(response.status()).toBe(429);
+    const body = await response.json();
+    expect(body.error).toContain('cooldown');
+
+    // Reset cooldown to 0 for cleanup
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { price_update_cooldown_minutes: 0 },
+    });
+  });
+
+  // ── Price change audit log ─────────────────────────────────────────
+
+  test('price change log contains entries', async ({ request }) => {
+    const response = await request.get(`${ADMIN_URL}/api/v1/admin/compliance/price-change-log`);
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.data).toBeInstanceOf(Array);
+    expect(body.data.length).toBeGreaterThanOrEqual(1);
+    // Check structure of first entry
+    const entry = body.data[0];
+    expect(entry.api_key_name).toBeTruthy();
+    expect(entry.token_address).toBeTruthy();
+    expect(entry.new_price).toBeGreaterThan(0);
+    expect(entry.ip_address).toBeTruthy();
   });
 
   // ── API key lifecycle ────────────────────────────────────────────────

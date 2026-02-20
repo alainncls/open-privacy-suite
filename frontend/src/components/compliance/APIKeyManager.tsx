@@ -12,7 +12,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Loader2, Plus, AlertCircle, Key, Copy, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
-import type { APIKey } from '@/types/compliance';
+import type { APIKey, ExternalRatesSettings, PriceChangeLog } from '@/types/compliance';
 
 function getKeyStatus(key: APIKey): 'active' | 'revoked' | 'expired' {
   if (key.revoked_at) return 'revoked';
@@ -43,6 +43,16 @@ export default function APIKeyManager() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
 
+  // Security settings
+  const [, setSettings] = useState<ExternalRatesSettings | null>(null);
+  const [settingsForm, setSettingsForm] = useState({ max_price_deviation_pct: 0, price_update_cooldown_minutes: 0 });
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsSuccess, setSettingsSuccess] = useState(false);
+
+  // Price change log
+  const [priceChanges, setPriceChanges] = useState<PriceChangeLog[]>([]);
+
   const loadKeys = async () => {
     try {
       setLoading(true);
@@ -57,8 +67,49 @@ export default function APIKeyManager() {
     }
   };
 
+  const loadSettings = async () => {
+    try {
+      const response = await complianceApi.externalRatesSettings.get();
+      setSettings(response.data);
+      setSettingsForm({
+        max_price_deviation_pct: response.data.max_price_deviation_pct,
+        price_update_cooldown_minutes: response.data.price_update_cooldown_minutes,
+      });
+    } catch {
+      // Settings may not exist yet, that's fine
+    }
+  };
+
+  const loadPriceChanges = async () => {
+    try {
+      const response = await complianceApi.priceChangeLog.list({ limit: 20 });
+      setPriceChanges(response.data.data || []);
+    } catch {
+      // Ignore errors loading price changes
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      setSettingsSaving(true);
+      setSettingsError(null);
+      setSettingsSuccess(false);
+      const response = await complianceApi.externalRatesSettings.update(settingsForm);
+      setSettings(response.data);
+      setSettingsSuccess(true);
+      setTimeout(() => setSettingsSuccess(false), 2000);
+    } catch (err: unknown) {
+      const axiosError = err as { response?: { data?: { error?: string } } };
+      setSettingsError(axiosError.response?.data?.error || 'Failed to save settings');
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   useEffect(() => {
     loadKeys();
+    loadSettings();
+    loadPriceChanges();
   }, []);
 
   const openCreateDialog = () => {
@@ -205,6 +256,110 @@ export default function APIKeyManager() {
           </TableBody>
         </Table>
       )}
+
+      {/* External Rates Security Settings */}
+      <Card>
+        <CardContent className="p-6 space-y-4">
+          <h3 className="text-base font-medium text-[#374151]">External Rates Security</h3>
+
+          {settingsError && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {settingsError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                Max Price Deviation (%)
+              </label>
+              <Input
+                type="number"
+                value={settingsForm.max_price_deviation_pct}
+                onChange={e => setSettingsForm(prev => ({ ...prev, max_price_deviation_pct: parseFloat(e.target.value) || 0 }))}
+                min="0"
+                step="0.1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                Price Update Cooldown (minutes)
+              </label>
+              <Input
+                type="number"
+                value={settingsForm.price_update_cooldown_minutes}
+                onChange={e => setSettingsForm(prev => ({ ...prev, price_update_cooldown_minutes: parseInt(e.target.value) || 0 }))}
+                min="0"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleSaveSettings} disabled={settingsSaving}>
+              {settingsSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Save Settings
+            </Button>
+            {settingsSuccess && (
+              <span className="text-sm text-[#22C55E] flex items-center gap-1">
+                <Check className="w-4 h-4" /> Saved
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Price Change Audit Log */}
+      <Card>
+        <CardContent className="p-6 space-y-4">
+          <h3 className="text-base font-medium text-[#374151]">Price Change Audit Log</h3>
+
+          {priceChanges.length === 0 ? (
+            <p className="text-[#6B7280] text-sm py-4 text-center">No price changes recorded</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>API Key</TableHead>
+                  <TableHead>Token</TableHead>
+                  <TableHead>Old Price → New Price</TableHead>
+                  <TableHead>Deviation</TableHead>
+                  <TableHead>IP</TableHead>
+                  <TableHead>IP Changed</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {priceChanges.map(log => (
+                  <TableRow key={log.id}>
+                    <TableCell className="text-[#6B7280] text-sm whitespace-nowrap">
+                      {new Date(log.created_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm">{log.api_key_name}</TableCell>
+                    <TableCell className="font-mono text-xs">{log.symbol}</TableCell>
+                    <TableCell className="text-sm">
+                      {log.old_price != null ? `$${log.old_price.toFixed(2)}` : 'N/A'}
+                      {' → '}
+                      ${log.new_price.toFixed(2)}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {log.deviation_pct != null ? `${log.deviation_pct.toFixed(1)}%` : 'N/A'}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-[#6B7280]">{log.ip_address}</TableCell>
+                    <TableCell>
+                      {log.ip_changed ? (
+                        <AlertTriangle className="w-4 h-4 text-[#F97316]" />
+                      ) : (
+                        <span className="text-[#6B7280] text-sm">No</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Create Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={open => { if (!open) setShowCreateDialog(false); }}>

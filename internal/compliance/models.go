@@ -49,6 +49,7 @@ type APIKey struct {
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	LastIP      *string    `json:"last_ip,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
@@ -174,4 +175,19 @@ type ComplianceLogFilters struct {
 	TransferType *TransferType
 	Limit        int
 	Offset       int
+}
+
+// PriceChangeLog records every price change made via the external rates API.
+type PriceChangeLog struct {
+	ID           int        `json:"id"`
+	APIKeyID     string     `json:"api_key_id"`
+	APIKeyName   string     `json:"api_key_name"`
+	TokenAddress string     `json:"token_address"`
+	Symbol       string     `json:"symbol"`
+	OldPrice     *float64   `json:"old_price,omitempty"`
+	NewPrice     float64    `json:"new_price"`
+	DeviationPct *float64   `json:"deviation_pct,omitempty"`
+	IPAddress    string     `json:"ip_address"`
+	IPChanged    bool       `json:"ip_changed"`
+	CreatedAt    time.Time  `json:"created_at"`
 }

@@ -17,6 +17,8 @@ import type {
   CurrencyConfig,
   APIKey,
   CreateAPIKeyResponse,
+  ExternalRatesSettings,
+  PriceChangeLog,
 } from '../types/compliance';
 
 export const complianceApi = {
@@ -78,6 +80,18 @@ export const complianceApi = {
       api.get<CurrencyConfig>('/compliance/currency'),
     set: (currency: string) =>
       api.put<{ currency: string; message: string }>('/compliance/currency', { currency }),
+  },
+
+  externalRatesSettings: {
+    get: () =>
+      api.get<ExternalRatesSettings>('/compliance/external-rates-settings'),
+    update: (settings: Partial<ExternalRatesSettings>) =>
+      api.put<ExternalRatesSettings>('/compliance/external-rates-settings', settings),
+  },
+
+  priceChangeLog: {
+    list: (params?: { limit?: number; offset?: number }) =>
+      api.get<PaginatedResponse<PriceChangeLog>>('/compliance/price-change-log', { params }),
   },
 
   apiKeys: {

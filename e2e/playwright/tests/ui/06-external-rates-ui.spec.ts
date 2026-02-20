@@ -14,6 +14,11 @@ test.describe.serial('External Rates UI', () => {
   let apiKeyId: string;
 
   test.beforeAll(async ({ request }) => {
+    // Disable cooldown and set permissive bounds for E2E tests
+    await request.put(`${ADMIN_URL}/api/v1/admin/compliance/external-rates-settings`, {
+      data: { price_update_cooldown_minutes: 0, max_price_deviation_pct: 500 },
+    });
+
     // Create an API key for pushing external prices
     const keyResponse = await request.post(`${ADMIN_URL}/api/v1/admin/compliance/api-keys`, {
       data: { name: 'E2E UI Rates Test Key' },

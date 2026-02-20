@@ -64,4 +64,10 @@ type Store interface {
 	RevokeAPIKey(ctx context.Context, id string) error
 	DeleteAPIKey(ctx context.Context, id string) error
 	UpdateAPIKeyLastUsed(ctx context.Context, id string) error
+	UpdateAPIKeyLastIP(ctx context.Context, id, ip string) error
+	GetAPIKeyLastIP(ctx context.Context, id string) (*string, error)
+
+	// Price change audit log
+	CreatePriceChangeLog(ctx context.Context, entry *PriceChangeLog) error
+	ListPriceChangeLogs(ctx context.Context, limit, offset int) ([]*PriceChangeLog, int, error)
 }

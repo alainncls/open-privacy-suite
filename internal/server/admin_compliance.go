@@ -61,6 +61,11 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	adminGroup.GET("/compliance/api-keys", s.listAPIKeys)
 	adminGroup.POST("/compliance/api-keys", s.createAPIKey)
 	adminGroup.DELETE("/compliance/api-keys/:id", s.revokeAPIKey)
+
+	// External rates protection settings and audit log
+	adminGroup.GET("/compliance/price-change-log", s.listPriceChangeLogs)
+	adminGroup.GET("/compliance/external-rates-settings", s.getExternalRatesSettings)
+	adminGroup.PUT("/compliance/external-rates-settings", s.setExternalRatesSettings)
 }
 
 // compliancePaginationParams parses and caps pagination parameters.

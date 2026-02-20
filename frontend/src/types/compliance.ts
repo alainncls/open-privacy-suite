@@ -164,7 +164,27 @@ export interface APIKey {
   expires_at?: string;
   revoked_at?: string;
   last_used_at?: string;
+  last_ip?: string;
   created_at: string;
+}
+
+export interface PriceChangeLog {
+  id: number;
+  api_key_id: string;
+  api_key_name: string;
+  token_address: string;
+  symbol: string;
+  old_price?: number;
+  new_price: number;
+  deviation_pct?: number;
+  ip_address: string;
+  ip_changed: boolean;
+  created_at: string;
+}
+
+export interface ExternalRatesSettings {
+  max_price_deviation_pct: number;
+  price_update_cooldown_minutes: number;
 }
 
 export interface CreateAPIKeyResponse {
