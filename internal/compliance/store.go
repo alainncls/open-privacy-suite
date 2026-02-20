@@ -18,6 +18,7 @@ type Store interface {
 	GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*SystemTokenPrice, error)
 	GetSystemTokenPriceByAddress(ctx context.Context, tokenAddress string) (*SystemTokenPrice, error)
 	UpsertSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
+	UpdateSystemTokenPriceByID(ctx context.Context, price *SystemTokenPrice) error
 	CreateSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
 	ListSystemTokenPrices(ctx context.Context) ([]*SystemTokenPrice, error)
 

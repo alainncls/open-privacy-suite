@@ -114,6 +114,16 @@ func (d *DB) UpsertSystemTokenPrice(ctx context.Context, price *compliance.Syste
 	return err
 }
 
+func (d *DB) UpdateSystemTokenPriceByID(ctx context.Context, price *compliance.SystemTokenPrice) error {
+	query := `UPDATE system_token_prices SET
+	          symbol = $1, decimals = $2, price_fiat = $3, source = $4, token_address = $5, updated_at = $6
+	          WHERE id = $7`
+	_, err := d.conn.ExecContext(ctx, query,
+		price.Symbol, price.Decimals, price.PriceFiat, price.Source, price.TokenAddress, price.UpdatedAt, price.ID,
+	)
+	return err
+}
+
 func (d *DB) CreateSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error {
 	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7)

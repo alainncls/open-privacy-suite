@@ -68,6 +68,12 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}, nil
 	}
 
+	// Read base currency once for the entire decision — used for audit trail.
+	currency, _ := c.store.GetSystemSetting(ctx, "base_currency")
+	if currency == "" {
+		currency = "usd"
+	}
+
 	// Step 3: Sanctions check (sender, recipient, and tx originator if different)
 
 	// For transferFrom, info.FromAddress is the allowance owner, but req.From is the
@@ -82,7 +88,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 			log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 			// M2: Denial decisions — warn on log failure but still deny. The tx is already
 			// blocked, so a missing audit entry is less severe than letting it through.
-			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 				log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 			}
 			return &CheckResult{
@@ -101,7 +107,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		reason := fmt.Sprintf("recipient address %s is sanctioned", info.ToAddress)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -119,7 +125,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		reason := fmt.Sprintf("sender address %s is sanctioned", info.FromAddress)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -149,7 +155,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		// Sentinel: price unavailable
 		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
 		log.Printf("Compliance denied (fail closed): org=%s user=%s %s", req.OrgID, req.UserID, reason)
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -180,7 +186,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Allowed decision — fail closed on log failure. Allowing a transaction
 		// without an audit trail is a compliance violation. Deny instead.
-		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", nil); err != nil {
+		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", nil, currency); err != nil {
 			log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
 			return &CheckResult{
 				Allowed:      false,
@@ -207,7 +213,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountFiat, threshold)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -223,7 +229,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountFiat, threshold, record.ID)
 	log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 	// M2: Allowed decision — fail closed on log failure.
-	if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", &record.ID); err != nil {
+	if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", &record.ID, currency); err != nil {
 		log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		return &CheckResult{
 			Allowed:      false,
@@ -318,17 +324,11 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 // trade-off: we log the decision at check time because we need the audit trail before
 // forwarding the transaction to the node.
 func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *TransferInfo,
-	amountFiat *float64, thresholdFiat *float64, decision, denialReason string, recordID *string) error {
+	amountFiat *float64, thresholdFiat *float64, decision, denialReason string, recordID *string, currency string) error {
 
 	var denialReasonPtr *string
 	if denialReason != "" {
 		denialReasonPtr = &denialReason
-	}
-
-	// Read base currency for the currency snapshot
-	currency, _ := c.store.GetSystemSetting(ctx, "base_currency")
-	if currency == "" {
-		currency = "usd"
 	}
 
 	entry := &ComplianceLog{

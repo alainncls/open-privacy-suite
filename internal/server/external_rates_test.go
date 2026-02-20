@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,8 @@ import (
 
 	"privacy-proxy/internal/compliance"
 )
+
+var testHexAddressRe = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
 
 // mockExternalRatesStore implements the subset of db methods needed for testing.
 type mockExternalRatesStore struct {
@@ -41,9 +45,24 @@ func setupExternalRatesRouter(store *mockExternalRatesStore) *gin.Engine {
 			return
 		}
 
+		// Normalize and validate token address
+		input.TokenAddress = strings.ToLower(strings.TrimSpace(input.TokenAddress))
+		if input.TokenAddress != "native" {
+			if len(input.TokenAddress) != 42 || !testHexAddressRe.MatchString(input.TokenAddress) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "token_address must be 'native' or a valid 42-character hex address starting with 0x"})
+				return
+			}
+		}
+
 		existing := store.systemPricesByAddr[input.TokenAddress]
 
 		if existing != nil {
+			// Reject overriding CoinGecko-sourced tokens
+			if existing.Source == "coingecko" {
+				c.JSON(http.StatusConflict, gin.H{"error": "cannot override CoinGecko-sourced token via external API; use the admin dashboard to manage CoinGecko tokens"})
+				return
+			}
+
 			existing.PriceFiat = input.Price
 			existing.Source = "external"
 			existing.UpdatedAt = time.Now()
@@ -102,7 +121,7 @@ func TestExternalRates_UpdateExisting(t *testing.T) {
 				Symbol:       "ETH",
 				Decimals:     18,
 				PriceFiat:    2000,
-				Source:       "coingecko",
+				Source:       "external",
 				TokenAddress: &nativeAddr,
 				UpdatedAt:    time.Now().Add(-1 * time.Hour),
 			},
@@ -219,6 +238,85 @@ func TestExternalRates_BadPrice(t *testing.T) {
 
 			if w.Code != tt.code {
 				t.Errorf("expected %d, got %d: %s", tt.code, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestExternalRates_RejectCoinGeckoOverride(t *testing.T) {
+	nativeAddr := "native"
+	store := &mockExternalRatesStore{
+		systemPricesByAddr: map[string]*compliance.SystemTokenPrice{
+			"native": {
+				ID:           1,
+				CoingeckoID:  strPtr("ethereum"),
+				Symbol:       "ETH",
+				Decimals:     18,
+				PriceFiat:    2000,
+				Source:       "coingecko",
+				TokenAddress: &nativeAddr,
+				UpdatedAt:    time.Now().Add(-1 * time.Hour),
+			},
+		},
+	}
+
+	r := setupExternalRatesRouter(store)
+	body, _ := json.Marshal(map[string]any{"token_address": "native", "price": 9999.99})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/external/rates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["error"].(string), "CoinGecko") {
+		t.Errorf("expected error mentioning CoinGecko, got %v", resp["error"])
+	}
+
+	// Verify price was NOT changed
+	if store.systemPricesByAddr["native"].PriceFiat != 2000 {
+		t.Errorf("expected price to remain 2000, got %v", store.systemPricesByAddr["native"].PriceFiat)
+	}
+}
+
+func TestExternalRates_InvalidTokenAddress(t *testing.T) {
+	store := &mockExternalRatesStore{
+		systemPricesByAddr: map[string]*compliance.SystemTokenPrice{},
+	}
+
+	r := setupExternalRatesRouter(store)
+
+	tests := []struct {
+		name    string
+		address string
+	}{
+		{"too short", "0x1234"},
+		{"no 0x prefix", "1234567890abcdef1234567890abcdef12345678"},
+		{"non-hex characters", "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"},
+		{"too long", "0x1234567890abcdef1234567890abcdef1234567890"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{
+				"token_address": tt.address,
+				"price":         100.0,
+				"symbol":        "TEST",
+				"decimals":      18,
+			})
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/external/rates", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
 			}
 		})
 	}

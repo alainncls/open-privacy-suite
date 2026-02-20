@@ -1,7 +1,11 @@
 package server
 
 import (
+	"fmt"
+	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -9,10 +13,13 @@ import (
 	"privacy-proxy/internal/compliance"
 )
 
+var hexAddressRe = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
+
 // registerExternalRatesRoutes registers the external rates API routes.
 // These are authenticated via API keys, completely separate from JWT/localhost auth.
 func (s *Server) registerExternalRatesRoutes(router *gin.Engine) {
 	external := router.Group("/api/v1/external")
+	external.Use(s.authRateLimiter.Middleware())
 	external.Use(apiKeyMiddleware(s.db, "rates:write"))
 	{
 		external.PUT("/rates", s.putExternalRate)
@@ -36,6 +43,15 @@ func (s *Server) putExternalRate(c *gin.Context) {
 		return
 	}
 
+	// Normalize and validate token address
+	input.TokenAddress = strings.ToLower(strings.TrimSpace(input.TokenAddress))
+	if input.TokenAddress != "native" {
+		if len(input.TokenAddress) != 42 || !hexAddressRe.MatchString(input.TokenAddress) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token_address must be 'native' or a valid 42-character hex address starting with 0x"})
+			return
+		}
+	}
+
 	ctx := c.Request.Context()
 
 	// Try to find by token_address first
@@ -46,11 +62,17 @@ func (s *Server) putExternalRate(c *gin.Context) {
 	}
 
 	if existing != nil {
-		// Update existing token — flip source to external so CoinGecko stops overwriting
+		// Reject overriding CoinGecko-sourced tokens via external API
+		if existing.Source == "coingecko" {
+			c.JSON(http.StatusConflict, gin.H{"error": "cannot override CoinGecko-sourced token via external API; use the admin dashboard to manage CoinGecko tokens"})
+			return
+		}
+
+		// Update existing external token
 		existing.PriceFiat = input.Price
 		existing.Source = "external"
 		existing.UpdatedAt = time.Now()
-		if err := s.db.UpsertSystemTokenPrice(ctx, existing); err != nil {
+		if err := s.db.UpdateSystemTokenPriceByID(ctx, existing); err != nil {
 			internalError(c, "failed to update system token price", err)
 			return
 		}
@@ -241,18 +263,34 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 	// Zero out CoinGecko-sourced system prices to force re-fetch in new currency
 	// External prices are not touched — they are already in the correct currency.
 	prices, err := s.db.ListSystemTokenPrices(ctx)
-	if err == nil {
-		for _, p := range prices {
-			if p.Source == "coingecko" {
-				p.PriceFiat = 0
-				p.UpdatedAt = time.Now()
-				s.db.UpsertSystemTokenPrice(ctx, p)
+	if err != nil {
+		log.Printf("WARNING: failed to list system token prices after currency change: %v", err)
+		c.JSON(http.StatusOK, gin.H{
+			"currency": input.Currency,
+			"message":  "Base currency updated, but failed to zero CoinGecko prices. They may show values in the old currency until the next CoinGecko fetch.",
+		})
+		return
+	}
+
+	var zeroErrors int
+	for _, p := range prices {
+		if p.Source == "coingecko" {
+			p.PriceFiat = 0
+			p.UpdatedAt = time.Now()
+			if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
+				log.Printf("WARNING: failed to zero price for %s: %v", p.Symbol, err)
+				zeroErrors++
 			}
 		}
 	}
 
+	msg := "Base currency updated. CoinGecko prices have been zeroed and will be re-fetched in the new currency."
+	if zeroErrors > 0 {
+		msg = fmt.Sprintf("Base currency updated. %d CoinGecko price(s) failed to zero — they may show values in the old currency until the next fetch.", zeroErrors)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"currency": input.Currency,
-		"message":  "Base currency updated. CoinGecko prices have been zeroed and will be re-fetched in the new currency.",
+		"message":  msg,
 	})
 }
