@@ -22,7 +22,7 @@ async function setupUser(request: any) {
   jwtToken = await getJWTToken(request, USER_DID);
 
   // Step 2: Find the user by external ID to get their internal ID
-  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const usersResp = await request.get(`${API_URL}/api/v1/admin/users`);
   const usersData = await usersResp.json();
   const users = usersData.data;
   const user = users.find((u: any) => u.external_id === USER_DID);
@@ -31,19 +31,19 @@ async function setupUser(request: any) {
   }
 
   // Step 3: Update KYC status using internal ID
-  await request.put(`${API_URL}/api/v1/users/${user.id}`, {
+  await request.put(`${API_URL}/api/v1/admin/users/${user.id}`, {
     data: { kyc: true }
   });
 
   // Step 4: Get default org and create/find a group with proper permissions
-  const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
+  const orgsResp = await request.get(`${API_URL}/api/v1/admin/orgs`);
   const orgsData = await orgsResp.json();
   const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
   if (defaultOrg) {
     // Create a group
-    const groupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
+    const groupResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-historical-state',
         name: 'Security Historical State Test',
@@ -56,7 +56,7 @@ async function setupUser(request: any) {
       groupId = group.id;
     } else {
       // Group might already exist, find it
-      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
       const groupsData = await groupsResp.json();
       const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-historical-state');
@@ -65,7 +65,7 @@ async function setupUser(request: any) {
 
     if (groupId) {
       // Set group access via separate endpoint
-      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${groupId}/access`, {
+      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${groupId}/access`, {
         data: {
           allowed_methods: ['eth_call', 'eth_getStorageAt', 'eth_getBalance', 'eth_getCode', 'eth_getTransactionCount'],
           claims: ['deploy'] // deploy needed for unregistered contract access
@@ -74,7 +74,7 @@ async function setupUser(request: any) {
 
       // Add user to the group
       await request.post(
-        `${API_URL}/api/v1/users/${user.id}/memberships`,
+        `${API_URL}/api/v1/admin/users/${user.id}/memberships`,
         { data: { org_id: defaultOrg.id, group_id: groupId } }
       );
     }

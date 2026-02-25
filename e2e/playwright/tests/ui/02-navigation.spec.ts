@@ -6,7 +6,7 @@ import { navigateToAdminAuthenticated, mockLoginViaAPI } from '../../helpers/ui/
 async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
   const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
   try {
-    const response = await request.get(`${ADMIN_URL}/api/v1/status`);
+    const response = await request.get(`${ADMIN_URL}/api/v1/admin/status`);
     if (response.ok()) {
       const data = await response.json();
       return data?.security?.runtime_tracing_enabled === true;

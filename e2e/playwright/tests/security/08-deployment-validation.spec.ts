@@ -27,7 +27,7 @@ async function setupUsers(request: any) {
   nonDeployerToken = await getJWTToken(request, NON_DEPLOYER_DID);
 
   // Step 2: Find users by external ID to get their internal IDs
-  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const usersResp = await request.get(`${API_URL}/api/v1/admin/users`);
   const usersData = await usersResp.json();
   const users = usersData.data;
   const deployerUser = users.find((u: any) => u.external_id === DEPLOYER_DID);
@@ -41,22 +41,22 @@ async function setupUsers(request: any) {
   }
 
   // Step 3: Update KYC status using internal IDs
-  await request.put(`${API_URL}/api/v1/users/${deployerUser.id}`, {
+  await request.put(`${API_URL}/api/v1/admin/users/${deployerUser.id}`, {
     data: { kyc: true }
   });
-  await request.put(`${API_URL}/api/v1/users/${nonDeployerUser.id}`, {
+  await request.put(`${API_URL}/api/v1/admin/users/${nonDeployerUser.id}`, {
     data: { kyc: true }
   });
 
   // Step 4: Get default org and create appropriate groups
-  const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
+  const orgsResp = await request.get(`${API_URL}/api/v1/admin/orgs`);
   const orgsData = await orgsResp.json();
   const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
 
   if (defaultOrg) {
     // Create group with deploy claim
-    const deployGroupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
+    const deployGroupResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-deployers',
         name: 'Security Deployers'
@@ -68,7 +68,7 @@ async function setupUsers(request: any) {
       const group = await deployGroupResp.json();
       deployGroupId = group.id;
     } else {
-      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
       const groupsData = await groupsResp.json();
       const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-deployers');
@@ -77,7 +77,7 @@ async function setupUsers(request: any) {
 
     // Set group access permissions (deploy claim)
     if (deployGroupId) {
-      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${deployGroupId}/access`, {
+      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${deployGroupId}/access`, {
         data: {
           allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
           claims: ['read', 'write', 'deploy']
@@ -86,7 +86,7 @@ async function setupUsers(request: any) {
     }
 
     // Create group without deploy claim
-    const noDeployGroupResp = await request.post(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`, {
+    const noDeployGroupResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`, {
       data: {
         slug: 'security-no-deploy',
         name: 'Security No Deploy'
@@ -98,7 +98,7 @@ async function setupUsers(request: any) {
       const group = await noDeployGroupResp.json();
       noDeployGroupId = group.id;
     } else {
-      const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+      const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
       const groupsData = await groupsResp.json();
       const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-no-deploy');
@@ -107,7 +107,7 @@ async function setupUsers(request: any) {
 
     // Set group access permissions (no deploy claim)
     if (noDeployGroupId) {
-      await request.put(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups/${noDeployGroupId}/access`, {
+      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${noDeployGroupId}/access`, {
         data: {
           allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
           claims: ['read', 'write']  // No deploy!
@@ -118,14 +118,14 @@ async function setupUsers(request: any) {
     // Add users to groups using internal IDs
     if (deployGroupId) {
       await request.post(
-        `${API_URL}/api/v1/users/${deployerUser.id}/memberships`,
+        `${API_URL}/api/v1/admin/users/${deployerUser.id}/memberships`,
         { data: { org_id: defaultOrg.id, group_id: deployGroupId } }
       );
     }
 
     if (noDeployGroupId) {
       await request.post(
-        `${API_URL}/api/v1/users/${nonDeployerUser.id}/memberships`,
+        `${API_URL}/api/v1/admin/users/${nonDeployerUser.id}/memberships`,
         { data: { org_id: defaultOrg.id, group_id: noDeployGroupId } }
       );
     }

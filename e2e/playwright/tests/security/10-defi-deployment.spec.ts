@@ -18,7 +18,7 @@ const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 // Helper to check if runtime tracing is enabled (preregistration is disabled when enabled)
 async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
   try {
-    const response = await request.get(`${API_URL}/api/v1/status`);
+    const response = await request.get(`${API_URL}/api/v1/admin/status`);
     if (response.ok()) {
       const data = await response.json();
       return data?.security?.runtime_tracing_enabled === true;
@@ -142,7 +142,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     orgSlug = `defi-test-${testRunId}`;
 
     // Create Organization for DeFi deployment
-    const orgResp = await apiCall(request, 'POST', '/api/v1/orgs', {
+    const orgResp = await apiCall(request, 'POST', '/api/v1/admin/orgs', {
       slug: orgSlug,
       name: 'DeFi Deployment Test Org'
     });
@@ -152,7 +152,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     orgId = orgResp.body.id;
 
     // Create group with deploy permissions
-    const groupResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/groups`, {
+    const groupResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/groups`, {
       slug: 'defi-deployers',
       name: 'DeFi Deployers'
     });
@@ -162,7 +162,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     groupId = groupResp.body.id;
 
     // Set group access with deploy claim
-    await apiCall(request, 'PUT', `/api/v1/orgs/${orgId}/groups/${groupId}/access`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`, {
       allowed_methods: [
         'eth_call',
         'eth_sendTransaction',
@@ -179,15 +179,15 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     userToken = await getJWTToken(request, userDID);
 
     // Find user and update KYC + membership
-    const usersResp = await apiCall(request, 'GET', '/api/v1/users');
+    const usersResp = await apiCall(request, 'GET', '/api/v1/admin/users');
     const users = usersResp.body.data;
     const user = users.find((u: any) => u.external_id === userDID);
     if (!user) {
       throw new Error(`User not created after auth: ${userDID}`);
     }
 
-    await apiCall(request, 'PUT', `/api/v1/users/${user.id}`, { kyc: true });
-    await apiCall(request, 'POST', `/api/v1/users/${user.id}/memberships`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/users/${user.id}`, { kyc: true });
+    await apiCall(request, 'POST', `/api/v1/admin/users/${user.id}/memberships`, {
       org_id: orgId,
       group_id: groupId
     });
@@ -199,7 +199,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     factoryAddress = '0x' + 'ff'.repeat(20);
 
     // Configure factory for the org
-    await apiCall(request, 'PUT', `/api/v1/orgs/${orgId}/config/create3`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/orgs/${orgId}/config/create3`, {
       factory: factoryAddress
     });
   });
@@ -215,7 +215,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-001: Preregister Token address via API', async ({ request }) => {
       const saltPrefix = generateSaltPrefix('token');
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -236,7 +236,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-002: Preregister Pool address via API', async ({ request }) => {
       const saltPrefix = generateSaltPrefix('pool');
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -257,7 +257,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-003: Preregister Router address via API', async ({ request }) => {
       const saltPrefix = generateSaltPrefix('router');
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -278,7 +278,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-004: Preregister multiple addresses in batch', async ({ request }) => {
       const saltPrefix = generateSaltPrefix('batch');
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 5,
@@ -296,7 +296,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     });
 
     test('DEFI-005: List preregistered addresses', async ({ request }) => {
-      const result = await apiCall(request, 'GET', `/api/v1/orgs/${orgId}/addresses/preregistered`);
+      const result = await apiCall(request, 'GET', `/api/v1/admin/orgs/${orgId}/addresses/preregistered`);
 
       expect(result.ok).toBe(true);
       expect(Array.isArray(result.body)).toBe(true);
@@ -314,7 +314,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-006: Update constructor ABI for preregistered address', async ({ request }) => {
       // First preregister a new address
       const saltPrefix = generateSaltPrefix('abiupdate');
-      const preregResult = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const preregResult = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -335,7 +335,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const updateResult = await apiCall(
         request,
         'PUT',
-        `/api/v1/orgs/${orgId}/addresses/preregistered/${address}/abi`,
+        `/api/v1/admin/orgs/${orgId}/addresses/preregistered/${address}/abi`,
         { constructor_abi: newABI }
       );
 
@@ -360,10 +360,6 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     });
 
     test('DEFI-008: Deployment to non-preregistered address is denied', async ({ request }) => {
-      // Use a random address that is NOT preregistered
-      const hexTs = Date.now().toString(16).slice(-8);
-      const randomAddress = '0xcc' + hexTs + 'c'.repeat(30);
-
       // This should be allowed for general reads via claims
       // but deployment would be denied
       const result = await rpcCall(request, userToken, 'eth_sendTransaction', [
@@ -442,7 +438,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
     test('DEFI-012: Preregister V2 upgrade addresses', async ({ request }) => {
       const saltPrefix = generateSaltPrefix('v2token');
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -493,7 +489,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
 
     test.beforeAll(async ({ request }) => {
       // Create another organization
-      const otherOrgResp = await apiCall(request, 'POST', '/api/v1/orgs', {
+      const otherOrgResp = await apiCall(request, 'POST', '/api/v1/admin/orgs', {
         slug: `defi-other-${testRunId}`,
         name: 'Other DeFi Org'
       });
@@ -503,7 +499,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       otherOrgId = otherOrgResp.body.id;
 
       // Create group for other org
-      const otherGroupResp = await apiCall(request, 'POST', `/api/v1/orgs/${otherOrgId}/groups`, {
+      const otherGroupResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${otherOrgId}/groups`, {
         slug: 'other-defi-group',
         name: 'Other DeFi Group'
       });
@@ -513,7 +509,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const otherGroupId = otherGroupResp.body.id;
 
       // Set group access
-      await apiCall(request, 'PUT', `/api/v1/orgs/${otherOrgId}/groups/${otherGroupId}/access`, {
+      await apiCall(request, 'PUT', `/api/v1/admin/orgs/${otherOrgId}/groups/${otherGroupId}/access`, {
         allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas'],
         claims: ['read', 'write']
       });
@@ -522,15 +518,15 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const otherUserDID = `did:defi:other-user-${testRunId}`;
       otherUserToken = await getJWTToken(request, otherUserDID);
 
-      const usersResp = await apiCall(request, 'GET', '/api/v1/users');
+      const usersResp = await apiCall(request, 'GET', '/api/v1/admin/users');
       const users = usersResp.body.data;
       const otherUser = users.find((u: any) => u.external_id === otherUserDID);
       if (!otherUser) {
         throw new Error(`Other user not created: ${otherUserDID}`);
       }
 
-      await apiCall(request, 'PUT', `/api/v1/users/${otherUser.id}`, { kyc: true });
-      await apiCall(request, 'POST', `/api/v1/users/${otherUser.id}/memberships`, {
+      await apiCall(request, 'PUT', `/api/v1/admin/users/${otherUser.id}`, { kyc: true });
+      await apiCall(request, 'POST', `/api/v1/admin/users/${otherUser.id}/memberships`, {
         org_id: otherOrgId,
         group_id: otherGroupId
       });
@@ -582,11 +578,11 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const saltPrefix = generateSaltPrefix('othertok');
 
       // Configure factory for other org
-      await apiCall(request, 'PUT', `/api/v1/orgs/${otherOrgId}/config/create3`, {
+      await apiCall(request, 'PUT', `/api/v1/admin/orgs/${otherOrgId}/config/create3`, {
         factory: otherFactory
       });
 
-      const result = await apiCall(request, 'POST', `/api/v1/orgs/${otherOrgId}/addresses/preregister`, {
+      const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${otherOrgId}/addresses/preregister`, {
         factory: otherFactory,
         salt_prefix: saltPrefix,
         count: 1,
@@ -597,8 +593,8 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const otherOrgAddress = result.body.addresses[0].address;
 
       // Verify original org's addresses are separate
-      const ourAddresses = await apiCall(request, 'GET', `/api/v1/orgs/${orgId}/addresses/preregistered`);
-      const otherAddresses = await apiCall(request, 'GET', `/api/v1/orgs/${otherOrgId}/addresses/preregistered`);
+      const ourAddresses = await apiCall(request, 'GET', `/api/v1/admin/orgs/${orgId}/addresses/preregistered`);
+      const otherAddresses = await apiCall(request, 'GET', `/api/v1/admin/orgs/${otherOrgId}/addresses/preregistered`);
 
       const ourList = ourAddresses.body.map((a: any) => a.address.toLowerCase());
       const otherList = otherAddresses.body.map((a: any) => a.address.toLowerCase());
@@ -618,7 +614,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       // Preregister a new address for deletion test
       const saltPrefix = generateSaltPrefix('todelete');
 
-      const preregResult = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const preregResult = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -632,13 +628,13 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       const deleteResult = await apiCall(
         request,
         'DELETE',
-        `/api/v1/orgs/${orgId}/addresses/preregistered/${addressToDelete}`
+        `/api/v1/admin/orgs/${orgId}/addresses/preregistered/${addressToDelete}`
       );
 
       expect(deleteResult.ok).toBe(true);
 
       // Verify it's gone
-      const listResult = await apiCall(request, 'GET', `/api/v1/orgs/${orgId}/addresses/preregistered`);
+      const listResult = await apiCall(request, 'GET', `/api/v1/admin/orgs/${orgId}/addresses/preregistered`);
       const addresses = listResult.body.map((a: any) => a.address.toLowerCase());
       expect(addresses).not.toContain(addressToDelete.toLowerCase());
     });
@@ -650,7 +646,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
       // For now, verify the deletion API works for pending addresses
       const saltPrefix = generateSaltPrefix('pending');
 
-      const preregResult = await apiCall(request, 'POST', `/api/v1/orgs/${orgId}/addresses/preregister`, {
+      const preregResult = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgId}/addresses/preregister`, {
         factory: factoryAddress,
         salt_prefix: saltPrefix,
         count: 1,
@@ -679,7 +675,7 @@ test.describe('DeFi Deployment Error Handling', () => {
 
     const testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-    const orgResp = await apiCall(request, 'POST', '/api/v1/orgs', {
+    const orgResp = await apiCall(request, 'POST', '/api/v1/admin/orgs', {
       slug: `defi-errors-${testRunId}`,
       name: 'DeFi Error Handling Test'
     });
@@ -697,7 +693,7 @@ test.describe('DeFi Deployment Error Handling', () => {
   });
 
   test('DEFI-021: Invalid factory address rejected', async ({ request }) => {
-    const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: 'not-an-address',
       salt_prefix: '0x1234',
       count: 1
@@ -710,7 +706,7 @@ test.describe('DeFi Deployment Error Handling', () => {
   test('DEFI-022: Text salt prefix is allowed (not just hex)', async ({ request }) => {
     // Text salt prefixes are intentionally allowed - they get hashed internally
     // Examples: "myapp-v1", "token-deployment", etc.
-    const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: '0x' + '1'.repeat(40),
       salt_prefix: 'text-salt-prefix',
       count: 1
@@ -722,7 +718,7 @@ test.describe('DeFi Deployment Error Handling', () => {
   });
 
   test('DEFI-023: Zero count rejected', async ({ request }) => {
-    const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: '0x' + '1'.repeat(40),
       salt_prefix: '0x1234',
       count: 0
@@ -732,7 +728,7 @@ test.describe('DeFi Deployment Error Handling', () => {
   });
 
   test('DEFI-024: Excessive count rejected', async ({ request }) => {
-    const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: '0x' + '1'.repeat(40),
       salt_prefix: '0x1234',
       count: 1000 // Excessively large
@@ -750,11 +746,11 @@ test.describe('DeFi Deployment Error Handling', () => {
   test('DEFI-025: Invalid constructor ABI rejected', async ({ request }) => {
     const factoryAddr = '0x' + '1'.repeat(40);
 
-    await apiCall(request, 'PUT', `/api/v1/orgs/${testOrgId}/config/create3`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/orgs/${testOrgId}/config/create3`, {
       factory: factoryAddr
     });
 
-    const result = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: factoryAddr,
       salt_prefix: generateSaltPrefix('badabi'),
       count: 1,
@@ -768,12 +764,12 @@ test.describe('DeFi Deployment Error Handling', () => {
     const factoryAddr = '0x' + '2'.repeat(40);
     const saltPrefix = generateSaltPrefix('dup');
 
-    await apiCall(request, 'PUT', `/api/v1/orgs/${testOrgId}/config/create3`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/orgs/${testOrgId}/config/create3`, {
       factory: factoryAddr
     });
 
     // First preregistration
-    const first = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const first = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: factoryAddr,
       salt_prefix: saltPrefix,
       count: 1
@@ -781,7 +777,7 @@ test.describe('DeFi Deployment Error Handling', () => {
     expect(first.ok).toBe(true);
 
     // Second preregistration with same salt
-    const second = await apiCall(request, 'POST', `/api/v1/orgs/${testOrgId}/addresses/preregister`, {
+    const second = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
       factory: factoryAddr,
       salt_prefix: saltPrefix,
       count: 1

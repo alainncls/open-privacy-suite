@@ -305,8 +305,14 @@ export class RBACTestFixture {
       }
     }
 
-    // We don't delete organizations to avoid affecting other tests
-    // Organizations with unique slugs are effectively isolated
+    // Delete organizations last
+    for (const org of [...this.orgs].reverse()) {
+      try {
+        await this.rbac.deleteOrganization(org.id);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
 
     // Clear tracked resources
     this.contracts = [];

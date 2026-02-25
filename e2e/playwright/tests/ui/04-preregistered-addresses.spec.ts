@@ -12,7 +12,7 @@ const generateSaltPrefix = (base: string) => `0x${base}${Date.now().toString(16)
 async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
   const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
   try {
-    const response = await request.get(`${ADMIN_URL}/api/v1/status`);
+    const response = await request.get(`${ADMIN_URL}/api/v1/admin/status`);
     if (response.ok()) {
       const data = await response.json();
       return data?.security?.runtime_tracing_enabled === true;
@@ -184,7 +184,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory2 = '0x' + '2'.repeat(40);
 
     // Create org1 via API
-    const org1Response = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const org1Response = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: org1Slug, name: `Test Org 1 ${Date.now()}` },
     });
@@ -192,7 +192,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org1 = await org1Response.json();
 
     // Create org2 via API
-    const org2Response = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const org2Response = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: org2Slug, name: `Test Org 2 ${Date.now()}` },
     });
@@ -200,13 +200,13 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org2 = await org2Response.json();
 
     // Set different factories for each org
-    const config1Response = await request.put(`${ADMIN_URL}/api/orgs/${org1.id}/config/create3`, {
+    const config1Response = await request.put(`${ADMIN_URL}/api/v1/admin/orgs/${org1.id}/config/create3`, {
       headers: { 'Content-Type': 'application/json' },
       data: { factory: factory1 },
     });
     expect(config1Response.ok()).toBe(true);
 
-    const config2Response = await request.put(`${ADMIN_URL}/api/orgs/${org2.id}/config/create3`, {
+    const config2Response = await request.put(`${ADMIN_URL}/api/v1/admin/orgs/${org2.id}/config/create3`, {
       headers: { 'Content-Type': 'application/json' },
       data: { factory: factory2 },
     });
@@ -242,14 +242,14 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'abcd'.repeat(10);
 
     // Create org and set factory via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Copy Test Org ${Date.now()}` },
     });
     expect(orgResponse.ok()).toBe(true);
     const org = await orgResponse.json();
 
-    await request.put(`${ADMIN_URL}/api/orgs/${org.id}/config/create3`, {
+    await request.put(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/config/create3`, {
       headers: { 'Content-Type': 'application/json' },
       data: { factory },
     });
@@ -277,7 +277,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ef'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Table Test Org ${Date.now()}` },
     });
@@ -285,7 +285,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister some addresses
-    const preregResponse = await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    const preregResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -324,7 +324,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + '99'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Copy Buttons Test ${Date.now()}` },
     });
@@ -332,7 +332,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    const preregResponse = await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    const preregResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -364,7 +364,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'bb'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Status Test ${Date.now()}` },
     });
@@ -372,7 +372,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address (it will be unused/pending)
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -400,7 +400,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'cc'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Delete Test ${Date.now()}` },
     });
@@ -408,7 +408,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -436,7 +436,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'dd'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `Delete Confirm Test ${Date.now()}` },
     });
@@ -444,7 +444,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    const preregResponse = await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    const preregResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -497,7 +497,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'aa'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Column Test ${Date.now()}` },
     });
@@ -505,7 +505,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -538,7 +538,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ab'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Badge Test ${Date.now()}` },
     });
@@ -546,7 +546,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address WITHOUT ABI
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -580,7 +580,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ac'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Editor Open Test ${Date.now()}` },
     });
@@ -588,7 +588,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    const preregResponse = await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    const preregResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -641,7 +641,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ad'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Save Test ${Date.now()}` },
     });
@@ -649,7 +649,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -704,7 +704,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ae'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Validation Test ${Date.now()}` },
     });
@@ -712,7 +712,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -761,7 +761,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'af'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Cancel Test ${Date.now()}` },
     });
@@ -769,7 +769,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
@@ -816,7 +816,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const factory = '0x' + 'ba'.repeat(20);
 
     // Create org via API
-    const orgResponse = await request.post(`${ADMIN_URL}/api/orgs`, {
+    const orgResponse = await request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: { slug: orgSlug, name: `ABI Preset Test ${Date.now()}` },
     });
@@ -824,7 +824,7 @@ test.describe('Pre-registered Addresses and Factory Config', () => {
     const org = await orgResponse.json();
 
     // Preregister an address WITH ABI
-    await request.post(`${ADMIN_URL}/api/orgs/${org.id}/addresses/preregister`, {
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/addresses/preregister`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         factory,
