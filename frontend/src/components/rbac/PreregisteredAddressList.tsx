@@ -193,8 +193,8 @@ export default function PreregisteredAddressList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-[#374151]">Pre-registered Addresses</h3>
-          <p className="text-xs text-[#6B7280] mt-0.5">
+          <h3 className="text-sm font-medium text-neutral-700">Pre-registered Addresses</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
             CREATE3 addresses whitelisted for future deployments
           </p>
         </div>
@@ -206,14 +206,14 @@ export default function PreregisteredAddressList() {
 
       {/* Factory Address Display */}
       {factoryAddress && (
-        <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-center justify-between">
+        <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#0EA5E9] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center">
               <Factory className="w-4 h-4 text-white" />
             </div>
             <div>
-              <p className="text-xs font-medium text-[#0369A1]">CREATE3 Factory</p>
-              <p className="font-mono text-sm text-[#0C4A6E]" title={factoryAddress}>
+              <p className="text-xs font-medium text-sky-700">CREATE3 Factory</p>
+              <p className="font-mono text-sm text-sky-900" title={factoryAddress}>
                 {factoryAddress}
               </p>
             </div>
@@ -222,11 +222,11 @@ export default function PreregisteredAddressList() {
             variant="ghost"
             size="sm"
             onClick={copyFactory}
-            className="h-8 w-8 p-0 text-[#0369A1] hover:text-[#0C4A6E] hover:bg-[#E0F2FE]"
+            className="h-8 w-8 p-0 text-sky-700 hover:text-sky-900 hover:bg-sky-100"
             title="Copy factory address"
           >
             {factoryCopied ? (
-              <Check className="w-4 h-4 text-[#22C55E]" />
+              <Check className="w-4 h-4 text-success" />
             ) : (
               <Copy className="w-4 h-4" />
             )}
@@ -236,15 +236,15 @@ export default function PreregisteredAddressList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+          <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
         </div>
       ) : addresses.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <Hash className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <Hash className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-2">No pre-registered addresses</p>
-          <p className="text-[#94A3B8] text-sm mb-4">
+          <p className="text-neutral-500 mb-2">No pre-registered addresses</p>
+          <p className="text-neutral-400 text-sm mb-4">
             Pre-register CREATE3 addresses to whitelist future deployment targets
           </p>
           <Button
@@ -279,7 +279,7 @@ export default function PreregisteredAddressList() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <Hash className="w-4 h-4 text-[#8950FA]" />
+                    <Hash className="w-4 h-4 text-primary" />
                     <span
                       className="font-mono text-sm"
                       title={addr.address}
@@ -288,11 +288,11 @@ export default function PreregisteredAddressList() {
                     </span>
                     <button
                       onClick={() => copyToClipboard(addr.address, `addr-${addr.id}`)}
-                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                       title="Copy address"
                     >
                       {copiedId === `addr-${addr.id}` ? (
-                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        <Check className="w-3.5 h-3.5 text-success" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
@@ -302,18 +302,18 @@ export default function PreregisteredAddressList() {
                 <TableCell>
                   <div className="flex items-center gap-1">
                     <span
-                      className="font-mono text-sm text-[#6B7280]"
+                      className="font-mono text-sm text-neutral-500"
                       title={addr.factory}
                     >
                       {truncateAddress(addr.factory)}
                     </span>
                     <button
                       onClick={() => copyToClipboard(addr.factory, `factory-${addr.id}`)}
-                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                       title="Copy factory address"
                     >
                       {copiedId === `factory-${addr.id}` ? (
-                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        <Check className="w-3.5 h-3.5 text-success" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
@@ -323,18 +323,18 @@ export default function PreregisteredAddressList() {
                 <TableCell>
                   <div className="flex items-center gap-1">
                     <span
-                      className="font-mono text-xs text-[#94A3B8]"
+                      className="font-mono text-xs text-neutral-400"
                       title={addr.salt}
                     >
                       {truncateSalt(addr.salt)}
                     </span>
                     <button
                       onClick={() => copyToClipboard(addr.salt, `salt-${addr.id}`)}
-                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                       title="Copy salt"
                     >
                       {copiedId === `salt-${addr.id}` ? (
-                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        <Check className="w-3.5 h-3.5 text-success" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
@@ -342,19 +342,19 @@ export default function PreregisteredAddressList() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-[#6B7280]">
+                  <span className="text-sm text-neutral-500">
                     {addr.note || '-'}
                   </span>
                 </TableCell>
                 {!runtimeTracingEnabled && (
                   <TableCell>
                     {addr.constructor_abi ? (
-                      <Badge variant="default" className="gap-1 bg-[#8950FA] hover:bg-[#7C3AED]">
+                      <Badge variant="default" className="gap-1 bg-primary hover:bg-primary-700">
                         <FileCode className="w-3 h-3" />
                         Set
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="gap-1 text-[#D97706] border-[#FDE68A]">
+                      <Badge variant="outline" className="gap-1 text-amber-600 border-amber-200">
                         <FileCode className="w-3 h-3" />
                         Not set
                       </Badge>
@@ -363,19 +363,19 @@ export default function PreregisteredAddressList() {
                 )}
                 <TableCell>
                   {addr.used_at ? (
-                    <Badge variant="default" className="gap-1 bg-[#10B981] hover:bg-[#059669]">
+                    <Badge variant="default" className="gap-1 bg-emerald-500 hover:bg-emerald-600">
                       <Check className="w-3 h-3" />
                       Used
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="gap-1 text-[#6B7280]">
+                    <Badge variant="outline" className="gap-1 text-neutral-500">
                       <Clock className="w-3 h-3" />
                       Pending
                     </Badge>
                   )}
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-[#6B7280]">
+                  <span className="text-sm text-neutral-500">
                     {formatDate(addr.created_at)}
                   </span>
                 </TableCell>
@@ -386,7 +386,7 @@ export default function PreregisteredAddressList() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openAbiEditor(addr)}
-                        className="text-[#6B7280] hover:text-[#374151] hover:bg-[#F1F5F9]"
+                        className="text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100"
                         title="Edit contract ABI"
                       >
                         <Pencil className="w-4 h-4" />
@@ -396,7 +396,7 @@ export default function PreregisteredAddressList() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setDeleteTarget(addr)}
-                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
                       title="Delete pre-registered address"
                       disabled={!!addr.used_at}
                     >
@@ -451,21 +451,21 @@ export default function PreregisteredAddressList() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <FileCode className="w-5 h-5 text-[#8950FA]" />
+              <FileCode className="w-5 h-5 text-primary" />
               Edit Constructor ABI
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
-              <p className="text-xs font-medium text-[#64748B] mb-1">Address</p>
-              <p className="font-mono text-sm text-[#334155]">{abiTarget?.address}</p>
+            <div className="p-3 rounded-lg bg-neutral-100 border border-neutral-200">
+              <p className="text-xs font-medium text-neutral-500 mb-1">Address</p>
+              <p className="font-mono text-sm text-neutral-600">{abiTarget?.address}</p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="constructor-abi" className="text-sm font-medium text-[#374151]">
+              <label htmlFor="constructor-abi" className="text-sm font-medium text-neutral-700">
                 Contract ABI (JSON)
               </label>
-              <p className="text-xs text-[#6B7280]">
+              <p className="text-xs text-neutral-500">
                 Paste the contract ABI JSON. This is used to validate constructor arguments
                 containing addresses (e.g., immutable address variables).
               </p>
@@ -480,12 +480,12 @@ export default function PreregisteredAddressList() {
                 className="font-mono text-sm min-h-[200px] resize-y"
               />
               {abiError && (
-                <p className="text-sm text-[#DC2626]">{abiError}</p>
+                <p className="text-sm text-red-600">{abiError}</p>
               )}
             </div>
 
-            <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A]">
-              <p className="text-xs text-[#92400E]">
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
+              <p className="text-xs text-amber-800">
                 <strong>Note:</strong> The ABI is required when deploying contracts with constructor
                 arguments that contain addresses. If the ABI is not set, deployments with constructor
                 args will be rejected.

@@ -147,7 +147,7 @@ export default function AddressThresholdList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-[#6B7280]">
+          <p className="text-sm text-neutral-500">
             Per-address threshold overrides. When set, the address-specific threshold takes precedence
             over the org-level threshold. Use $0 to require travel rule data for every transfer involving this address.
           </p>
@@ -159,21 +159,21 @@ export default function AddressThresholdList() {
       </div>
 
       {error && (
-        <div className="p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-3 rounded-lg bg-error-light border border-error/30 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       {loading ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="w-6 h-6 animate-spin text-[#6B7280]" />
+          <Loader2 className="w-6 h-6 animate-spin text-neutral-500" />
         </div>
       ) : overrides.length === 0 ? (
         <div className="text-center py-8">
-          <MapPin className="w-8 h-8 mx-auto mb-2 text-[#94A3B8]" />
-          <p className="text-[#6B7280]">No address threshold overrides</p>
-          <p className="text-[#94A3B8] text-sm mt-1">
+          <MapPin className="w-8 h-8 mx-auto mb-2 text-neutral-400" />
+          <p className="text-neutral-500">No address threshold overrides</p>
+          <p className="text-neutral-400 text-sm mt-1">
             All addresses use the org-level threshold
           </p>
         </div>
@@ -197,11 +197,11 @@ export default function AddressThresholdList() {
                       <span className="font-mono text-xs">{o.address}</span>
                       <button
                         onClick={() => copyToClipboard(o.address, o.id)}
-                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                         title="Copy address"
                       >
                         {copiedId === o.id ? (
-                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
@@ -210,15 +210,15 @@ export default function AddressThresholdList() {
                   </TableCell>
                   <TableCell>
                     {o.threshold_usd === 0 ? (
-                      <span className="text-[#DC2626] font-medium">$0 (all transfers)</span>
+                      <span className="text-red-600 font-medium">$0 (all transfers)</span>
                     ) : (
                       <span>${o.threshold_usd.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-[#6B7280] max-w-[200px] truncate">
+                  <TableCell className="text-sm text-neutral-500 max-w-[200px] truncate">
                     {o.note || '-'}
                   </TableCell>
-                  <TableCell className="text-xs text-[#6B7280]">
+                  <TableCell className="text-xs text-neutral-500">
                     {new Date(o.updated_at).toLocaleDateString()}
                   </TableCell>
                   <TableCell>
@@ -229,13 +229,13 @@ export default function AddressThresholdList() {
                         onClick={() => openEditForm(o)}
                         className="h-7 w-7 p-0"
                       >
-                        <Pencil className="w-3.5 h-3.5 text-[#6B7280]" />
+                        <Pencil className="w-3.5 h-3.5 text-neutral-500" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => setDeleteTarget(o)}
-                        className="h-7 w-7 p-0 text-[#DC2626] hover:text-[#991B1B]"
+                        className="h-7 w-7 p-0 text-red-600 hover:text-error-dark"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
@@ -264,7 +264,7 @@ export default function AddressThresholdList() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Address
               </label>
               <Input
@@ -276,7 +276,7 @@ export default function AddressThresholdList() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Threshold (USD)
               </label>
               <Input
@@ -287,12 +287,12 @@ export default function AddressThresholdList() {
                 min="0"
                 step="0.01"
               />
-              <p className="text-xs text-[#6B7280] mt-1">
+              <p className="text-xs text-neutral-500 mt-1">
                 Set to $0 to require travel rule data for every transfer involving this address.
               </p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Note (optional)
               </label>
               <Input
@@ -302,7 +302,7 @@ export default function AddressThresholdList() {
               />
             </div>
             {formError && (
-              <p className="text-sm text-[#DC2626]">{formError}</p>
+              <p className="text-sm text-red-600">{formError}</p>
             )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>

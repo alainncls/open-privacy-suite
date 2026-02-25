@@ -243,25 +243,25 @@ export default function ContractGrantForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       {/* Group selection */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Select Group
         </label>
-        <p className="text-xs text-[#94A3B8] mb-2">
+        <p className="text-xs text-neutral-400 mb-2">
           Choose which group can access this contract. The group's claims (set in the Groups tab) determine their permissions.
         </p>
         <select
           value={selectedGroupId}
           onChange={e => setSelectedGroupId(e.target.value)}
           disabled={isEditing} // Can't change group when editing
-          className="w-full px-3 py-2 border border-[#E5E7EB] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#8950FA] focus:border-transparent disabled:bg-[#F9FAFB] disabled:text-[#6B7280]"
+          className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-neutral-100 disabled:text-neutral-500"
         >
           <option value="">Select a group...</option>
           {availableGroups.map(group => (
@@ -271,7 +271,7 @@ export default function ContractGrantForm({
           ))}
         </select>
         {!isEditing && availableGroups.length === 0 && (
-          <p className="text-xs text-[#DC2626]">
+          <p className="text-xs text-red-600">
             All groups in this organization already have access to this contract.
           </p>
         )}
@@ -279,12 +279,12 @@ export default function ContractGrantForm({
 
       {/* Show selected group's info */}
       {selectedGroup && (
-        <div className="p-4 rounded-lg bg-[#F5F3FF] border border-[#E9E3FF]">
+        <div className="p-4 rounded-lg bg-primary-50 border border-primary-50">
           <div className="flex items-center gap-3 mb-2">
-            <Users className="w-5 h-5 text-[#8950FA]" />
-            <p className="font-medium text-[#0F0F0F]">{selectedGroup.name}</p>
+            <Users className="w-5 h-5 text-primary" />
+            <p className="font-medium text-neutral-900">{selectedGroup.name}</p>
           </div>
-          <p className="text-xs text-[#64748B]">
+          <p className="text-xs text-neutral-500">
             This group's members will have access to this contract based on the group's claim settings.
           </p>
         </div>
@@ -292,42 +292,42 @@ export default function ContractGrantForm({
 
       {/* Function Access */}
       <div className="space-y-3">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Function Access
         </label>
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           Restrict access to specific contract functions, or allow all functions.
         </p>
 
         {/* Radio options */}
         <div className="space-y-2">
-          <label className="flex items-center gap-3 p-3 border border-[#E5E7EB] rounded-lg cursor-pointer hover:bg-[#F9FAFB] transition-colors">
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
             <input
               type="radio"
               name="functionMode"
               value="all"
               checked={functionMode === 'all'}
               onChange={() => setFunctionMode('all')}
-              className="w-4 h-4 text-[#8950FA] focus:ring-[#8950FA]"
+              className="w-4 h-4 text-primary focus:ring-primary"
             />
             <div>
-              <p className="text-sm font-medium text-[#0F0F0F]">All functions</p>
-              <p className="text-xs text-[#6B7280]">Group can call any function on this contract</p>
+              <p className="text-sm font-medium text-neutral-900">All functions</p>
+              <p className="text-xs text-neutral-500">Group can call any function on this contract</p>
             </div>
           </label>
 
-          <label className="flex items-center gap-3 p-3 border border-[#E5E7EB] rounded-lg cursor-pointer hover:bg-[#F9FAFB] transition-colors">
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
             <input
               type="radio"
               name="functionMode"
               value="specific"
               checked={functionMode === 'specific'}
               onChange={() => setFunctionMode('specific')}
-              className="w-4 h-4 text-[#8950FA] focus:ring-[#8950FA]"
+              className="w-4 h-4 text-primary focus:ring-primary"
             />
             <div>
-              <p className="text-sm font-medium text-[#0F0F0F]">Specific functions only</p>
-              <p className="text-xs text-[#6B7280]">Restrict to selected function selectors</p>
+              <p className="text-sm font-medium text-neutral-900">Specific functions only</p>
+              <p className="text-xs text-neutral-500">Restrict to selected function selectors</p>
             </div>
           </label>
         </div>
@@ -337,9 +337,9 @@ export default function ContractGrantForm({
           <div className="space-y-3 pt-2">
             {/* Warning when no ABI is available */}
             {!contractAbi && (
-              <div className="p-4 rounded-lg bg-[#FEF9C3] border border-[#FDE68A] flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-[#92400E] flex-shrink-0 mt-0.5" />
-                <span className="text-[#92400E] text-sm">
+              <div className="p-4 rounded-lg bg-warning-light border border-amber-200 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-800 flex-shrink-0 mt-0.5" />
+                <span className="text-amber-800 text-sm">
                   No ABI uploaded for this contract. Function names shown are based on common ERC20 selectors and may not match this contract's actual interface.
                 </span>
               </div>
@@ -347,7 +347,7 @@ export default function ContractGrantForm({
             {/* Current selectors */}
             {functions.length > 0 && (
               <div className="space-y-3">
-                <p className="text-xs font-medium text-[#6B7280]">Allowed functions:</p>
+                <p className="text-xs font-medium text-neutral-500">Allowed functions:</p>
                 <div className="space-y-2">
                   {functions.map(rule => {
                     const label = getSelectorLabel(rule.selector);
@@ -363,19 +363,19 @@ export default function ContractGrantForm({
                     return (
                       <div
                         key={rule.selector}
-                        className="p-2 rounded-lg border border-[#E9E3FF] bg-[#FAFAFF]"
+                        className="p-2 rounded-lg border border-primary-50 bg-neutral-50"
                       >
                         <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA] border border-[#E9E3FF]">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
                             <code className="font-mono">{rule.selector}</code>
                             {hasLabel && (
-                              <span className="text-[#A78BFA]">({label})</span>
+                              <span className="text-primary-300">({label})</span>
                             )}
                           </span>
                           {(rule.param_rules || []).map(pr => (
                             <span
                               key={pr.index}
-                              className="px-1.5 py-0.5 rounded text-[10px] bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] font-medium"
+                              className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium"
                             >
                               param[{pr.index}]={pr.must_be}
                             </span>
@@ -383,7 +383,7 @@ export default function ContractGrantForm({
                           <button
                             type="button"
                             onClick={() => handleRemoveSelector(rule.selector)}
-                            className="ml-auto hover:text-[#7C3AED] text-[#A78BFA]"
+                            className="ml-auto hover:text-primary-700 text-primary-300"
                           >
                             <X className="w-3 h-3" />
                           </button>
@@ -398,7 +398,7 @@ export default function ContractGrantForm({
                               return (
                                 <label
                                   key={param.index}
-                                  className="flex items-center gap-2 text-xs text-[#6B7280] cursor-pointer"
+                                  className="flex items-center gap-2 text-xs text-neutral-500 cursor-pointer"
                                 >
                                   <input
                                     type="checkbox"
@@ -406,10 +406,10 @@ export default function ContractGrantForm({
                                     onChange={e =>
                                       handleToggleParamRule(rule.selector, param.index, e.target.checked)
                                     }
-                                    className="w-3.5 h-3.5 rounded text-[#8950FA] focus:ring-[#8950FA]"
+                                    className="w-3.5 h-3.5 rounded text-primary focus:ring-primary"
                                   />
                                   <span>
-                                    <code className="font-mono text-[#374151]">{param.name || `param[${param.index}]`}</code>
+                                    <code className="font-mono text-neutral-700">{param.name || `param[${param.index}]`}</code>
                                     {' '}must be caller's own address
                                   </span>
                                 </label>
@@ -431,7 +431,7 @@ export default function ContractGrantForm({
                 value={newSelector}
                 onChange={e => setNewSelector(e.target.value)}
                 placeholder="0x70a08231"
-                className="flex-1 px-3 py-2 border border-[#E5E7EB] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#8950FA] focus:border-transparent"
+                className="flex-1 px-3 py-2 border border-neutral-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -455,10 +455,10 @@ export default function ContractGrantForm({
             {abiFunctions.length > 0 ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <FileJson className="w-3.5 h-3.5 text-[#22C55E]" />
-                  <p className="text-xs font-medium text-[#166534]">Contract functions ({abiFunctions.length}):</p>
+                  <FileJson className="w-3.5 h-3.5 text-success" />
+                  <p className="text-xs font-medium text-success-dark">Contract functions ({abiFunctions.length}):</p>
                 </div>
-                <div className="max-h-48 overflow-y-auto space-y-1 border border-[#E5E7EB] rounded-lg p-2">
+                <div className="max-h-48 overflow-y-auto space-y-1 border border-neutral-200 rounded-lg p-2">
                   {abiFunctions.map(({ selector, name, stateMutability }) => {
                     const isView = stateMutability === 'view' || stateMutability === 'pure';
                     return (
@@ -467,17 +467,17 @@ export default function ContractGrantForm({
                         type="button"
                         onClick={() => handleAddCommonSelector(selector)}
                         disabled={hasFunctionSelector(selector)}
-                        className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-neutral-100 hover:border-primary-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
                       >
                         <span className="flex items-center gap-2 min-w-0">
-                          <code className="font-mono text-[#6B7280] truncate">{name}</code>
+                          <code className="font-mono text-neutral-500 truncate">{name}</code>
                           {isView && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#DCFCE7] text-[#166534] font-medium">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-success-light text-success-dark font-medium">
                               view
                             </span>
                           )}
                         </span>
-                        <code className="font-mono text-[#94A3B8] text-[10px] ml-2 flex-shrink-0">{selector}</code>
+                        <code className="font-mono text-neutral-400 text-[10px] ml-2 flex-shrink-0">{selector}</code>
                       </button>
                     );
                   })}
@@ -485,7 +485,7 @@ export default function ContractGrantForm({
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-xs font-medium text-[#6B7280]">Common selectors:</p>
+                <p className="text-xs font-medium text-neutral-500">Common selectors:</p>
                 <div className="flex flex-wrap gap-1.5">
                   {Object.entries(COMMON_SELECTORS).map(([selector, name]) => (
                     <button
@@ -493,10 +493,10 @@ export default function ContractGrantForm({
                       type="button"
                       onClick={() => handleAddCommonSelector(selector)}
                       disabled={hasFunctionSelector(selector)}
-                      className="px-2 py-1 text-xs rounded border border-[#E5E7EB] hover:bg-[#F9FAFB] hover:border-[#DDD6FE] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="px-2 py-1 text-xs rounded border border-neutral-200 hover:bg-neutral-100 hover:border-primary-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
-                      <code className="font-mono text-[#6B7280]">{selector}</code>
-                      <span className="ml-1 text-[#94A3B8]">{name}</span>
+                      <code className="font-mono text-neutral-500">{selector}</code>
+                      <span className="ml-1 text-neutral-400">{name}</span>
                     </button>
                   ))}
                 </div>

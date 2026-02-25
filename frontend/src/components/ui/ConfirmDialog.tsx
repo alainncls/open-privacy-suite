@@ -28,9 +28,9 @@ const iconMap = {
 };
 
 const iconColorMap = {
-  default: 'text-[#8950FA]',
-  destructive: 'text-[#991B1B]',
-  warning: 'text-[#CA8A04]',
+  default: 'text-primary',
+  destructive: 'text-error-dark',
+  warning: 'text-warning-dark',
 };
 
 const buttonVariantMap = {
@@ -108,10 +108,10 @@ const alertIconMap = {
 };
 
 const alertIconColorMap = {
-  default: 'text-[#8950FA]',
-  error: 'text-[#991B1B]',
-  warning: 'text-[#CA8A04]',
-  success: 'text-[#166534]',
+  default: 'text-primary',
+  error: 'text-error-dark',
+  warning: 'text-warning-dark',
+  success: 'text-success-dark',
 };
 
 const alertButtonVariantMap = {

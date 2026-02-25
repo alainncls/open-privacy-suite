@@ -158,6 +158,7 @@ export function TestRequestPanel() {
   const [txValue, setTxValue] = useState('');
   const [userLinkedAddresses, setUserLinkedAddresses] = useState<Array<{ address: string; verified_at: string }>>([]);
   const [ethPriceUsd, setEthPriceUsd] = useState<number | null>(null);
+  const [priceLoadWarning, setPriceLoadWarning] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -171,9 +172,10 @@ export function TestRequestPanel() {
         const nativeToken = tokens?.find((t) => t.token_address === 'native');
         if (nativeToken) {
           setEthPriceUsd(nativeToken.price_usd);
+          setPriceLoadWarning(null);
         }
       } catch {
-        // silently fail - USD display just won't show
+        setPriceLoadWarning('Unable to load ETH price. Fiat estimate unavailable.');
       }
     })();
   }, []);
@@ -273,8 +275,8 @@ export function TestRequestPanel() {
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#FEF9C3] flex items-center justify-center">
-            <Zap className="w-5 h-5 text-[#854D0E]" />
+          <div className="w-10 h-10 rounded-lg bg-warning-light flex items-center justify-center">
+            <Zap className="w-5 h-5 text-warning-dark" />
           </div>
           <CardTitle className="text-lg">Test Request</CardTitle>
         </div>
@@ -330,7 +332,7 @@ export function TestRequestPanel() {
         {isErc20 && (
           <div className="space-y-3 animate-fade-in">
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">
+              <label className="block text-sm font-medium text-neutral-700 mb-2">
                 Contract Address
               </label>
               <Input
@@ -342,10 +344,10 @@ export function TestRequestPanel() {
             </div>
             {erc20Method?.fields.map((field) => (
               <div key={field.name}>
-                <label className="block text-sm font-medium text-[#374151] mb-2">
+                <label className="block text-sm font-medium text-neutral-700 mb-2">
                   {field.name.charAt(0).toUpperCase() + field.name.slice(1)}
                   {field.type === 'uint256' && (
-                    <span className="text-xs text-[#6B7280] ml-1">(uint256)</span>
+                    <span className="text-xs text-neutral-500 ml-1">(uint256)</span>
                   )}
                 </label>
                 <Input
@@ -363,7 +365,7 @@ export function TestRequestPanel() {
         {isSendTx && (
           <div className="space-y-3 animate-fade-in">
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">
+              <label className="block text-sm font-medium text-neutral-700 mb-2">
                 From Address
               </label>
               {(userLinkedAddresses.length > 0 || isDev) ? (
@@ -388,7 +390,7 @@ export function TestRequestPanel() {
                         {ANVIL_ACCOUNTS.map((addr, i) => (
                           <SelectItem key={addr} value={addr}>
                             <span className="font-mono text-sm">
-                              <span className="text-[#6B7280]">#{i}</span>{' '}
+                              <span className="text-neutral-500">#{i}</span>{' '}
                               {addr.slice(0, 10)}...{addr.slice(-4)}
                             </span>
                           </SelectItem>
@@ -409,7 +411,7 @@ export function TestRequestPanel() {
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">
+              <label className="block text-sm font-medium text-neutral-700 mb-2">
                 To Address
               </label>
               <Input
@@ -427,7 +429,7 @@ export function TestRequestPanel() {
                       key={addr}
                       type="button"
                       onClick={() => setTxTo(addr)}
-                      className="text-xs font-mono px-1.5 py-0.5 rounded bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#6B7280] hover:text-[#374151] transition-colors border border-transparent hover:border-[#D1D5DB]"
+                      className="rounded border border-transparent bg-neutral-100 px-1.5 py-0.5 font-mono text-xs text-neutral-500 transition-colors hover:border-neutral-300 hover:bg-neutral-200 hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                     >
                       #{i} {addr.slice(0, 6)}...{addr.slice(-4)}
                     </button>
@@ -436,7 +438,7 @@ export function TestRequestPanel() {
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">
+              <label className="block text-sm font-medium text-neutral-700 mb-2">
                 Amount (ETH)
               </label>
               <Input
@@ -450,17 +452,20 @@ export function TestRequestPanel() {
               {txValue && !isNaN(parseFloat(txValue)) && parseFloat(txValue) > 0 && (
                 <div className="mt-1 space-y-0.5">
                   {ethPriceUsd != null && (
-                    <p className="text-sm font-medium text-[#374151]">
+                    <p className="text-sm font-medium text-neutral-700">
                       ≈ ${(parseFloat(txValue) * ethPriceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD{' '}
-                      <span className="text-xs font-normal text-[#6B7280]">
+                      <span className="text-xs font-normal text-neutral-500">
                         (at ${ethPriceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/ETH)
                       </span>
                     </p>
                   )}
-                  <p className="text-xs text-[#6B7280]">
+                  <p className="text-xs text-neutral-500">
                     = {ethToHexWei(txValue)} wei
                   </p>
                 </div>
+              )}
+              {priceLoadWarning && (
+                <p className="mt-1 text-xs text-warning-dark">{priceLoadWarning}</p>
               )}
             </div>
           </div>
@@ -468,7 +473,7 @@ export function TestRequestPanel() {
 
         {!isErc20 && !isSendTx && (
           <div>
-            <label className="block text-sm font-medium text-[#374151] mb-2">
+            <label className="block text-sm font-medium text-neutral-700 mb-2">
               Params (JSON array, optional)
             </label>
             <Textarea
@@ -485,7 +490,7 @@ export function TestRequestPanel() {
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-2 text-sm text-[#6B7280] hover:text-[#374151] transition-colors"
+            className="flex items-center gap-2 rounded px-1 text-sm text-neutral-500 transition-colors hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             {showAdvanced ? (
               <ChevronDown className="w-4 h-4" />
@@ -497,7 +502,7 @@ export function TestRequestPanel() {
 
           {showAdvanced && (
             <div className="mt-3 space-y-2 animate-fade-in">
-              <label className="block text-sm font-medium text-[#374151] mb-2">
+              <label className="block text-sm font-medium text-neutral-700 mb-2">
                 JWT Token
               </label>
               <Textarea
@@ -507,7 +512,7 @@ export function TestRequestPanel() {
                 placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                 className="h-20"
               />
-              <p className="text-xs text-[#6B7280]">
+              <p className="text-xs text-neutral-500">
                 Paste a JWT token to test as a specific user identity. Copy from the user dashboard after authentication.
               </p>
               <UserContextPanel jwtToken={jwtToken} onUserLoaded={handleUserLoaded} />
@@ -516,9 +521,9 @@ export function TestRequestPanel() {
         </div>
 
         {error && (
-          <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-            <span className="text-[#991B1B] text-sm">{error}</span>
+          <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+            <span className="text-error-dark text-sm">{error}</span>
           </div>
         )}
 
@@ -542,12 +547,12 @@ export function TestRequestPanel() {
                 </Badge>
               )}
               {result.data.latency_ms !== undefined && (
-                <span className="text-sm text-[#6B7280]">
+                <span className="text-sm text-neutral-500">
                   {result.data.latency_ms}ms
                 </span>
               )}
               {result.data.identity && (
-                <span className="text-xs text-[#6B7280] font-mono truncate max-w-[300px]" title={result.data.identity}>
+                <span className="text-xs text-neutral-500 font-mono truncate max-w-[300px]" title={result.data.identity}>
                   Identity: {result.data.identity}
                 </span>
               )}
@@ -560,10 +565,10 @@ export function TestRequestPanel() {
               </div>
             )}
             {result.data.error && (
-              <div className="p-4 rounded-lg bg-[#FEF9C3] border border-[#FDE047]">
-                <span className="text-[#854D0E] text-sm">{result.data.error}</span>
+              <div className="p-4 rounded-lg bg-warning-light border border-warning/40">
+                <span className="text-warning-dark text-sm">{result.data.error}</span>
                 {result.status === 403 && !jwtToken.trim() && (
-                  <p className="text-[#92400E] text-xs mt-2">
+                  <p className="text-amber-800 text-xs mt-2">
                     No JWT token provided. Expand "Advanced: Test with JWT Token" below the Send button and paste a valid token to test as a specific user.
                   </p>
                 )}

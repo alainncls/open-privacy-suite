@@ -18,7 +18,7 @@ export default function Pagination({ total, limit, offset, onPageChange }: Pagin
 
   return (
     <div className="flex items-center justify-between pt-4">
-      <p className="text-sm text-[#6B7280]">
+      <p className="text-sm text-neutral-500">
         Showing {offset + 1}–{Math.min(offset + limit, total)} of {total}
       </p>
       <div className="flex items-center gap-2">
@@ -31,7 +31,7 @@ export default function Pagination({ total, limit, offset, onPageChange }: Pagin
           <ChevronLeft className="w-4 h-4" />
           Prev
         </Button>
-        <span className="text-sm text-[#6B7280]">
+        <span className="text-sm text-neutral-500">
           {currentPage} / {totalPages}
         </span>
         <Button

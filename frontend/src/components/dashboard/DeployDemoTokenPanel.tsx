@@ -63,19 +63,19 @@ export function DeployDemoTokenPanel() {
   };
 
   return (
-    <Card className="border-dashed border-[#FDE047]">
+    <Card className="border-dashed border-warning/40">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[#FEF9C3] flex items-center justify-center">
-              <FlaskConical className="w-5 h-5 text-[#854D0E]" />
+            <div className="w-10 h-10 rounded-lg bg-warning-light flex items-center justify-center">
+              <FlaskConical className="w-5 h-5 text-warning-dark" />
             </div>
             <div>
               <CardTitle className="text-lg">Dev Tools</CardTitle>
-              <p className="text-sm text-[#6B7280] mt-0.5">Deploy demo contracts for testing</p>
+              <p className="text-sm text-neutral-500 mt-0.5">Deploy demo contracts for testing</p>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#FEF9C3] text-[#854D0E] text-xs font-medium">
+          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-warning-light text-warning-dark text-xs font-medium">
             <FlaskConical className="w-3 h-3" />
             Development Only
           </span>
@@ -85,7 +85,7 @@ export function DeployDemoTokenPanel() {
         {/* Deploy form */}
         <div className="flex items-end gap-3">
           <div className="flex-1 min-w-[180px]">
-            <label className="text-xs font-medium text-[#6B7280] mb-1.5 block">
+            <label className="text-xs font-medium text-neutral-500 mb-1.5 block">
               Organization (optional)
             </label>
             <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
@@ -104,7 +104,7 @@ export function DeployDemoTokenPanel() {
           </div>
 
           <div className="w-[200px]">
-            <label className="text-xs font-medium text-[#6B7280] mb-1.5 block">
+            <label className="text-xs font-medium text-neutral-500 mb-1.5 block">
               Token Name
             </label>
             <Input
@@ -131,7 +131,7 @@ export function DeployDemoTokenPanel() {
 
         {/* Error */}
         {error && (
-          <div className="mt-3 p-3 rounded-lg bg-[#FEF2F2] text-[#991B1B] text-sm">
+          <div className="mt-3 p-3 rounded-lg bg-red-50 text-error-dark text-sm">
             {error}
           </div>
         )}
@@ -139,35 +139,35 @@ export function DeployDemoTokenPanel() {
         {/* Deployment history */}
         {deployments.length > 0 && (
           <div className="mt-4 space-y-2">
-            <p className="text-xs font-medium text-[#6B7280]">Deployed this session</p>
+            <p className="text-xs font-medium text-neutral-500">Deployed this session</p>
             {deployments.map((d, i) => (
               <div
                 key={`${d.address}-${i}`}
-                className="flex items-center gap-3 p-2.5 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB]"
+                className="flex items-center gap-3 p-2.5 rounded-lg bg-neutral-100 border border-neutral-200"
               >
-                <span className="text-sm font-medium text-[#111827]">{d.name}</span>
+                <span className="text-sm font-medium text-neutral-800">{d.name}</span>
                 <code
-                  className="text-xs font-mono text-[#6B7280] truncate max-w-[200px]"
+                  className="text-xs font-mono text-neutral-500 truncate max-w-[200px]"
                   title={d.address}
                 >
                   {d.address}
                 </code>
                 <button
                   onClick={() => handleCopy(d.address)}
-                  className="p-1 rounded hover:bg-[#E5E7EB] transition-colors flex-shrink-0"
+                  className="p-1 rounded hover:bg-neutral-200 transition-colors flex-shrink-0"
                   title="Copy address"
                 >
                   {copiedAddress === d.address ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A]" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
                   ) : (
-                    <Copy className="w-3.5 h-3.5 text-[#9CA3AF]" />
+                    <Copy className="w-3.5 h-3.5 text-neutral-400" />
                   )}
                 </button>
                 {copiedAddress === d.address && (
-                  <span className="text-xs text-[#16A34A]">Copied!</span>
+                  <span className="text-xs text-green-600">Copied!</span>
                 )}
                 {d.registered && (
-                  <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-xs font-medium">
+                  <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-medium">
                     Registered
                   </span>
                 )}

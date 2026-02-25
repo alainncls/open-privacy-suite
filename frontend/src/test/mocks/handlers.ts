@@ -467,6 +467,31 @@ export const handlers = [
     return HttpResponse.json({ message: 'Address unlinked' });
   }),
 
+  // User organization endpoints
+  http.get('/api/v1/me/orgs', () => {
+    return HttpResponse.json({
+      organizations: [
+        {
+          id: mockOrganization.id,
+          slug: mockOrganization.slug,
+          name: mockOrganization.name,
+        },
+      ],
+    });
+  }),
+
+  // Admin status endpoint
+  http.get('/api/v1/admin/status', () => {
+    return HttpResponse.json({
+      proxy: { status: 'running', port: '8080' },
+      node: { status: 'ok', url: 'http://localhost:8545', latency_ms: 12 },
+      security: {
+        runtime_tracing_enabled: false,
+        travel_rule_enabled: true,
+      },
+    });
+  }),
+
   // Organization endpoints
   http.get('/api/v1/admin/orgs', () => {
     return HttpResponse.json({ data: [mockOrganization], total: 1, limit: 25, offset: 0 });

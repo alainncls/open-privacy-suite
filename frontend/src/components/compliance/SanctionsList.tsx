@@ -126,7 +126,7 @@ export default function SanctionsList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -134,7 +134,7 @@ export default function SanctionsList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-[#374151]">Sanctioned Addresses</h3>
+        <h3 className="text-base font-medium text-neutral-700">Sanctioned Addresses</h3>
         <Button size="sm" onClick={openCreateForm}>
           <Plus className="w-4 h-4 mr-1" />
           Add Address
@@ -142,7 +142,7 @@ export default function SanctionsList() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
@@ -150,11 +150,11 @@ export default function SanctionsList() {
 
       {addresses.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <ShieldBan className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <ShieldBan className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-2">No sanctioned addresses</p>
-          <p className="text-[#94A3B8] text-sm">
+          <p className="text-neutral-500 mb-2">No sanctioned addresses</p>
+          <p className="text-neutral-400 text-sm">
             Add addresses to the sanctions list to block transfers involving them
           </p>
         </div>
@@ -174,11 +174,11 @@ export default function SanctionsList() {
             <TableBody>
               {addresses.map(addr => (
                 <TableRow key={addr.id}>
-                  <TableCell className="font-mono text-xs text-[#6B7280]">
+                  <TableCell className="font-mono text-xs text-neutral-500">
                     {addr.address.slice(0, 10)}...{addr.address.slice(-6)}
                   </TableCell>
                   <TableCell className="max-w-[200px] truncate">{addr.reason}</TableCell>
-                  <TableCell className="text-[#6B7280] text-sm">{addr.source || '—'}</TableCell>
+                  <TableCell className="text-neutral-500 text-sm">{addr.source || '—'}</TableCell>
                   <TableCell>
                     {addr.org_id ? (
                       <Badge variant="outline">{getOrgName(addr.org_id)}</Badge>
@@ -186,12 +186,12 @@ export default function SanctionsList() {
                       <Badge variant="warning">Global</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-[#6B7280] text-sm">
+                  <TableCell className="text-neutral-500 text-sm">
                     {new Date(addr.created_at).toLocaleDateString()}
                   </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(addr)}>
-                      <Trash2 className="w-4 h-4 text-[#991B1B]" />
+                      <Trash2 className="w-4 h-4 text-error-dark" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -215,14 +215,14 @@ export default function SanctionsList() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             {formError && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {formError}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Address</label>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Address</label>
               <Input
                 value={formAddress}
                 onChange={e => setFormAddress(e.target.value)}
@@ -232,7 +232,7 @@ export default function SanctionsList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Reason</label>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Reason</label>
               <Input
                 value={formReason}
                 onChange={e => setFormReason(e.target.value)}
@@ -242,8 +242,8 @@ export default function SanctionsList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                Source <span className="text-[#94A3B8] font-normal">(optional)</span>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                Source <span className="text-neutral-400 font-normal">(optional)</span>
               </label>
               <Input
                 value={formSource}
@@ -253,11 +253,11 @@ export default function SanctionsList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 Scope
               </label>
               <select
-                className="w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#8950FA]/40"
+                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 value={formOrgId}
                 onChange={e => setFormOrgId(e.target.value)}
               >
@@ -266,7 +266,7 @@ export default function SanctionsList() {
                   <option key={org.id} value={org.id}>{org.name}</option>
                 ))}
               </select>
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <p className="text-xs text-neutral-400 mt-1">
                 Global sanctions apply to all organizations
               </p>
             </div>

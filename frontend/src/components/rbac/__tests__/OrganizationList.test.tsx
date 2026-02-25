@@ -91,7 +91,7 @@ function renderOrganizationList(options: { organizations?: Organization[] } = {}
   render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <MockOrgProvider organizations={options.organizations}>
             <OrganizationList />
           </MockOrgProvider>

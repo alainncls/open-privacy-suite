@@ -34,6 +34,7 @@ export function LinkWalletPage() {
   });
   const [isLinking, setIsLinking] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+  const [unlinkError, setUnlinkError] = useState<string | null>(null);
 
   // Copy address to clipboard
   const copyToClipboard = async (address: string) => {
@@ -119,6 +120,7 @@ export function LinkWalletPage() {
   // Handle unlink
   const handleUnlink = async (addressToUnlink: string) => {
     if (!accessToken) return;
+    setUnlinkError(null);
 
     try {
       await ethLinkApiMethods.unlinkAddress(accessToken, addressToUnlink);
@@ -129,7 +131,7 @@ export function LinkWalletPage() {
         ),
       }));
     } catch {
-      // Handle error silently or show toast
+      setUnlinkError('Failed to unlink address. Please try again.');
     }
   };
 
@@ -144,15 +146,15 @@ export function LinkWalletPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] flex items-center justify-center p-4" data-testid="link-wallet-page">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-100 p-4" data-testid="link-wallet-page">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Header */}
         <div className="text-center mb-8" data-testid="link-wallet-header">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#8950FA] to-[#A478FC] flex items-center justify-center shadow-lg shadow-primary">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary-300 shadow-lg shadow-primary">
             <Wallet className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-[#0F0F0F]">Link Your Wallet</h1>
-          <p className="text-[#6B7280] mt-1">Connect an Ethereum address</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Link Your Wallet</h1>
+          <p className="mt-1 text-neutral-500">Connect an Ethereum address</p>
         </div>
 
         {/* Main Card */}
@@ -190,27 +192,30 @@ export function LinkWalletPage() {
                           Connect Wallet
                         </Button>
                       ) : (
-                        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-card p-4 space-y-3" data-testid="wallet-connected">
+                        <div className="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-card" data-testid="wallet-connected">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-[#F5F3FF] flex items-center justify-center">
-                                <Wallet className="w-5 h-5 text-[#8950FA]" />
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-50">
+                                <Wallet className="h-5 w-5 text-primary" />
                               </div>
                               <div>
-                                <p className="text-[#0F0F0F] font-medium text-sm" data-testid="wallet-address">
+                                <p className="text-sm font-medium text-neutral-900" data-testid="wallet-address">
                                   {account.displayName}
                                 </p>
                                 <button
+                                  type="button"
                                   onClick={openChainModal}
-                                  className="text-xs text-[#94A3B8] hover:text-[#374151] flex items-center gap-1"
+                                  className="flex items-center gap-1 rounded px-1 text-xs text-neutral-400 transition-colors hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                                 >
                                   {chain.name}
                                 </button>
                               </div>
                             </div>
                             <button
+                              type="button"
                               onClick={() => disconnect()}
-                              className="text-[#94A3B8] hover:text-[#374151] p-1"
+                              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                              aria-label="Disconnect wallet"
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -239,7 +244,7 @@ export function LinkWalletPage() {
                               )}
                             </Button>
                           ) : (
-                            <div className="flex items-center gap-2 text-[#166534] text-sm justify-center" data-testid="address-linked">
+                            <div className="flex items-center justify-center gap-2 text-sm text-success-dark" data-testid="address-linked">
                               <CheckCircle2 className="w-4 h-4" />
                               Address linked
                             </div>
@@ -254,46 +259,56 @@ export function LinkWalletPage() {
 
             {/* Error display */}
             {state.step === 'error' && state.error && (
-              <div className="flex items-start gap-3 p-3 bg-[#FEE2E2] border border-[#FECACA] rounded-lg">
-                <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-error-light p-3">
+                <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-error-dark" />
                 <div>
-                  <p className="text-[#991B1B] text-sm font-medium">Error</p>
-                  <p className="text-[#7F1D1D] text-xs">{state.error}</p>
+                  <p className="text-sm font-medium text-error-dark">Error</p>
+                  <p className="text-xs text-error-dark">{state.error}</p>
                 </div>
+              </div>
+            )}
+
+            {unlinkError && (
+              <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-error-light p-3">
+                <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-error-dark" />
+                <p className="text-sm text-error-dark">{unlinkError}</p>
               </div>
             )}
 
             {/* Linked Addresses List */}
             {state.linkedAddresses.length > 0 && (
               <div className="space-y-3" data-testid="linked-addresses">
-                <h3 className="text-sm font-medium text-[#374151]">Linked Addresses</h3>
+                <h3 className="text-sm font-medium text-neutral-700">Linked Addresses</h3>
                 <div className="space-y-2">
                   {state.linkedAddresses.map((linked) => (
                     <div
                       key={linked.address}
-                      className="flex items-center justify-between p-3 bg-[#F1F5F9] rounded-lg gap-2"
+                      className="flex items-center justify-between gap-2 rounded-lg bg-neutral-100 p-3"
                     >
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <CheckCircle2 className="w-4 h-4 text-[#166534] flex-shrink-0" />
-                        <span className="text-[#374151] font-mono text-xs break-all">
+                        <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-success-dark" />
+                        <span className="font-mono text-xs text-neutral-700 break-all">
                           {linked.address}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button
+                          type="button"
                           onClick={() => copyToClipboard(linked.address)}
-                          className="text-[#94A3B8] hover:text-[#374151] p-1"
+                          className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                           title="Copy address"
+                          aria-label={`Copy address ${linked.address}`}
                         >
                           {copiedAddress === linked.address ? (
-                            <Check className="w-4 h-4 text-[#166534]" />
+                            <Check className="h-4 w-4 text-success-dark" />
                           ) : (
                             <Copy className="w-4 h-4" />
                           )}
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleUnlink(linked.address)}
-                          className="text-[#94A3B8] hover:text-[#991B1B] text-xs"
+                          className="rounded px-1 py-0.5 text-xs text-neutral-400 transition-colors hover:text-error-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                         >
                           Unlink
                         </button>
@@ -305,7 +320,7 @@ export function LinkWalletPage() {
             )}
 
             {/* Action buttons */}
-            <div className="flex flex-col gap-3 pt-4 border-t border-[#E2E8F0]">
+            <div className="flex flex-col gap-3 border-t border-neutral-200 pt-4">
               <Button
                 onClick={handleContinue}
                 variant="success"
@@ -323,7 +338,7 @@ export function LinkWalletPage() {
                   onClick={handleSkip}
                   variant="ghost"
                   size="sm"
-                  className="w-full text-[#94A3B8]"
+                  className="w-full text-neutral-400"
                   data-testid="skip-btn"
                 >
                   Skip for now
@@ -336,8 +351,9 @@ export function LinkWalletPage() {
         {/* Logout option */}
         <div className="mt-6 text-center">
           <button
+            type="button"
             onClick={logout}
-            className="text-[#94A3B8] text-sm hover:text-[#6B7280] underline underline-offset-2"
+            className="rounded px-1 text-sm text-neutral-400 underline underline-offset-2 transition-colors hover:text-neutral-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             Sign out
           </button>

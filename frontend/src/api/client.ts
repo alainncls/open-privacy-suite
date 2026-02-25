@@ -1,11 +1,7 @@
 import axios from 'axios';
+import { adminApi } from './adminClient';
 
-const api = axios.create({
-  baseURL: '/api/v1/admin',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const api = adminApi;
 
 export interface AccessLog {
   id: number;

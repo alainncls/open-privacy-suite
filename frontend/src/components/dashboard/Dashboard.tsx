@@ -32,8 +32,8 @@ export function Dashboard() {
     return (
       <div className="flex items-center justify-center py-16" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-[#8950FA] animate-spin" aria-hidden="true" />
-          <p className="text-[#6B7280]">Loading dashboard...</p>
+          <Loader2 className="w-8 h-8 text-primary animate-spin" aria-hidden="true" />
+          <p className="text-neutral-500">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -41,9 +41,9 @@ export function Dashboard() {
 
   if (error && !status) {
     return (
-      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-card p-6 animate-fade-in">
-        <div className="flex items-center gap-3 text-[#991B1B]">
-          <div className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
+      <div className="bg-white border border-neutral-200 rounded-xl shadow-card p-6 animate-fade-in">
+        <div className="flex items-center gap-3 text-error-dark">
+          <div className="w-2 h-2 rounded-full bg-error animate-pulse" />
           <span>Failed to load status: {error}</span>
         </div>
       </div>

@@ -161,8 +161,8 @@ export default function ContractList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-[#374151]">Contracts</h3>
-          <p className="text-xs text-[#6B7280] mt-0.5">
+          <h3 className="text-sm font-medium text-neutral-700">Contracts</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
             Registered contracts with access grants for groups
           </p>
         </div>
@@ -186,14 +186,14 @@ export default function ContractList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+          <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
         </div>
       ) : contracts.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <FileCode2 className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <FileCode2 className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-4">No contracts registered</p>
+          <p className="text-neutral-500 mb-4">No contracts registered</p>
           <Button
             variant="outline"
             onClick={() => setShowForm(true)}
@@ -223,7 +223,7 @@ export default function ContractList() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <FileCode2 className="w-4 h-4 text-[#8950FA]" />
+                    <FileCode2 className="w-4 h-4 text-primary" />
                     <span
                       className="font-mono text-sm"
                       title={getContractAddress(contract)}
@@ -232,11 +232,11 @@ export default function ContractList() {
                     </span>
                     <button
                       onClick={() => copyToClipboard(getContractAddress(contract), contract.id)}
-                      className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                      className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                       title="Copy address"
                     >
                       {copiedId === contract.id ? (
-                        <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                        <Check className="w-3.5 h-3.5 text-success" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
@@ -249,14 +249,14 @@ export default function ContractList() {
                 <TableCell className="text-center">
                   {contract.abi ? (
                     <span title="ABI loaded">
-                      <Check className="w-4 h-4 text-[#22C55E] mx-auto" />
+                      <Check className="w-4 h-4 text-success mx-auto" />
                     </span>
                   ) : (
-                    <span className="text-[#94A3B8]" title="No ABI">-</span>
+                    <span className="text-neutral-400" title="No ABI">-</span>
                   )}
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-[#6B7280]">
+                  <span className="text-sm text-neutral-500">
                     {formatDate(contract.created_at)}
                   </span>
                 </TableCell>
@@ -267,7 +267,7 @@ export default function ContractList() {
                       size="sm"
                       onClick={() => setManagingGrants(contract)}
                       title="Manage permissions"
-                      className="text-[#8950FA] hover:text-[#7040E0] hover:bg-[#F5F3FF]"
+                      className="text-primary hover:text-primary-600 hover:bg-primary-50"
                     >
                       <Shield className="w-4 h-4" />
                     </Button>
@@ -283,7 +283,7 @@ export default function ContractList() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setDeleteTarget(contract)}
-                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
                       title="Delete contract"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -373,7 +373,6 @@ export default function ContractList() {
               key={managingGrants.id}
               orgId={orgId}
               contract={managingGrants}
-              onClose={() => setManagingGrants(null)}
             />
           )}
         </DialogContent>
@@ -389,29 +388,29 @@ export default function ContractList() {
             <div className="space-y-4">
               {/* Summary */}
               <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="p-3 rounded-lg bg-[#DCFCE7]">
-                  <div className="text-2xl font-semibold text-[#166534]">
+                <div className="p-3 rounded-lg bg-success-light">
+                  <div className="text-2xl font-semibold text-success-dark">
                     {syncResult.existing?.length ?? 0}
                   </div>
-                  <div className="text-xs text-[#166534]">On Chain</div>
+                  <div className="text-xs text-success-dark">On Chain</div>
                 </div>
-                <div className="p-3 rounded-lg bg-[#FEF3C7]">
-                  <div className="text-2xl font-semibold text-[#92400E]">
+                <div className="p-3 rounded-lg bg-amber-100">
+                  <div className="text-2xl font-semibold text-amber-800">
                     {syncResult.missing?.length ?? 0}
                   </div>
-                  <div className="text-xs text-[#92400E]">Missing</div>
+                  <div className="text-xs text-amber-800">Missing</div>
                 </div>
-                <div className="p-3 rounded-lg bg-[#FEE2E2]">
-                  <div className="text-2xl font-semibold text-[#991B1B]">
+                <div className="p-3 rounded-lg bg-error-light">
+                  <div className="text-2xl font-semibold text-error-dark">
                     {syncResult.errors?.length ?? 0}
                   </div>
-                  <div className="text-xs text-[#991B1B]">Errors</div>
+                  <div className="text-xs text-error-dark">Errors</div>
                 </div>
               </div>
 
               {/* All synced message */}
               {!syncResult.missing?.length && !syncResult.errors?.length && (
-                <div className="p-4 rounded-lg bg-[#DCFCE7] text-[#166534] text-center">
+                <div className="p-4 rounded-lg bg-success-light text-success-dark text-center">
                   <Check className="w-6 h-6 mx-auto mb-2" />
                   <p className="font-medium">All contracts exist on chain!</p>
                 </div>
@@ -420,7 +419,7 @@ export default function ContractList() {
               {/* Missing contracts list */}
               {(syncResult.missing?.length ?? 0) > 0 && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[#92400E]">
+                  <div className="flex items-center gap-2 text-amber-800">
                     <AlertTriangle className="w-4 h-4" />
                     <span className="font-medium text-sm">
                       Contracts not found on chain:
@@ -435,7 +434,7 @@ export default function ContractList() {
                         <span className="font-mono text-xs">
                           {truncateAddress(contract.address)}
                         </span>
-                        <span className="text-[#6B7280]">
+                        <span className="text-neutral-500">
                           {contract.name || 'Unnamed'}
                         </span>
                       </div>
@@ -447,7 +446,7 @@ export default function ContractList() {
               {/* Errors list */}
               {(syncResult.errors?.length ?? 0) > 0 && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[#991B1B]">
+                  <div className="flex items-center gap-2 text-error-dark">
                     <AlertTriangle className="w-4 h-4" />
                     <span className="font-medium text-sm">
                       Chain unavailable for these contracts (not deleted):
@@ -463,12 +462,12 @@ export default function ContractList() {
                           <span className="font-mono text-xs">
                             {truncateAddress(contract.address)}
                           </span>
-                          <span className="text-[#6B7280]">
+                          <span className="text-neutral-500">
                             {contract.name || 'Unnamed'}
                           </span>
                         </div>
                         {contract.error && (
-                          <div className="text-xs text-[#991B1B] mt-1">
+                          <div className="text-xs text-error-dark mt-1">
                             {contract.error}
                           </div>
                         )}

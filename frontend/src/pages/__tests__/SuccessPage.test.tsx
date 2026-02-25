@@ -44,7 +44,7 @@ function setupAuthenticated() {
 // Helper to render with providers
 function renderSuccessPage(initialRoute = '/success') {
   return render(
-    <MemoryRouter initialEntries={[initialRoute]}>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialRoute]}>
       <AuthProvider>
         <Routes>
           <Route path="/success" element={<SuccessPage />} />

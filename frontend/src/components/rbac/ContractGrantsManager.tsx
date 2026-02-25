@@ -47,7 +47,6 @@ const COMMON_SELECTORS: Record<string, string> = {
 interface ContractGrantsManagerProps {
   orgId: string;
   contract: Contract;
-  onClose: () => void;
 }
 
 // Extended grant type that includes the group info and group access
@@ -59,7 +58,6 @@ interface GrantWithGroup extends ContractGrant {
 export default function ContractGrantsManager({
   orgId,
   contract,
-  onClose: _onClose,
 }: ContractGrantsManagerProps) {
   const [grants, setGrants] = useState<GrantWithGroup[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -187,25 +185,25 @@ export default function ContractGrantsManager({
   return (
     <div className="space-y-4">
       {/* Contract header */}
-      <div className="flex items-start gap-3 pb-4 border-b border-[#E5E7EB]">
-        <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
-          <FileCode2 className="w-5 h-5 text-[#8950FA]" />
+      <div className="flex items-start gap-3 pb-4 border-b border-neutral-200">
+        <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+          <FileCode2 className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h3 className="text-lg font-semibold text-[#0F0F0F]">
+          <h3 className="text-lg font-semibold text-neutral-900">
             {contract.name || 'Unnamed Contract'}
           </h3>
           <div className="flex items-center gap-2 mt-1">
-            <span className="font-mono text-sm text-[#6B7280]" title={contractAddress}>
+            <span className="font-mono text-sm text-neutral-500" title={contractAddress}>
               {truncateAddress(contractAddress)}
             </span>
             <button
               onClick={copyToClipboard}
-              className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+              className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
               title="Copy address"
             >
               {copiedAddress ? (
-                <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                <Check className="w-3.5 h-3.5 text-success" />
               ) : (
                 <Copy className="w-3.5 h-3.5" />
               )}
@@ -215,9 +213,9 @@ export default function ContractGrantsManager({
       </div>
 
       {/* Info banner */}
-      <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-start gap-2">
-        <Info className="w-4 h-4 text-[#0284C7] mt-0.5 flex-shrink-0" />
-        <p className="text-xs text-[#0369A1]">
+      <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 flex items-start gap-2">
+        <Info className="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-sky-700">
           Groups define claims (read, write, etc.) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims. You can also restrict access to specific functions.
         </p>
       </div>
@@ -226,8 +224,8 @@ export default function ContractGrantsManager({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-[#8950FA]" />
-            <span className="text-sm font-medium text-[#374151]">Groups with Access</span>
+            <Shield className="w-4 h-4 text-primary" />
+            <span className="text-sm font-medium text-neutral-700">Groups with Access</span>
           </div>
           <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
             <Plus className="w-4 h-4" />
@@ -237,12 +235,12 @@ export default function ContractGrantsManager({
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+            <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
           </div>
         ) : grants.length === 0 ? (
-          <div className="text-center py-8 border border-dashed border-[#E5E7EB] rounded-lg">
-            <Users className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
-            <p className="text-sm text-[#6B7280] mb-3">
+          <div className="text-center py-8 border border-dashed border-neutral-200 rounded-lg">
+            <Users className="w-8 h-8 text-neutral-400 mx-auto mb-2" />
+            <p className="text-sm text-neutral-500 mb-3">
               No groups have access to this contract yet
             </p>
             <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="gap-2">
@@ -255,19 +253,19 @@ export default function ContractGrantsManager({
             {grants.map(grant => (
               <div
                 key={grant.id}
-                className="p-4 border border-[#E5E7EB] rounded-lg hover:border-[#DDD6FE] transition-colors"
+                className="p-4 border border-neutral-200 rounded-lg hover:border-primary-100 transition-colors"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-[#F1F5F9] flex items-center justify-center">
-                      <Users className="w-4 h-4 text-[#6B7280]" />
+                    <div className="w-8 h-8 rounded-lg bg-neutral-100 flex items-center justify-center">
+                      <Users className="w-4 h-4 text-neutral-500" />
                     </div>
                     <div>
-                      <h4 className="font-medium text-[#0F0F0F]">
+                      <h4 className="font-medium text-neutral-900">
                         {grant.group?.name || 'Unknown Group'}
                       </h4>
                       {grant.group && (
-                        <p className="text-xs text-[#94A3B8] mt-0.5">
+                        <p className="text-xs text-neutral-400 mt-0.5">
                           {grant.group.path}
                         </p>
                       )}
@@ -286,7 +284,7 @@ export default function ContractGrantsManager({
                       variant="ghost"
                       size="sm"
                       onClick={() => setDeleteTarget(grant)}
-                      className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
                       title="Remove group access"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -296,7 +294,7 @@ export default function ContractGrantsManager({
 
                 {/* Group's claims from GroupAccess */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#6B7280]">
+                  <span className="text-xs text-neutral-500">
                     {grant.groupAccess?.narrowed_by_parent ? 'Effective claims:' : 'Group claims:'}
                   </span>
                   {grant.groupAccess?.claims && grant.groupAccess.claims.length > 0 ? (
@@ -307,19 +305,19 @@ export default function ContractGrantsManager({
                       ).map(claim => (
                         <span
                           key={claim}
-                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#F5F3FF] text-[#8950FA]"
+                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary"
                         >
                           {CLAIM_LABELS[claim] || claim}
                         </span>
                       ))}
                       {grant.groupAccess.narrowed_by_parent && (
-                        <span className="text-xs text-[#94A3B8] italic ml-1">
+                        <span className="text-xs text-neutral-400 italic ml-1">
                           (narrowed by parent)
                         </span>
                       )}
                     </>
                   ) : (
-                    <span className="text-xs text-[#94A3B8] italic">
+                    <span className="text-xs text-neutral-400 italic">
                       No claims configured - set up in Groups tab
                     </span>
                   )}
@@ -327,9 +325,9 @@ export default function ContractGrantsManager({
 
                 {/* Function access */}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-[#6B7280]">Functions:</span>
+                  <span className="text-xs text-neutral-500">Functions:</span>
                   {!grant.functions || grant.functions.length === 0 ? (
-                    <span className="text-xs text-[#22C55E] font-medium">All functions allowed</span>
+                    <span className="text-xs text-success font-medium">All functions allowed</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
                       {grant.functions.map((rule: FunctionRule) => {
@@ -340,13 +338,13 @@ export default function ContractGrantsManager({
                         return (
                           <span
                             key={rule.selector}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-amber-100 text-amber-800 border border-amber-200"
                             title={name ? `${name}()` : rule.selector}
                           >
                             <Code2 className="w-3 h-3" />
                             {name || rule.selector}
                             {paramLabels.length > 0 && (
-                              <span className="ml-1 text-[10px] text-[#B45309]">
+                              <span className="ml-1 text-[10px] text-amber-700">
                                 [{paramLabels.join(', ')}]
                               </span>
                             )}

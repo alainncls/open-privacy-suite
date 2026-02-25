@@ -127,7 +127,7 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
   if (selectedUser) {
     return (
       <div
-        className="flex items-center h-10 rounded-lg border border-[#CBD5E1] bg-white px-3 py-2 text-sm text-[#374151]"
+        className="flex items-center h-10 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700"
       >
         <span className="flex-1 truncate" title={selectedUser.external_id}>
           {truncateDid(selectedUser.external_id)}
@@ -136,7 +136,7 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
           <button
             type="button"
             onClick={handleClear}
-            className="ml-2 text-[#94A3B8] hover:text-[#374151] transition-colors"
+            className="ml-2 text-neutral-400 hover:text-neutral-700 transition-colors"
             aria-label="Clear selection"
           >
             <X className="h-4 w-4" />
@@ -150,7 +150,7 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
   return (
     <div ref={containerRef} className="relative" onKeyDown={handleKeyDown}>
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94A3B8]" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
         <Input
           value={query}
           onChange={handleInputChange}
@@ -161,14 +161,14 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
       </div>
 
       {isOpen && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-[#E2E8F0] rounded-lg shadow-md max-h-60 overflow-y-auto">
+        <div className="absolute z-10 mt-1 w-full bg-white border border-neutral-200 rounded-lg shadow-md max-h-60 overflow-y-auto">
           {isLoading ? (
-            <div className="flex items-center justify-center py-4 text-[#6B7280]">
+            <div className="flex items-center justify-center py-4 text-neutral-500">
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
               <span className="text-sm">Searching...</span>
             </div>
           ) : results.length === 0 ? (
-            <div className="py-4 text-center text-sm text-[#6B7280]">
+            <div className="py-4 text-center text-sm text-neutral-500">
               No users found
             </div>
           ) : (
@@ -177,7 +177,7 @@ export function UserSearchInput({ orgId, value, onChange, disabled }: UserSearch
                 key={user.id}
                 type="button"
                 onClick={() => handleSelect(user)}
-                className="w-full text-left px-3 py-2 text-sm text-[#374151] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
               >
                 {truncateDid(user.external_id)}
               </button>

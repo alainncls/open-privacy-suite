@@ -158,9 +158,9 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <AlertTriangle className="w-12 h-12 text-[#CA8A04] mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">Error Loading Data</h3>
-          <p className="text-[#6B7280] mb-4">{error}</p>
+          <AlertTriangle className="w-12 h-12 text-warning-dark mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-neutral-900 mb-2">Error Loading Data</h3>
+          <p className="text-neutral-500 mb-4">{error}</p>
           <Button onClick={fetchData}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Try Again
@@ -175,12 +175,12 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
-            <Shield className="w-5 h-5 text-[#8950FA]" />
+          <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-[#0F0F0F]">Data Disclosures</h1>
-            <p className="text-sm text-[#6B7280]">
+            <h1 className="text-xl font-semibold text-neutral-900">Data Disclosures</h1>
+            <p className="text-sm text-neutral-500">
               Manage who can access your activity data
             </p>
           </div>
@@ -225,12 +225,12 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
               {[1, 2].map((i) => (
                 <Card key={i} className="animate-pulse">
                   <CardHeader className="pb-3">
-                    <div className="h-10 bg-[#E2E8F0] rounded w-3/4" />
+                    <div className="h-10 bg-neutral-200 rounded w-3/4" />
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      <div className="h-4 bg-[#E2E8F0] rounded w-full" />
-                      <div className="h-4 bg-[#E2E8F0] rounded w-2/3" />
+                      <div className="h-4 bg-neutral-200 rounded w-full" />
+                      <div className="h-4 bg-neutral-200 rounded w-2/3" />
                     </div>
                   </CardContent>
                 </Card>
@@ -239,9 +239,9 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
           ) : activeGrants.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <CheckCircle2 className="w-12 h-12 text-[#166534] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Active Grants</h3>
-                <p className="text-[#6B7280]">
+                <CheckCircle2 className="w-12 h-12 text-success-dark mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Active Grants</h3>
+                <p className="text-neutral-500">
                   You have not approved any disclosure requests yet.
                 </p>
               </CardContent>
@@ -267,12 +267,12 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
               {[1, 2].map((i) => (
                 <Card key={i} className="animate-pulse">
                   <CardHeader className="pb-3">
-                    <div className="h-10 bg-[#E2E8F0] rounded w-3/4" />
+                    <div className="h-10 bg-neutral-200 rounded w-3/4" />
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      <div className="h-4 bg-[#E2E8F0] rounded w-full" />
-                      <div className="h-4 bg-[#E2E8F0] rounded w-2/3" />
+                      <div className="h-4 bg-neutral-200 rounded w-full" />
+                      <div className="h-4 bg-neutral-200 rounded w-2/3" />
                     </div>
                   </CardContent>
                 </Card>
@@ -281,9 +281,9 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
           ) : pendingRequests.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <Clock className="w-12 h-12 text-[#CA8A04] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Pending Requests</h3>
-                <p className="text-[#6B7280]">
+                <Clock className="w-12 h-12 text-warning-dark mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Pending Requests</h3>
+                <p className="text-neutral-500">
                   There are no disclosure requests awaiting your approval.
                 </p>
               </CardContent>
@@ -310,12 +310,12 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
               {[1, 2].map((i) => (
                 <Card key={i} className="animate-pulse">
                   <CardHeader className="pb-3">
-                    <div className="h-10 bg-[#E2E8F0] rounded w-3/4" />
+                    <div className="h-10 bg-neutral-200 rounded w-3/4" />
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      <div className="h-4 bg-[#E2E8F0] rounded w-full" />
-                      <div className="h-4 bg-[#E2E8F0] rounded w-2/3" />
+                      <div className="h-4 bg-neutral-200 rounded w-full" />
+                      <div className="h-4 bg-neutral-200 rounded w-2/3" />
                     </div>
                   </CardContent>
                 </Card>
@@ -324,9 +324,9 @@ export function UserDisclosureDashboard({ accessToken }: UserDisclosureDashboard
           ) : inactiveItems.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <XCircle className="w-12 h-12 text-[#94A3B8] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Inactive Items</h3>
-                <p className="text-[#6B7280]">
+                <XCircle className="w-12 h-12 text-neutral-400 mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Inactive Items</h3>
+                <p className="text-neutral-500">
                   You have no rejected, revoked, or expired disclosures.
                 </p>
               </CardContent>

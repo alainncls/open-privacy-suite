@@ -73,7 +73,7 @@ export default function ComplianceConfig() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -81,21 +81,21 @@ export default function ComplianceConfig() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-[#374151]">Compliance Configuration</h3>
+        <h3 className="text-base font-medium text-neutral-700">Compliance Configuration</h3>
         <Badge variant={enabled ? 'success' : 'secondary'}>
           {enabled ? 'Enabled' : 'Disabled'}
         </Badge>
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
       )}
 
       {success && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#DCFCE7] border border-[#BBF7D0] text-[#166534] text-sm">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-success-light border border-success/30 text-success-dark text-sm">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           Configuration saved successfully
         </div>
@@ -103,7 +103,7 @@ export default function ComplianceConfig() {
 
       <div className="max-w-md space-y-4">
         <div>
-          <label className="block text-sm font-medium text-[#374151] mb-1.5">
+          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
             Enforcement
           </label>
           <Button
@@ -113,13 +113,13 @@ export default function ComplianceConfig() {
           >
             {enabled ? 'Enabled' : 'Disabled'} — Click to {enabled ? 'disable' : 'enable'}
           </Button>
-          <p className="text-xs text-[#94A3B8] mt-1">
+          <p className="text-xs text-neutral-400 mt-1">
             When enabled, transfers above the threshold require a travel rule record
           </p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-[#374151] mb-1.5">
+          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
             Threshold (USD)
           </label>
           <Input
@@ -130,7 +130,7 @@ export default function ComplianceConfig() {
             min="0"
             step="0.01"
           />
-          <p className="text-xs text-[#94A3B8] mt-1">
+          <p className="text-xs text-neutral-400 mt-1">
             Transfers above this USD value will require travel rule compliance
           </p>
         </div>
@@ -142,16 +142,16 @@ export default function ComplianceConfig() {
       </div>
 
       {config && (
-        <div className="pt-4 border-t border-[#E2E8F0]">
-          <p className="text-xs text-[#94A3B8]">
+        <div className="pt-4 border-t border-neutral-200">
+          <p className="text-xs text-neutral-400">
             Last updated: {new Date(config.updated_at).toLocaleString()}
           </p>
         </div>
       )}
 
       {!config && (
-        <div className="pt-4 border-t border-[#E2E8F0]">
-          <div className="flex items-center gap-2 text-sm text-[#6B7280]">
+        <div className="pt-4 border-t border-neutral-200">
+          <div className="flex items-center gap-2 text-sm text-neutral-500">
             <Settings className="w-4 h-4" />
             No configuration saved yet. Save to create the initial config.
           </div>

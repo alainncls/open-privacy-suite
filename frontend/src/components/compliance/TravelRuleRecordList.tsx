@@ -218,7 +218,7 @@ export default function TravelRuleRecordList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -226,7 +226,7 @@ export default function TravelRuleRecordList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-[#374151]">Travel Rule Records</h3>
+        <h3 className="text-base font-medium text-neutral-700">Travel Rule Records</h3>
         <Button size="sm" onClick={openCreateForm}>
           <Plus className="w-4 h-4 mr-1" />
           Create Record
@@ -234,14 +234,14 @@ export default function TravelRuleRecordList() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
       )}
 
       {createWarning && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] text-sm">
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-100 border border-amber-200 text-amber-800 text-sm">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="flex-1">
             <span>{createWarning}</span>
@@ -252,11 +252,11 @@ export default function TravelRuleRecordList() {
 
       {records.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <FileText className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <FileText className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-2">No travel rule records</p>
-          <p className="text-[#94A3B8] text-sm">
+          <p className="text-neutral-500 mb-2">No travel rule records</p>
+          <p className="text-neutral-400 text-sm">
             Create a travel rule record to authorize high-value transfers
           </p>
         </div>
@@ -281,10 +281,10 @@ export default function TravelRuleRecordList() {
                 return (
                   <TableRow
                     key={record.id}
-                    className="cursor-pointer hover:bg-[#F8FAFC]"
+                    className="cursor-pointer hover:bg-neutral-100"
                     onClick={() => setSelectedRecord(record)}
                   >
-                    <TableCell className="text-sm text-[#6B7280]">
+                    <TableCell className="text-sm text-neutral-500">
                       {record.originator_external_id ? (
                         <span className="font-mono text-xs">
                           {record.originator_external_id.length > 20
@@ -297,16 +297,16 @@ export default function TravelRuleRecordList() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <span className="font-mono text-xs text-[#6B7280]">
+                        <span className="font-mono text-xs text-neutral-500">
                           {record.beneficiary_address.slice(0, 10)}...{record.beneficiary_address.slice(-6)}
                         </span>
                         <button
                           onClick={(e) => { e.stopPropagation(); copyToClipboard(record.beneficiary_address, `${record.id}-addr`); }}
-                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                          className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                           title="Copy address"
                         >
                           {copiedKey === `${record.id}-addr` ? (
-                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                            <Check className="w-3.5 h-3.5 text-success" />
                           ) : (
                             <Copy className="w-3.5 h-3.5" />
                           )}
@@ -320,7 +320,7 @@ export default function TravelRuleRecordList() {
                     <TableCell>
                       <Badge variant={statusBadgeVariant[status]}>{status}</Badge>
                     </TableCell>
-                    <TableCell className="text-[#6B7280] text-sm">
+                    <TableCell className="text-neutral-500 text-sm">
                       {new Date(record.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell>
@@ -330,7 +330,7 @@ export default function TravelRuleRecordList() {
                           size="icon"
                           onClick={(e) => { e.stopPropagation(); setDeleteTarget(record); }}
                         >
-                          <Trash2 className="w-4 h-4 text-[#991B1B]" />
+                          <Trash2 className="w-4 h-4 text-error-dark" />
                         </Button>
                       )}
                     </TableCell>
@@ -359,69 +359,69 @@ export default function TravelRuleRecordList() {
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 text-sm">
-                  <span className="text-[#6B7280] font-medium">Originator</span>
+                  <span className="text-neutral-500 font-medium">Originator</span>
                   <div>
                     {selectedRecord.originator_external_id && (
                       <div className="font-mono text-xs break-all">{selectedRecord.originator_external_id}</div>
                     )}
                     {selectedRecord.originator_data?.name ? (
-                      <div className="text-[#374151] mt-1">
+                      <div className="text-neutral-700 mt-1">
                         {String(selectedRecord.originator_data.name)}
                       </div>
                     ) : null}
                     {selectedRecord.originator_data?.account_ref ? (
-                      <div className="text-[#6B7280] text-xs mt-0.5">
+                      <div className="text-neutral-500 text-xs mt-0.5">
                         Ref: {String(selectedRecord.originator_data.account_ref)}
                       </div>
                     ) : null}
-                    <div className="font-mono text-xs text-[#94A3B8] mt-0.5 break-all">{selectedRecord.originator_user_id}</div>
+                    <div className="font-mono text-xs text-neutral-400 mt-0.5 break-all">{selectedRecord.originator_user_id}</div>
                   </div>
 
-                  <span className="text-[#6B7280] font-medium">Beneficiary</span>
+                  <span className="text-neutral-500 font-medium">Beneficiary</span>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm break-all">{selectedRecord.beneficiary_address}</span>
                       <button
                         onClick={() => copyToClipboard(selectedRecord.beneficiary_address, 'detail-beneficiary')}
-                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                        className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                         title="Copy address"
                       >
                         {copiedKey === 'detail-beneficiary' ? (
-                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
                       </button>
                     </div>
                     {selectedRecord.beneficiary_data?.name ? (
-                      <div className="text-[#374151] mt-1">
+                      <div className="text-neutral-700 mt-1">
                         {String(selectedRecord.beneficiary_data.name)}
                       </div>
                     ) : null}
                     {selectedRecord.beneficiary_data?.institution ? (
-                      <div className="text-[#6B7280] text-xs mt-0.5">
+                      <div className="text-neutral-500 text-xs mt-0.5">
                         Institution: {String(selectedRecord.beneficiary_data.institution)}
                       </div>
                     ) : null}
                   </div>
 
-                  <span className="text-[#6B7280] font-medium">Transfer Type</span>
+                  <span className="text-neutral-500 font-medium">Transfer Type</span>
                   <div>
                     <Badge variant="outline">{selectedRecord.transfer_type.toUpperCase()}</Badge>
                   </div>
 
                   {selectedRecord.transfer_type === 'erc20' && selectedRecord.token_address && (
                     <>
-                      <span className="text-[#6B7280] font-medium">Token Address</span>
+                      <span className="text-neutral-500 font-medium">Token Address</span>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm break-all">{selectedRecord.token_address}</span>
                         <button
                           onClick={() => copyToClipboard(selectedRecord.token_address!, 'detail-token')}
-                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                          className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                           title="Copy address"
                         >
                           {copiedKey === 'detail-token' ? (
-                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                            <Check className="w-3.5 h-3.5 text-success" />
                           ) : (
                             <Copy className="w-3.5 h-3.5" />
                           )}
@@ -430,42 +430,42 @@ export default function TravelRuleRecordList() {
                     </>
                   )}
 
-                  <span className="text-[#6B7280] font-medium">Amount (wei)</span>
+                  <span className="text-neutral-500 font-medium">Amount (wei)</span>
                   <span className="font-mono text-sm break-all">{selectedRecord.amount_wei}</span>
 
-                  <span className="text-[#6B7280] font-medium">Amount (USD)</span>
+                  <span className="text-neutral-500 font-medium">Amount (USD)</span>
                   <span>${selectedRecord.amount_usd.toLocaleString()}</span>
 
-                  <span className="text-[#6B7280] font-medium">Status</span>
+                  <span className="text-neutral-500 font-medium">Status</span>
                   <div>
                     <Badge variant={statusBadgeVariant[status]}>{status}</Badge>
                   </div>
 
-                  <span className="text-[#6B7280] font-medium">Expires at</span>
+                  <span className="text-neutral-500 font-medium">Expires at</span>
                   <span>{new Date(selectedRecord.expires_at).toLocaleString()}</span>
 
-                  <span className="text-[#6B7280] font-medium">Created at</span>
+                  <span className="text-neutral-500 font-medium">Created at</span>
                   <span>{new Date(selectedRecord.created_at).toLocaleString()}</span>
 
                   {selectedRecord.used_at && (
                     <>
-                      <span className="text-[#6B7280] font-medium">Used at</span>
+                      <span className="text-neutral-500 font-medium">Used at</span>
                       <span>{new Date(selectedRecord.used_at).toLocaleString()}</span>
                     </>
                   )}
 
                   {selectedRecord.used_tx_hash && (
                     <>
-                      <span className="text-[#6B7280] font-medium">Used tx hash</span>
+                      <span className="text-neutral-500 font-medium">Used tx hash</span>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm break-all">{selectedRecord.used_tx_hash}</span>
                         <button
                           onClick={() => copyToClipboard(selectedRecord.used_tx_hash!, 'detail-txhash')}
-                          className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                          className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                           title="Copy tx hash"
                         >
                           {copiedKey === 'detail-txhash' ? (
-                            <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                            <Check className="w-3.5 h-3.5 text-success" />
                           ) : (
                             <Copy className="w-3.5 h-3.5" />
                           )}
@@ -499,14 +499,14 @@ export default function TravelRuleRecordList() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             {formError && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {formError}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 Originator
               </label>
               <UserSearchInput orgId={orgId!} value={formOriginatorUserId} onChange={setFormOriginatorUserId} />
@@ -514,8 +514,8 @@ export default function TravelRuleRecordList() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Originator Name <span className="text-[#991B1B]">*</span>
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                  Originator Name <span className="text-error-dark">*</span>
                 </label>
                 <Input
                   value={formOriginatorName}
@@ -525,7 +525,7 @@ export default function TravelRuleRecordList() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   Account Reference
                 </label>
                 <Input
@@ -538,8 +538,8 @@ export default function TravelRuleRecordList() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                  Beneficiary Name <span className="text-[#991B1B]">*</span>
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                  Beneficiary Name <span className="text-error-dark">*</span>
                 </label>
                 <Input
                   value={formBeneficiaryName}
@@ -549,7 +549,7 @@ export default function TravelRuleRecordList() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   Institution
                 </label>
                 <Input
@@ -562,7 +562,7 @@ export default function TravelRuleRecordList() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   Transfer Type
                 </label>
                 <Select value={formTransferType} onValueChange={v => { setFormTransferType(v as TransferType); setFormTokenAddress(''); }}>
@@ -577,7 +577,7 @@ export default function TravelRuleRecordList() {
               </div>
               {formTransferType === 'erc20' && (
                 <div>
-                  <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                  <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                     Token
                   </label>
                   {erc20Tokens.length > 0 ? (
@@ -594,7 +594,7 @@ export default function TravelRuleRecordList() {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <p className="text-xs text-[#6B7280] mt-2">
+                    <p className="text-xs text-neutral-500 mt-2">
                       No ERC-20 tokens configured. Add them in Token Prices tab.
                     </p>
                   )}
@@ -603,7 +603,7 @@ export default function TravelRuleRecordList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 Beneficiary Address
               </label>
               <Input
@@ -619,13 +619,13 @@ export default function TravelRuleRecordList() {
                 placeholder="0x..."
                 required
               />
-              {addressError && <p className="text-xs text-[#991B1B] mt-1">{addressError}</p>}
+              {addressError && <p className="text-xs text-error-dark mt-1">{addressError}</p>}
             </div>
 
             <div>
               {selectedTokenInfo ? (
                 <>
-                  <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                  <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                     Amount ({selectedTokenInfo.symbol})
                   </label>
                   <Input
@@ -635,13 +635,13 @@ export default function TravelRuleRecordList() {
                     required
                   />
                   {formHumanAmount && !isNaN(parseFloat(formHumanAmount)) && (
-                    <p className="text-xs text-[#6B7280] mt-1">
+                    <p className="text-xs text-neutral-500 mt-1">
                       ≈ {humanToWei(formHumanAmount, selectedTokenInfo.decimals)} wei{formEstimatedUsd && ` | ≈ $${formEstimatedUsd} USD (server will compute exact value)`}
                     </p>
                   )}
                 </>
               ) : (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] text-sm">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-100 border border-amber-200 text-amber-800 text-sm">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   Configure token prices in the Token Prices tab first to enable amount entry.
                 </div>

@@ -43,7 +43,7 @@ function renderComplianceManager(initialRoute = '/admin/compliance/config') {
   render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter initialEntries={[initialRoute]}>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialRoute]}>
           <Routes>
             <Route path="/admin/compliance" element={<ComplianceManager />}>
               <Route index element={<Navigate to="config" replace />} />

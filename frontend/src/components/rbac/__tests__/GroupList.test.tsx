@@ -55,7 +55,7 @@ function renderGroupList() {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <GroupList />
         </MemoryRouter>
       </AuthProvider>

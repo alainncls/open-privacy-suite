@@ -6,7 +6,7 @@ import { Loader2, FileText, AlertTriangle } from 'lucide-react';
 
 function getClaimColor(claim: string): string {
   switch (claim) {
-    case 'admin': return 'bg-red-100 text-[#991B1B] border-red-300';
+    case 'admin': return 'bg-red-100 text-error-dark border-red-300';
     case 'deployer': return 'bg-purple-100 text-purple-700 border-purple-300';
     case 'upgrade': return 'bg-orange-100 text-orange-700 border-orange-300';
     case 'writer': return 'bg-blue-100 text-blue-700 border-blue-300';
@@ -81,7 +81,7 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] text-sm text-[#6B7280]">
+      <div className="flex items-center gap-2 p-3 rounded-lg bg-sky-50 border border-sky-200 text-sm text-neutral-500">
         <Loader2 className="w-4 h-4 animate-spin" />
         Looking up contract...
       </div>
@@ -90,7 +90,7 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
 
   if (error) {
     return (
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEF9C3] border border-[#FDE047] text-sm text-[#854D0E]" data-testid="contract-info-panel">
+      <div className="flex items-center gap-2 p-3 rounded-lg bg-warning-light border border-warning/40 text-sm text-warning-dark" data-testid="contract-info-panel">
         <AlertTriangle className="w-4 h-4" />
         {error}
       </div>
@@ -102,21 +102,21 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
   const { contract, organization, grants } = data;
 
   return (
-    <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] space-y-3 animate-fade-in" data-testid="contract-info-panel">
+    <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 space-y-3 animate-fade-in" data-testid="contract-info-panel">
       {/* Header */}
       <div className="flex items-center gap-2">
         <FileText className="w-4 h-4 text-blue-600" />
-        <span className="text-sm font-medium text-[#374151]">
+        <span className="text-sm font-medium text-neutral-700">
           {contract.name || 'Unnamed Contract'}
         </span>
-        <span className="text-xs text-[#94A3B8]">&middot;</span>
-        <span className="text-xs text-[#6B7280]">{organization.name}</span>
+        <span className="text-xs text-neutral-400">&middot;</span>
+        <span className="text-xs text-neutral-500">{organization.name}</span>
       </div>
 
       {/* Groups with access */}
       {grants.length > 0 ? (
         <div>
-          <div className="text-xs font-medium text-[#6B7280] mb-1.5">Groups with access</div>
+          <div className="text-xs font-medium text-neutral-500 mb-1.5">Groups with access</div>
           <div className="space-y-1">
             {grants.map((g) => {
               const claims = g.access?.claims || [];
@@ -124,8 +124,8 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
 
               return (
                 <div key={g.grant.id} className="flex items-center gap-2 text-sm">
-                  <span className="text-[#374151]">{g.group.name}</span>
-                  <span className="text-[#94A3B8]">&mdash;</span>
+                  <span className="text-neutral-700">{g.group.name}</span>
+                  <span className="text-neutral-400">&mdash;</span>
                   {claims.length > 0 ? (
                     <div className="flex gap-1">
                       {claims.map((claim) => (
@@ -139,10 +139,10 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
                       ))}
                     </div>
                   ) : (
-                    <span className="text-xs text-[#94A3B8]">No claims</span>
+                    <span className="text-xs text-neutral-400">No claims</span>
                   )}
                   {hasFunctionRestrictions && (
-                    <span className="text-xs text-[#94A3B8]">
+                    <span className="text-xs text-neutral-400">
                       ({g.grant.functions!.length} function{g.grant.functions!.length !== 1 ? 's' : ''})
                     </span>
                   )}
@@ -152,7 +152,7 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
           </div>
         </div>
       ) : (
-        <div className="text-xs text-[#94A3B8]">No groups have been granted access</div>
+        <div className="text-xs text-neutral-400">No groups have been granted access</div>
       )}
     </div>
   );

@@ -190,7 +190,7 @@ export default function GroupAccessForm({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -203,29 +203,29 @@ export default function GroupAccessForm({
     const totalCount = methods.length;
 
     return (
-      <div className={`border rounded-lg ${hasClaim ? 'border-[#E5E7EB]' : 'border-[#F3F4F6] bg-[#F9FAFB]'}`}>
+      <div className={`border rounded-lg ${hasClaim ? 'border-neutral-200' : 'border-neutral-100 bg-neutral-100'}`}>
         {/* Section header */}
         <div
-          className={`flex items-center justify-between p-3 cursor-pointer ${hasClaim ? 'hover:bg-[#F5F3FF]' : ''}`}
+          className={`flex items-center justify-between p-3 cursor-pointer ${hasClaim ? 'hover:bg-primary-50' : ''}`}
           onClick={() => hasClaim && toggleSection(claimType)}
         >
           <div className="flex items-center gap-2">
             {hasClaim ? (
               isExpanded ? (
-                <ChevronDown className="w-4 h-4 text-[#6B7280]" />
+                <ChevronDown className="w-4 h-4 text-neutral-500" />
               ) : (
-                <ChevronRight className="w-4 h-4 text-[#6B7280]" />
+                <ChevronRight className="w-4 h-4 text-neutral-500" />
               )
             ) : (
-              <ChevronRight className="w-4 h-4 text-[#D1D5DB]" />
+              <ChevronRight className="w-4 h-4 text-neutral-300" />
             )}
-            <span className={`text-sm font-medium ${hasClaim ? 'text-[#374151]' : 'text-[#9CA3AF]'}`}>
+            <span className={`text-sm font-medium ${hasClaim ? 'text-neutral-700' : 'text-neutral-400'}`}>
               {title}
             </span>
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               hasClaim
-                ? 'bg-[#F5F3FF] text-[#8950FA]'
-                : 'bg-[#F3F4F6] text-[#9CA3AF]'
+                ? 'bg-primary-50 text-primary'
+                : 'bg-neutral-100 text-neutral-400'
             }`}>
               {selectedCount} / {totalCount}
             </span>
@@ -234,15 +234,15 @@ export default function GroupAccessForm({
             <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
               <button
                 type="button"
-                className="text-xs text-[#8950FA] hover:text-[#7040E0] font-medium"
+                className="text-xs text-primary hover:text-primary-600 font-medium"
                 onClick={() => selectAllInSection(claimType)}
               >
                 Select All
               </button>
-              <span className="text-[#E5E7EB]">|</span>
+              <span className="text-neutral-200">|</span>
               <button
                 type="button"
-                className="text-xs text-[#6B7280] hover:text-[#374151] font-medium"
+                className="text-xs text-neutral-500 hover:text-neutral-700 font-medium"
                 onClick={() => clearAllInSection(claimType)}
               >
                 Clear
@@ -254,7 +254,7 @@ export default function GroupAccessForm({
         {/* Disabled message */}
         {!hasClaim && (
           <div className="px-3 pb-3">
-            <p className="text-xs text-[#9CA3AF] italic">
+            <p className="text-xs text-neutral-400 italic">
               Enable "{CLAIM_LABELS[claimType]}" claim to configure these methods
             </p>
           </div>
@@ -262,22 +262,22 @@ export default function GroupAccessForm({
 
         {/* Methods grid */}
         {hasClaim && isExpanded && (
-          <div className="border-t border-[#E5E7EB] p-2 max-h-48 overflow-y-auto">
+          <div className="border-t border-neutral-200 p-2 max-h-48 overflow-y-auto">
             <div className="grid grid-cols-2 gap-1">
               {methods.map(method => (
                 <label
                   key={method}
-                  className="flex items-center gap-2 p-1.5 rounded hover:bg-[#F5F3FF] cursor-pointer"
+                  className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer"
                   onClick={() => toggleMethod(method)}
                 >
                   <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
                     allowedMethods.includes(method)
-                      ? 'bg-[#8950FA] border-[#8950FA]'
-                      : 'border-[#CBD5E1] bg-white'
+                      ? 'bg-primary border-primary'
+                      : 'border-neutral-300 bg-white'
                   }`}>
                     {allowedMethods.includes(method) && <Check className="w-2.5 h-2.5 text-white" />}
                   </div>
-                  <span className="text-xs font-mono text-[#374151] truncate">{method}</span>
+                  <span className="text-xs font-mono text-neutral-700 truncate">{method}</span>
                 </label>
               ))}
             </div>
@@ -290,17 +290,17 @@ export default function GroupAccessForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       {/* Parent group context */}
       {parentGroup && (
-        <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD] flex items-start gap-2">
-          <Info className="w-4 h-4 text-[#0284C7] mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-[#0369A1]">
+        <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 flex items-start gap-2">
+          <Info className="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-sky-700">
             <p>
               Parent group "<strong>{parentGroup.name}</strong>" has claims:{' '}
               {parentGroup.claims.length > 0
@@ -319,9 +319,9 @@ export default function GroupAccessForm({
         const excess = claims.filter(c => !parentGroup.claims.includes(c));
         if (excess.length === 0) return null;
         return (
-          <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A] flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-[#D97706] mt-0.5 flex-shrink-0" />
-            <p className="text-xs text-[#92400E]">
+          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-amber-800">
               Claims {excess.map((c, i) => <span key={c}>{i > 0 && ', '}<strong>{CLAIM_LABELS[c]}</strong></span>)} exceed the parent group and will have no effect at runtime.
             </p>
           </div>
@@ -330,10 +330,10 @@ export default function GroupAccessForm({
 
       {/* Claims section - moved to top */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Claims
         </label>
-        <p className="text-xs text-[#94A3B8] mb-2">
+        <p className="text-xs text-neutral-400 mb-2">
           Capabilities for this group. Apply to unregistered contracts directly, and to registered contracts via grants. Read/Write also control which RPC methods are available.
         </p>
         <div className="space-y-2">
@@ -346,45 +346,45 @@ export default function GroupAccessForm({
               <label
                 key={claim}
                 className={`flex items-start gap-3 p-2 rounded-lg ${
-                  isImplied ? 'opacity-60 cursor-default' : 'hover:bg-[#F5F3FF] cursor-pointer'
+                  isImplied ? 'opacity-60 cursor-default' : 'hover:bg-primary-50 cursor-pointer'
                 }`}
                 onClick={() => !isImplied && toggleClaim(claim)}
               >
                 <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
                   isChecked
                     ? isImplied
-                      ? 'bg-[#B8A0F0] border-[#B8A0F0]'
-                      : 'bg-[#8950FA] border-[#8950FA]'
-                    : 'border-[#CBD5E1] bg-white'
+                      ? 'bg-primary-200 border-primary-200'
+                      : 'bg-primary border-primary'
+                    : 'border-neutral-300 bg-white'
                 }`}>
                   {isChecked && <Check className="w-3 h-3 text-white" />}
                 </div>
                 <div>
-                  <span className="text-sm font-medium text-[#0F0F0F]">
+                  <span className="text-sm font-medium text-neutral-900">
                     {CLAIM_LABELS[claim]}
                     {isImplied && (
-                      <span className="text-xs font-normal text-[#94A3B8] ml-2">
+                      <span className="text-xs font-normal text-neutral-400 ml-2">
                         (implied by {CLAIM_LABELS[implyingClaim]})
                       </span>
                     )}
                   </span>
-                  <p className="text-xs text-[#94A3B8]">{CLAIM_DESCRIPTIONS[claim]}</p>
+                  <p className="text-xs text-neutral-400">{CLAIM_DESCRIPTIONS[claim]}</p>
                 </div>
               </label>
             );
           })}
         </div>
         {claims.length === 0 && (
-          <p className="text-xs text-[#EF4444] mt-1">Select at least one claim.</p>
+          <p className="text-xs text-error mt-1">Select at least one claim.</p>
         )}
       </div>
 
       {/* RPC Methods section - now grouped by claim */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Allowed RPC Methods
         </label>
-        <p className="text-xs text-[#94A3B8] mb-2">
+        <p className="text-xs text-neutral-400 mb-2">
           Methods are grouped by required claim. Enable a claim above to configure its methods.
         </p>
         <div className="space-y-2">
@@ -392,7 +392,7 @@ export default function GroupAccessForm({
           {renderMethodSection('write', 'Write Methods')}
         </div>
         {hasMethodGap && (
-          <p className="text-xs text-[#EF4444] mt-1">
+          <p className="text-xs text-error mt-1">
             {claimsWithoutMethods.map(c => CLAIM_LABELS[c]).join(' and ')} claim{claimsWithoutMethods.length > 1 ? 's have' : ' has'} no methods selected.
           </p>
         )}
@@ -401,7 +401,7 @@ export default function GroupAccessForm({
       {/* Rate limits */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-[#374151]">
+          <label className="block text-sm font-medium text-neutral-700">
             Rate Limit (RPS)
           </label>
           <Input
@@ -411,11 +411,11 @@ export default function GroupAccessForm({
             placeholder="100"
             min="0"
           />
-          <p className="text-xs text-[#94A3B8]">Requests per second</p>
+          <p className="text-xs text-neutral-400">Requests per second</p>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-[#374151]">
+          <label className="block text-sm font-medium text-neutral-700">
             Rate Limit (Daily)
           </label>
           <Input
@@ -425,7 +425,7 @@ export default function GroupAccessForm({
             placeholder="100000"
             min="0"
           />
-          <p className="text-xs text-[#94A3B8]">Requests per day</p>
+          <p className="text-xs text-neutral-400">Requests per day</p>
         </div>
       </div>
 

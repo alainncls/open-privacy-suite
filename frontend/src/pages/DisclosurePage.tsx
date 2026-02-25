@@ -29,9 +29,7 @@ export function DisclosurePage() {
 
   // Redirect if not authenticated (wait for auth to load first)
   useEffect(() => {
-    console.log('[DisclosurePage] Auth check:', { isAuthLoading, isAuthenticated, accessToken: !!accessToken });
     if (!isAuthLoading && !isAuthenticated) {
-      console.log('[DisclosurePage] Redirecting to /login because not authenticated');
       navigate('/login');
     }
   }, [isAuthenticated, isAuthLoading, navigate, accessToken]);
@@ -111,7 +109,7 @@ export function DisclosurePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] p-4">
+    <div className="min-h-screen bg-neutral-100 p-4">
       <div className="max-w-2xl mx-auto animate-fade-in">
         {/* Header */}
         <div className="mb-8">
@@ -126,23 +124,23 @@ export function DisclosurePage() {
           </Button>
 
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8950FA] to-[#A478FC] flex items-center justify-center shadow-lg shadow-primary">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-primary-300 flex items-center justify-center shadow-lg shadow-primary">
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-[#0F0F0F]">Data Disclosure</h1>
-              <p className="text-[#6B7280]">Manage access to your data</p>
+              <h1 className="text-2xl font-bold text-neutral-900">Data Disclosure</h1>
+              <p className="text-neutral-500">Manage access to your data</p>
             </div>
           </div>
         </div>
 
         {/* Error Alert */}
         {error && (
-          <Card variant="default" className="mb-4 border-[#FEE2E2]">
+          <Card variant="default" className="mb-4 border-error-light">
             <CardContent className="py-4">
               <div className="flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0" />
-                <p className="text-[#991B1B] text-sm flex-1">{error}</p>
+                <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0" />
+                <p className="text-error-dark text-sm flex-1">{error}</p>
                 <Button
                   onClick={() => setError(null)}
                   variant="ghost"
@@ -159,12 +157,12 @@ export function DisclosurePage() {
         <Card variant="default" className="mb-6">
           <CardContent className="py-4">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center flex-shrink-0">
-                <FileText className="w-5 h-5 text-[#8950FA]" />
+              <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                <FileText className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <h3 className="text-[#0F0F0F] font-medium">Selective Disclosure</h3>
-                <p className="text-[#6B7280] text-sm mt-1">
+                <h3 className="text-neutral-900 font-medium">Selective Disclosure</h3>
+                <p className="text-neutral-500 text-sm mt-1">
                   Review and manage requests from auditors, regulators, and other parties
                   who need access to your activity data. You control what data is shared
                   and can revoke access at any time.
@@ -178,7 +176,7 @@ export function DisclosurePage() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-[#0F0F0F]">Pending Requests</h2>
+              <h2 className="text-lg font-semibold text-neutral-900">Pending Requests</h2>
               {pendingRequests.length > 0 && (
                 <Badge variant="warning">{pendingRequests.length}</Badge>
               )}
@@ -197,16 +195,16 @@ export function DisclosurePage() {
           {isLoading ? (
             <Card variant="default">
               <CardContent className="py-12 text-center">
-                <RefreshCw className="w-8 h-8 text-[#94A3B8] animate-spin mx-auto mb-3" />
-                <p className="text-[#6B7280]">Loading requests...</p>
+                <RefreshCw className="w-8 h-8 text-neutral-400 animate-spin mx-auto mb-3" />
+                <p className="text-neutral-500">Loading requests...</p>
               </CardContent>
             </Card>
           ) : pendingRequests.length === 0 ? (
             <Card variant="default">
               <CardContent className="py-12 text-center">
-                <Shield className="w-12 h-12 text-[#CBD5E1] mx-auto mb-3" />
-                <p className="text-[#6B7280]">No pending disclosure requests</p>
-                <p className="text-[#94A3B8] text-sm mt-1">
+                <Shield className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
+                <p className="text-neutral-500">No pending disclosure requests</p>
+                <p className="text-neutral-400 text-sm mt-1">
                   You will be notified when someone requests access to your data
                 </p>
               </CardContent>
@@ -229,7 +227,7 @@ export function DisclosurePage() {
         {/* Active Grants Section */}
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-lg font-semibold text-[#0F0F0F]">Active Data Access Grants</h2>
+            <h2 className="text-lg font-semibold text-neutral-900">Active Data Access Grants</h2>
             {activeGrants.filter((g) => !g.revoked_at && new Date(g.valid_until) > new Date()).length > 0 && (
               <Badge variant="success">
                 {activeGrants.filter((g) => !g.revoked_at && new Date(g.valid_until) > new Date()).length}
@@ -240,16 +238,16 @@ export function DisclosurePage() {
           {isLoading ? (
             <Card variant="default">
               <CardContent className="py-12 text-center">
-                <RefreshCw className="w-8 h-8 text-[#94A3B8] animate-spin mx-auto mb-3" />
-                <p className="text-[#6B7280]">Loading grants...</p>
+                <RefreshCw className="w-8 h-8 text-neutral-400 animate-spin mx-auto mb-3" />
+                <p className="text-neutral-500">Loading grants...</p>
               </CardContent>
             </Card>
           ) : activeGrants.length === 0 ? (
             <Card variant="default">
               <CardContent className="py-12 text-center">
-                <Key className="w-12 h-12 text-[#CBD5E1] mx-auto mb-3" />
-                <p className="text-[#6B7280]">No active data access grants</p>
-                <p className="text-[#94A3B8] text-sm mt-1">
+                <Key className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
+                <p className="text-neutral-500">No active data access grants</p>
+                <p className="text-neutral-400 text-sm mt-1">
                   Grants you approve will appear here
                 </p>
               </CardContent>
@@ -274,14 +272,14 @@ export function DisclosurePage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Check className="w-5 h-5 text-[#166534]" />
+              <Check className="w-5 h-5 text-success-dark" />
               Access Granted Successfully
             </DialogTitle>
           </DialogHeader>
 
           <div className="py-4">
-            <div className="p-4 bg-[#DCFCE7] border border-[#BBF7D0] rounded-lg">
-              <p className="text-sm text-[#166534]">
+            <div className="p-4 bg-success-light border border-success/30 rounded-lg">
+              <p className="text-sm text-success-dark">
                 The disclosure request has been approved. The authorized auditor can now
                 access your data through their authenticated session.
               </p>

@@ -202,7 +202,7 @@ export default function TokenPriceList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -212,7 +212,7 @@ export default function TokenPriceList() {
       {/* System Prices Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[#6B7280] uppercase tracking-wide">
+          <h3 className="text-sm font-medium text-neutral-500 uppercase tracking-wide">
             Auto-Fetched Prices (CoinGecko)
           </h3>
           <Button variant="ghost" size="sm" onClick={loadSystemPrices}>
@@ -222,7 +222,7 @@ export default function TokenPriceList() {
         </div>
 
         {systemPrices.length === 0 ? (
-          <div className="p-4 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-sm text-[#6B7280]">
+          <div className="p-4 rounded-lg bg-neutral-100 border border-neutral-200 text-sm text-neutral-500">
             No system prices available. Prices will appear after the first CoinGecko fetch.
           </div>
         ) : (
@@ -232,14 +232,14 @@ export default function TokenPriceList() {
                 key={sp.coingecko_id}
                 className={`p-4 rounded-lg border ${
                   sp.price_usd === 0
-                    ? 'bg-[#FEF2F2] border-[#FECACA]'
+                    ? 'bg-red-50 border-error/30'
                     : sp.is_stale
-                    ? 'bg-[#FFFBEB] border-[#FDE68A]'
-                    : 'bg-[#F0FDF4] border-[#BBF7D0]'
+                    ? 'bg-amber-50 border-amber-200'
+                    : 'bg-green-50 border-success/30'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-[#374151]">{sp.symbol}</span>
+                  <span className="font-medium text-neutral-700">{sp.symbol}</span>
                   <Badge
                     variant={sp.price_usd === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
                     className="text-xs"
@@ -247,17 +247,17 @@ export default function TokenPriceList() {
                     {sp.price_usd === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
                   </Badge>
                 </div>
-                <div className="text-xl font-semibold text-[#111827]">
+                <div className="text-xl font-semibold text-neutral-800">
                   {sp.price_usd === 0 ? '—' : `$${sp.price_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </div>
-                <div className="text-xs text-[#94A3B8] mt-1">
+                <div className="text-xs text-neutral-400 mt-1">
                   {sp.price_usd === 0 ? (
-                    <span className="text-[#991B1B] flex items-center gap-1">
+                    <span className="text-error-dark flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />
                       Price unavailable — add manual override
                     </span>
                   ) : sp.is_stale ? (
-                    <span className="text-[#92400E] flex items-center gap-1">
+                    <span className="text-amber-800 flex items-center gap-1">
                       <AlertTriangle className="w-3 h-3" />
                       Last updated {timeAgo(sp.updated_at)}
                     </span>
@@ -274,7 +274,7 @@ export default function TokenPriceList() {
       {/* Per-Org Token Prices */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-medium text-[#374151]">Per-Organization Token Prices</h3>
+          <h3 className="text-base font-medium text-neutral-700">Per-Organization Token Prices</h3>
           {orgId && (
             <Button size="sm" onClick={openCreateForm}>
               <Plus className="w-4 h-4 mr-1" />
@@ -284,14 +284,14 @@ export default function TokenPriceList() {
         </div>
 
         {!orgId ? (
-          <div className="text-center py-8 text-[#6B7280] text-sm">
+          <div className="text-center py-8 text-neutral-500 text-sm">
             Select an organization above to manage per-org token prices.
           </div>
         ) : (
         <>
 
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
             <AlertCircle className="w-4 h-4 shrink-0" />
             {error}
           </div>
@@ -299,11 +299,11 @@ export default function TokenPriceList() {
 
         {tokens.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-              <Coins className="w-8 h-8 text-[#94A3B8]" />
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+              <Coins className="w-8 h-8 text-neutral-400" />
             </div>
-            <p className="text-[#6B7280] mb-2">No per-org token prices configured</p>
-            <p className="text-[#94A3B8] text-sm">
+            <p className="text-neutral-500 mb-2">No per-org token prices configured</p>
+            <p className="text-neutral-400 text-sm">
               Native ETH will auto-resolve from CoinGecko if a system price is available.
               Add token prices for ERC-20 tokens or manual overrides.
             </p>
@@ -329,13 +329,13 @@ export default function TokenPriceList() {
                       {token.token_address === 'native' ? (
                         <Badge variant="info">native (ETH)</Badge>
                       ) : (
-                        <span className="text-[#6B7280]">{token.token_address}</span>
+                        <span className="text-neutral-500">{token.token_address}</span>
                       )}
                     </TableCell>
                     <TableCell className="font-medium">{token.symbol}</TableCell>
                     <TableCell>
                       {token.coingecko_id ? (
-                        <Badge variant="outline" className="text-xs bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE]">
+                        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
                           {COINGECKO_OPTIONS.find(o => o.id === token.coingecko_id)?.label || `CoinGecko: ${token.coingecko_id}`}
                         </Badge>
                       ) : (
@@ -344,7 +344,7 @@ export default function TokenPriceList() {
                     </TableCell>
                     <TableCell>
                       {resolved.price === 0 ? (
-                        <span className="text-[#991B1B] flex items-center gap-1">
+                        <span className="text-error-dark flex items-center gap-1">
                           <AlertCircle className="w-3.5 h-3.5" />
                           Unavailable
                         </span>
@@ -352,14 +352,14 @@ export default function TokenPriceList() {
                         <span className="flex items-center gap-1">
                           ${resolved.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           {resolved.stale && (
-                            <AlertTriangle className="w-3.5 h-3.5 text-[#D97706]" />
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                           )}
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-[#6B7280] text-sm">
+                    <TableCell className="text-neutral-500 text-sm">
                       {resolved.updatedAt ? (
-                        <span className={resolved.stale ? 'text-[#D97706]' : ''}>
+                        <span className={resolved.stale ? 'text-amber-600' : ''}>
                           {timeAgo(resolved.updatedAt)}
                         </span>
                       ) : (
@@ -372,7 +372,7 @@ export default function TokenPriceList() {
                           <Pencil className="w-4 h-4" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(token)}>
-                          <Trash2 className="w-4 h-4 text-[#991B1B]" />
+                          <Trash2 className="w-4 h-4 text-error-dark" />
                         </Button>
                       </div>
                     </TableCell>
@@ -393,14 +393,14 @@ export default function TokenPriceList() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             {formError && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {formError}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 Token Address
               </label>
               <Input
@@ -409,13 +409,13 @@ export default function TokenPriceList() {
                 placeholder='native or 0x...'
                 disabled={!!editing}
               />
-              <p className="text-xs text-[#94A3B8] mt-1">
+              <p className="text-xs text-neutral-400 mt-1">
                 Use "native" for the chain's native currency (ETH)
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Price Source</label>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Price Source</label>
               <UISelect value={formSource} onValueChange={handleSourceChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select price source" />
@@ -430,7 +430,7 @@ export default function TokenPriceList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Symbol</label>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Symbol</label>
               <Input
                 value={formSymbol}
                 onChange={e => setFormSymbol(e.target.value)}
@@ -440,7 +440,7 @@ export default function TokenPriceList() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Decimals</label>
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Decimals</label>
               <Input
                 type="number"
                 value={formDecimals}
@@ -454,7 +454,7 @@ export default function TokenPriceList() {
 
             {formSource === 'manual' && (
               <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   Price (USD)
                 </label>
                 <Input
@@ -469,7 +469,7 @@ export default function TokenPriceList() {
             )}
 
             {formSource !== 'manual' && (
-              <div className="p-3 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-[#1E40AF]">
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-800">
                 Price will be automatically fetched from CoinGecko. You can still set a manual fallback price above.
               </div>
             )}

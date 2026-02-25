@@ -126,7 +126,7 @@ export default function ComplianceManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as ComplianceTab;
-    let path = `/admin/compliance/${tab}`;
+    const path = `/admin/compliance/${tab}`;
     if (selectedOrg) {
       navigate(`${path}?org=${selectedOrg.id}`);
     } else {
@@ -144,51 +144,51 @@ export default function ComplianceManager() {
     >
       <Card className="animate-fade-in">
         <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
-                <Scale className="w-5 h-5 text-[#8950FA]" />
+              <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+                <Scale className="w-5 h-5 text-primary" />
               </div>
               <div>
                 <CardTitle className="text-lg">Compliance</CardTitle>
-                <p className="text-sm text-[#6B7280] mt-0.5">
+                <p className="text-sm text-neutral-500 mt-0.5">
                   Travel rule enforcement, token prices, and sanctions
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-[#6B7280]">Scope:</span>
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 lg:w-auto">
+              <span className="text-sm text-neutral-500 sm:whitespace-nowrap">Scope:</span>
               {loading ? (
-                <div className="flex items-center gap-2 text-[#94A3B8]">
+                <div className="flex items-center gap-2 text-neutral-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-sm">Loading...</span>
                 </div>
               ) : !showOrgSelector ? (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#F1F5F9] text-[#6B7280]">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-neutral-100 text-neutral-500">
                   <Globe className="w-4 h-4" />
                   <span className="text-sm">Global (all organizations)</span>
                 </div>
               ) : organizations.length === 0 ? (
-                <Badge variant="outline" className="text-[#6B7280]">
+                <Badge variant="outline" className="text-neutral-500">
                   No organizations
                 </Badge>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
                   <Select
                     value={selectedOrg?.id || ''}
                     onValueChange={handleOrgChange}
                   >
-                    <SelectTrigger className={`w-[280px] ${!selectedOrg ? 'border-[#EF4444] ring-1 ring-[#EF4444]/20' : ''}`}>
+                    <SelectTrigger className={`w-full sm:w-[280px] ${!selectedOrg ? 'border-error ring-1 ring-error/20' : ''}`}>
                       <SelectValue placeholder="Select organization" />
                     </SelectTrigger>
                     <SelectContent>
                       {organizations.map(org => (
                         <SelectItem key={org.id} value={org.id}>
                           <div className="flex items-center gap-2 whitespace-nowrap">
-                            <Building2 className="w-4 h-4 text-[#94A3B8] shrink-0" />
+                            <Building2 className="w-4 h-4 text-neutral-400 shrink-0" />
                             <span className="truncate">{org.name}</span>
-                            <span className="text-[#94A3B8] text-xs shrink-0">
+                            <span className="text-neutral-400 text-xs shrink-0">
                               ({org.slug})
                             </span>
                           </div>
@@ -197,7 +197,7 @@ export default function ComplianceManager() {
                     </SelectContent>
                   </Select>
                   {!selectedOrg && (
-                    <span className="text-xs text-[#EF4444] whitespace-nowrap">
+                    <span className="text-xs text-error whitespace-nowrap">
                       Select an org
                     </span>
                   )}
@@ -209,11 +209,11 @@ export default function ComplianceManager() {
 
         <CardContent className="pt-0">
           {travelRuleEnabled === false && (
-            <div className="flex items-center gap-2 p-3 mb-4 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-sm text-[#991B1B]">
+            <div className="flex items-center gap-2 p-3 mb-4 rounded-lg bg-red-50 border border-error/30 text-sm text-error-dark">
               <AlertTriangle className="w-4 h-4 shrink-0" />
               <span>
                 Travel rule enforcement is <strong>disabled</strong> on the backend.
-                Set <code className="px-1 py-0.5 rounded bg-[#FEE2E2] text-xs font-mono">ENABLE_TRAVEL_RULE=true</code> and restart to enforce thresholds and sanctions.
+                Set <code className="px-1 py-0.5 rounded bg-error-light text-xs font-mono">ENABLE_TRAVEL_RULE=true</code> and restart to enforce thresholds and sanctions.
               </span>
             </div>
           )}
@@ -256,11 +256,11 @@ export default function ComplianceManager() {
 function NoOrgSelected() {
   return (
     <div className="text-center py-12">
-      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-        <Building2 className="w-8 h-8 text-[#94A3B8]" />
+      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+        <Building2 className="w-8 h-8 text-neutral-400" />
       </div>
-      <p className="text-[#6B7280] mb-2">No organization selected</p>
-      <p className="text-[#94A3B8] text-sm">
+      <p className="text-neutral-500 mb-2">No organization selected</p>
+      <p className="text-neutral-400 text-sm">
         Select an organization from the dropdown above to manage compliance settings
       </p>
     </div>

@@ -144,8 +144,8 @@ export default function UserList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-[#374151]">Users</h3>
-          <p className="text-xs text-[#6B7280] mt-0.5">
+          <h3 className="text-sm font-medium text-neutral-700">Users</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
             Manage user accounts, KYC status, and group memberships
           </p>
         </div>
@@ -154,7 +154,7 @@ export default function UserList() {
       {/* Search */}
       <div className="flex items-center gap-4">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
           <Input
             type="text"
             placeholder="Search by DID or wallet address..."
@@ -169,7 +169,7 @@ export default function UserList() {
             variant="ghost"
             size="sm"
             onClick={() => setSearchQuery('')}
-            className="text-[#6B7280]"
+            className="text-neutral-500"
           >
             Clear search
           </Button>
@@ -178,15 +178,15 @@ export default function UserList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+          <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
         </div>
       ) : users.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <Users className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <Users className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-2">No users found</p>
-          <p className="text-[#94A3B8] text-sm">
+          <p className="text-neutral-500 mb-2">No users found</p>
+          <p className="text-neutral-400 text-sm">
             Users are created automatically when they authenticate
           </p>
         </div>
@@ -212,7 +212,7 @@ export default function UserList() {
               >
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <UserIcon className="w-4 h-4 text-[#8950FA]" />
+                    <UserIcon className="w-4 h-4 text-primary" />
                     <span
                       className="font-mono text-sm"
                       title={user.external_id}
@@ -223,12 +223,12 @@ export default function UserList() {
                 </TableCell>
                 <TableCell>
                   {user.kyc ? (
-                    <div className="flex items-center gap-1.5 text-[#166534]">
+                    <div className="flex items-center gap-1.5 text-success-dark">
                       <Check className="w-4 h-4" />
                       <span className="text-sm">Verified</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5 text-[#94A3B8]">
+                    <div className="flex items-center gap-1.5 text-neutral-400">
                       <X className="w-4 h-4" />
                       <span className="text-sm">No</span>
                     </div>
@@ -247,10 +247,10 @@ export default function UserList() {
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="text-[#6B7280] text-sm">
+                <TableCell className="text-neutral-500 text-sm">
                   {formatDate(user.created_at)}
                 </TableCell>
-                <TableCell className="text-[#6B7280] text-sm max-w-[150px] truncate">
+                <TableCell className="text-neutral-500 text-sm max-w-[150px] truncate">
                   {user.note || '-'}
                 </TableCell>
                 <TableCell>
@@ -303,7 +303,7 @@ export default function UserList() {
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserIcon className="w-5 h-5 text-[#8950FA]" />
+              <UserIcon className="w-5 h-5 text-primary" />
               User Details
             </DialogTitle>
           </DialogHeader>

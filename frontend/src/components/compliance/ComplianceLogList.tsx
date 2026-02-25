@@ -88,7 +88,7 @@ export default function ComplianceLogList() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+        <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
       </div>
     );
   }
@@ -96,7 +96,7 @@ export default function ComplianceLogList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-medium text-[#374151]">Compliance Logs</h3>
+        <h3 className="text-base font-medium text-neutral-700">Compliance Logs</h3>
       </div>
 
       {/* Filters */}
@@ -132,7 +132,7 @@ export default function ComplianceLogList() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEE2E2] border border-[#FECACA] text-[#991B1B] text-sm">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-error-light border border-error/30 text-error-dark text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
@@ -140,11 +140,11 @@ export default function ComplianceLogList() {
 
       {logs.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <ScrollText className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <ScrollText className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-2">No compliance logs</p>
-          <p className="text-[#94A3B8] text-sm">
+          <p className="text-neutral-500 mb-2">No compliance logs</p>
+          <p className="text-neutral-400 text-sm">
             Compliance decisions will appear here when transfers are evaluated
           </p>
         </div>
@@ -166,13 +166,13 @@ export default function ComplianceLogList() {
               {logs.map(log => (
                 <TableRow
                   key={log.id}
-                  className="cursor-pointer hover:bg-[#F8FAFC]"
+                  className="cursor-pointer hover:bg-neutral-100"
                   onClick={() => setSelectedLog(log)}
                 >
-                  <TableCell className="text-[#6B7280] text-xs whitespace-nowrap">
+                  <TableCell className="text-neutral-500 text-xs whitespace-nowrap">
                     {new Date(log.created_at).toLocaleString()}
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-[#6B7280]">
+                  <TableCell className="font-mono text-xs text-neutral-500">
                     {log.user_external_id
                       ? (log.user_external_id.length > 20 ? log.user_external_id.slice(0, 15) + '...' : log.user_external_id)
                       : log.user_id.slice(0, 8) + '...'}
@@ -182,16 +182,16 @@ export default function ComplianceLogList() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <span className="font-mono text-xs text-[#6B7280]">
+                      <span className="font-mono text-xs text-neutral-500">
                         {log.from_address.slice(0, 6)}...{log.from_address.slice(-4)}
                       </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); copyToClipboard(log.from_address, `${log.id}-from`); }}
-                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                         title="Copy address"
                       >
                         {copiedKey === `${log.id}-from` ? (
-                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
@@ -200,16 +200,16 @@ export default function ComplianceLogList() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <span className="font-mono text-xs text-[#6B7280]">
+                      <span className="font-mono text-xs text-neutral-500">
                         {log.to_address.slice(0, 6)}...{log.to_address.slice(-4)}
                       </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); copyToClipboard(log.to_address, `${log.id}-to`); }}
-                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors"
+                        className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors"
                         title="Copy address"
                       >
                         {copiedKey === `${log.id}-to` ? (
-                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
@@ -246,36 +246,36 @@ export default function ComplianceLogList() {
           {selectedLog && (
             <div className="space-y-4">
               <div className="grid grid-cols-[120px_1fr] gap-y-3 gap-x-4 text-sm">
-                <span className="text-[#6B7280] font-medium">Time</span>
+                <span className="text-neutral-500 font-medium">Time</span>
                 <span>{new Date(selectedLog.created_at).toLocaleString()}</span>
 
                 {selectedLog.user_external_id && (
                   <>
-                    <span className="text-[#6B7280] font-medium">User (DID)</span>
+                    <span className="text-neutral-500 font-medium">User (DID)</span>
                     <span className="font-mono text-xs break-all">{selectedLog.user_external_id}</span>
                   </>
                 )}
 
-                <span className="text-[#6B7280] font-medium">User ID</span>
+                <span className="text-neutral-500 font-medium">User ID</span>
                 <span className="font-mono text-xs break-all">{selectedLog.user_id}</span>
 
-                <span className="text-[#6B7280] font-medium">Transfer Type</span>
+                <span className="text-neutral-500 font-medium">Transfer Type</span>
                 <div>
                   <Badge variant="outline">{selectedLog.transfer_type.toUpperCase()}</Badge>
                 </div>
 
                 {selectedLog.token_address && (
                   <>
-                    <span className="text-[#6B7280] font-medium">Token Address</span>
+                    <span className="text-neutral-500 font-medium">Token Address</span>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm break-all">{selectedLog.token_address}</span>
                       <button
                         onClick={() => copyToClipboard(selectedLog.token_address!, 'detail-token')}
-                        className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                        className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                         title="Copy address"
                       >
                         {copiedKey === 'detail-token' ? (
-                          <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
@@ -284,52 +284,52 @@ export default function ComplianceLogList() {
                   </>
                 )}
 
-                <span className="text-[#6B7280] font-medium">From Address</span>
+                <span className="text-neutral-500 font-medium">From Address</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm break-all">{selectedLog.from_address}</span>
                   <button
                     onClick={() => copyToClipboard(selectedLog.from_address, 'detail-from')}
-                    className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                    className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                     title="Copy address"
                   >
                     {copiedKey === 'detail-from' ? (
-                      <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      <Check className="w-3.5 h-3.5 text-success" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" />
                     )}
                   </button>
                 </div>
 
-                <span className="text-[#6B7280] font-medium">To Address</span>
+                <span className="text-neutral-500 font-medium">To Address</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm break-all">{selectedLog.to_address}</span>
                   <button
                     onClick={() => copyToClipboard(selectedLog.to_address, 'detail-to')}
-                    className="p-1 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#6B7280] transition-colors shrink-0"
+                    className="p-1 rounded hover:bg-neutral-100 text-neutral-400 hover:text-neutral-500 transition-colors shrink-0"
                     title="Copy address"
                   >
                     {copiedKey === 'detail-to' ? (
-                      <Check className="w-3.5 h-3.5 text-[#22C55E]" />
+                      <Check className="w-3.5 h-3.5 text-success" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" />
                     )}
                   </button>
                 </div>
 
-                <span className="text-[#6B7280] font-medium">Amount (wei)</span>
+                <span className="text-neutral-500 font-medium">Amount (wei)</span>
                 <span className="font-mono text-sm break-all">{selectedLog.amount_wei}</span>
 
-                <span className="text-[#6B7280] font-medium">Amount (USD)</span>
+                <span className="text-neutral-500 font-medium">Amount (USD)</span>
                 <span>{selectedLog.amount_usd != null ? `$${selectedLog.amount_usd.toLocaleString()}` : '—'}</span>
 
                 {selectedLog.threshold_usd != null && (
                   <>
-                    <span className="text-[#6B7280] font-medium">Threshold (USD)</span>
+                    <span className="text-neutral-500 font-medium">Threshold (USD)</span>
                     <span>${selectedLog.threshold_usd.toLocaleString()}</span>
                   </>
                 )}
 
-                <span className="text-[#6B7280] font-medium">Decision</span>
+                <span className="text-neutral-500 font-medium">Decision</span>
                 <div>
                   <Badge variant={selectedLog.decision === 'allowed' ? 'success' : 'destructive'}>
                     {selectedLog.decision}
@@ -338,14 +338,14 @@ export default function ComplianceLogList() {
 
                 {selectedLog.denial_reason && (
                   <>
-                    <span className="text-[#6B7280] font-medium">Denial Reason</span>
-                    <span className="text-[#991B1B]">{selectedLog.denial_reason}</span>
+                    <span className="text-neutral-500 font-medium">Denial Reason</span>
+                    <span className="text-error-dark">{selectedLog.denial_reason}</span>
                   </>
                 )}
 
                 {selectedLog.travel_rule_record_id && (
                   <>
-                    <span className="text-[#6B7280] font-medium">Travel Rule ID</span>
+                    <span className="text-neutral-500 font-medium">Travel Rule ID</span>
                     <span className="font-mono text-xs break-all">{selectedLog.travel_rule_record_id}</span>
                   </>
                 )}

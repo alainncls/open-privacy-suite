@@ -108,7 +108,7 @@ describe('AddressThresholdList', () => {
       });
 
       const zeroSpan = screen.getByText('$0 (all transfers)');
-      expect(zeroSpan).toHaveClass('text-[#DC2626]', 'font-medium');
+      expect(zeroSpan).toHaveClass('text-red-600', 'font-medium');
     });
 
     it('shows formatted USD threshold', async () => {

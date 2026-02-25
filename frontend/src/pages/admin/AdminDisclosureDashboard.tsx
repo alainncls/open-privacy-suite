@@ -112,14 +112,14 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
 
     // Active grants
     const active = grants.filter((g) => {
-      const isRevoked = !!(g as any).revoked_at;
+      const isRevoked = !!g.revoked_at;
       const isExpired = new Date(g.valid_until || '') < now;
       return !isRevoked && !isExpired;
     });
 
     // Inactive grants (revoked or expired)
     const inactive = grants.filter((g) => {
-      const isRevoked = !!(g as any).revoked_at;
+      const isRevoked = !!g.revoked_at;
       const isExpired = new Date(g.valid_until || '') < now;
       return isRevoked || isExpired;
     });
@@ -203,9 +203,9 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <AlertTriangle className="w-12 h-12 text-[#CA8A04] mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">Error Loading Data</h3>
-          <p className="text-[#6B7280] mb-4">{error}</p>
+          <AlertTriangle className="w-12 h-12 text-warning-dark mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-neutral-900 mb-2">Error Loading Data</h3>
+          <p className="text-neutral-500 mb-4">{error}</p>
           <Button onClick={fetchData}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Try Again
@@ -220,12 +220,12 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
-            <Shield className="w-5 h-5 text-[#8950FA]" />
+          <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-[#0F0F0F]">Disclosure Management</h1>
-            <p className="text-sm text-[#6B7280]">
+            <h1 className="text-xl font-semibold text-neutral-900">Disclosure Management</h1>
+            <p className="text-sm text-neutral-500">
               Admin view of all disclosure requests and grants
             </p>
           </div>
@@ -247,10 +247,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <Users className="w-8 h-8 text-[#8950FA]" />
+              <Users className="w-8 h-8 text-primary" />
               <div>
-                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.totalRequests}</p>
-                <p className="text-xs text-[#6B7280]">Total Requests</p>
+                <p className="text-2xl font-semibold text-neutral-900">{stats.totalRequests}</p>
+                <p className="text-xs text-neutral-500">Total Requests</p>
               </div>
             </div>
           </CardContent>
@@ -258,10 +258,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <Clock className="w-8 h-8 text-[#CA8A04]" />
+              <Clock className="w-8 h-8 text-warning-dark" />
               <div>
-                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.pendingCount}</p>
-                <p className="text-xs text-[#6B7280]">Pending</p>
+                <p className="text-2xl font-semibold text-neutral-900">{stats.pendingCount}</p>
+                <p className="text-xs text-neutral-500">Pending</p>
               </div>
             </div>
           </CardContent>
@@ -269,10 +269,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-8 h-8 text-[#166534]" />
+              <CheckCircle2 className="w-8 h-8 text-success-dark" />
               <div>
-                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.activeCount}</p>
-                <p className="text-xs text-[#6B7280]">Active Grants</p>
+                <p className="text-2xl font-semibold text-neutral-900">{stats.activeCount}</p>
+                <p className="text-xs text-neutral-500">Active Grants</p>
               </div>
             </div>
           </CardContent>
@@ -280,10 +280,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <XCircle className="w-8 h-8 text-[#94A3B8]" />
+              <XCircle className="w-8 h-8 text-neutral-400" />
               <div>
-                <p className="text-2xl font-semibold text-[#0F0F0F]">{stats.inactiveCount}</p>
-                <p className="text-xs text-[#6B7280]">Inactive</p>
+                <p className="text-2xl font-semibold text-neutral-900">{stats.inactiveCount}</p>
+                <p className="text-xs text-neutral-500">Inactive</p>
               </div>
             </div>
           </CardContent>
@@ -322,15 +322,15 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
           {isLoading ? (
             <Card className="animate-pulse">
               <CardContent className="py-8">
-                <div className="h-32 bg-[#E2E8F0] rounded" />
+                <div className="h-32 bg-neutral-200 rounded" />
               </CardContent>
             </Card>
           ) : pendingRequests.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <Clock className="w-12 h-12 text-[#CA8A04] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Pending Requests</h3>
-                <p className="text-[#6B7280]">
+                <Clock className="w-12 h-12 text-warning-dark mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Pending Requests</h3>
+                <p className="text-neutral-500">
                   All disclosure requests have been processed.
                 </p>
               </CardContent>
@@ -352,7 +352,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                   {pendingRequests.map((request) => (
                     <TableRow
                       key={request.id}
-                      className="cursor-pointer hover:bg-[#F1F5F9]"
+                      className="cursor-pointer hover:bg-neutral-100"
                       onClick={() => {
                         setSelectedRequest(request);
                         setSelectedGrant(null);
@@ -380,10 +380,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm text-[#6B7280]">
+                      <TableCell className="text-sm text-neutral-500">
                         {formatDate(request.created_at)}
                       </TableCell>
-                      <TableCell className="text-sm text-[#6B7280]">
+                      <TableCell className="text-sm text-neutral-500">
                         {formatDate(request.valid_until)}
                       </TableCell>
                       <TableCell className="text-right">
@@ -413,15 +413,15 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
           {isLoading ? (
             <Card className="animate-pulse">
               <CardContent className="py-8">
-                <div className="h-32 bg-[#E2E8F0] rounded" />
+                <div className="h-32 bg-neutral-200 rounded" />
               </CardContent>
             </Card>
           ) : activeGrants.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <CheckCircle2 className="w-12 h-12 text-[#166534] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Active Grants</h3>
-                <p className="text-[#6B7280]">
+                <CheckCircle2 className="w-12 h-12 text-success-dark mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Active Grants</h3>
+                <p className="text-neutral-500">
                   There are no active disclosure grants.
                 </p>
               </CardContent>
@@ -443,7 +443,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                   {activeGrants.map((grant) => (
                     <TableRow
                       key={grant.id}
-                      className="cursor-pointer hover:bg-[#F1F5F9]"
+                      className="cursor-pointer hover:bg-neutral-100"
                       onClick={() => {
                         setSelectedGrant(grant);
                         setSelectedRequest(null);
@@ -471,10 +471,10 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-sm text-[#6B7280]">
+                      <TableCell className="text-sm text-neutral-500">
                         {formatDate(grant.created_at)}
                       </TableCell>
-                      <TableCell className="text-sm text-[#6B7280]">
+                      <TableCell className="text-sm text-neutral-500">
                         {formatDate(grant.valid_until)}
                       </TableCell>
                       <TableCell className="text-right">
@@ -504,15 +504,15 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
           {isLoading ? (
             <Card className="animate-pulse">
               <CardContent className="py-8">
-                <div className="h-32 bg-[#E2E8F0] rounded" />
+                <div className="h-32 bg-neutral-200 rounded" />
               </CardContent>
             </Card>
           ) : inactiveGrants.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
-                <XCircle className="w-12 h-12 text-[#94A3B8] mx-auto mb-4 opacity-50" />
-                <h3 className="text-lg font-medium text-[#0F0F0F] mb-2">No Inactive Grants</h3>
-                <p className="text-[#6B7280]">
+                <XCircle className="w-12 h-12 text-neutral-400 mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium text-neutral-900 mb-2">No Inactive Grants</h3>
+                <p className="text-neutral-500">
                   There are no revoked or expired grants.
                 </p>
               </CardContent>
@@ -539,7 +539,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                     return (
                       <TableRow
                         key={grant.id}
-                        className="opacity-75 cursor-pointer hover:bg-[#F1F5F9]"
+                        className="opacity-75 cursor-pointer hover:bg-neutral-100"
                         onClick={() => {
                           setSelectedGrant(grant);
                           setSelectedRequest(null);
@@ -557,14 +557,14 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                         <TableCell className="font-mono text-xs max-w-[200px] truncate" title={grant.requester_did}>
                           {grant.requester_did || '-'}
                         </TableCell>
-                        <TableCell className="text-sm text-[#6B7280]">
+                        <TableCell className="text-sm text-neutral-500">
                           {formatDate(grant.created_at)}
                         </TableCell>
-                        <TableCell className="text-sm text-[#6B7280]">
+                        <TableCell className="text-sm text-neutral-500">
                           {formatDate(endDate)}
                         </TableCell>
-                        <TableCell className="text-sm text-[#6B7280] max-w-[200px] truncate">
-                          {(grant as any).revoke_reason || '-'}
+                        <TableCell className="text-sm text-neutral-500 max-w-[200px] truncate">
+                          {grant.revoke_reason || '-'}
                         </TableCell>
                       </TableRow>
                     );
@@ -581,7 +581,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-[#CA8A04]" />
+              <AlertTriangle className="w-5 h-5 text-warning-dark" />
               Remove Pending Request
             </DialogTitle>
             <DialogDescription>
@@ -616,7 +616,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShieldOff className="w-5 h-5 text-[#991B1B]" />
+              <ShieldOff className="w-5 h-5 text-error-dark" />
               Revoke Grant
             </DialogTitle>
             <DialogDescription>
@@ -625,7 +625,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <label className="text-sm text-[#6B7280] block mb-2">
+            <label className="text-sm text-neutral-500 block mb-2">
               Reason (optional)
             </label>
             <Textarea
@@ -670,41 +670,41 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
             {selectedRequest && (
               <>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Request ID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Request ID</label>
                   <p className="font-mono text-sm break-all">{selectedRequest.id}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Target User ID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Target User ID</label>
                   <p className="font-mono text-sm break-all">{selectedRequest.user_id}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Requester DID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Requester DID</label>
                   <p className="font-mono text-sm break-all">{selectedRequest.requester_did || '-'}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Disclosure Level</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Disclosure Level</label>
                   <p>{selectedRequest.disclosure_level ? DISCLOSURE_LEVEL_LABELS[selectedRequest.disclosure_level] : '-'}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Purpose</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Purpose</label>
                   <p className="text-sm">{selectedRequest.purpose || '-'}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Legal Basis</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Legal Basis</label>
                   <p className="text-sm">{selectedRequest.legal_basis || '-'}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Created</label>
+                    <label className="text-xs text-neutral-500 uppercase tracking-wide">Created</label>
                     <p className="text-sm">{formatDate(selectedRequest.created_at)}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Expires</label>
+                    <label className="text-xs text-neutral-500 uppercase tracking-wide">Expires</label>
                     <p className="text-sm">{formatDate(selectedRequest.valid_until)}</p>
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Status</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Status</label>
                   <p className="capitalize">{selectedRequest.status}</p>
                 </div>
               </>
@@ -712,42 +712,42 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
             {selectedGrant && (
               <>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Grant ID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Grant ID</label>
                   <p className="font-mono text-sm break-all">{selectedGrant.id}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Request ID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Request ID</label>
                   <p className="font-mono text-sm break-all">{selectedGrant.request_id}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Target User ID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Target User ID</label>
                   <p className="font-mono text-sm break-all">{selectedGrant.user_id}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Requester DID</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Requester DID</label>
                   <p className="font-mono text-sm break-all">{selectedGrant.requester_did || '-'}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Disclosure Level</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Disclosure Level</label>
                   <p>{selectedGrant.disclosure_level ? DISCLOSURE_LEVEL_LABELS[selectedGrant.disclosure_level] : '-'}</p>
                 </div>
                 <div>
-                  <label className="text-xs text-[#6B7280] uppercase tracking-wide">Reason</label>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Reason</label>
                   <p className="text-sm">{selectedGrant.reason || '-'}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Granted At</label>
+                    <label className="text-xs text-neutral-500 uppercase tracking-wide">Granted At</label>
                     <p className="text-sm">{formatDate(selectedGrant.created_at)}</p>
                   </div>
                   <div>
-                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Expires At</label>
+                    <label className="text-xs text-neutral-500 uppercase tracking-wide">Expires At</label>
                     <p className="text-sm">{formatDate(selectedGrant.valid_until)}</p>
                   </div>
                 </div>
                 {selectedGrant.revoked_at && (
                   <div>
-                    <label className="text-xs text-[#6B7280] uppercase tracking-wide">Revoked At</label>
+                    <label className="text-xs text-neutral-500 uppercase tracking-wide">Revoked At</label>
                     <p className="text-sm">{formatDate(selectedGrant.revoked_at)}</p>
                   </div>
                 )}
