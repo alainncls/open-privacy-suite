@@ -276,6 +276,7 @@ type AccessController struct {
 	upgradeValidator     *UpgradeValidator
 	factoryCallValidator *FactoryCallValidator
 	pendingTracker       *PendingDeploymentTracker
+	allowUnregistered    bool
 }
 
 // Store returns the underlying RBAC store for the access controller.
@@ -295,6 +296,12 @@ func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
 	c.upgradeValidator.SetRuntimeTracingEnabled(enabled)
 }
 
+// SetAllowUnregisteredAddresses controls whether unregistered contract addresses can
+// be accessed via default deploy/admin claims.
+func (c *AccessController) SetAllowUnregisteredAddresses(allowed bool) {
+	c.allowUnregistered = allowed
+}
+
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
@@ -306,6 +313,7 @@ func NewAccessController(store Store, cacheTTL time.Duration) *AccessController 
 		upgradeValidator:     NewUpgradeValidator(store),
 		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),
 		pendingTracker:       NewPendingDeploymentTracker(1 * time.Hour),
+		allowUnregistered:    true,
 	}
 }
 
@@ -540,6 +548,19 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
+		// Optionally disable access to truly unregistered addresses (addresses that are not
+		// owned by any organization). This keeps deploy/admin default claims for registered
+		// org-owned contracts while hardening public-address access when configured.
+		if access != nil && !hasExplicitAccess && !c.allowUnregistered {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID == "" {
+				access = nil
+			}
+		}
+
 		// If no access from explicit registration or default_claims, check if it's a preregistered address
 		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them
 		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables
@@ -563,7 +584,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Cross-org deploy claim check: for unregistered contracts, permissions are resolved
 		// for one org (typically default), which may not have deploy claims. Check if the user
 		// has deploy/admin claims in ANY of their group memberships across all orgs.
-		if access == nil && !hasExplicitAccess {
+		if access == nil && !hasExplicitAccess && c.allowUnregistered {
 			hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, user.ID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check cross-org deploy claims: %w", err)
@@ -1619,6 +1640,15 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 	// Check user has read claim on each address
 	for _, addr := range addresses {
 		hasExplicitAccess := perms.IsContractRegistered(addr)
+		if !hasExplicitAccess && !c.allowUnregistered {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
+			}
+			if ownerOrgID == "" {
+				return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
+			}
+		}
 
 		// For contracts in user's orgs or public contracts, check claims
 		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {

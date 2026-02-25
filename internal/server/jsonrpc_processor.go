@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -29,6 +30,12 @@ type JSONRPCProcessor struct {
 	runtimeTracer     *tracer.RuntimeTracer
 	traceValidator    *rbac.TraceValidator
 	complianceChecker *compliance.Checker
+
+	// Enhanced audit fields
+	enhancedLogger EnhancedAccessLogger
+	hashChain      *audit.HashChain
+	siemForwarder  *audit.SIEMForwarder
+	logParams      bool
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -36,14 +43,21 @@ type AccessLogger interface {
 	LogAccess(ctx context.Context, userID, method string, statusCode int, clientIP string) error
 }
 
+// EnhancedAccessLogger logs access with correlation ID, params, and returns the entry ID for hash chain.
+type EnhancedAccessLogger interface {
+	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte) (int64, time.Time, error)
+	UpdateAccessLogHash(ctx context.Context, id int64, hash string) error
+}
+
 // ProcessRequest represents a validated JSON-RPC request ready for processing.
 type ProcessRequest struct {
-	UserID   string
-	OrgID    string // Optional: specify which org to use (for users with multiple memberships)
-	Method   string
-	Params   []any
-	Body     []byte
-	ClientIP string
+	UserID        string
+	OrgID         string // Optional: specify which org to use (for users with multiple memberships)
+	Method        string
+	Params        []any
+	Body          []byte
+	ClientIP      string
+	CorrelationID string // Request correlation ID for audit trail
 }
 
 // ProcessResult represents the result of processing a JSON-RPC request.
@@ -81,6 +95,66 @@ func NewJSONRPCProcessor(
 // SetComplianceChecker sets the compliance checker for travel rule enforcement.
 func (p *JSONRPCProcessor) SetComplianceChecker(checker *compliance.Checker) {
 	p.complianceChecker = checker
+}
+
+// SetEnhancedAudit configures enhanced audit logging with hash chain and optional SIEM.
+func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashChain *audit.HashChain, siemForwarder *audit.SIEMForwarder, logParams bool) {
+	p.enhancedLogger = logger
+	p.hashChain = hashChain
+	p.siemForwarder = siemForwarder
+	p.logParams = logParams
+}
+
+// logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
+// falling back to the basic logger.
+func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, statusCode int) {
+	if p.enhancedLogger != nil && p.hashChain != nil {
+		var params []byte
+		if p.logParams && req.Params != nil {
+			params = audit.RedactParams(req.Method, req.Params)
+		}
+
+		id, createdAt, err := p.enhancedLogger.LogAccessEnhanced(ctx, req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID, params)
+		if err != nil {
+			// Fallback to basic logging
+			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+			return
+		}
+
+		// Compute and store hash chain entry
+		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%s", id, req.UserID, req.Method, req.ClientIP, statusCode, createdAt.Format(time.RFC3339Nano))
+		hash := p.hashChain.ComputeNext(entryContent)
+		if err := p.enhancedLogger.UpdateAccessLogHash(ctx, id, hash); err != nil {
+			// Non-fatal: log entry exists, hash just wasn't stored
+			fmt.Printf("Warning: failed to update access log hash for id=%d: %v\n", id, err)
+		}
+
+		// Forward to SIEM if configured
+		if p.siemForwarder != nil {
+			outcome := "success"
+			if statusCode >= 400 {
+				outcome = "denied"
+			}
+			if statusCode >= 500 {
+				outcome = "error"
+			}
+			p.siemForwarder.Send(audit.SIEMEvent{
+				Timestamp:     createdAt,
+				EventType:     "access",
+				CorrelationID: req.CorrelationID,
+				ActorID:       req.UserID,
+				Action:        req.Method,
+				Outcome:       outcome,
+				Details:       fmt.Sprintf("status=%d", statusCode),
+				SourceIP:      req.ClientIP,
+				EntryHash:     hash,
+			})
+		}
+		return
+	}
+
+	// Fallback to basic logging
+	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
 }
 
 // NewJSONRPCProcessorWithTracing creates a new processor with runtime tracing support.
@@ -161,7 +235,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusInternalServerError,
@@ -171,7 +245,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	if !result.Allowed {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusForbidden,
@@ -182,7 +256,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Runtime tracing: validate all call targets for eth_sendTransaction
 	if traceErr := p.validateWithTracing(ctx, req, targetAddr); traceErr != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: traceErr,
 		}
@@ -199,7 +273,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusTooManyRequests, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusTooManyRequests,
@@ -211,7 +285,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Forward to node
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
 	if err != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusBadGateway, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusBadGateway)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadGateway,
@@ -226,7 +300,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Log successful access
-	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+	p.logAccess(ctx, req, statusCode)
 
 	return &ProcessResult{
 		StatusCode:   statusCode,
@@ -423,15 +497,16 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 	}
 
 	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
-		OrgID:  orgID,
-		UserID: userID,
-		From:   from,
-		To:     to,
-		Data:   data,
-		Value:  value,
+		OrgID:         orgID,
+		UserID:        userID,
+		From:          from,
+		To:            to,
+		Data:          data,
+		Value:         value,
+		CorrelationID: req.CorrelationID,
 	})
 	if compErr != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusInternalServerError,
@@ -440,7 +515,7 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 		}
 	}
 	if !compResult.Allowed {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusForbidden,
@@ -468,7 +543,7 @@ func isSimpleValueTransfer(data string) bool {
 func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *ProcessRequest) *ProcessResult {
 	// eth_sendRawTransaction requires runtime tracing for security
 	if p.runtimeTracer == nil || !p.runtimeTracer.IsEnabled() {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusForbidden,
@@ -524,7 +599,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusInternalServerError, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusInternalServerError,
@@ -534,7 +609,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	if !result.Allowed {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusForbidden,
@@ -558,7 +633,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		if !skipTrace {
 			traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
 			if traceErr != nil {
-				p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusForbidden, req.ClientIP)
+				p.logAccess(ctx, req, http.StatusForbidden)
 				return &ProcessResult{
 					Error: traceErr,
 				}
@@ -574,7 +649,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusTooManyRequests, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusTooManyRequests,
@@ -586,7 +661,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Forward the original raw transaction to node
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
 	if err != nil {
-		p.accessLogger.LogAccess(ctx, req.UserID, req.Method, http.StatusBadGateway, req.ClientIP)
+		p.logAccess(ctx, req, http.StatusBadGateway)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadGateway,
@@ -596,7 +671,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Log successful access
-	p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
+	p.logAccess(ctx, req, statusCode)
 
 	return &ProcessResult{
 		StatusCode:   statusCode,

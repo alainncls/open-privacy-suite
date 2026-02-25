@@ -89,7 +89,7 @@ func (d *DB) UpdateOrganization(ctx context.Context, org *rbac.Organization) err
 
 func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error) {
 	query := `SELECT id, slug, name, settings, created_at, updated_at
-	          FROM organizations ORDER BY name`
+	          FROM organizations ORDER BY created_at DESC, name ASC`
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
@@ -127,7 +127,7 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 	}
 
 	query := `SELECT id, slug, name, settings, created_at, updated_at
-	          FROM organizations ORDER BY name LIMIT $1 OFFSET $2`
+	          FROM organizations ORDER BY created_at DESC, name ASC LIMIT $1 OFFSET $2`
 
 	rows, err := d.conn.QueryContext(ctx, query, limit, offset)
 	if err != nil {

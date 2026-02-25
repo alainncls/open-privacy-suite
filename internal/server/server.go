@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
@@ -65,6 +67,8 @@ type Server struct {
 	jsonrpcProcessor  *JSONRPCProcessor
 	zkRoleExtractor   *auth.ZKRoleExtractor
 	runtimeTracer     *tracer.RuntimeTracer
+	retentionCleaner  *audit.RetentionCleaner
+	siemForwarder     *audit.SIEMForwarder
 }
 
 // DB returns the database instance (for testing)
@@ -98,6 +102,12 @@ func (s *Server) Stop() {
 	}
 	if s.runtimeTracer != nil {
 		s.runtimeTracer.Stop()
+	}
+	if s.siemForwarder != nil {
+		s.siemForwarder.Stop()
+	}
+	if s.retentionCleaner != nil {
+		s.retentionCleaner.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -154,6 +164,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize RBAC access controller
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
+	rbacAccessCtrl.SetAllowUnregisteredAddresses(cfg.AllowUnregisteredAddresses)
 
 	// Configure runtime tracing mode for deployment validation
 	// When enabled, contracts with dynamic calls are allowed at deploy time
@@ -268,6 +279,43 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}
 
+	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
+	hashChainSeed, err := database.GetLatestAccessLogHash(context.Background())
+	if err != nil {
+		log.Printf("Warning: failed to seed hash chain from DB: %v (starting fresh)", err)
+	}
+	hashChain := audit.NewHashChain(hashChainSeed)
+
+	// Initialize SIEM forwarder if webhook URL is configured
+	var siemForwarder *audit.SIEMForwarder
+	if cfg.SIEMWebhookURL != "" {
+		siemForwarder = audit.NewSIEMForwarder(audit.SIEMConfig{
+			WebhookURL:    cfg.SIEMWebhookURL,
+			AuthHeader:    cfg.SIEMAuthHeader,
+			BatchSize:     cfg.SIEMBatchSize,
+			FlushInterval: cfg.SIEMFlushInterval,
+		})
+		s.siemForwarder = siemForwarder
+		log.Printf("SIEM forwarding enabled (webhook: %s, batch size: %d, flush interval: %s)",
+			cfg.SIEMWebhookURL, cfg.SIEMBatchSize, cfg.SIEMFlushInterval)
+	}
+
+	// Wire enhanced audit into JSON-RPC processor
+	s.jsonrpcProcessor.SetEnhancedAudit(database, hashChain, siemForwarder, cfg.AuditLogParams)
+
+	// Initialize retention cleaner
+	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
+		AccessLogs:      cfg.RetentionAccessLogs,
+		ComplianceLogs:  cfg.RetentionComplianceLogs,
+		RBACAuditLogs:   cfg.RetentionRBACAuditLogs,
+		TravelRecords:   cfg.RetentionTravelRecords,
+		CleanupInterval: cfg.RetentionCleanupInterval,
+	}, database, cfg.EnableTravelRule)
+	s.retentionCleaner = retentionCleaner
+	log.Printf("Retention cleaner started (access: %s, compliance: %s, rbac: %s, travel: %s, interval: %s)",
+		cfg.RetentionAccessLogs, cfg.RetentionComplianceLogs, cfg.RetentionRBACAuditLogs,
+		cfg.RetentionTravelRecords, cfg.RetentionCleanupInterval)
+
 	return s, nil
 }
 
@@ -304,6 +352,9 @@ func (s *Server) setupRouter() *gin.Engine {
 		trustedProxies = append(trustedProxies, s.config.TrustedProxies...)
 	}
 	router.SetTrustedProxies(trustedProxies)
+
+	// Correlation ID middleware (generates/propagates request IDs for audit trail)
+	router.Use(correlationIDMiddleware())
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -411,11 +462,12 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
+	adminAuth := s.adminAuthMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
 		// Admin endpoints - localhost only
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware())
+		admin.Use(s.localhostOnlyMiddleware(), adminAuth)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -444,7 +496,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	api := router.Group("/api")
 	{
 		adminLegacy := api.Group("/admin")
-		adminLegacy.Use(s.localhostOnlyMiddleware())
+		adminLegacy.Use(s.localhostOnlyMiddleware(), adminAuth)
 		adminLegacy.Use(s.deprecationMiddleware("/api/admin", "/api/v1/admin"))
 		{
 			adminLegacy.GET("/logs", s.getLogs)
@@ -507,12 +559,13 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 
 	// Process the request through the business logic layer
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
-		UserID:   subjectStr,
-		OrgID:    orgID,
-		Method:   method,
-		Params:   params,
-		Body:     body,
-		ClientIP: c.ClientIP(),
+		UserID:        subjectStr,
+		OrgID:         orgID,
+		Method:        method,
+		Params:        params,
+		Body:          body,
+		ClientIP:      c.ClientIP(),
+		CorrelationID: getCorrelationID(c),
 	})
 
 	// Handle errors from processing
@@ -567,13 +620,44 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 
 		if allowOrigin != "" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", allowOrigin)
-			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			if allowOrigin != "*" {
+				c.Writer.Header().Set("Vary", "Origin")
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// adminAuthMiddleware enforces shared-token authentication for admin APIs.
+// If no admin token is configured, the middleware is a no-op and localhost/network
+// controls remain the only gate.
+func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
+	expectedToken := strings.TrimSpace(s.config.AdminAPIToken)
+	if expectedToken == "" {
+		return func(c *gin.Context) { c.Next() }
+	}
+
+	return func(c *gin.Context) {
+		providedToken := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
+		if providedToken == "" {
+			authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				providedToken = strings.TrimSpace(authHeader[7:])
+			}
+		}
+
+		if providedToken == "" || subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "admin authentication required"})
+			c.Abort()
 			return
 		}
 
@@ -687,11 +771,15 @@ func (s *Server) getStatus(c *gin.Context) {
 
 	// Check if runtime tracing is enabled
 	runtimeTracingEnabled := s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
+	proxyPort := "8080"
+	if s.config != nil && s.config.Port != "" {
+		proxyPort = s.config.Port
+	}
 
 	status := StatusResponse{
 		Proxy: ProxyStatus{
 			Status: "running",
-			Port:   "8080",
+			Port:   proxyPort,
 		},
 		Node: NodeStatus{
 			Status:    nodeHealth.Status,
@@ -804,12 +892,13 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 		if needsCheck {
 			compResult, compErr := s.complianceChecker.Check(c.Request.Context(), &compliance.CheckRequest{
-				OrgID:  result.OrgID,
-				UserID: result.UserID,
-				From:   compFrom,
-				To:     compTo,
-				Data:   compData,
-				Value:  compValue,
+				OrgID:         result.OrgID,
+				UserID:        result.UserID,
+				From:          compFrom,
+				To:            compTo,
+				Data:          compData,
+				Value:         compValue,
+				CorrelationID: getCorrelationID(c),
 			})
 			if compErr != nil {
 				c.JSON(http.StatusInternalServerError, TestRequestResponse{

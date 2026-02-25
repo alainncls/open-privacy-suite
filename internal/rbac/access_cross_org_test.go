@@ -11,30 +11,30 @@ import (
 // MockCrossOrgStore is a comprehensive mock store for testing cross-org isolation.
 // It implements the full Store interface with configurable behaviors.
 type MockCrossOrgStore struct {
-	users                 map[string]*User                  // externalID -> User
-	organizations         map[string]*Organization          // orgID -> Organization
-	memberships           map[string][]*MembershipWithDetails // userID -> memberships
-	contractOwners        map[string]string                  // lowercase address -> orgID
-	registeredToAnyOrg    map[string]bool                    // lowercase address -> bool
-	addressOwnedByOrg     map[string]map[string]bool         // address -> orgID -> bool
-	groupAccess           map[string]*GroupAccess            // groupID -> GroupAccess
-	cachedPermissions     map[string]*EffectivePermissions   // userID:orgID -> perms
-	contractGrants        map[string][]*ContractGrant        // groupID -> grants
-	contractDeployers     map[string]*string                 // lowercase address -> userID (deployer)
+	users              map[string]*User                    // externalID -> User
+	organizations      map[string]*Organization            // orgID -> Organization
+	memberships        map[string][]*MembershipWithDetails // userID -> memberships
+	contractOwners     map[string]string                   // lowercase address -> orgID
+	registeredToAnyOrg map[string]bool                     // lowercase address -> bool
+	addressOwnedByOrg  map[string]map[string]bool          // address -> orgID -> bool
+	groupAccess        map[string]*GroupAccess             // groupID -> GroupAccess
+	cachedPermissions  map[string]*EffectivePermissions    // userID:orgID -> perms
+	contractGrants     map[string][]*ContractGrant         // groupID -> grants
+	contractDeployers  map[string]*string                  // lowercase address -> userID (deployer)
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
 	return &MockCrossOrgStore{
-		users:                 make(map[string]*User),
-		organizations:         make(map[string]*Organization),
-		memberships:           make(map[string][]*MembershipWithDetails),
-		contractOwners:        make(map[string]string),
-		registeredToAnyOrg:    make(map[string]bool),
-		addressOwnedByOrg:     make(map[string]map[string]bool),
-		groupAccess:           make(map[string]*GroupAccess),
-		cachedPermissions:     make(map[string]*EffectivePermissions),
-		contractGrants:        make(map[string][]*ContractGrant),
-		contractDeployers:     make(map[string]*string),
+		users:              make(map[string]*User),
+		organizations:      make(map[string]*Organization),
+		memberships:        make(map[string][]*MembershipWithDetails),
+		contractOwners:     make(map[string]string),
+		registeredToAnyOrg: make(map[string]bool),
+		addressOwnedByOrg:  make(map[string]map[string]bool),
+		groupAccess:        make(map[string]*GroupAccess),
+		cachedPermissions:  make(map[string]*EffectivePermissions),
+		contractGrants:     make(map[string][]*ContractGrant),
+		contractDeployers:  make(map[string]*string),
 	}
 }
 
@@ -58,8 +58,12 @@ func (m *MockCrossOrgStore) GetUser(ctx context.Context, id string) (*User, erro
 }
 
 func (m *MockCrossOrgStore) UpdateUser(ctx context.Context, user *User) error { return nil }
-func (m *MockCrossOrgStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) { return nil, 0, nil }
+func (m *MockCrossOrgStore) ListUsers(ctx context.Context, limit, offset int) ([]*User, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*User, int, error) {
+	return nil, 0, nil
+}
 func (m *MockCrossOrgStore) DeleteUser(ctx context.Context, id string) error { return nil }
 func (m *MockCrossOrgStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
@@ -79,10 +83,18 @@ func (m *MockCrossOrgStore) GetOrganizationBySlug(ctx context.Context, slug stri
 	return nil, nil
 }
 
-func (m *MockCrossOrgStore) CreateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockCrossOrgStore) UpdateOrganization(ctx context.Context, org *Organization) error { return nil }
-func (m *MockCrossOrgStore) ListOrganizations(ctx context.Context) ([]*Organization, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) { return nil, 0, nil }
+func (m *MockCrossOrgStore) CreateOrganization(ctx context.Context, org *Organization) error {
+	return nil
+}
+func (m *MockCrossOrgStore) UpdateOrganization(ctx context.Context, org *Organization) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListOrganizations(ctx context.Context) ([]*Organization, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
+	return nil, 0, nil
+}
 func (m *MockCrossOrgStore) DeleteOrganization(ctx context.Context, id string) error { return nil }
 
 // Membership operations
@@ -100,14 +112,28 @@ func (m *MockCrossOrgStore) ListUserMembershipsInOrg(ctx context.Context, userID
 	return result, nil
 }
 
-func (m *MockCrossOrgStore) CreateMembership(ctx context.Context, membership *UserMembership) error { return nil }
-func (m *MockCrossOrgStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) { return nil, nil }
-func (m *MockCrossOrgStore) UpdateMembership(ctx context.Context, membership *UserMembership) error { return nil }
-func (m *MockCrossOrgStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) { return nil, nil }
+func (m *MockCrossOrgStore) CreateMembership(ctx context.Context, membership *UserMembership) error {
+	return nil
+}
+func (m *MockCrossOrgStore) GetMembership(ctx context.Context, id string) (*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) GetMembershipByUserAndGroup(ctx context.Context, userID, groupID string) (*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) UpdateMembership(ctx context.Context, membership *UserMembership) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListUserMemberships(ctx context.Context, userID string) ([]*UserMembership, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListGroupMembers(ctx context.Context, groupID string) ([]*UserMembership, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) DeleteMembership(ctx context.Context, id string) error { return nil }
-func (m *MockCrossOrgStore) DeleteExpiredMemberships(ctx context.Context) (int64, error) { return 0, nil }
+func (m *MockCrossOrgStore) DeleteExpiredMemberships(ctx context.Context) (int64, error) {
+	return 0, nil
+}
 
 // Contract ownership operations - CRITICAL for cross-org isolation
 func (m *MockCrossOrgStore) GetContractOwnerOrgID(ctx context.Context, address string) (string, error) {
@@ -127,26 +153,46 @@ func (m *MockCrossOrgStore) IsAddressOwnedByOrg(ctx context.Context, address str
 
 // Contract operations
 func (m *MockCrossOrgStore) CreateContract(ctx context.Context, contract *Contract) error { return nil }
-func (m *MockCrossOrgStore) GetContract(ctx context.Context, id string) (*Contract, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) { return nil, nil }
+func (m *MockCrossOrgStore) GetContract(ctx context.Context, id string) (*Contract, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
-func (m *MockCrossOrgStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) { return nil, 0, nil }
+func (m *MockCrossOrgStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) {
+	return nil, 0, nil
+}
 func (m *MockCrossOrgStore) DeleteContract(ctx context.Context, id string) error { return nil }
 func (m *MockCrossOrgStore) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
 	return m.contractDeployers[normalizeAddress(address)], nil
 }
 
 // Group operations
-func (m *MockCrossOrgStore) CreateGroup(ctx context.Context, group *Group) error { return nil }
+func (m *MockCrossOrgStore) CreateGroup(ctx context.Context, group *Group) error     { return nil }
 func (m *MockCrossOrgStore) GetGroup(ctx context.Context, id string) (*Group, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetGroupBySlug(ctx context.Context, orgID, slug string) (*Group, error) { return nil, nil }
+func (m *MockCrossOrgStore) GetGroupBySlug(ctx context.Context, orgID, slug string) (*Group, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) UpdateGroup(ctx context.Context, group *Group) error { return nil }
-func (m *MockCrossOrgStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
-func (m *MockCrossOrgStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) { return nil, 0, nil }
-func (m *MockCrossOrgStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) { return nil, nil }
+func (m *MockCrossOrgStore) ListGroups(ctx context.Context, orgID string) ([]*Group, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) {
+	return nil, 0, nil
+}
+func (m *MockCrossOrgStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) {
+	return nil, 0, nil
+}
+func (m *MockCrossOrgStore) ListGroupsByParent(ctx context.Context, parentID string) ([]*Group, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) DeleteGroup(ctx context.Context, id string) error { return nil }
 func (m *MockCrossOrgStore) GetGroupHierarchy(ctx context.Context, groupID string) ([]*Group, error) {
 	return []*Group{}, nil
@@ -156,20 +202,36 @@ func (m *MockCrossOrgStore) GetGroupHierarchy(ctx context.Context, groupID strin
 func (m *MockCrossOrgStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error) {
 	return m.groupAccess[groupID], nil
 }
-func (m *MockCrossOrgStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
-func (m *MockCrossOrgStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
+func (m *MockCrossOrgStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error {
+	return nil
+}
+func (m *MockCrossOrgStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) error {
+	return nil
+}
 func (m *MockCrossOrgStore) DeleteGroupAccess(ctx context.Context, groupID string) error { return nil }
 
 // Contract grant operations
-func (m *MockCrossOrgStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockCrossOrgStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) { return nil, nil }
-func (m *MockCrossOrgStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
-func (m *MockCrossOrgStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
+func (m *MockCrossOrgStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error {
+	return nil
+}
+func (m *MockCrossOrgStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
 	return m.contractGrants[groupID], nil
 }
-func (m *MockCrossOrgStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) { return nil, nil }
+func (m *MockCrossOrgStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
 
 // Cache operations
@@ -180,39 +242,81 @@ func (m *MockCrossOrgStore) SetCachedPermissions(ctx context.Context, perms *Eff
 	m.cachedPermissions[perms.UserID+":"+perms.OrgID] = perms
 	return nil
 }
-func (m *MockCrossOrgStore) InvalidateCacheForUser(ctx context.Context, userID string) error { return nil }
-func (m *MockCrossOrgStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error { return nil }
-func (m *MockCrossOrgStore) InvalidateCacheForGroup(ctx context.Context, groupID string) error { return nil }
+func (m *MockCrossOrgStore) InvalidateCacheForUser(ctx context.Context, userID string) error {
+	return nil
+}
+func (m *MockCrossOrgStore) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
+	return nil
+}
+func (m *MockCrossOrgStore) InvalidateCacheForGroup(ctx context.Context, groupID string) error {
+	return nil
+}
 func (m *MockCrossOrgStore) CleanupExpiredCache(ctx context.Context) (int64, error) { return 0, nil }
 
 // Audit log operations
-func (m *MockCrossOrgStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
-func (m *MockCrossOrgStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
-func (m *MockCrossOrgStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
+func (m *MockCrossOrgStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) {
+	return nil, nil
+}
 
 // Preregistered address operations
-func (m *MockCrossOrgStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error { return nil }
-func (m *MockCrossOrgStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) { return nil, nil }
-func (m *MockCrossOrgStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) { return nil, nil }
-func (m *MockCrossOrgStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error { return nil }
-func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) { return false, nil }
+func (m *MockCrossOrgStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
+	return nil
+}
+func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	return false, nil
+}
 func (m *MockCrossOrgStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
 
 // Managed proxy operations
-func (m *MockCrossOrgStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error { return nil }
-func (m *MockCrossOrgStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) { return nil, nil }
-func (m *MockCrossOrgStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error { return nil }
-func (m *MockCrossOrgStore) IsManagedProxy(ctx context.Context, address string) (bool, error) { return false, nil }
+func (m *MockCrossOrgStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
+	return nil
+}
+func (m *MockCrossOrgStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error {
+	return nil
+}
+func (m *MockCrossOrgStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
+	return false, nil
+}
 
 // Constructor ABI operations
-func (m *MockCrossOrgStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
-func (m *MockCrossOrgStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
+func (m *MockCrossOrgStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
+	return "", nil
+}
+func (m *MockCrossOrgStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
+	return nil
+}
 
 // Shared infrastructure stubs
-func (m *MockCrossOrgStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }
-func (m *MockCrossOrgStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error { return nil }
-func (m *MockCrossOrgStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) { return nil, nil }
-func (m *MockCrossOrgStore) DeleteSharedInfrastructure(ctx context.Context, address string) error { return nil }
+func (m *MockCrossOrgStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
+	return false, nil
+}
+func (m *MockCrossOrgStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error {
+	return nil
+}
+func (m *MockCrossOrgStore) ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error) {
+	return nil, nil
+}
+func (m *MockCrossOrgStore) DeleteSharedInfrastructure(ctx context.Context, address string) error {
+	return nil
+}
 
 // Helper to normalize address
 func normalizeAddress(addr string) string {
@@ -255,13 +359,13 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 
 	// Define contract addresses
@@ -292,9 +396,9 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		ContractAccess: map[string]ContractAccess{
 			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
 		},
-		Claims:  []Claim{ClaimRead},
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		Claims:     []Claim{ClaimRead},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
 	store.cachedPermissions["user-b:org-b"] = &EffectivePermissions{
 		ID:             "perms-b",
@@ -304,9 +408,9 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		ContractAccess: map[string]ContractAccess{
 			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
 		},
-		Claims:  []Claim{ClaimRead},
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		Claims:     []Claim{ClaimRead},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
 }
 
@@ -531,7 +635,7 @@ func TestCheckAccessCrossOrgWithClaims(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{},
-		Claims:  []Claim{ClaimRead, ClaimWrite, ClaimAdmin}, // Very permissive
+		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin}, // Very permissive
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -580,7 +684,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
-			Claims:  []Claim{ClaimRead},          // Has read claim only — no deploy/admin
+			Claims:         []Claim{ClaimRead},          // Has read claim only — no deploy/admin
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -614,8 +718,8 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			UserID:         "user-a",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
-			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
+			ContractAccess: map[string]ContractAccess{},                 // NO explicit grant for contractA
+			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -649,9 +753,9 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for contractA
 			},
-			Claims: []Claim{ClaimRead},
-			ComputedAt:    time.Now(),
-			ExpiresAt:     time.Now().Add(1 * time.Hour),
+			Claims:     []Claim{ClaimRead},
+			ComputedAt: time.Now(),
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
 
 		controller := NewAccessController(store, 5*time.Minute)
@@ -682,7 +786,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // No explicit grants
-			Claims:         []Claim{ClaimRead},           // Read only — no deploy/admin
+			Claims:         []Claim{ClaimRead},          // Read only — no deploy/admin
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -771,13 +875,13 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:  []Claim{ClaimRead},
+		Claims:         []Claim{ClaimRead},
 	}
 
 	// Define contracts
@@ -802,9 +906,9 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-a contract
 		},
-		Claims:  []Claim{ClaimRead},
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		Claims:     []Claim{ClaimRead},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
 	store.cachedPermissions["multi-user:org-b"] = &EffectivePermissions{
 		ID:             "perms-multi-b",
@@ -814,9 +918,9 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-b contract
 		},
-		Claims:  []Claim{ClaimRead},
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		Claims:     []Claim{ClaimRead},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
 
 	controller := NewAccessController(store, 5*time.Minute)
@@ -852,6 +956,90 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		}
 		if !result.Allowed {
 			t.Errorf("expected multi-org user to access contract from org-b, got: %s", result.Reason)
+		}
+	})
+}
+
+func TestAllowUnregisteredAddressesToggle(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+
+	publicContract := "0x1111111111111111111111111111111111111111"
+
+	// User has deploy/admin-style default claims but no explicit contract grant.
+	store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+		ID:             "perms-a",
+		UserID:         "user-a",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"eth_call", "eth_getLogs"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	t.Run("allow=true permits unregistered contract access via default claims", func(t *testing.T) {
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.SetAllowUnregisteredAddresses(true)
+
+		callReq := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": publicContract, "data": "0x"}, "latest"},
+			TargetAddress:  publicContract,
+		}
+		callResult, err := controller.CheckAccess(ctx, callReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !callResult.Allowed {
+			t.Fatalf("expected eth_call to be allowed, got denied: %s", callResult.Reason)
+		}
+
+		logReq := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_getLogs",
+			Params:         []any{map[string]any{"address": publicContract}},
+		}
+		logResult, err := controller.CheckAccess(ctx, logReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !logResult.Allowed {
+			t.Fatalf("expected eth_getLogs to be allowed, got denied: %s", logResult.Reason)
+		}
+	})
+
+	t.Run("allow=false denies unregistered contract access", func(t *testing.T) {
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.SetAllowUnregisteredAddresses(false)
+
+		callReq := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": publicContract, "data": "0x"}, "latest"},
+			TargetAddress:  publicContract,
+		}
+		callResult, err := controller.CheckAccess(ctx, callReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callResult.Allowed {
+			t.Fatalf("expected eth_call to be denied for unregistered contract")
+		}
+
+		logReq := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_getLogs",
+			Params:         []any{map[string]any{"address": publicContract}},
+		}
+		logResult, err := controller.CheckAccess(ctx, logReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if logResult.Allowed {
+			t.Fatalf("expected eth_getLogs to be denied for unregistered contract")
 		}
 	})
 }
@@ -1151,9 +1339,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant, no upgrade
 			},
-			Claims:         []Claim{ClaimRead, ClaimWrite},
-			ComputedAt:     time.Now(),
-			ExpiresAt:      time.Now().Add(1 * time.Hour),
+			Claims:     []Claim{ClaimRead, ClaimWrite},
+			ComputedAt: time.Now(),
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
 
 		controller := NewAccessController(store, 5*time.Minute)
@@ -1198,9 +1386,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite, ClaimUpgrade}}, // Explicit grant with upgrade
 			},
-			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
-			ComputedAt:     time.Now(),
-			ExpiresAt:      time.Now().Add(1 * time.Hour),
+			Claims:     []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
+			ComputedAt: time.Now(),
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
 
 		controller := NewAccessController(store, 5*time.Minute)
@@ -1240,9 +1428,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant
 			},
-			Claims:         []Claim{ClaimRead, ClaimWrite},
-			ComputedAt:     time.Now(),
-			ExpiresAt:      time.Now().Add(1 * time.Hour),
+			Claims:     []Claim{ClaimRead, ClaimWrite},
+			ComputedAt: time.Now(),
+			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
 
 		controller := NewAccessController(store, 5*time.Minute)
@@ -1449,4 +1637,3 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		}
 	})
 }
-
