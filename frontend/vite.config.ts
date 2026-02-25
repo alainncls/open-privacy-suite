@@ -1,10 +1,29 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import type { RollupLog } from 'rollup'
+
+function isThirdPartyPureAnnotationWarning(warning: RollupLog): boolean {
+  if (warning.code !== 'INVALID_ANNOTATION') return false
+  if (!warning.message?.includes('contains an annotation that Rollup cannot interpret')) return false
+  const id = 'id' in warning ? warning.id : undefined
+  return typeof id === 'string' && id.includes('/node_modules/')
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Wallet SDK dependencies are intentionally large; this threshold avoids
+    // noisy warnings while still surfacing genuinely abnormal growth.
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (isThirdPartyPureAnnotationWarning(warning)) return
+        warn(warning)
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
