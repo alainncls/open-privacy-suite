@@ -58,6 +58,11 @@ export default defineConfig({
         target: process.env.VITE_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       },
+      // Proxy auth callbacks (Privado wallet POSTs to /auth/callback through tunnel → Vite → backend)
+      '/auth': {
+        target: process.env.VITE_API_TARGET || 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
 })

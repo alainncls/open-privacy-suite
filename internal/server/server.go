@@ -46,6 +46,10 @@ const (
 
 	// ENS resolution timeout
 	ENSResolutionTimeout = 30 * time.Second
+
+	// devVerifierDID is a valid placeholder DID used in dev mode when VERIFIER_ID is not configured.
+	// Uses did:pkh (public key hash) which the Privado wallet can parse without on-chain resolution.
+	devVerifierDID = "did:pkh:eip155:1:0x0000000000000000000000000000000000000001"
 )
 
 type Server struct {

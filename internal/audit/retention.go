@@ -56,6 +56,12 @@ func (rc *RetentionCleaner) Stop() {
 func (rc *RetentionCleaner) run() {
 	defer close(rc.doneCh)
 
+	// If cleanup interval is zero or negative, retention is disabled — just wait for stop.
+	if rc.config.CleanupInterval <= 0 {
+		<-rc.stopCh
+		return
+	}
+
 	// Run cleanup immediately on startup
 	rc.cleanup()
 

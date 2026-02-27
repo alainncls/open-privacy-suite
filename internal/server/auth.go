@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -18,9 +19,20 @@ import (
 )
 
 // getCallbackBaseURL determines the base URL for auth callbacks.
-// Priority: callback_origin from request body > dynamic detection from headers > config
-// The callback_origin approach is most reliable as it comes directly from the browser's address bar.
+// Priority: tunnel URL (for localhost callers) > callback_origin > dynamic detection > config
+//
+// When a cloudflared tunnel is running, the tunnel URL file contains the public HTTPS URL.
+// If the caller is on localhost, we use the tunnel URL so the Privado wallet (on phone)
+// can reach the callback endpoint through the tunnel.
 func (s *Server) getCallbackBaseURL(c *gin.Context, callbackOrigin string) string {
+	// If the caller is on localhost and a tunnel URL is available, use the tunnel.
+	// The wallet app (HTTP client) won't hit any browser interstitial.
+	if s.isLocalOrigin(callbackOrigin) {
+		if tunnelURL := s.readTunnelURL(); tunnelURL != "" {
+			return tunnelURL
+		}
+	}
+
 	// If the frontend passed its origin, use that hostname with the backend port
 	// This ensures the callback URL works from any hostname (localhost, Tailscale, etc.)
 	if callbackOrigin != "" {
@@ -33,17 +45,23 @@ func (s *Server) getCallbackBaseURL(c *gin.Context, callbackOrigin string) strin
 			if len(parts) == 2 {
 				proto := parts[0]
 				hostWithPort := parts[1]
-				// Strip the port from the origin
+				// Check if origin has an explicit port
 				hostname := hostWithPort
+				hasExplicitPort := false
 				if colonIdx := strings.LastIndex(hostWithPort, ":"); colonIdx != -1 {
 					// Check for IPv6 literal
 					isIPv6Literal := strings.Contains(hostWithPort, "[")
 					hasPortAfterBracket := !strings.HasSuffix(hostWithPort, "]")
 					if !isIPv6Literal || hasPortAfterBracket {
 						hostname = hostWithPort[:colonIdx]
+						hasExplicitPort = true
 					}
 				}
-				// Add the backend port
+				if !hasExplicitPort {
+					// No port in origin (e.g., tunnel URL) — return as-is
+					return fmt.Sprintf("%s://%s", proto, hostname)
+				}
+				// Has explicit port — swap to backend port (existing behavior)
 				port := s.config.Port
 				if port == "" {
 					port = "8080"
@@ -55,6 +73,33 @@ func (s *Server) getCallbackBaseURL(c *gin.Context, callbackOrigin string) strin
 
 	// Fall back to header-based detection
 	return s.getPublicURL(c)
+}
+
+// isLocalOrigin returns true if the origin is localhost or loopback.
+func (s *Server) isLocalOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	lower := strings.ToLower(origin)
+	return strings.Contains(lower, "localhost") || strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "[::1]")
+}
+
+// readTunnelURL reads the tunnel URL from the file specified by TUNNEL_URL_FILE.
+// Returns empty string if not configured or file doesn't exist yet (tunnel still starting).
+func (s *Server) readTunnelURL() string {
+	path := s.config.TunnelURLFile
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	url := strings.TrimSpace(string(data))
+	if url == "" || !strings.HasPrefix(url, "https://") {
+		return ""
+	}
+	return url
 }
 
 // getPublicURL extracts the public-facing URL for callbacks.
@@ -88,12 +133,18 @@ func (s *Server) getPublicURL(c *gin.Context) string {
 		// For IPv6 without port like [::1], we don't want to strip at the internal colon
 		// Logic: strip port if (not IPv6 literal) OR (IPv6 literal with port, i.e. doesn't end with ])
 		hostname := host
+		hasExplicitPort := false
 		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
 			isIPv6Literal := strings.Contains(host, "[")
 			hasPortAfterBracket := !strings.HasSuffix(host, "]")
 			if !isIPv6Literal || hasPortAfterBracket {
 				hostname = host[:colonIdx]
+				hasExplicitPort = true
 			}
+		}
+		if !hasExplicitPort {
+			// No port in host (e.g., tunnel URL) — return as-is
+			return fmt.Sprintf("%s://%s", proto, hostname)
 		}
 		port := s.config.Port
 		if port == "" {
@@ -177,18 +228,24 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 		// Development mode: return mock session for demo/testing
 		log.Printf("Warning: VERIFIER_ID not configured - returning mock auth session for development")
 
-		// Create a mock auth request so the frontend can render the QR code
+		// Create a mock auth request via the library so ThreadID and fields are set correctly
 		callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
-		mockAuthReq := &protocol.AuthorizationRequestMessage{
-			ID:   sessionID,
-			Typ:  "application/iden3comm-plain-json",
-			Type: "https://iden3-communication.io/authorization/1.0/request",
-			Body: protocol.AuthorizationRequestMessageBody{
-				CallbackURL: callbackURL,
-				Reason:      "Authenticate to access Privacy Proxy (demo mode)",
-				Scope:       []protocol.ZeroKnowledgeProofRequest{},
-			},
-			From: "did:privado:verifier:demo-mode",
+		mockAuthReq, err := s.privadoVerifier.CreateAuthorizationRequest(
+			devVerifierDID,
+			callbackURL,
+			"Authenticate to access Privacy Proxy (demo mode)",
+		)
+		if err != nil {
+			s.sessionStore.DeleteSession(sessionID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create mock auth request: " + err.Error()})
+			return
+		}
+
+		// Store the mock auth request in the session so callback verification works
+		if err := s.sessionStore.UpdateSession(sessionID, mockAuthReq); err != nil {
+			s.sessionStore.DeleteSession(sessionID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session: " + err.Error()})
+			return
 		}
 
 		c.JSON(http.StatusOK, AuthRequestResponse{

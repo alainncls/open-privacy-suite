@@ -60,6 +60,9 @@ type Config struct {
 	SIEMBatchSize     int           // Events per SIEM batch (default: 100)
 	SIEMFlushInterval time.Duration // Max time before flushing SIEM batch (default: 10s)
 
+	// Tunnel URL file path — cloudflared writes the public URL here (auto-detected)
+	TunnelURLFile string
+
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 }
@@ -235,6 +238,7 @@ func Load() *Config {
 		SIEMAuthHeader:             siemAuthHeader,
 		SIEMBatchSize:              siemBatchSize,
 		SIEMFlushInterval:          siemFlushInterval,
+		TunnelURLFile:              getEnv("TUNNEL_URL_FILE", ""),
 		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}
 }

@@ -23,7 +23,7 @@ type MockPrivadoVerifier struct {
 // NewMockPrivadoVerifier creates a new mock verifier with default settings
 func NewMockPrivadoVerifier() *MockPrivadoVerifier {
 	return &MockPrivadoVerifier{
-		DefaultDID:     "did:privado:mock_user",
+		DefaultDID:     "did:pkh:eip155:1:0x0000000000000000000000000000000000000002",
 		DefaultIsHuman: true,
 		ShouldFail:     false,
 		FailureError:   "mock verification failed",
