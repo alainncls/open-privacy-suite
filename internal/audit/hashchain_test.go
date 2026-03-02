@@ -5,108 +5,103 @@ import (
 	"encoding/hex"
 	"sync"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestHashChain_DeterministicOutput(t *testing.T) {
-	chain1 := NewHashChain("")
-	chain2 := NewHashChain("")
+func TestHashChain_BasicChaining(t *testing.T) {
+	// Two chains seeded the same should produce identical hashes for the same input.
+	chain1 := NewHashChain("seed")
+	chain2 := NewHashChain("seed")
 
-	hash1 := chain1.ComputeNext("entry1")
-	hash2 := chain2.ComputeNext("entry1")
+	h1 := chain1.ComputeNext("entry-1")
+	h2 := chain2.ComputeNext("entry-1")
 
-	assert.Equal(t, hash1, hash2)
-	assert.Len(t, hash1, 64) // SHA-256 hex is 64 chars
-}
-
-func TestHashChain_ChainReproducibility(t *testing.T) {
-	chain1 := NewHashChain("seed-hash")
-	chain2 := NewHashChain("seed-hash")
-
-	entries := []string{"first", "second", "third"}
-	var hashes1, hashes2 []string
-
-	for _, e := range entries {
-		hashes1 = append(hashes1, chain1.ComputeNext(e))
-	}
-	for _, e := range entries {
-		hashes2 = append(hashes2, chain2.ComputeNext(e))
+	if h1 != h2 {
+		t.Fatalf("same seed + same input should produce same hash, got %s vs %s", h1, h2)
 	}
 
-	assert.Equal(t, hashes1, hashes2)
+	// Advance both chains with the same second entry.
+	h1b := chain1.ComputeNext("entry-2")
+	h2b := chain2.ComputeNext("entry-2")
+
+	if h1b != h2b {
+		t.Fatalf("second entry hash mismatch: %s vs %s", h1b, h2b)
+	}
+
+	// Second hash must differ from first (different previous hash input).
+	if h1 == h1b {
+		t.Fatal("different entries should produce different hashes")
+	}
 }
 
-func TestHashChain_DifferentInputDifferentHash(t *testing.T) {
-	chain1 := NewHashChain("")
-	chain2 := NewHashChain("")
+func TestHashChain_TamperDetection(t *testing.T) {
+	// Build a chain: entry-A then entry-B.
+	chain := NewHashChain("")
+	chain.ComputeNext("entry-A")
+	hashAfterB := chain.ComputeNext("entry-B")
 
-	hash1 := chain1.ComputeNext("entry-a")
-	hash2 := chain2.ComputeNext("entry-b")
+	// Build a tampered chain: entry-A-TAMPERED then entry-B.
+	tampered := NewHashChain("")
+	tampered.ComputeNext("entry-A-TAMPERED")
+	hashAfterBTampered := tampered.ComputeNext("entry-B")
 
-	assert.NotEqual(t, hash1, hash2)
+	if hashAfterB == hashAfterBTampered {
+		t.Fatal("tampering with a previous entry should change all subsequent hashes")
+	}
 }
 
-func TestHashChain_DifferentSeedDifferentHash(t *testing.T) {
-	chain1 := NewHashChain("seed-1")
-	chain2 := NewHashChain("seed-2")
+func TestHashChain_EmptySeed(t *testing.T) {
+	chain := NewHashChain("")
+	hash := chain.ComputeNext("hello")
 
-	hash1 := chain1.ComputeNext("same-entry")
-	hash2 := chain2.ComputeNext("same-entry")
+	// Manually compute expected: SHA-256("" + "hello")
+	hasher := sha256.New()
+	hasher.Write([]byte(""))
+	hasher.Write([]byte("hello"))
+	expected := hex.EncodeToString(hasher.Sum(nil))
 
-	assert.NotEqual(t, hash1, hash2)
+	if hash != expected {
+		t.Fatalf("expected %s, got %s", expected, hash)
+	}
 }
 
-func TestHashChain_ManualVerification(t *testing.T) {
+func TestHashChain_LastHash(t *testing.T) {
+	chain := NewHashChain("init")
+
+	if got := chain.LastHash(); got != "init" {
+		t.Fatalf("expected initial last hash 'init', got %q", got)
+	}
+
+	h := chain.ComputeNext("data")
+	if got := chain.LastHash(); got != h {
+		t.Fatalf("LastHash should return tail hash %s, got %s", h, got)
+	}
+}
+
+func TestHashChain_ThreadSafety(t *testing.T) {
 	chain := NewHashChain("")
 
-	// Compute first hash: SHA-256("" + "entry1")
-	expected1 := sha256hex("" + "entry1")
-	actual1 := chain.ComputeNext("entry1")
-	assert.Equal(t, expected1, actual1)
-
-	// Compute second hash: SHA-256(hash1 + "entry2")
-	expected2 := sha256hex(expected1 + "entry2")
-	actual2 := chain.ComputeNext("entry2")
-	assert.Equal(t, expected2, actual2)
-}
-
-func TestHashChain_ConcurrentSafety(t *testing.T) {
-	chain := NewHashChain("")
 	var wg sync.WaitGroup
+	const goroutines = 100
 
-	hashes := make([]string, 100)
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
+	hashes := make([]string, goroutines)
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			hashes[idx] = chain.ComputeNext("concurrent-entry")
+			hashes[idx] = chain.ComputeNext("entry")
 		}(i)
 	}
 	wg.Wait()
 
-	// All hashes should be non-empty and unique (each builds on previous)
+	// All hashes should be non-empty and unique (each builds on a different previous hash).
 	seen := make(map[string]bool)
-	for _, h := range hashes {
-		require.NotEmpty(t, h)
-		require.Len(t, h, 64)
+	for i, h := range hashes {
+		if h == "" {
+			t.Fatalf("hash %d is empty", i)
+		}
+		if seen[h] {
+			t.Fatalf("duplicate hash at index %d: %s", i, h)
+		}
 		seen[h] = true
 	}
-	// With sequential chain, each hash is unique
-	assert.Len(t, seen, 100)
-}
-
-func TestHashChain_LastHash(t *testing.T) {
-	chain := NewHashChain("initial")
-	assert.Equal(t, "initial", chain.LastHash())
-
-	hash := chain.ComputeNext("entry")
-	assert.Equal(t, hash, chain.LastHash())
-}
-
-func sha256hex(s string) string {
-	h := sha256.New()
-	h.Write([]byte(s))
-	return hex.EncodeToString(h.Sum(nil))
 }

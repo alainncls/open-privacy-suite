@@ -5,121 +5,128 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
+// mockRetentionStore tracks calls to each cleanup method.
 type mockRetentionStore struct {
-	accessCount     atomic.Int64
-	complianceCount atomic.Int64
-	rbacCount       atomic.Int64
-	travelCount     atomic.Int64
-	expiredCount    atomic.Int64
+	accessCalls     atomic.Int64
+	complianceCalls atomic.Int64
+	rbacCalls       atomic.Int64
+	travelCalls     atomic.Int64
+	expiredCalls    atomic.Int64
 }
 
 func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (int64, error) {
-	m.accessCount.Add(1)
+	m.accessCalls.Add(1)
 	return 5, nil
 }
 
 func (m *mockRetentionStore) CleanupComplianceLogs(_ context.Context, _ time.Time) (int64, error) {
-	m.complianceCount.Add(1)
+	m.complianceCalls.Add(1)
 	return 3, nil
 }
 
 func (m *mockRetentionStore) CleanupRBACAuditLogs(_ context.Context, _ time.Time) (int64, error) {
-	m.rbacCount.Add(1)
+	m.rbacCalls.Add(1)
 	return 2, nil
 }
 
 func (m *mockRetentionStore) CleanupUsedTravelRecords(_ context.Context, _ time.Time) (int64, error) {
-	m.travelCount.Add(1)
+	m.travelCalls.Add(1)
 	return 1, nil
 }
 
 func (m *mockRetentionStore) CleanupExpiredRecords(_ context.Context) (int64, error) {
-	m.expiredCount.Add(1)
-	return 4, nil
+	m.expiredCalls.Add(1)
+	return 0, nil
 }
 
-func TestRetentionCleaner_RunsOnStartup(t *testing.T) {
+func TestRetention_DisabledWithZeroInterval(t *testing.T) {
 	store := &mockRetentionStore{}
-	cfg := RetentionConfig{
-		AccessLogs:      90 * 24 * time.Hour,
-		ComplianceLogs:  7 * 365 * 24 * time.Hour,
-		RBACAuditLogs:   365 * 24 * time.Hour,
-		TravelRecords:   7 * 365 * 24 * time.Hour,
-		CleanupInterval: 1 * time.Hour, // won't fire in test
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:      24 * time.Hour,
+		CleanupInterval: 0, // disabled
+	}, store)
+
+	mgr.Start()
+	// Give it a moment to start (it should exit immediately).
+	time.Sleep(50 * time.Millisecond)
+	mgr.Stop()
+
+	if store.accessCalls.Load() != 0 {
+		t.Fatal("expected no cleanup calls when interval is 0")
 	}
-
-	cleaner := NewRetentionCleaner(cfg, store, true)
-	// Give startup cleanup time to run
-	time.Sleep(100 * time.Millisecond)
-	cleaner.Stop()
-
-	assert.GreaterOrEqual(t, store.accessCount.Load(), int64(1))
-	assert.GreaterOrEqual(t, store.complianceCount.Load(), int64(1))
-	assert.GreaterOrEqual(t, store.rbacCount.Load(), int64(1))
-	assert.GreaterOrEqual(t, store.travelCount.Load(), int64(1))
-	assert.GreaterOrEqual(t, store.expiredCount.Load(), int64(1))
 }
 
-func TestRetentionCleaner_SkipsZeroDuration(t *testing.T) {
+func TestRetention_RunsOnStartAndInterval(t *testing.T) {
 	store := &mockRetentionStore{}
-	cfg := RetentionConfig{
-		AccessLogs:      0, // keep forever
-		ComplianceLogs:  0, // keep forever
-		RBACAuditLogs:   0, // keep forever
-		TravelRecords:   0, // keep forever
-		CleanupInterval: 1 * time.Hour,
-	}
-
-	cleaner := NewRetentionCleaner(cfg, store, false)
-	time.Sleep(100 * time.Millisecond)
-	cleaner.Stop()
-
-	assert.Equal(t, int64(0), store.accessCount.Load())
-	assert.Equal(t, int64(0), store.complianceCount.Load())
-	assert.Equal(t, int64(0), store.rbacCount.Load())
-	assert.Equal(t, int64(0), store.travelCount.Load())
-	assert.Equal(t, int64(0), store.expiredCount.Load())
-}
-
-func TestRetentionCleaner_SkipsExpiredWhenTravelRuleInactive(t *testing.T) {
-	store := &mockRetentionStore{}
-	cfg := RetentionConfig{
-		AccessLogs:      90 * 24 * time.Hour,
-		CleanupInterval: 1 * time.Hour,
-	}
-
-	cleaner := NewRetentionCleaner(cfg, store, false) // travel rule inactive
-	time.Sleep(100 * time.Millisecond)
-	cleaner.Stop()
-
-	assert.GreaterOrEqual(t, store.accessCount.Load(), int64(1))
-	assert.Equal(t, int64(0), store.expiredCount.Load())
-}
-
-func TestRetentionCleaner_StopsGracefully(t *testing.T) {
-	store := &mockRetentionStore{}
-	cfg := RetentionConfig{
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:      24 * time.Hour,
 		CleanupInterval: 50 * time.Millisecond,
+	}, store)
+
+	mgr.Start()
+	// Wait for initial run + at least one tick.
+	time.Sleep(120 * time.Millisecond)
+	mgr.Stop()
+
+	calls := store.accessCalls.Load()
+	if calls < 2 {
+		t.Fatalf("expected at least 2 cleanup calls (initial + tick), got %d", calls)
 	}
+}
 
-	cleaner := NewRetentionCleaner(cfg, store, false)
-	time.Sleep(200 * time.Millisecond)
+func TestRetention_ZeroDurationSkipsTable(t *testing.T) {
+	store := &mockRetentionStore{}
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:      24 * time.Hour,
+		ComplianceLogs:  0, // skip
+		RBACAuditLogs:   0, // skip
+		TravelRecords:   0, // skip
+		CleanupInterval: 50 * time.Millisecond,
+	}, store)
 
-	// Stop should return without hanging
+	mgr.Start()
+	time.Sleep(80 * time.Millisecond)
+	mgr.Stop()
+
+	if store.accessCalls.Load() == 0 {
+		t.Fatal("expected access_logs cleanup to run")
+	}
+	if store.complianceCalls.Load() != 0 {
+		t.Fatal("expected compliance_logs cleanup to be skipped (zero duration)")
+	}
+	if store.rbacCalls.Load() != 0 {
+		t.Fatal("expected rbac_audit_logs cleanup to be skipped (zero duration)")
+	}
+	if store.travelCalls.Load() != 0 {
+		t.Fatal("expected travel_records cleanup to be skipped (zero duration)")
+	}
+	// Expired records always run.
+	if store.expiredCalls.Load() == 0 {
+		t.Fatal("expected expired records cleanup to always run")
+	}
+}
+
+func TestRetention_StopChannelWorks(t *testing.T) {
+	store := &mockRetentionStore{}
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:      24 * time.Hour,
+		CleanupInterval: 1 * time.Hour, // long interval
+	}, store)
+
+	mgr.Start()
+	// Stop immediately - should not hang.
 	done := make(chan struct{})
 	go func() {
-		cleaner.Stop()
+		mgr.Stop()
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		// ok
+		// OK
 	case <-time.After(2 * time.Second):
-		t.Fatal("Stop() did not return within 2 seconds")
+		t.Fatal("Stop() did not return in time")
 	}
 }

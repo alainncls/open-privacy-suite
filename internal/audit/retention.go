@@ -22,108 +22,118 @@ type RetentionStore interface {
 	CleanupComplianceLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupRBACAuditLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupUsedTravelRecords(ctx context.Context, olderThan time.Time) (int64, error)
-	CleanupExpiredRecords(ctx context.Context) (int64, error) // unused expired travel records
+	CleanupExpiredRecords(ctx context.Context) (int64, error)
 }
 
-// RetentionCleaner runs periodic cleanup of old audit records.
-type RetentionCleaner struct {
-	config          RetentionConfig
-	store           RetentionStore
-	travelRuleActive bool
-	stopCh          chan struct{}
-	doneCh          chan struct{}
+// RetentionManager runs periodic retention cleanup on audit tables.
+type RetentionManager struct {
+	cfg   RetentionConfig
+	store RetentionStore
+	stop  chan struct{}
+	done  chan struct{}
 }
 
-// NewRetentionCleaner creates and starts a background retention cleaner.
-func NewRetentionCleaner(cfg RetentionConfig, store RetentionStore, travelRuleActive bool) *RetentionCleaner {
-	rc := &RetentionCleaner{
-		config:           cfg,
-		store:            store,
-		travelRuleActive: travelRuleActive,
-		stopCh:           make(chan struct{}),
-		doneCh:           make(chan struct{}),
+// RetentionCleaner is an alias for RetentionManager for API compatibility.
+type RetentionCleaner = RetentionManager
+
+// NewRetentionManager creates a new retention manager. Call Start() to begin cleanup.
+func NewRetentionManager(cfg RetentionConfig, store RetentionStore) *RetentionManager {
+	return &RetentionManager{
+		cfg:   cfg,
+		store: store,
+		stop:  make(chan struct{}),
+		done:  make(chan struct{}),
 	}
-	go rc.run()
-	return rc
 }
 
-// Stop gracefully stops the retention cleaner and waits for the goroutine to exit.
-func (rc *RetentionCleaner) Stop() {
-	close(rc.stopCh)
-	<-rc.doneCh
+// NewRetentionCleaner creates a new retention cleaner. If travelRuleEnabled is false,
+// the TravelRecords retention duration is zeroed (skip cleanup). Starts automatically.
+func NewRetentionCleaner(cfg RetentionConfig, store RetentionStore, travelRuleEnabled bool) *RetentionCleaner {
+	if !travelRuleEnabled {
+		cfg.TravelRecords = 0
+	}
+	mgr := NewRetentionManager(cfg, store)
+	mgr.Start()
+	return mgr
 }
 
-func (rc *RetentionCleaner) run() {
-	defer close(rc.doneCh)
+// Start begins the periodic cleanup loop in a goroutine.
+func (r *RetentionManager) Start() {
+	go r.run()
+}
 
-	// If cleanup interval is zero or negative, retention is disabled — just wait for stop.
-	if rc.config.CleanupInterval <= 0 {
-		<-rc.stopCh
+// Stop signals the cleanup loop to stop and waits for it to finish.
+func (r *RetentionManager) Stop() {
+	close(r.stop)
+	<-r.done
+}
+
+func (r *RetentionManager) run() {
+	defer close(r.done)
+
+	if r.cfg.CleanupInterval <= 0 {
+		// Retention disabled.
 		return
 	}
 
-	// Run cleanup immediately on startup
-	rc.cleanup()
+	// Run cleanup immediately on start, then on interval.
+	r.cleanup()
 
-	ticker := time.NewTicker(rc.config.CleanupInterval)
+	ticker := time.NewTicker(r.cfg.CleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			rc.cleanup()
-		case <-rc.stopCh:
+		case <-r.stop:
 			return
+		case <-ticker.C:
+			r.cleanup()
 		}
 	}
 }
 
-func (rc *RetentionCleaner) cleanup() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+func (r *RetentionManager) cleanup() {
+	ctx := context.Background()
+	now := time.Now()
 
-	if rc.config.AccessLogs > 0 {
-		cutoff := time.Now().Add(-rc.config.AccessLogs)
-		if count, err := rc.store.CleanupAccessLogs(ctx, cutoff); err != nil {
-			log.Printf("Retention cleanup error (access_logs): %v", err)
-		} else if count > 0 {
-			log.Printf("Retention cleanup: deleted %d access_logs older than %s", count, rc.config.AccessLogs)
+	type tableCleanup struct {
+		name     string
+		duration time.Duration
+		fn       func(ctx context.Context, olderThan time.Time) (int64, error)
+	}
+
+	tables := []tableCleanup{
+		{"access_logs", r.cfg.AccessLogs, r.store.CleanupAccessLogs},
+		{"compliance_logs", r.cfg.ComplianceLogs, r.store.CleanupComplianceLogs},
+		{"rbac_audit_logs", r.cfg.RBACAuditLogs, r.store.CleanupRBACAuditLogs},
+		{"travel_records", r.cfg.TravelRecords, r.store.CleanupUsedTravelRecords},
+	}
+
+	for _, tc := range tables {
+		if tc.duration <= 0 {
+			continue
+		}
+
+		cutoff := now.Add(-tc.duration)
+
+		// M3 fix: log BEFORE deletion so operators have an auditable trail of retention events.
+		log.Printf("Retention: deleting %s older than %s (cutoff: %s)", tc.name, tc.duration, cutoff.Format(time.RFC3339))
+
+		deleted, err := tc.fn(ctx, cutoff)
+		if err != nil {
+			log.Printf("Retention: error cleaning %s: %v", tc.name, err)
+			continue
+		}
+		if deleted > 0 {
+			log.Printf("Retention: deleted %d rows from %s", deleted, tc.name)
 		}
 	}
 
-	if rc.config.ComplianceLogs > 0 {
-		cutoff := time.Now().Add(-rc.config.ComplianceLogs)
-		if count, err := rc.store.CleanupComplianceLogs(ctx, cutoff); err != nil {
-			log.Printf("Retention cleanup error (compliance_logs): %v", err)
-		} else if count > 0 {
-			log.Printf("Retention cleanup: deleted %d compliance_logs older than %s", count, rc.config.ComplianceLogs)
-		}
-	}
-
-	if rc.config.RBACAuditLogs > 0 {
-		cutoff := time.Now().Add(-rc.config.RBACAuditLogs)
-		if count, err := rc.store.CleanupRBACAuditLogs(ctx, cutoff); err != nil {
-			log.Printf("Retention cleanup error (rbac_audit_log): %v", err)
-		} else if count > 0 {
-			log.Printf("Retention cleanup: deleted %d rbac_audit_log entries older than %s", count, rc.config.RBACAuditLogs)
-		}
-	}
-
-	if rc.config.TravelRecords > 0 {
-		cutoff := time.Now().Add(-rc.config.TravelRecords)
-		if count, err := rc.store.CleanupUsedTravelRecords(ctx, cutoff); err != nil {
-			log.Printf("Retention cleanup error (travel_rule_records): %v", err)
-		} else if count > 0 {
-			log.Printf("Retention cleanup: deleted %d used travel_rule_records older than %s", count, rc.config.TravelRecords)
-		}
-	}
-
-	// Also clean up expired unused travel rule records when travel rule is active
-	if rc.travelRuleActive {
-		if count, err := rc.store.CleanupExpiredRecords(ctx); err != nil {
-			log.Printf("Retention cleanup error (expired travel records): %v", err)
-		} else if count > 0 {
-			log.Printf("Retention cleanup: deleted %d expired unused travel_rule_records", count)
-		}
+	// Always clean up expired records regardless of config.
+	expired, err := r.store.CleanupExpiredRecords(ctx)
+	if err != nil {
+		log.Printf("Retention: error cleaning expired records: %v", err)
+	} else if expired > 0 {
+		log.Printf("Retention: deleted %d expired records", expired)
 	}
 }

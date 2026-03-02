@@ -197,7 +197,14 @@ Request bodies are limited to 1MB to prevent memory exhaustion.
 
 ### Admin API Protection
 
-All `/api/*` endpoints restricted to localhost only. In Docker, this includes container network (`172.16.0.0/12`).
+Admin endpoints (`/api/v1/admin/*`, `/api/admin/*`) are protected by two independent layers:
+
+1. **Localhost-only middleware** — requests must originate from `127.0.0.1` or Docker bridge network (`172.16.0.0/12`). This guards against external callers.
+2. **`ADMIN_API_TOKEN`** — when configured, every admin request must supply the token via `X-Admin-Token` header. This guards against SSRF, misconfigured reverse proxies, and other processes sharing the localhost network. Required in production (`config.Validate()` enforces this).
+
+> **Why both layers?** The localhost check is the first gate but can be bypassed by a misconfigured reverse proxy (which forwards external traffic to the backend on localhost), an SSRF vulnerability, or another container on the same Docker network. The token is the backstop when the network gate fails.
+
+**Production requirement:** set `ADMIN_API_TOKEN` to a strong random secret (32+ chars). The `X-Admin-Token` header is the only accepted mechanism — `Authorization: Bearer` is intentionally NOT accepted here to avoid confusion with user JWT tokens.
 
 ### Trusted Proxies
 
@@ -217,12 +224,15 @@ Configured via Gin middleware. Adjust in `internal/server/server.go` for product
 - [ ] Set `ENVIRONMENT=production`
 - [ ] Configure `VERIFIER_ID` with your Privado DID
 - [ ] Set `BASE_URL` to public HTTPS URL
+- [ ] Set `ADMIN_API_TOKEN` to a strong random secret (32+ chars)
 - [ ] Enable `REQUIRE_PROOF_OF_HUMANITY` if using Billions
 - [ ] Configure PostgreSQL with SSL (`sslmode=require`)
 - [ ] Place behind reverse proxy with TLS termination
 - [ ] Restrict admin API access at network level
 - [ ] Set up log aggregation for audit trail
 - [ ] Configure rate limits appropriate for your use case
+- [ ] If using `SIEM_WEBHOOK_URL`: ensure the endpoint is covered by a data processing agreement — audit events contain user DIDs and IP addresses (PII under GDPR)
+- [ ] If using `AUDIT_LOG_PARAMS=true`: review which RPC methods your users call — params for methods not explicitly handled by `RedactParams` are logged verbatim
 
 ---
 

@@ -305,6 +305,18 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		return
 	}
 
+	// H4: Verify originator_user_id belongs to this org before creating the record.
+	// Previously only the DB foreign key was checked, allowing cross-org originator references.
+	originatorMemberships, err := s.db.ListUserMembershipsInOrg(c.Request.Context(), input.OriginatorUserID, orgID)
+	if err != nil {
+		internalError(c, "failed to verify originator org membership", err)
+		return
+	}
+	if len(originatorMemberships) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "originator_user_id is not a member of this organization"})
+		return
+	}
+
 	// Validate transfer type
 	transferType := compliance.TransferType(input.TransferType)
 	if transferType != compliance.TransferTypeETH && transferType != compliance.TransferTypeERC20 {

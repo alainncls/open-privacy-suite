@@ -3,107 +3,177 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCorrelationIDMiddleware_GeneratesUUID(t *testing.T) {
+func init() {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(correlationIDMiddleware())
+}
 
-	var capturedID string
-	router.GET("/test", func(c *gin.Context) {
-		capturedID = getCorrelationID(c)
+func setupCorrelationRouter() *gin.Engine {
+	r := gin.New()
+	r.Use(correlationIDMiddleware())
+	r.GET("/test", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"correlation_id": getCorrelationID(c)})
+	})
+	return r
+}
+
+func isValidUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+func TestCorrelationIDMiddleware_NoHeader(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	respID := w.Header().Get(CorrelationIDHeader)
+	require.NotEmpty(t, respID, "should generate a correlation ID when none supplied")
+	assert.True(t, isValidUUID(respID), "generated correlation ID should be a valid UUID, got: %s", respID)
+}
+
+func TestCorrelationIDMiddleware_ValidCorrelationID(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(CorrelationIDHeader, "my-trace-id-123")
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "my-trace-id-123", w.Header().Get(CorrelationIDHeader))
+}
+
+func TestCorrelationIDMiddleware_FallbackToRequestID(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(RequestIDHeader, "request-id-456")
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "request-id-456", w.Header().Get(CorrelationIDHeader))
+}
+
+func TestCorrelationIDMiddleware_TooLong(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	longID := strings.Repeat("a", 129)
+	req.Header.Set(CorrelationIDHeader, longID)
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	respID := w.Header().Get(CorrelationIDHeader)
+	assert.NotEqual(t, longID, respID, "should not use a too-long client value")
+	assert.True(t, isValidUUID(respID), "should generate a valid UUID when client value is too long, got: %s", respID)
+}
+
+func TestCorrelationIDMiddleware_CRLFInjection(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(CorrelationIDHeader, "evil\r\nX-Injected: true")
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	respID := w.Header().Get(CorrelationIDHeader)
+	assert.NotContains(t, respID, "\r", "response must not contain carriage return")
+	assert.NotContains(t, respID, "\n", "response must not contain newline")
+	assert.True(t, isValidUUID(respID), "should generate a valid UUID when control chars detected, got: %s", respID)
+}
+
+func TestCorrelationIDMiddleware_TabCharacter(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(CorrelationIDHeader, "trace\tid")
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	respID := w.Header().Get(CorrelationIDHeader)
+	assert.NotContains(t, respID, "\t", "response must not contain tab character")
+	assert.True(t, isValidUUID(respID), "should generate a valid UUID when control chars detected, got: %s", respID)
+}
+
+func TestCorrelationIDMiddleware_ResponseHeader(t *testing.T) {
+	router := setupCorrelationRouter()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(CorrelationIDHeader, "echo-me-back")
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "echo-me-back", w.Header().Get(CorrelationIDHeader),
+		"correlation ID should be echoed back in response header")
+}
+
+func TestCorrelationIDMiddleware_ContextSet(t *testing.T) {
+	r := gin.New()
+	r.Use(correlationIDMiddleware())
+
+	var ctxID string
+	r.GET("/test", func(c *gin.Context) {
+		ctxID = getCorrelationID(c)
 		c.Status(http.StatusOK)
 	})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	router.ServeHTTP(w, req)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(CorrelationIDHeader, "ctx-test-id")
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.NotEmpty(t, capturedID)
-	// Should be a valid UUID (36 chars with hyphens)
-	assert.Len(t, capturedID, 36)
-	// Should echo back in response header
-	assert.Equal(t, capturedID, w.Header().Get(CorrelationIDHeader))
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, "ctx-test-id", ctxID, "correlation ID should be available in gin context")
 }
 
-func TestCorrelationIDMiddleware_PreservesCorrelationID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(correlationIDMiddleware())
+func TestSanitizeCorrelationID(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "valid simple", input: "abc-123", want: "abc-123"},
+		{name: "valid UUID", input: "550e8400-e29b-41d4-a716-446655440000", want: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "empty", input: "", want: ""},
+		{name: "whitespace only", input: "   ", want: ""},
+		{name: "with leading/trailing spaces", input: "  hello  ", want: "hello"},
+		{name: "exactly 128 chars", input: strings.Repeat("x", 128), want: strings.Repeat("x", 128)},
+		{name: "129 chars", input: strings.Repeat("x", 129), want: ""},
+		{name: "contains newline", input: "abc\ndef", want: ""},
+		{name: "contains carriage return", input: "abc\rdef", want: ""},
+		{name: "contains tab", input: "abc\tdef", want: ""},
+		{name: "contains null byte", input: "abc\x00def", want: ""},
+		{name: "contains DEL", input: "abc\x7fdef", want: ""},
+		{name: "CRLF injection", input: "evil\r\nX-Header: injected", want: ""},
+		{name: "printable special chars", input: "trace/id@host:8080#ref", want: "trace/id@host:8080#ref"},
+	}
 
-	existingID := "existing-correlation-id-123"
-	var capturedID string
-	router.GET("/test", func(c *gin.Context) {
-		capturedID = getCorrelationID(c)
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set(CorrelationIDHeader, existingID)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, existingID, capturedID)
-	assert.Equal(t, existingID, w.Header().Get(CorrelationIDHeader))
-}
-
-func TestCorrelationIDMiddleware_FallsBackToRequestID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(correlationIDMiddleware())
-
-	requestID := "request-id-456"
-	var capturedID string
-	router.GET("/test", func(c *gin.Context) {
-		capturedID = getCorrelationID(c)
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set(RequestIDHeader, requestID)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, requestID, capturedID)
-	assert.Equal(t, requestID, w.Header().Get(CorrelationIDHeader))
-}
-
-func TestCorrelationIDMiddleware_PrefersCorrelationIDOverRequestID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(correlationIDMiddleware())
-
-	correlationID := "correlation-id-789"
-	requestID := "request-id-should-be-ignored"
-	var capturedID string
-	router.GET("/test", func(c *gin.Context) {
-		capturedID = getCorrelationID(c)
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set(CorrelationIDHeader, correlationID)
-	req.Header.Set(RequestIDHeader, requestID)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, correlationID, capturedID)
-}
-
-func TestGetCorrelationID_ReturnsEmptyWhenNotSet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	require.Empty(t, getCorrelationID(c))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeCorrelationID(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

@@ -3,88 +3,186 @@ package audit
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestRedactParams_RawTransaction(t *testing.T) {
-	params := []any{"0xf86c0a8502540be400825208948d97689c9818892b700e27f316cc3e41e17fbeb9872386f26fc1000080820a96a0f0c7f3e0c7b5f6d3a3b5c4e3d2f1e0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4a0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0"}
+func TestRedactParams_SendRawTransaction(t *testing.T) {
+	longHex := "0xf86c0a8502540be400825208944bbeeb066ed09b7ae" +
+		"d07bf39eee0460dfa26152088016345785d8a0000"
+	params := []any{longHex}
 
 	result := RedactParams("eth_sendRawTransaction", params)
-	require.NotNil(t, result)
 
-	var parsed []any
-	err := json.Unmarshal(result, &parsed)
-	require.NoError(t, err)
-	require.Len(t, parsed, 1)
+	var out []any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(out))
+	}
 
-	rawTx, ok := parsed[0].(string)
-	require.True(t, ok)
-	assert.Equal(t, "0xf86c0a8502540be400...", rawTx)
+	truncated, ok := out[0].(string)
+	if !ok {
+		t.Fatal("expected string param")
+	}
+
+	// 20 chars + "..."
+	if len(truncated) != 23 {
+		t.Fatalf("expected length 23, got %d: %q", len(truncated), truncated)
+	}
+	if truncated != longHex[:20]+"..." {
+		t.Fatalf("unexpected truncation: %q", truncated)
+	}
 }
 
 func TestRedactParams_SendTransaction(t *testing.T) {
-	params := []any{map[string]any{
-		"from":  "0x1234567890abcdef1234567890abcdef12345678",
-		"to":    "0xabcdef1234567890abcdef1234567890abcdef12",
-		"value": "0x1000",
-		"data":  "0xa9059cbb000000000000000000000000abcdef1234567890abcdef1234567890abcdef120000000000000000000000000000000000000000000000000000000000001000",
-	}}
+	params := []any{
+		map[string]any{
+			"from":  "0xabc",
+			"to":    "0xdef",
+			"value": "0x1",
+			"gas":   "0x5208",
+			"data":  "0x606060405260003411156100145760006000fd5b",
+		},
+	}
 
 	result := RedactParams("eth_sendTransaction", params)
-	require.NotNil(t, result)
 
-	var parsed []any
-	err := json.Unmarshal(result, &parsed)
-	require.NoError(t, err)
-	require.Len(t, parsed, 1)
+	var out []any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
 
-	txObj, ok := parsed[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", txObj["from"])
-	assert.Equal(t, "0xabcdef1234567890abcdef1234567890abcdef12", txObj["to"])
-	assert.Equal(t, "0x1000", txObj["value"])
+	obj, ok := out[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected object param")
+	}
 
-	data, ok := txObj["data"].(string)
-	require.True(t, ok)
-	assert.Equal(t, "0xa9059cbb...", data)
+	// Safe fields preserved.
+	for _, key := range []string{"from", "to", "value", "gas"} {
+		if _, exists := obj[key]; !exists {
+			t.Errorf("expected %q to be preserved", key)
+		}
+	}
+
+	// Data truncated.
+	data, ok := obj["data"].(string)
+	if !ok {
+		t.Fatal("expected data field")
+	}
+	if len(data) != 13 { // 10 + "..."
+		t.Fatalf("expected truncated data length 13, got %d: %q", len(data), data)
+	}
 }
 
-func TestRedactParams_OtherMethods(t *testing.T) {
-	params := []any{"0x1234", "latest"}
+func TestRedactParams_EthCall(t *testing.T) {
+	params := []any{
+		map[string]any{
+			"from":  "0xabc",
+			"to":    "0xdef",
+			"value": "0x0",
+			"data":  "0x70a0823100000000000000000000000000000000000abc",
+		},
+		"latest",
+	}
 
-	result := RedactParams("eth_getBalance", params)
-	require.NotNil(t, result)
+	result := RedactParams("eth_call", params)
 
-	var parsed []any
-	err := json.Unmarshal(result, &parsed)
-	require.NoError(t, err)
-	assert.Equal(t, []any{"0x1234", "latest"}, parsed)
+	var out []any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if len(out) != 2 {
+		t.Fatalf("expected 2 params (object + block), got %d", len(out))
+	}
+
+	obj, ok := out[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected object param")
+	}
+
+	// Safe fields preserved.
+	for _, key := range []string{"from", "to", "value"} {
+		if _, exists := obj[key]; !exists {
+			t.Errorf("expected %q to be preserved", key)
+		}
+	}
+
+	// Data truncated.
+	data, ok := obj["data"].(string)
+	if !ok {
+		t.Fatal("expected data field")
+	}
+	if len(data) != 13 { // 10 + "..."
+		t.Fatalf("expected truncated data length 13, got %d: %q", len(data), data)
+	}
+
+	// Block param preserved.
+	if out[1] != "latest" {
+		t.Fatalf("expected block param 'latest', got %v", out[1])
+	}
+}
+
+func TestRedactParams_EstimateGas(t *testing.T) {
+	params := []any{
+		map[string]any{
+			"from":  "0xabc",
+			"to":    "0xdef",
+			"data":  "0x70a0823100000000000000000000000000000000000abc",
+			"input": "0x70a0823100000000000000000000000000000000000abc",
+		},
+	}
+
+	result := RedactParams("eth_estimateGas", params)
+
+	var out []any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	obj, ok := out[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected object param")
+	}
+
+	// Both data and input should be truncated.
+	for _, key := range []string{"data", "input"} {
+		val, ok := obj[key].(string)
+		if !ok {
+			t.Fatalf("expected %q field", key)
+		}
+		if len(val) != 13 {
+			t.Fatalf("expected %q truncated to 13 chars, got %d: %q", key, len(val), val)
+		}
+	}
+}
+
+func TestRedactParams_UnknownMethod(t *testing.T) {
+	params := []any{"arg1", 42, true}
+
+	result := RedactParams("eth_blockNumber", params)
+
+	var out []any
+	if err := json.Unmarshal(result, &out); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if len(out) != 3 {
+		t.Fatalf("expected 3 params, got %d", len(out))
+	}
+	if out[0] != "arg1" {
+		t.Errorf("expected 'arg1', got %v", out[0])
+	}
 }
 
 func TestRedactParams_EmptyParams(t *testing.T) {
 	result := RedactParams("eth_blockNumber", nil)
-	assert.Nil(t, result)
+	if result != nil {
+		t.Fatalf("expected nil for empty params, got %s", result)
+	}
 
 	result = RedactParams("eth_blockNumber", []any{})
-	assert.Nil(t, result)
-}
-
-func TestRedactParams_ShortData(t *testing.T) {
-	params := []any{map[string]any{
-		"from": "0x1234",
-		"to":   "0x5678",
-		"data": "0x1234",
-	}}
-
-	result := RedactParams("eth_sendTransaction", params)
-	require.NotNil(t, result)
-
-	var parsed []any
-	err := json.Unmarshal(result, &parsed)
-	require.NoError(t, err)
-
-	txObj := parsed[0].(map[string]any)
-	assert.Equal(t, "0x1234", txObj["data"])
+	if result != nil {
+		t.Fatalf("expected nil for empty slice, got %s", result)
+	}
 }

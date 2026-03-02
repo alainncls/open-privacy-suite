@@ -294,10 +294,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	var siemForwarder *audit.SIEMForwarder
 	if cfg.SIEMWebhookURL != "" {
 		siemForwarder = audit.NewSIEMForwarder(audit.SIEMConfig{
-			WebhookURL:    cfg.SIEMWebhookURL,
-			AuthHeader:    cfg.SIEMAuthHeader,
-			BatchSize:     cfg.SIEMBatchSize,
-			FlushInterval: cfg.SIEMFlushInterval,
+			WebhookURL:      cfg.SIEMWebhookURL,
+			AuthHeader:      cfg.SIEMAuthHeader,
+			BatchSize:       cfg.SIEMBatchSize,
+			FlushInterval:   cfg.SIEMFlushInterval,
+			FallbackLogPath: cfg.SIEMFallbackLogPath,
 		})
 		s.siemForwarder = siemForwarder
 		log.Printf("SIEM forwarding enabled (webhook: %s, batch size: %d, flush interval: %s)",
@@ -651,16 +652,11 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
-		providedToken := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
-		if providedToken == "" {
-			authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-				providedToken = strings.TrimSpace(authHeader[7:])
-			}
-		}
-
-		if providedToken == "" || subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "admin authentication required"})
+		// L3 fix: only accept X-Admin-Token. Authorization: Bearer is intentionally NOT
+		// accepted to avoid semantic collision with user JWT tokens.
+		provided := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
+		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing X-Admin-Token"})
 			c.Abort()
 			return
 		}

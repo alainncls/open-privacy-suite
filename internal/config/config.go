@@ -58,7 +58,8 @@ type Config struct {
 	SIEMWebhookURL    string        // SIEM webhook endpoint (empty = disabled)
 	SIEMAuthHeader    string        // Authorization header for SIEM webhook
 	SIEMBatchSize     int           // Events per SIEM batch (default: 100)
-	SIEMFlushInterval time.Duration // Max time before flushing SIEM batch (default: 10s)
+	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
+	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
 
 	// Tunnel URL file path — cloudflared writes the public URL here (auto-detected)
 	TunnelURLFile string
@@ -238,6 +239,7 @@ func Load() *Config {
 		SIEMAuthHeader:             siemAuthHeader,
 		SIEMBatchSize:              siemBatchSize,
 		SIEMFlushInterval:          siemFlushInterval,
+		SIEMFallbackLogPath:        getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		TunnelURLFile:              getEnv("TUNNEL_URL_FILE", ""),
 		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}

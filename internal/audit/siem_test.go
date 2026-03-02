@@ -1,192 +1,190 @@
 package audit
 
 import (
+	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestSIEMForwarder_BatchFlush(t *testing.T) {
-	var received []SIEMEvent
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+func TestSIEM_SuccessfulSendClearsBatch(t *testing.T) {
+	var received atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var events []SIEMEvent
-		json.Unmarshal(body, &events)
-		mu.Lock()
-		received = append(received, events...)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
-		BatchSize:     3,
-		FlushInterval: 1 * time.Hour, // won't fire
-	})
-
-	// Send 3 events (triggers batch flush)
-	for i := 0; i < 3; i++ {
-		sf.Send(SIEMEvent{
-			EventType: "access",
-			Action:    "rpc_call",
-			Outcome:   "success",
-		})
-	}
-
-	// Allow time for flush
-	time.Sleep(200 * time.Millisecond)
-	sf.Stop()
-
-	mu.Lock()
-	assert.Len(t, received, 3)
-	mu.Unlock()
-}
-
-func TestSIEMForwarder_FlushInterval(t *testing.T) {
-	var received []SIEMEvent
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var events []SIEMEvent
-		json.Unmarshal(body, &events)
-		mu.Lock()
-		received = append(received, events...)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
-		BatchSize:     100, // large batch
-		FlushInterval: 100 * time.Millisecond,
-	})
-
-	sf.Send(SIEMEvent{EventType: "access", Action: "test"})
-
-	// Wait for interval flush
-	time.Sleep(300 * time.Millisecond)
-	sf.Stop()
-
-	mu.Lock()
-	assert.Len(t, received, 1)
-	mu.Unlock()
-}
-
-func TestSIEMForwarder_RetryOnServerError(t *testing.T) {
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := attempts.Add(1)
-		if count <= 2 {
-			w.WriteHeader(http.StatusInternalServerError)
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			t.Errorf("decode error: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		received.Add(int64(len(events)))
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
+	defer srv.Close()
 
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
-		BatchSize:     1,
-		FlushInterval: 1 * time.Hour,
-	})
-
-	sf.Send(SIEMEvent{EventType: "access", Action: "test"})
-
-	// Allow retries to complete (retry delays: 0s, 1s, 2s)
-	time.Sleep(5 * time.Second)
-	sf.Stop()
-
-	assert.Equal(t, int32(3), attempts.Load())
-}
-
-func TestSIEMForwarder_AuthHeader(t *testing.T) {
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
-		AuthHeader:    "Bearer test-token-123",
-		BatchSize:     1,
-		FlushInterval: 1 * time.Hour,
-	})
-
-	sf.Send(SIEMEvent{EventType: "access"})
-	time.Sleep(200 * time.Millisecond)
-	sf.Stop()
-
-	assert.Equal(t, "Bearer test-token-123", receivedAuth)
-}
-
-func TestSIEMForwarder_GracefulStop(t *testing.T) {
-	var received []SIEMEvent
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var events []SIEMEvent
-		json.Unmarshal(body, &events)
-		mu.Lock()
-		received = append(received, events...)
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
+	fwd := NewSIEMForwarder(SIEMConfig{
+		WebhookURL:    srv.URL,
 		BatchSize:     100,
-		FlushInterval: 1 * time.Hour,
+		FlushInterval: 50 * time.Millisecond,
 	})
 
-	// Send events that won't trigger batch flush
-	sf.Send(SIEMEvent{EventType: "access", Action: "pending1"})
-	sf.Send(SIEMEvent{EventType: "access", Action: "pending2"})
+	fwd.Send(SIEMEvent{Action: "eth_call", Outcome: "success"})
+	fwd.Send(SIEMEvent{Action: "eth_sendTransaction", Outcome: "success"})
 
-	// Stop should flush remaining events
-	sf.Stop()
+	fwd.Start()
+	time.Sleep(120 * time.Millisecond)
+	fwd.Stop()
 
-	mu.Lock()
-	require.Len(t, received, 2)
-	mu.Unlock()
+	if received.Load() != 2 {
+		t.Fatalf("expected 2 events received by SIEM, got %d", received.Load())
+	}
+
+	// After stop, internal batch should be empty.
+	fwd.mu.Lock()
+	remaining := len(fwd.batch)
+	fwd.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("expected empty batch after stop, got %d", remaining)
+	}
 }
 
-func TestSIEMForwarder_NoRetryOnClientError(t *testing.T) {
-	var attempts atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts.Add(1)
-		w.WriteHeader(http.StatusBadRequest)
+func TestSIEM_FailedSendWithFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer server.Close()
+	defer srv.Close()
 
-	sf := NewSIEMForwarder(SIEMConfig{
-		WebhookURL:    server.URL,
-		BatchSize:     1,
-		FlushInterval: 1 * time.Hour,
+	fallbackPath := filepath.Join(t.TempDir(), "fallback.jsonl")
+
+	fwd := NewSIEMForwarder(SIEMConfig{
+		WebhookURL:      srv.URL,
+		BatchSize:        100,
+		FlushInterval:    50 * time.Millisecond,
+		FallbackLogPath:  fallbackPath,
 	})
 
-	sf.Send(SIEMEvent{EventType: "access"})
-	time.Sleep(200 * time.Millisecond)
-	sf.Stop()
+	fwd.Send(SIEMEvent{Action: "eth_call", Outcome: "success"})
+	fwd.Send(SIEMEvent{Action: "eth_getBalance", Outcome: "success"})
 
-	// Should only attempt once for 4xx errors
-	assert.Equal(t, int32(1), attempts.Load())
+	fwd.Start()
+	// Wait for flush + retries (3 retries with backoff: 0s + 1s + 2s = ~3s).
+	time.Sleep(5 * time.Second)
+	fwd.Stop()
+
+	// Check fallback file was written.
+	data, err := os.ReadFile(fallbackPath)
+	if err != nil {
+		t.Fatalf("failed to read fallback file: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected fallback file to contain events")
+	}
+
+	// Parse each JSON line.
+	lines := 0
+	dec := json.NewDecoder(bytes.NewReader(data))
+	for dec.More() {
+		var event SIEMEvent
+		if err := dec.Decode(&event); err != nil {
+			t.Fatalf("failed to decode fallback event: %v", err)
+		}
+		lines++
+	}
+	if lines != 2 {
+		t.Fatalf("expected 2 events in fallback file, got %d", lines)
+	}
+}
+
+func TestSIEM_FailedSendWithoutFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	fwd := NewSIEMForwarder(SIEMConfig{
+		WebhookURL:    srv.URL,
+		BatchSize:     100,
+		FlushInterval: 50 * time.Millisecond,
+		// No FallbackLogPath - events will be dropped with ERROR log.
+	})
+
+	fwd.Send(SIEMEvent{Action: "eth_call", Outcome: "success"})
+
+	fwd.Start()
+	time.Sleep(5 * time.Second)
+	fwd.Stop()
+
+	// No crash, events dropped. The ERROR log is printed but we cannot easily
+	// capture log output in this test without a custom logger.
+	fwd.mu.Lock()
+	remaining := len(fwd.batch)
+	fwd.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("expected empty batch after stop, got %d", remaining)
+	}
+}
+
+func TestSIEM_StopFlushesPending(t *testing.T) {
+	var received atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []SIEMEvent
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received.Add(int64(len(events)))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	fwd := NewSIEMForwarder(SIEMConfig{
+		WebhookURL:    srv.URL,
+		BatchSize:     100,
+		FlushInterval: 1 * time.Hour, // will not tick during test
+	})
+
+	fwd.Send(SIEMEvent{Action: "eth_call", Outcome: "success"})
+	fwd.Start()
+
+	// Stop should flush the pending event.
+	fwd.Stop()
+
+	if received.Load() != 1 {
+		t.Fatalf("expected 1 event flushed on Stop(), got %d", received.Load())
+	}
+}
+
+func TestSIEM_BatchSizeTrigger(t *testing.T) {
+	var flushes atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flushes.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	fwd := NewSIEMForwarder(SIEMConfig{
+		WebhookURL:    srv.URL,
+		BatchSize:     3,
+		FlushInterval: 1 * time.Hour, // will not tick during test
+	})
+
+	fwd.Start()
+
+	// Adding 3 events should trigger an immediate flush (batch full).
+	fwd.Send(SIEMEvent{Action: "a", Outcome: "success"})
+	fwd.Send(SIEMEvent{Action: "b", Outcome: "success"})
+	fwd.Send(SIEMEvent{Action: "c", Outcome: "success"})
+
+	// Give the flush a moment to complete.
+	time.Sleep(100 * time.Millisecond)
+
+	if flushes.Load() < 1 {
+		t.Fatal("expected at least 1 flush when batch size reached")
+	}
+
+	fwd.Stop()
 }

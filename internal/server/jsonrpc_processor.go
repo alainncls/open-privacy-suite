@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -122,11 +123,21 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 		}
 
 		// Compute and store hash chain entry
-		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%s", id, req.UserID, req.Method, req.ClientIP, statusCode, createdAt.Format(time.RFC3339Nano))
+		// M2 fix: include all audit-relevant fields in hash content
+		paramsDigest := ""
+		if len(params) > 0 {
+			paramsDigest = string(params)
+		}
+		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%s|%s|%s",
+			id, req.UserID, req.Method, req.ClientIP, statusCode,
+			createdAt.Format(time.RFC3339Nano),
+			req.CorrelationID,
+			paramsDigest,
+		)
 		hash := p.hashChain.ComputeNext(entryContent)
 		if err := p.enhancedLogger.UpdateAccessLogHash(ctx, id, hash); err != nil {
-			// Non-fatal: log entry exists, hash just wasn't stored
-			fmt.Printf("Warning: failed to update access log hash for id=%d: %v\n", id, err)
+			// L1 fix: use log.Printf so this goes to the structured log stream
+			log.Printf("Warning: failed to update access log hash for id=%d: %v", id, err)
 		}
 
 		// Forward to SIEM if configured

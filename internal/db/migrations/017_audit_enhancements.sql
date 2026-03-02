@@ -3,23 +3,23 @@
 
 -- Add correlation_id, request_params, and entry_hash to access_logs
 ALTER TABLE access_logs
-    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(128),
     ADD COLUMN IF NOT EXISTS request_params JSONB,
-    ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64);
+    ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(128);
 
 CREATE INDEX IF NOT EXISTS idx_access_logs_correlation
     ON access_logs(correlation_id) WHERE correlation_id IS NOT NULL;
 
 -- Add correlation_id to compliance_logs
 ALTER TABLE compliance_logs
-    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64);
+    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(128);
 
 CREATE INDEX IF NOT EXISTS idx_compliance_logs_correlation
     ON compliance_logs(correlation_id) WHERE correlation_id IS NOT NULL;
 
 -- Add correlation_id to rbac_audit_log
 ALTER TABLE rbac_audit_log
-    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64);
+    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(128);
 
 CREATE INDEX IF NOT EXISTS idx_rbac_audit_correlation
     ON rbac_audit_log(correlation_id) WHERE correlation_id IS NOT NULL;
