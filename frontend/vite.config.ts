@@ -44,11 +44,16 @@ export default defineConfig({
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq, req) => {
-            // Forward original host so backend can build correct callback URLs
+            // Forward original host so backend can build correct callback URLs.
             const originalHost = req.headers.host;
             if (originalHost) {
               proxyReq.setHeader('X-Forwarded-Host', originalHost);
-              proxyReq.setHeader('X-Forwarded-Proto', 'http');
+            }
+            // Pass through the protocol ngrok/cloudflare set (https), not
+            // a hardcoded 'http' which would cause backend to build http:// URLs.
+            const originalProto = req.headers['x-forwarded-proto'];
+            if (originalProto) {
+              proxyReq.setHeader('X-Forwarded-Proto', originalProto);
             }
           });
         },

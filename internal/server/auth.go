@@ -25,16 +25,22 @@ import (
 // If the caller is on localhost, we use the tunnel URL so the Privado wallet (on phone)
 // can reach the callback endpoint through the tunnel.
 func (s *Server) getCallbackBaseURL(c *gin.Context, callbackOrigin string) string {
-	// If the caller is on localhost and a tunnel URL is available, use the tunnel.
-	// The wallet app (HTTP client) won't hit any browser interstitial.
+	// If the caller is on localhost, prefer the tunnel URL (cloudflared) so the
+	// Privado wallet (on a phone) can reach the callback endpoint.
+	// If no tunnel is configured, fall through to getPublicURL so that BASE_URL
+	// (e.g. an ngrok URL) is used instead of constructing an unreachable
+	// "http://localhost:8080" URL.
 	if s.isLocalOrigin(callbackOrigin) {
 		if tunnelURL := s.readTunnelURL(); tunnelURL != "" {
 			return tunnelURL
 		}
+		// Local origin, no tunnel — use BASE_URL / header detection.
+		return s.getPublicURL(c)
 	}
 
-	// If the frontend passed its origin, use that hostname with the backend port
-	// This ensures the callback URL works from any hostname (localhost, Tailscale, etc.)
+	// Non-local origin (e.g. the browser opened via ngrok/Tailscale): use the
+	// origin hostname directly so the callback URL matches the tunnel the user
+	// already has open.
 	if callbackOrigin != "" {
 		// Parse the origin to extract the hostname
 		// Origin format: "http://hostname:port" or "https://hostname:port"
