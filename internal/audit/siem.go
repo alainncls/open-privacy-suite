@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -46,9 +46,49 @@ type SIEMForwarder struct {
 	done  chan struct{}
 }
 
+// blockedCIDRs are the IP ranges that must never be used as a SIEM webhook
+// destination. Using net.ParseCIDR + subnet.Contains avoids the string-prefix
+// pitfall where "172.0.0.1" or "10.io" could bypass or trip a HasPrefix check.
+//
+// Note: do NOT include IPv4-mapped IPv6 ranges like ::ffff:0:0/96 here.
+// Go's net.IPNet.Contains normalises them to IPv4 by taking the last 4 bytes
+// of the mask, which turns a /96 IPv6 mask into a /0 IPv4 mask and would
+// match every IPv4 address.
+var blockedCIDRs = func() []*net.IPNet {
+	ranges := []string{
+		"127.0.0.0/8",    // IPv4 loopback
+		"::1/128",        // IPv6 loopback
+		"169.254.0.0/16", // Link-local / cloud instance metadata (AWS, GCP, Azure)
+		"fe80::/10",      // IPv6 link-local
+		"10.0.0.0/8",     // RFC-1918 private
+		"172.16.0.0/12",  // RFC-1918 private (Docker bridge lives here)
+		"192.168.0.0/16", // RFC-1918 private
+		"100.64.0.0/10",  // CGNAT / Tailscale (shared address space)
+	}
+	nets := make([]*net.IPNet, 0, len(ranges))
+	for _, r := range ranges {
+		_, cidr, err := net.ParseCIDR(r)
+		if err != nil {
+			panic(fmt.Sprintf("audit: invalid blockedCIDR %q: %v", r, err))
+		}
+		nets = append(nets, cidr)
+	}
+	return nets
+}()
+
 // ValidateWebhookURL checks that the SIEM webhook URL is safe to use.
 // It rejects non-HTTPS schemes and private/loopback destinations to
 // prevent Server-Side Request Forgery (SSRF).
+//
+// IP range checks use net.ParseCIDR + subnet.Contains instead of
+// strings.HasPrefix to avoid the pitfalls documented in
+// localhost_security_test.go (e.g. "10.io" tripping a prefix check,
+// or "172.0.0.1" bypassing the Docker range).
+//
+// Note: if the host is a domain name (not a bare IP literal), DNS-resolved
+// addresses are not checked here — that would require a network call at
+// startup. The https requirement and redirect-blocking on the client provide
+// additional defence for hostname-based URLs.
 func ValidateWebhookURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -60,21 +100,17 @@ func ValidateWebhookURL(rawURL string) error {
 
 	host := u.Hostname()
 
-	// Block loopback.
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	// "localhost" is a hostname alias for loopback; block it by name.
+	if host == "localhost" {
 		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a loopback address")
 	}
-	// Block link-local (AWS/GCP/Azure instance metadata endpoints live here).
-	if strings.HasPrefix(host, "169.254.") || strings.HasPrefix(host, "fe80:") {
-		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a link-local address")
-	}
-	// Block RFC-1918 private ranges.
-	if strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") {
-		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a private IP range")
-	}
-	for i := 16; i <= 31; i++ {
-		if strings.HasPrefix(host, fmt.Sprintf("172.%d.", i)) {
-			return fmt.Errorf("SIEM_WEBHOOK_URL must not target a private IP range")
+
+	// If the host is an IP literal, run proper CIDR checks.
+	if ip := net.ParseIP(host); ip != nil {
+		for _, blocked := range blockedCIDRs {
+			if blocked.Contains(ip) {
+				return fmt.Errorf("SIEM_WEBHOOK_URL targets a blocked IP range (%s is in %s)", ip, blocked)
+			}
 		}
 	}
 

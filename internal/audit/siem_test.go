@@ -195,17 +195,37 @@ func TestValidateWebhookURL(t *testing.T) {
 		url     string
 		wantErr bool
 	}{
+		// Valid
 		{"valid https URL", "https://siem.example.com/ingest", false},
+		{"172.32.x allowed - outside private range", "https://172.32.0.1/ingest", false},
+
+		// Scheme
 		{"http rejected", "http://siem.example.com/ingest", true},
+		{"invalid URL rejected", "://bad-url", true},
+
+		// Loopback
 		{"localhost rejected", "https://localhost/ingest", true},
 		{"127.0.0.1 rejected", "https://127.0.0.1/ingest", true},
-		{"link-local 169.254 rejected", "https://169.254.169.254/latest/meta-data/", true},
-		{"private 10.x rejected", "https://10.0.0.1/ingest", true},
-		{"private 192.168.x rejected", "https://192.168.1.1/ingest", true},
-		{"private 172.16.x rejected", "https://172.16.0.1/ingest", true},
-		{"private 172.31.x rejected", "https://172.31.255.255/ingest", true},
-		{"172.32.x allowed (not private)", "https://172.32.0.1/ingest", false},
-		{"invalid URL rejected", "://bad-url", true},
+		{"127.255.255.255 rejected - whole /8 blocked", "https://127.255.255.255/ingest", true},
+
+		// Link-local / cloud metadata
+		{"169.254.169.254 rejected - AWS metadata", "https://169.254.169.254/latest/meta-data/", true},
+		{"169.254.0.1 rejected - link-local range start", "https://169.254.0.1/ingest", true},
+
+		// RFC-1918 private ranges - correct CIDR boundaries, not string prefix
+		{"10.0.0.1 rejected", "https://10.0.0.1/ingest", true},
+		{"10.255.255.255 rejected - end of /8", "https://10.255.255.255/ingest", true},
+		{"192.168.1.1 rejected", "https://192.168.1.1/ingest", true},
+		{"172.16.0.1 rejected - start of Docker /12", "https://172.16.0.1/ingest", true},
+		{"172.31.255.255 rejected - end of Docker /12", "https://172.31.255.255/ingest", true},
+
+		// Pitfall: string-prefix matching would wrongly block/allow these
+		{"172.0.0.1 allowed - outside 172.16/12 (HasPrefix pitfall)", "https://172.0.0.1/ingest", false},
+		{"172.15.255.255 allowed - just below 172.16/12", "https://172.15.255.255/ingest", false},
+
+		// Domain names that look like IPs are NOT blocked (host is not a bare IP)
+		// This documents the known limitation: DNS resolution is not performed at validation time.
+		{"10.io domain allowed - not a bare IP", "https://10.io/ingest", false},
 	}
 
 	for _, tt := range tests {
