@@ -50,14 +50,14 @@ func TestAdminAuthMiddleware_TokenConfigured_RequiresToken(t *testing.T) {
 		{
 			name:           "missing token denied",
 			setupRequest:   func(req *http.Request) {},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "wrong X-Admin-Token denied",
 			setupRequest: func(req *http.Request) {
 				req.Header.Set("X-Admin-Token", "wrong-token")
 			},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "correct X-Admin-Token allowed",
@@ -67,18 +67,20 @@ func TestAdminAuthMiddleware_TokenConfigured_RequiresToken(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name: "correct bearer token allowed",
+			// L3: Bearer token intentionally not supported to avoid semantic
+			// collision with user JWT tokens. Even with correct value, rejected.
+			name: "bearer token not accepted even with correct value",
 			setupRequest: func(req *http.Request) {
 				req.Header.Set("Authorization", "Bearer test-admin-token")
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "wrong bearer token denied",
+			name: "bearer token with wrong value denied",
 			setupRequest: func(req *http.Request) {
 				req.Header.Set("Authorization", "Bearer wrong-token")
 			},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusUnauthorized,
 		},
 	}
 
