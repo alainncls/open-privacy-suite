@@ -622,9 +622,16 @@ describe('MembershipForm', () => {
     it('shows loading indicator while fetching groups', async () => {
       const user = userEvent.setup();
 
+      // Use a deferred promise we control so the groups endpoint never responds
+      // until we explicitly release it. A fixed setTimeout delay is flaky because
+      // the waitFor polling inside selectOption can accumulate enough wall-clock
+      // time to let the fetch complete before we check for the loading indicator.
+      let resolveGroups!: () => void;
+      const groupsPending = new Promise<void>(resolve => { resolveGroups = resolve; });
+
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/groups', async () => {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await groupsPending;
           return HttpResponse.json({ data: [{ group: mockGroup, access: null }], total: 1, limit: 50, offset: 0 });
         })
       );
@@ -634,9 +641,11 @@ describe('MembershipForm', () => {
       // Select organization
       await selectOption(user, 'Select organization', 'Test Organization');
 
-      // Should show loading state
+      // Loading indicator must be visible — groups endpoint is still pending
       expect(screen.getByText('Loading groups...')).toBeInTheDocument();
 
+      // Release the endpoint and wait for loading to finish
+      resolveGroups();
       await waitFor(() => {
         expect(screen.queryByText('Loading groups...')).not.toBeInTheDocument();
       });
