@@ -188,3 +188,32 @@ func TestSIEM_BatchSizeTrigger(t *testing.T) {
 
 	fwd.Stop()
 }
+
+func TestValidateWebhookURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"valid https URL", "https://siem.example.com/ingest", false},
+		{"http rejected", "http://siem.example.com/ingest", true},
+		{"localhost rejected", "https://localhost/ingest", true},
+		{"127.0.0.1 rejected", "https://127.0.0.1/ingest", true},
+		{"link-local 169.254 rejected", "https://169.254.169.254/latest/meta-data/", true},
+		{"private 10.x rejected", "https://10.0.0.1/ingest", true},
+		{"private 192.168.x rejected", "https://192.168.1.1/ingest", true},
+		{"private 172.16.x rejected", "https://172.16.0.1/ingest", true},
+		{"private 172.31.x rejected", "https://172.31.255.255/ingest", true},
+		{"172.32.x allowed (not private)", "https://172.32.0.1/ingest", false},
+		{"invalid URL rejected", "://bad-url", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateWebhookURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateWebhookURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}

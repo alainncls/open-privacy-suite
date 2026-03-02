@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -44,6 +46,41 @@ type SIEMForwarder struct {
 	done  chan struct{}
 }
 
+// ValidateWebhookURL checks that the SIEM webhook URL is safe to use.
+// It rejects non-HTTPS schemes and private/loopback destinations to
+// prevent Server-Side Request Forgery (SSRF).
+func ValidateWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid SIEM webhook URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("SIEM_WEBHOOK_URL must use https, got %q", u.Scheme)
+	}
+
+	host := u.Hostname()
+
+	// Block loopback.
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a loopback address")
+	}
+	// Block link-local (AWS/GCP/Azure instance metadata endpoints live here).
+	if strings.HasPrefix(host, "169.254.") || strings.HasPrefix(host, "fe80:") {
+		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a link-local address")
+	}
+	// Block RFC-1918 private ranges.
+	if strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") {
+		return fmt.Errorf("SIEM_WEBHOOK_URL must not target a private IP range")
+	}
+	for i := 16; i <= 31; i++ {
+		if strings.HasPrefix(host, fmt.Sprintf("172.%d.", i)) {
+			return fmt.Errorf("SIEM_WEBHOOK_URL must not target a private IP range")
+		}
+	}
+
+	return nil
+}
+
 // NewSIEMForwarder creates a new SIEM forwarder. Call Start() to begin flushing.
 func NewSIEMForwarder(cfg SIEMConfig) *SIEMForwarder {
 	if cfg.BatchSize <= 0 {
@@ -57,6 +94,11 @@ func NewSIEMForwarder(cfg SIEMConfig) *SIEMForwarder {
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			// Disallow redirects: a redirect could lead to a private/internal
+			// address even when the original URL was validated (open-redirect SSRF).
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return fmt.Errorf("redirects not permitted for SIEM webhook")
+			},
 		},
 		batch: make([]SIEMEvent, 0, cfg.BatchSize),
 		stop:  make(chan struct{}),

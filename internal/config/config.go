@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/audit"
 )
 
 type Config struct {
@@ -287,6 +289,13 @@ func (c *Config) Validate() error {
 	}
 	if c.AdminAPIToken == "" {
 		return errors.New("ADMIN_API_TOKEN is required in production for admin API authentication")
+	}
+
+	// Validate SIEM webhook URL against SSRF if configured.
+	if c.SIEMWebhookURL != "" {
+		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
+			return err
+		}
 	}
 
 	return nil
