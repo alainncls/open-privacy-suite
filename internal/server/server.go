@@ -878,7 +878,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				return
 			}
 			var decodeErr error
-			compFrom, compTo, compData, compValue, decodeErr = decodeRawTransaction(rawTxHex)
+			compFrom, compTo, compData, compValue, _, decodeErr = decodeRawTransaction(rawTxHex)
 			if decodeErr != nil {
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
 					Error:    "failed to decode raw transaction: " + decodeErr.Error(),

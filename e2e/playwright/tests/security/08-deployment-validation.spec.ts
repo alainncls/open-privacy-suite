@@ -21,6 +21,13 @@ const NON_DEPLOYER_DID = `did:security:non-deployer-${timestamp}`;
 let deployerToken: string;
 let nonDeployerToken: string;
 
+let defaultOrgId: string;
+let deployGroupId: string;
+let noDeployGroupId: string;
+const OUTSIDER_DID = `did:security:outsider-${timestamp}`;
+let outsiderToken: string;
+let outsiderOrgId: string;
+
 async function setupUsers(request: any) {
   // Step 1: Authenticate both users first - this creates them via EnsureUserExists
   deployerToken = await getJWTToken(request, DEPLOYER_DID);
@@ -53,6 +60,7 @@ async function setupUsers(request: any) {
   const orgsData = await orgsResp.json();
   const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
+  if (defaultOrg) defaultOrgId = defaultOrg.id;
 
   if (defaultOrg) {
     // Create group with deploy claim
@@ -63,23 +71,23 @@ async function setupUsers(request: any) {
       }
     });
 
-    let deployGroupId: string | null = null;
+    let localDeployGroupId: string | null = null;
     if (deployGroupResp.ok()) {
       const group = await deployGroupResp.json();
-      deployGroupId = group.id;
+      localDeployGroupId = group.id;
     } else {
       const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
       const groupsData = await groupsResp.json();
       const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-deployers');
-      if (existing) deployGroupId = existing.id;
+      if (existing) localDeployGroupId = existing.id;
     }
 
     // Set group access permissions (deploy claim)
-    if (deployGroupId) {
-      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${deployGroupId}/access`, {
+    if (localDeployGroupId) {
+      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${localDeployGroupId}/access`, {
         data: {
-          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
+          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call', 'eth_getLogs'],
           claims: ['read', 'write', 'deploy']
         }
       });
@@ -93,40 +101,44 @@ async function setupUsers(request: any) {
       }
     });
 
-    let noDeployGroupId: string | null = null;
+    let localNoDeployGroupId: string | null = null;
     if (noDeployGroupResp.ok()) {
       const group = await noDeployGroupResp.json();
-      noDeployGroupId = group.id;
+      localNoDeployGroupId = group.id;
     } else {
       const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
       const groupsData = await groupsResp.json();
       const groups = groupsData.data.map((g: any) => g.group);
       const existing = groups.find((g: any) => g.slug === 'security-no-deploy');
-      if (existing) noDeployGroupId = existing.id;
+      if (existing) localNoDeployGroupId = existing.id;
     }
 
     // Set group access permissions (no deploy claim)
-    if (noDeployGroupId) {
-      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${noDeployGroupId}/access`, {
+    if (localNoDeployGroupId) {
+      await request.put(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups/${localNoDeployGroupId}/access`, {
         data: {
-          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call'],
+          allowed_methods: ['eth_sendTransaction', 'eth_estimateGas', 'eth_call', 'eth_getLogs'],
           claims: ['read', 'write']  // No deploy!
         }
       });
     }
 
+    // Assign to module-level variables
+    if (localDeployGroupId) deployGroupId = localDeployGroupId;
+    if (localNoDeployGroupId) noDeployGroupId = localNoDeployGroupId;
+
     // Add users to groups using internal IDs
-    if (deployGroupId) {
+    if (localDeployGroupId) {
       await request.post(
         `${API_URL}/api/v1/admin/users/${deployerUser.id}/memberships`,
-        { data: { org_id: defaultOrg.id, group_id: deployGroupId } }
+        { data: { org_id: defaultOrg.id, group_id: localDeployGroupId } }
       );
     }
 
-    if (noDeployGroupId) {
+    if (localNoDeployGroupId) {
       await request.post(
         `${API_URL}/api/v1/admin/users/${nonDeployerUser.id}/memberships`,
-        { data: { org_id: defaultOrg.id, group_id: noDeployGroupId } }
+        { data: { org_id: defaultOrg.id, group_id: localNoDeployGroupId } }
       );
     }
   }
@@ -369,5 +381,156 @@ test.describe('Empty Bytecode Handling', () => {
     ]);
 
     console.log(`No data deployment: status=${result.status}`);
+  });
+});
+
+function randomContractAddress(): string {
+  const bytes = Array.from({ length: 20 }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
+  );
+  return '0x' + bytes.join('');
+}
+
+test.describe('Deploy Window and Contract Registration', () => {
+
+  test.beforeAll(async ({ request }) => {
+    await setupUsers(request);
+
+    // Create outsider user authenticated into a separate org
+    outsiderToken = await getJWTToken(request, OUTSIDER_DID);
+
+    const usersResp = await request.get(`${API_URL}/api/v1/admin/users`);
+    const users = (await usersResp.json()).data;
+    const outsiderUser = users.find((u: any) => u.external_id === OUTSIDER_DID);
+    if (!outsiderUser) throw new Error(`Outsider user not created: ${OUTSIDER_DID}`);
+
+    await request.put(`${API_URL}/api/v1/admin/users/${outsiderUser.id}`, {
+      data: { kyc: true }
+    });
+
+    // Create a second org for the outsider
+    const outsiderOrgSlug = `outsider-deploy-${timestamp}`;
+    const orgResp = await request.post(`${API_URL}/api/v1/admin/orgs`, {
+      data: { slug: outsiderOrgSlug, name: 'Outsider Org' }
+    });
+    if (orgResp.ok()) {
+      outsiderOrgId = (await orgResp.json()).id;
+    } else {
+      const orgsResp = await request.get(`${API_URL}/api/v1/admin/orgs`);
+      const existing = (await orgsResp.json()).data.find((o: any) => o.slug === outsiderOrgSlug);
+      if (existing) outsiderOrgId = existing.id;
+    }
+    if (!outsiderOrgId) throw new Error('Failed to create or find outsider org');
+
+    // Create group with deploy claim in outsider org
+    const outsiderGroupSlug = `outsider-deployers-${timestamp}`;
+    const groupResp = await request.post(`${API_URL}/api/v1/admin/orgs/${outsiderOrgId}/groups`, {
+      data: { slug: outsiderGroupSlug, name: 'Outsider Deployers' }
+    });
+    if (!groupResp.ok()) throw new Error(`Failed to create outsider group: ${await groupResp.text()}`);
+    const outsiderGroupId = (await groupResp.json()).id;
+
+    await request.put(`${API_URL}/api/v1/admin/orgs/${outsiderOrgId}/groups/${outsiderGroupId}/access`, {
+      data: {
+        allowed_methods: ['eth_call', 'eth_getLogs', 'eth_sendTransaction'],
+        claims: ['read', 'write', 'deploy']
+      }
+    });
+
+    await request.post(`${API_URL}/api/v1/admin/users/${outsiderUser.id}/memberships`, {
+      data: { group_id: outsiderGroupId }
+    });
+
+    // Refresh token with updated KYC + membership
+    outsiderToken = await getJWTToken(request, OUTSIDER_DID);
+  });
+
+  test('DEPLOY-017: Deploy-window: deploy-claim user can eth_call unregistered contract address', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    const result = await rpcCall(request, deployerToken, 'eth_call', [
+      { to: addr, data: '0x' },
+      'latest'
+    ]);
+
+    // RBAC should pass (deploy claim grants access to unregistered addresses).
+    // The node may return an empty result or error, but the proxy must not return 403.
+    expect(result.status).not.toBe(403);
+  });
+
+  test('DEPLOY-018: Deploy-window: read-only user cannot eth_call unregistered contract address', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    const result = await rpcCall(request, nonDeployerToken, 'eth_call', [
+      { to: addr, data: '0x' },
+      'latest'
+    ]);
+
+    expect(result.status).toBe(403);
+  });
+
+  test('DEPLOY-019: Deploy-window: deploy-claim user can eth_getLogs on unregistered contract address', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    const result = await rpcCall(request, deployerToken, 'eth_getLogs', [
+      { address: addr, fromBlock: '0x0', toBlock: 'latest' }
+    ]);
+
+    // Symmetric with eth_call: deploy claim grants access to unregistered addresses.
+    expect(result.status).not.toBe(403);
+  });
+
+  test('DEPLOY-020: Deploy-window: read-only user cannot eth_getLogs on unregistered contract address', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    const result = await rpcCall(request, nonDeployerToken, 'eth_getLogs', [
+      { address: addr, fromBlock: '0x0', toBlock: 'latest' }
+    ]);
+
+    expect(result.status).toBe(403);
+  });
+
+  test('DEPLOY-021: After registering contract to org and granting access, org member can access it', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    // Confirm read-only user is blocked before registration
+    const before = await rpcCall(request, nonDeployerToken, 'eth_call', [
+      { to: addr, data: '0x' }, 'latest'
+    ]);
+    expect(before.status).toBe(403);
+
+    // Register the contract to the default org
+    const registerResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrgId}/contracts`, {
+      data: { address: addr, name: 'DeployWindowTest' }
+    });
+    expect(registerResp.ok()).toBeTruthy();
+
+    // Grant the no-deploy group access to the contract
+    const grantResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrgId}/contracts/${addr}/grants`, {
+      data: { group_id: noDeployGroupId, claims: ['read', 'write'] }
+    });
+    expect(grantResp.ok()).toBeTruthy();
+
+    // Now the read-only org member should be able to access it
+    const after = await rpcCall(request, nonDeployerToken, 'eth_call', [
+      { to: addr, data: '0x' }, 'latest'
+    ]);
+    expect(after.status).not.toBe(403);
+  });
+
+  test('DEPLOY-022: After registering contract to org, deploy-claim user in a different org is blocked', async ({ request }) => {
+    const addr = randomContractAddress();
+
+    // Register the contract to the default org
+    const registerResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrgId}/contracts`, {
+      data: { address: addr, name: 'CrossOrgTest' }
+    });
+    expect(registerResp.ok()).toBeTruthy();
+
+    // Outsider has deploy claim but belongs to a different org — must be blocked
+    const result = await rpcCall(request, outsiderToken, 'eth_call', [
+      { to: addr, data: '0x' }, 'latest'
+    ]);
+    expect(result.status).toBe(403);
   });
 });

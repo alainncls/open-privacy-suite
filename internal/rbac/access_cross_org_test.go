@@ -277,6 +277,12 @@ func (m *MockCrossOrgStore) GetPreregisteredAddressByAddress(ctx context.Context
 func (m *MockCrossOrgStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
 	return nil
 }
+func (m *MockCrossOrgStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	return nil
+}
+func (m *MockCrossOrgStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	return nil
+}
 func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
 	return false, nil
 }

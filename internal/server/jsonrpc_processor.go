@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	gethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	gethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
 
 	"privacy-proxy/internal/audit"
@@ -293,6 +296,24 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Pre-register plain CREATE deployments to close the cross-org race window.
+	// We do this as late as possible (after rate limiting) to avoid orphaned rows.
+	var plainCreatePreRegAddr string
+	if req.Method == "eth_sendTransaction" {
+		from, to, _, _ := extractTxParams(req.Params)
+		isPlainCreate := from != "" && (to == "" || to == "0x")
+		if isPlainCreate {
+			var preErr error
+			plainCreatePreRegAddr, preErr = p.preRegisterPlainCreate(ctx, result.OrgID, result.UserID, req.Params)
+			if preErr != nil {
+				// Non-fatal: log and continue without pre-registration.
+				// The cross-org window remains open for this tx, but the tx still proceeds.
+				log.Printf("Warning: plain CREATE pre-registration failed: %v", preErr)
+				plainCreatePreRegAddr = ""
+			}
+		}
+	}
+
 	// Forward to node
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
 	if err != nil {
@@ -308,6 +329,32 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Auto-register contract if this was a successful factory deploy
 	if result.FactoryDeployInfo != nil && statusCode == http.StatusOK {
 		p.autoRegisterFactoryDeploy(ctx, result.FactoryDeployInfo, responseBody)
+	}
+
+	// Handle plain CREATE pre-registration tracking/cleanup.
+	if plainCreatePreRegAddr != "" {
+		var rpcResp struct {
+			Result string `json:"result"`
+			Error  *struct{ Message string `json:"message"` } `json:"error"`
+		}
+		nodeAccepted := statusCode == http.StatusOK &&
+			err == nil &&
+			json.Unmarshal(responseBody, &rpcResp) == nil &&
+			rpcResp.Error == nil &&
+			rpcResp.Result != ""
+
+		if nodeAccepted {
+			// Track and start background receipt polling.
+			p.rbacAccessCtrl.TrackPlainCreateDeployment(rpcResp.Result, result.OrgID, result.UserID, plainCreatePreRegAddr)
+			p.pollAndFinalizePlainCreate(rpcResp.Result, plainCreatePreRegAddr, result.OrgID, result.UserID)
+		} else {
+			// Node rejected the tx — delete the pre-registration immediately.
+			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+				context.Background(), plainCreatePreRegAddr); delErr != nil {
+				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
+					plainCreatePreRegAddr, delErr)
+			}
+		}
 	}
 
 	// Log successful access
@@ -575,7 +622,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Decode RLP to get transaction details
-	from, to, data, value, err := decodeRawTransaction(rawTxHex)
+	from, to, data, value, txNonce, err := decodeRawTransaction(rawTxHex)
 	if err != nil {
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -669,15 +716,63 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
+	// Pre-register plain CREATE for raw transactions (nonce is embedded in the signed tx).
+	var rawTxPlainCreateAddr string
+	if isDeployment {
+		fromAddr := gethcommon.HexToAddress(from)
+		contractAddr := gethcrypto.CreateAddress(fromAddr, txNonce)
+		addrStr := strings.ToLower(contractAddr.Hex())
+		note := fmt.Sprintf("plain CREATE pending (raw tx): deployer=%s org=%s", result.UserID, result.OrgID)
+		if preErr := p.rbacAccessCtrl.Store().PreRegisterPlainCreate(ctx, result.OrgID, addrStr, note); preErr != nil {
+			log.Printf("Warning: plain CREATE pre-registration failed for raw tx: %v", preErr)
+		} else {
+			rawTxPlainCreateAddr = addrStr
+		}
+	}
+
 	// Forward the original raw transaction to node
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
 	if err != nil {
+		// Clean up pre-registration on forward failure.
+		if rawTxPlainCreateAddr != "" {
+			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+				context.Background(), rawTxPlainCreateAddr); delErr != nil {
+				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
+					rawTxPlainCreateAddr, delErr)
+			}
+		}
 		p.logAccess(ctx, req, http.StatusBadGateway)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusBadGateway,
 				Message:    fmt.Sprintf("failed to forward request: %v", err),
 			},
+		}
+	}
+
+	// Handle plain CREATE pre-registration tracking/cleanup.
+	if rawTxPlainCreateAddr != "" {
+		var rpcResp struct {
+			Result string `json:"result"`
+			Error  *struct{ Message string `json:"message"` } `json:"error"`
+		}
+		nodeAccepted := statusCode == http.StatusOK &&
+			err == nil &&
+			json.Unmarshal(responseBody, &rpcResp) == nil &&
+			rpcResp.Error == nil &&
+			rpcResp.Result != ""
+
+		if nodeAccepted {
+			// Track and start background receipt polling.
+			p.rbacAccessCtrl.TrackPlainCreateDeployment(rpcResp.Result, result.OrgID, result.UserID, rawTxPlainCreateAddr)
+			p.pollAndFinalizePlainCreate(rpcResp.Result, rawTxPlainCreateAddr, result.OrgID, result.UserID)
+		} else {
+			// Node rejected the tx — delete the pre-registration immediately.
+			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+				context.Background(), rawTxPlainCreateAddr); delErr != nil {
+				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
+					rawTxPlainCreateAddr, delErr)
+			}
 		}
 	}
 
@@ -768,8 +863,8 @@ func extractRawTxHex(params []any) (string, error) {
 }
 
 // decodeRawTransaction decodes an RLP-encoded transaction and extracts its fields.
-// Returns from (recovered from signature), to, data, value as hex strings.
-func decodeRawTransaction(rawTxHex string) (from, to, data, value string, err error) {
+// Returns from (recovered from signature), to, data, value as hex strings, and the nonce.
+func decodeRawTransaction(rawTxHex string) (from, to, data, value string, nonce uint64, err error) {
 	// Remove 0x prefix
 	rawTxHex = strings.TrimPrefix(rawTxHex, "0x")
 	rawTxHex = strings.TrimPrefix(rawTxHex, "0X")
@@ -777,14 +872,16 @@ func decodeRawTransaction(rawTxHex string) (from, to, data, value string, err er
 	// Decode hex to bytes
 	rawTxBytes, err := hex.DecodeString(rawTxHex)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("invalid hex: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("invalid hex: %w", err)
 	}
 
 	// Decode RLP transaction
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(rawTxBytes); err != nil {
-		return "", "", "", "", fmt.Errorf("failed to decode transaction: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("failed to decode transaction: %w", err)
 	}
+
+	nonce = tx.Nonce()
 
 	// Extract 'to' address (nil for contract creation)
 	if tx.To() != nil {
@@ -805,11 +902,11 @@ func decodeRawTransaction(rawTxHex string) (from, to, data, value string, err er
 	signer := types.LatestSignerForChainID(tx.ChainId())
 	fromAddr, err := types.Sender(signer, tx)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to recover sender: %w", err)
+		return "", "", "", "", 0, fmt.Errorf("failed to recover sender: %w", err)
 	}
 	from = fromAddr.Hex()
 
-	return from, to, data, value, nil
+	return from, to, data, value, nonce, nil
 }
 
 // buildTxParams builds transaction params for RBAC checking.
@@ -864,4 +961,181 @@ func extractTxParams(params []any) (from, to, data, value string) {
 	}
 
 	return
+}
+
+// extractNonceFromTxParams reads the "nonce" field from eth_sendTransaction params.
+// Returns (nonce, true) if present and parseable, (0, false) otherwise.
+func extractNonceFromTxParams(params []any) (uint64, bool) {
+	if len(params) == 0 {
+		return 0, false
+	}
+	txObj, ok := params[0].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	nonceVal, exists := txObj["nonce"]
+	if !exists {
+		return 0, false
+	}
+	nonceStr, ok := nonceVal.(string)
+	if !ok {
+		return 0, false
+	}
+	hexStr := strings.TrimPrefix(nonceStr, "0x")
+	n, err := strconv.ParseUint(hexStr, 16, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// getNonceFromNode fetches the pending transaction count (nonce) for an address from the node.
+func (p *JSONRPCProcessor) getNonceFromNode(from string) (uint64, error) {
+	reqBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getTransactionCount",
+		"params":  []any{from, "pending"},
+		"id":      1,
+	})
+	if err != nil {
+		return 0, err
+	}
+	respBody, _, err := p.proxy.Forward(reqBody)
+	if err != nil {
+		return 0, fmt.Errorf("get nonce: %w", err)
+	}
+	var resp struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return 0, fmt.Errorf("parse nonce response: %w", err)
+	}
+	if resp.Error != nil {
+		return 0, fmt.Errorf("nonce RPC error: %s", resp.Error.Message)
+	}
+	hexStr := strings.TrimPrefix(resp.Result, "0x")
+	nonce, err := strconv.ParseUint(hexStr, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse nonce hex %q: %w", resp.Result, err)
+	}
+	return nonce, nil
+}
+
+// preRegisterPlainCreate computes the deterministic CREATE address from (from, nonce)
+// and inserts it into preregistered_addresses for the deployer's org.
+// This closes the cross-org race window before the tx is forwarded.
+// Returns the pre-registered address (lowercase, 0x-prefixed).
+func (p *JSONRPCProcessor) preRegisterPlainCreate(ctx context.Context, orgID, userID string, params []any) (string, error) {
+	from, _, _, _ := extractTxParams(params)
+	if from == "" {
+		return "", fmt.Errorf("plain CREATE: missing 'from' in tx params")
+	}
+
+	// Get nonce: prefer explicit value from params, fall back to node query.
+	nonce, hasNonce := extractNonceFromTxParams(params)
+	if !hasNonce {
+		var err error
+		nonce, err = p.getNonceFromNode(from)
+		if err != nil {
+			return "", fmt.Errorf("plain CREATE nonce: %w", err)
+		}
+	}
+
+	// Compute the deterministic CREATE address: keccak256(rlp([from, nonce]))[12:]
+	contractAddr := gethcrypto.CreateAddress(gethcommon.HexToAddress(from), nonce)
+	addrStr := strings.ToLower(contractAddr.Hex())
+
+	note := fmt.Sprintf("plain CREATE pending: deployer=%s org=%s", userID, orgID)
+	if err := p.rbacAccessCtrl.Store().PreRegisterPlainCreate(ctx, orgID, addrStr, note); err != nil {
+		return "", fmt.Errorf("pre-register plain CREATE: %w", err)
+	}
+
+	return addrStr, nil
+}
+
+// pollAndFinalizePlainCreate polls for the receipt of a plain CREATE deployment
+// and calls NotifyDeploymentMined to finalize or clean up the pre-registration.
+// Runs in a goroutine; gives up after maxAttempts with exponential backoff.
+func (p *JSONRPCProcessor) pollAndFinalizePlainCreate(txHash, preRegisteredAddr, orgID, deployerUserID string) {
+	const maxAttempts = 12
+	const baseDelay = 2 * time.Second
+
+	go func() {
+		ctx := context.Background()
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if attempt > 0 {
+				delay := baseDelay * time.Duration(1<<uint(attempt-1))
+				if delay > 60*time.Second {
+					delay = 60 * time.Second
+				}
+				time.Sleep(delay)
+			}
+
+			contractAddr, err := p.getTransactionReceipt(txHash)
+			if err != nil {
+				// Receipt not available yet — retry.
+				continue
+			}
+
+			// Receipt obtained (contractAddr is "" on revert).
+			if err := p.rbacAccessCtrl.NotifyDeploymentMined(ctx, txHash, contractAddr); err != nil {
+				// Revert or finalization issue — logged inside NotifyDeploymentMined.
+				log.Printf("plain CREATE finalization for %s: %v", txHash, err)
+			}
+			return
+		}
+
+		// Exhausted retries — clean up the pre-registration to avoid orphaned rows.
+		log.Printf("plain CREATE: exhausted receipt retries for tx %s, cleaning up pre-registration %s",
+			txHash, preRegisteredAddr)
+		if err := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+			context.Background(), preRegisteredAddr); err != nil {
+			log.Printf("plain CREATE: failed to clean up pre-registration %s: %v", preRegisteredAddr, err)
+		}
+	}()
+}
+
+// getTransactionReceipt fetches the receipt for a tx and returns the contract address.
+// Returns ("", nil) if the receipt shows a revert.
+// Returns ("", error) if the receipt is not yet available (tx not mined).
+func (p *JSONRPCProcessor) getTransactionReceipt(txHash string) (string, error) {
+	reqBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getTransactionReceipt",
+		"params":  []any{txHash},
+		"id":      1,
+	})
+	if err != nil {
+		return "", err
+	}
+	respBody, _, err := p.proxy.Forward(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("receipt RPC: %w", err)
+	}
+	var resp struct {
+		Result *struct {
+			Status          string `json:"status"`          // "0x1" = success, "0x0" = fail
+			ContractAddress string `json:"contractAddress"` // set for deployments
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", fmt.Errorf("parse receipt: %w", err)
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("receipt RPC error: %s", resp.Error.Message)
+	}
+	if resp.Result == nil {
+		return "", fmt.Errorf("receipt not yet available")
+	}
+	// Status "0x0" = revert; return "" so caller knows to clean up.
+	if resp.Result.Status == "0x0" {
+		return "", nil
+	}
+	return strings.ToLower(resp.Result.ContractAddress), nil
 }

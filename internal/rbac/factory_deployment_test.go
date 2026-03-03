@@ -719,6 +719,14 @@ func (s *mockAccessControllerStore) GetContractsByIDs(ctx context.Context, ids [
 	return result, nil
 }
 
+func (s *mockAccessControllerStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	return nil
+}
+
+func (s *mockAccessControllerStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	return nil
+}
+
 // Add the SimpleCreate3FactoryHash to the trusted list for testing
 func init() {
 	// Add the test factory to the trusted list using the known hash

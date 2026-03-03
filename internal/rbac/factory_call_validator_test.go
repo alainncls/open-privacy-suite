@@ -72,6 +72,14 @@ func (s *factoryCallTestStore) IsContractRegisteredToAnyOrg(ctx context.Context,
 	return s.anyOrgContracts[strings.ToLower(address)], nil
 }
 
+func (s *factoryCallTestStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	return nil
+}
+
+func (s *factoryCallTestStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	return nil
+}
+
 // buildDeployCalldata builds calldata for factory.deploy(bytes32 salt, bytes creationCode)
 // Selector: 0xcdcb760a
 func buildDeployCalldata(salt [32]byte, creationCode []byte) []byte {

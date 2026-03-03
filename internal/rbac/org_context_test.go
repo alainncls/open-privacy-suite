@@ -117,6 +117,8 @@ func (m *MockOrgContextStore) GetPreregisteredAddress(ctx context.Context, id st
 func (m *MockOrgContextStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) { return nil, nil }
 func (m *MockOrgContextStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) { return nil, nil }
 func (m *MockOrgContextStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error { return nil }
+func (m *MockOrgContextStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error { return nil }
+func (m *MockOrgContextStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error { return nil }
 func (m *MockOrgContextStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, limit, offset int) ([]*GroupWithAccess, int, error) { return nil, 0, nil }
 func (m *MockOrgContextStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) { return nil, nil }

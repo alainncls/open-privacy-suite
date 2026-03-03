@@ -184,12 +184,13 @@ func (d *DB) MarkAddressUsed(ctx context.Context, address string) error {
 
 func scanPreregisteredAddress(row *sql.Row) (*rbac.PreregisteredAddress, error) {
 	addr := &rbac.PreregisteredAddress{}
+	var factory sql.NullString
 	var note sql.NullString
 	var constructorABI sql.NullString
 	var usedAt sql.NullTime
 
 	err := row.Scan(
-		&addr.ID, &addr.OrgID, &addr.Address, &addr.Factory,
+		&addr.ID, &addr.OrgID, &addr.Address, &factory,
 		&addr.Salt, &note, &constructorABI, &addr.CreatedAt, &usedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -199,6 +200,9 @@ func scanPreregisteredAddress(row *sql.Row) (*rbac.PreregisteredAddress, error) 
 		return nil, fmt.Errorf("failed to scan preregistered address: %w", err)
 	}
 
+	if factory.Valid {
+		addr.Factory = factory.String
+	}
 	if note.Valid {
 		addr.Note = note.String
 	}
@@ -216,17 +220,21 @@ func scanPreregisteredAddresses(rows *sql.Rows) ([]*rbac.PreregisteredAddress, e
 	var addresses []*rbac.PreregisteredAddress
 	for rows.Next() {
 		addr := &rbac.PreregisteredAddress{}
+		var factory sql.NullString
 		var note sql.NullString
 		var constructorABI sql.NullString
 		var usedAt sql.NullTime
 
 		if err := rows.Scan(
-			&addr.ID, &addr.OrgID, &addr.Address, &addr.Factory,
+			&addr.ID, &addr.OrgID, &addr.Address, &factory,
 			&addr.Salt, &note, &constructorABI, &addr.CreatedAt, &usedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan preregistered address: %w", err)
 		}
 
+		if factory.Valid {
+			addr.Factory = factory.String
+		}
 		if note.Valid {
 			addr.Note = note.String
 		}
@@ -245,6 +253,30 @@ func scanPreregisteredAddresses(rows *sql.Rows) ([]*rbac.PreregisteredAddress, e
 	}
 
 	return addresses, nil
+}
+
+// PreRegisterPlainCreate inserts a temporary preregistered_addresses row for a plain CREATE.
+func (d *DB) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	_, err := d.conn.ExecContext(ctx, `
+		INSERT INTO preregistered_addresses (id, org_id, address, factory, salt, note)
+		VALUES (gen_random_uuid(), $1, $2, NULL, NULL, $3)
+		ON CONFLICT (address) DO NOTHING
+	`, orgID, strings.ToLower(address), note)
+	if err != nil {
+		return fmt.Errorf("failed to pre-register plain CREATE address: %w", err)
+	}
+	return nil
+}
+
+// DeletePreregisteredAddressByAddress removes a preregistered address by address (no org filter).
+func (d *DB) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	_, err := d.conn.ExecContext(ctx, `
+		DELETE FROM preregistered_addresses WHERE LOWER(address) = LOWER($1)
+	`, address)
+	if err != nil {
+		return fmt.Errorf("failed to delete preregistered address: %w", err)
+	}
+	return nil
 }
 
 // nullString converts a string to sql.NullString, treating empty string as NULL.

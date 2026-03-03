@@ -584,7 +584,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Cross-org deploy claim check: for unregistered contracts, permissions are resolved
 		// for one org (typically default), which may not have deploy claims. Check if the user
 		// has deploy/admin claims in ANY of their group memberships across all orgs.
-		if access == nil && !hasExplicitAccess {
+		if access == nil && !hasExplicitAccess && ownerOrgID == "" {
 			hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, user.ID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check cross-org deploy claims: %w", err)
@@ -1824,6 +1824,26 @@ func (c *AccessController) TrackPendingDeployment(
 	c.pendingTracker.Track(txHash, deployment)
 }
 
+// TrackPlainCreateDeployment tracks a plain CREATE deployment for post-mining finalization.
+// The pre-registration (in preregistered_addresses) is cleaned up or finalized when the tx mines.
+func (c *AccessController) TrackPlainCreateDeployment(
+	txHash, orgID, deployerUserID, preRegisteredAddr string,
+) {
+	if txHash == "" || orgID == "" || preRegisteredAddr == "" {
+		return
+	}
+	deployment := &PendingDeployment{
+		TxHash:            txHash,
+		OrgID:             orgID,
+		IsProxy:           false,
+		IsPlainCreate:     true,
+		PreRegisteredAddr: preRegisteredAddr,
+		DeployerUserID:    deployerUserID,
+		SubmittedAt:       time.Now(),
+	}
+	c.pendingTracker.Track(txHash, deployment)
+}
+
 // NotifyDeploymentMined processes a mined deployment transaction.
 // This should be called by the RPC layer after receiving the transaction receipt.
 //
@@ -1843,6 +1863,44 @@ func (c *AccessController) NotifyDeploymentMined(
 	deployment := c.pendingTracker.Get(txHash)
 	if deployment == nil {
 		// Not a tracked deployment - this is fine
+		return nil
+	}
+
+	// Handle plain CREATE pre-registration finalization/cleanup.
+	if deployment.IsPlainCreate && deployment.PreRegisteredAddr != "" {
+		if contractAddress == "" {
+			// Transaction reverted or receipt had no contract address — clean up.
+			if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
+				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
+					deployment.PreRegisteredAddr, err)
+			}
+			return fmt.Errorf("plain CREATE deployment reverted or produced no contract address")
+		}
+		// Transaction succeeded — create a full contract record and remove the pre-registration.
+		now := time.Now()
+		contract := &Contract{
+			ID:      uuid.New().String(),
+			OrgID:   deployment.OrgID,
+			Address: strings.ToLower(contractAddress),
+			Name:    fmt.Sprintf("Contract %s", contractAddress[:10]),
+			Metadata: map[string]any{
+				"auto_registered": true,
+				"via":             "plain_create",
+			},
+		}
+		if deployment.DeployerUserID != "" {
+			contract.DeployedByUserID = &deployment.DeployerUserID
+		}
+		contract.DeployedAt = &now
+		if err := c.store.CreateContract(ctx, contract); err != nil {
+			log.Printf("Warning: failed to create contract record for plain CREATE %s: %v",
+				contractAddress, err)
+			// Still clean up pre-registration even if contract creation failed.
+		}
+		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
+			log.Printf("Warning: failed to delete pre-registration for %s after finalization: %v",
+				deployment.PreRegisteredAddr, err)
+		}
 		return nil
 	}
 
