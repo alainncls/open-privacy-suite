@@ -128,12 +128,15 @@ func TestLocalhostOnlyMiddleware(t *testing.T) {
 			expectedStatus: http.StatusForbidden,
 		},
 		{
-			name: "X-Forwarded-For external IP",
+			// TCP peer is Caddy (Docker IP) — allowed. XFF is intentionally ignored;
+			// the middleware only checks the actual TCP connection source, not the
+			// browser's public IP forwarded by the proxy.
+			name: "X-Forwarded-For external IP (allowed: TCP peer is Docker proxy)",
 			setupRequest: func(req *http.Request) {
 				req.RemoteAddr = "172.17.0.1:12345"
 				req.Header.Set("X-Forwarded-For", "203.0.113.1")
 			},
-			expectedStatus: http.StatusForbidden,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "External IP trying to spoof X-Forwarded-For",
