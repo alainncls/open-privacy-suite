@@ -20,7 +20,7 @@ The RBAC system uses a **group-centric claim model**:
 
 2. **ContractGrants link groups to contracts** - For registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
 
-3. **Unregistered contracts require deploy/admin** - If a contract isn't registered to any organization, only users with `deploy` or `admin` claims can access it. Regular `read`/`write` users must use registered contracts with explicit grants.
+3. **Unregistered contracts require deploy/admin** - If a contract isn't registered to any organization (`ownerOrgID == ""`), only users with `deploy` or `admin` claims in their own org can access it. Regular `read`/`write` users must use registered contracts with explicit grants. A contract registered to a _different_ org is always denied regardless of the user's claims — the deploy-claim fallback does not override cross-org isolation.
 
 4. **Deploy/admin users have broad access in their org** - Users with `deploy` or `admin` claims can access any registered contract in their own org via default claims, without needing explicit `ContractGrant` entries. This means deployers can interact with contracts immediately after deployment and registration.
 
@@ -140,7 +140,7 @@ Claims are capability tokens that grant specific actions. Groups define `claims`
 
 **Simplified Claim Model:**
 - Groups have `claims` that define what capabilities members have
-- For **unregistered contracts**: Only users with `deploy` or `admin` claims can access them (prevents race conditions with freshly deployed contracts)
+- For **unregistered contracts** (no registered owner): Only users with `deploy` or `admin` claims in their own org can access them. The deploy-claim fallback only fires when `ownerOrgID == ""`. For plain CREATE deployments, the proxy pre-registers the address to the deployer's org _before_ forwarding the transaction, so the contract is never truly unregistered from an access-control perspective.
 - For **registered contracts in own org**:
   - `deploy`/`admin` users: allowed via default claims (no ContractGrant needed)
   - `read`/`write`-only users: need a `ContractGrant` linking their group to the contract, and the group must have the required claims in its `GroupAccess.claims`
@@ -328,7 +328,7 @@ Request: eth_sendTransaction to contract owned by Org B
 |--------|-------------|----------|
 | Contract owned by Org A | Org A | Use Org A memberships |
 | Contract owned by Org B | Org B | Use Org B memberships |
-| Unregistered contract (no owner) | User's default org | Deploy/admin only |
+| Unregistered contract (no owner) | User's default org | Deploy/admin only — plain CREATE contracts are pre-registered before the tx is forwarded so this state is transient |
 | Contract owned by Org C (user not member) | - | Request denied |
 | No target (deployment) | User's default org | Use default org memberships |
 

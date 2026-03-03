@@ -63,7 +63,7 @@ Contract deployments require the `deploy` claim:
 
 | Method | Deployment Detection | Validation |
 |--------|---------------------|------------|
-| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim |
+| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim + pre-registers address |
 | `eth_estimateGas` | Missing/empty/null `to` field | Requires `deploy` claim |
 
 **Bytecode validation** is performed on deployments:
@@ -73,6 +73,8 @@ Contract deployments require the `deploy` claim:
 When `ENABLE_RUNTIME_TRACING=true` (default), dynamic calls are **allowed** at deployment because they are validated at runtime via transaction tracing.
 
 **CREATE3 factory deployments** additionally require the `admin` claim.
+
+**Plain CREATE address pre-registration:** For `eth_sendTransaction` deployments, the proxy computes the deterministic CREATE address before forwarding and pre-registers it to the deployer's org. This eliminates the window where a freshly deployed but unregistered contract could be accessed by users in other organizations.
 
 ### Runtime Transaction Validation
 
@@ -109,10 +111,22 @@ When a user accesses a contract:
 
 **Isolation Rules:**
 - Users can only access contracts owned by organizations they belong to
-- Unregistered contracts are only accessible to users with `deploy` or `admin` claims
+- Unregistered contracts (no registered owner at all) are only accessible to users with `deploy` or `admin` claims — the deploy-claim fallback only fires when `ownerOrgID == ""`. A contract registered to another org is always denied regardless of the user's claims.
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
 - Regular `read`/`write` users must use registered contracts with explicit grants (ContractGrant)
 - Contract registered to Org A cannot be accessed by Org B users, even with deploy/admin claims
+
+**Plain CREATE pre-registration:**
+When a user with the `deploy` claim sends `eth_sendTransaction` without a `to` address (plain CREATE deployment), the proxy:
+1. Computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` before forwarding
+2. Pre-registers the address to the deployer's organization immediately — closing the cross-org access window
+3. Forwards the transaction to the node
+4. On successful mining: finalizes the pre-registration as a full `Contract` record (`auto_registered: true`, `via: plain_create`)
+5. On revert or failure: deletes the pre-registration
+
+This ensures that from the moment the transaction is forwarded, the freshly deployed address belongs to the deployer's org and cannot be accessed by users in other orgs.
+
+**Location:** `internal/server/jsonrpc_processor.go`, `internal/rbac/access.go`
 
 **Multi-Organization Users:**
 Users can be members of multiple organizations. The system:
