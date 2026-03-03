@@ -540,26 +540,34 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
-		// Optionally disable access to truly unregistered addresses (addresses that are not
-		// owned by any organization). This keeps deploy/admin default claims for registered
-		// org-owned contracts while hardening public-address access when configured.
+		// Strip default_claims access for truly unregistered addresses (not owned by any org).
+		// Cache the owner lookup so the preregistered-address check below can reuse it.
+		var (
+			ownerOrgID       string
+			ownerOrgIDFetched bool
+		)
 		if access != nil && !hasExplicitAccess {
-			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			var err error
+			ownerOrgID, err = c.store.GetContractOwnerOrgID(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
+			ownerOrgIDFetched = true
 			if ownerOrgID == "" {
 				access = nil
 			}
 		}
 
-		// If no access from explicit registration or default_claims, check if it's a preregistered address
-		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them
-		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables
+		// If no access from explicit registration or default_claims, check if it's a preregistered address.
+		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them.
+		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables.
 		if access == nil {
-			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			if !ownerOrgIDFetched {
+				var err error
+				ownerOrgID, err = c.store.GetContractOwnerOrgID(ctx, addr)
+				if err != nil {
+					return nil, fmt.Errorf("failed to check address ownership: %w", err)
+				}
 			}
 			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
 				// Address is owned (registered or preregistered) by one of user's orgs - grant access.
@@ -1638,7 +1646,18 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 				return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
 			}
 			if ownerOrgID == "" {
-				return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
+				// Truly unregistered: allow only if user has deploy claims, consistent
+				// with the deployment-window access granted in CheckAccess.
+				hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, perms.UserID)
+				if err != nil {
+					return fmt.Errorf("eth_getLogs: failed to check deploy claims: %w", err)
+				}
+				if !hasDeployClaim {
+					return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
+				}
+				// Deploy-claim user in deployment window: grant read access and skip
+				// the claim checks below (which assume a registered contract).
+				continue
 			}
 		}
 
