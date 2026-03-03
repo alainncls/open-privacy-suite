@@ -168,7 +168,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize RBAC access controller
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
-	rbacAccessCtrl.SetAllowUnregisteredAddresses(cfg.AllowUnregisteredAddresses)
 
 	// Configure runtime tracing mode for deployment validation
 	// When enabled, contracts with dynamic calls are allowed at deploy time

@@ -23,7 +23,6 @@ type Config struct {
 	Environment                string        // "production" or "development"
 	BillionsIssuerDID          string        // Billions issuer DID for ProofOfHumanity verification
 	RequireProofOfHumanity     bool          // Whether to require ProofOfHumanity credential (default: true in prod)
-	AllowUnregisteredAddresses bool          // If true, deploy/admin default claims can access unregistered addresses (default: true)
 	AdminAPIToken              string        // Shared token required for admin API access (required in production)
 	ENSResolverURL             string        // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins         string        // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
@@ -79,13 +78,6 @@ func Load() *Config {
 		requirePoHBool = true
 	} else if requirePoH == "false" {
 		requirePoHBool = false
-	}
-
-	// Default AllowUnregisteredAddresses to true (addresses not in RBAC bypass permission checks)
-	allowUnregistered := getEnv("ALLOW_UNREGISTERED_ADDRESSES", "")
-	allowUnregisteredBool := true // Default to true (bypass enabled)
-	if allowUnregistered == "false" {
-		allowUnregisteredBool = false
 	}
 
 	// Default CORS origins: "*" in dev, must be configured in production
@@ -215,7 +207,6 @@ func Load() *Config {
 		Environment:                env,
 		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
 		RequireProofOfHumanity:     requirePoHBool,
-		AllowUnregisteredAddresses: allowUnregisteredBool,
 		AdminAPIToken:              getEnv("ADMIN_API_TOKEN", ""),
 		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:         corsOrigins,

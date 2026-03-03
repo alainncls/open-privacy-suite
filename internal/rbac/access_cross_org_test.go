@@ -823,6 +823,13 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
+		// userHasDeployClaimInAnyOrg checks actual group access records, not cached
+		// permissions, so we need the group to have deploy claims too.
+		store.groupAccess["group-a"] = &GroupAccess{
+			ID:      "access-a",
+			GroupID: "group-a",
+			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		}
 
 		controller := NewAccessController(store, 5*time.Minute)
 
@@ -960,7 +967,7 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 	})
 }
 
-func TestAllowUnregisteredAddressesToggle(t *testing.T) {
+func TestUnregisteredAddressesDenied(t *testing.T) {
 	ctx := context.Background()
 	store := NewMockCrossOrgStore()
 	setupCrossOrgTestScenario(store)
@@ -979,41 +986,8 @@ func TestAllowUnregisteredAddressesToggle(t *testing.T) {
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
 
-	t.Run("allow=true permits unregistered contract access via default claims", func(t *testing.T) {
+	t.Run("denies unregistered contract access via eth_call", func(t *testing.T) {
 		controller := NewAccessController(store, 5*time.Minute)
-		controller.SetAllowUnregisteredAddresses(true)
-
-		callReq := &AccessCheckRequest{
-			UserExternalID: "did:test:user-a",
-			Method:         "eth_call",
-			Params:         []any{map[string]any{"to": publicContract, "data": "0x"}, "latest"},
-			TargetAddress:  publicContract,
-		}
-		callResult, err := controller.CheckAccess(ctx, callReq)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !callResult.Allowed {
-			t.Fatalf("expected eth_call to be allowed, got denied: %s", callResult.Reason)
-		}
-
-		logReq := &AccessCheckRequest{
-			UserExternalID: "did:test:user-a",
-			Method:         "eth_getLogs",
-			Params:         []any{map[string]any{"address": publicContract}},
-		}
-		logResult, err := controller.CheckAccess(ctx, logReq)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !logResult.Allowed {
-			t.Fatalf("expected eth_getLogs to be allowed, got denied: %s", logResult.Reason)
-		}
-	})
-
-	t.Run("allow=false denies unregistered contract access", func(t *testing.T) {
-		controller := NewAccessController(store, 5*time.Minute)
-		controller.SetAllowUnregisteredAddresses(false)
 
 		callReq := &AccessCheckRequest{
 			UserExternalID: "did:test:user-a",
@@ -1028,6 +1002,10 @@ func TestAllowUnregisteredAddressesToggle(t *testing.T) {
 		if callResult.Allowed {
 			t.Fatalf("expected eth_call to be denied for unregistered contract")
 		}
+	})
+
+	t.Run("denies unregistered contract access via eth_getLogs", func(t *testing.T) {
+		controller := NewAccessController(store, 5*time.Minute)
 
 		logReq := &AccessCheckRequest{
 			UserExternalID: "did:test:user-a",
