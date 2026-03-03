@@ -3,7 +3,7 @@ services:
   postgres:
     image: postgres:15-alpine
     ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -22,7 +22,7 @@ services:
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
     ports:
-      - "8545:8545"
+      - "127.0.0.1:8545:8545"
     networks:
       - proxy-network
     # --steps-tracing enables debug_traceCall support for runtime validation
@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile.backend
       target: dev
     ports:
-      - "${BACKEND_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8080}:8080"
     environment:
       - NODE_URL=${NODE_URL:-http://anvil:8545}
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
@@ -51,6 +51,7 @@ services:
       - BASE_URL=${BASE_URL:-http://localhost:8080}
       - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-do-not-use-in-production-1234567890}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-dev-refresh-secret-do-not-use-in-production-0987654321}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
       - MOCK_SIGNATURES=true  # Allow mock signatures for demo recordings (never enable in production)
       - ALLOW_MOCK_LOGIN=true  # Allow mock JWZ tokens for dev/testing (never enable in production)
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
@@ -75,8 +76,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: dev
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -84,6 +86,7 @@ services:
       - VITE_API_TARGET=http://proxy-backend:8080
       - VITE_BACKEND_URL=http://localhost:${BACKEND_HOST_PORT:-8080}
       - VITE_ALLOW_MOCK_LOGIN=true
+      - VITE_ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
     depends_on:
       proxy-backend:
         condition: service_started

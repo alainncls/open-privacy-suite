@@ -469,7 +469,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	adminAuth := s.adminAuthMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
-		// Admin endpoints - localhost only
+		// Admin endpoints - private network + token auth
 		admin := apiV1.Group("/admin")
 		admin.Use(s.localhostOnlyMiddleware(), adminAuth)
 		{
@@ -651,8 +651,9 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
-		// L3 fix: only accept X-Admin-Token. Authorization: Bearer is intentionally NOT
-		// accepted to avoid semantic collision with user JWT tokens.
+		// Only accept X-Admin-Token. Authorization: Bearer is intentionally NOT
+		// accepted — no JWT today carries an admin claim, and accepting arbitrary
+		// Bearer values would create a confusing auth surface.
 		provided := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
 		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing X-Admin-Token"})
@@ -676,25 +677,33 @@ func (s *Server) deprecationMiddleware(oldPath, newPath string) gin.HandlerFunc 
 	}
 }
 
-// localhostOnlyMiddleware restricts access to localhost only
-// Works both when running locally and in Docker (when accessed from host)
-// When accessed from host via localhost:8080, Docker shows client as gateway IP (172.17.0.1)
-// Gin's ClientIP() with trusted proxies will correctly extract the real client IP
+// localhostOnlyMiddleware restricts admin API access to requests arriving over the local
+// network — localhost, Docker bridge networks, LAN, or Tailscale.
 //
 // SECURITY MODEL:
-// - Gin's SetTrustedProxies ensures only requests FROM trusted IPs can set X-Forwarded-For
-// - External attackers (e.g., 203.0.113.1) cannot spoof X-Forwarded-For: 127.0.0.1 because:
-//  1. Their remote IP (203.0.113.1) is not in the trusted proxy list
-//  2. Gin will ignore X-Forwarded-For and use the actual remote IP
-//  3. Middleware will reject the request
+// We check the *direct TCP peer* (c.Request.RemoteAddr), NOT the logical client IP
+// resolved through X-Forwarded-For. This is intentional:
 //
-// - Only localhost (127.0.0.1, ::1), Docker network IPs (172.x.x.x), and Tailscale IPs are allowed
+//   - When Caddy (or any reverse proxy) sits in front of the backend, the TCP peer is
+//     always the proxy container's IP (e.g., 172.18.0.x) — which IS in the allowed range.
+//   - The browser's real IP arrives in X-Forwarded-For, but we deliberately ignore it here.
+//     The goal is to ensure the request physically traversed the private Docker network,
+//     not to verify where the browser is geographically.
+//   - If the backend port is accidentally exposed to the public internet, an attacker's
+//     direct TCP connection will have a public source IP → blocked by this middleware,
+//     even before the token check.
+//
+// Defense in depth: network boundary check (this middleware) + token auth (adminAuth).
 func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Gin's ClientIP() only trusts X-Forwarded-For if remote IP is in trusted proxy list
-		// External attackers cannot spoof because their IP won't be trusted
-		clientIP := c.ClientIP()
-		ip := net.ParseIP(clientIP)
+		// Use the raw TCP peer address, not the proxy-resolved client IP.
+		host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid remote address"})
+			c.Abort()
+			return
+		}
+		ip := net.ParseIP(host)
 		if ip == nil {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid client IP"})
 			c.Abort()

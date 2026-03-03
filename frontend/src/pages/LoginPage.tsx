@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Shield, Smartphone, ExternalLink, Loader2, AlertCircle, CheckCircle2, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,7 +24,9 @@ interface AuthState {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login, isAuthenticated, isLoading } = useAuth();
+  const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
   const [state, setState] = useState<AuthState>({
     step: 'init',
     sessionId: null,
@@ -36,9 +38,9 @@ export function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/link-wallet');
+      navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate, isLoading]);
+  }, [isAuthenticated, navigate, isLoading, from]);
 
   // Start auth request
   const startAuth = useCallback(async () => {
@@ -82,12 +84,12 @@ export function LoginPage() {
       // Step 3: Login
       login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
       setState(prev => ({ ...prev, step: 'success' }));
-      setTimeout(() => navigate('/link-wallet'), 1000);
+      setTimeout(() => navigate(from, { replace: true }), 1000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
     }
-  }, [login, navigate]);
+  }, [login, navigate, from]);
 
   // Auto-start on mount
   useEffect(() => {
@@ -119,7 +121,7 @@ export function LoginPage() {
         if (result && mounted) {
           login(result.access_token, result.refresh_token, result.expires_in);
           setState(prev => ({ ...prev, step: 'success' }));
-          setTimeout(() => navigate('/link-wallet'), 1000);
+          setTimeout(() => navigate(from, { replace: true }), 1000);
           return;
         }
       } catch (err) {

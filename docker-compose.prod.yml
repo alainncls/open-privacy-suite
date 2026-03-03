@@ -1,0 +1,63 @@
+# Production overrides — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this changes vs the base file:
+#   - Backend/frontend use production build targets (no mock auth, compiled frontend)
+#   - Internal services (postgres, anvil) lose their host port bindings
+#   - Caddy is added as the sole public-facing service (TLS via Let's Encrypt)
+#   - Dev-only flags (MOCK_SIGNATURES, ALLOW_MOCK_LOGIN, ENABLE_RUNTIME_TRACING) are set correctly
+
+services:
+  postgres:
+    ports: !reset []   # Internal only — accessed by backend via Docker network
+
+  anvil:
+    ports: !reset []   # Internal only — accessed by backend via Docker network
+
+  proxy-backend:
+    build:
+      target: prod     # Production binary (no mockauth build tag)
+    ports: !reset []   # Accessed by Caddy via Docker network only
+    environment:
+      - ENVIRONMENT=production
+      - MOCK_SIGNATURES=false
+      - ALLOW_MOCK_LOGIN=false
+      - DEMO_AUTO_AUTH_DELAY=
+      - ENABLE_RUNTIME_TRACING=true
+      - ENABLE_TRAVEL_RULE=true
+
+  proxy-frontend:
+    build:
+      target: prod     # Compiled React app served by nginx
+    ports: !reset []   # Accessed by Caddy via Docker network only
+    volumes: !reset [] # No hot-reload mounts in production
+    environment:
+      - VITE_API_TARGET=   # Not used in prod (nginx doesn't proxy; Caddy does)
+      - VITE_BACKEND_URL=  # Not used in prod (all calls are relative /api/...)
+      - VITE_ALLOW_MOCK_LOGIN=false
+
+  # TLS-terminating reverse proxy — the only service that binds public ports
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"          # HTTP (ACME HTTP-01 challenge + redirect to HTTPS)
+      - "443:443"        # HTTPS
+      - "443:443/udp"    # HTTP/3 (QUIC)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data         # Persists Let's Encrypt certs
+      - caddy-config:/config
+    environment:
+      - BASE_URL=${BASE_URL:-https://localhost}
+    depends_on:
+      proxy-backend:
+        condition: service_started
+      proxy-frontend:
+        condition: service_started
+    networks:
+      - proxy-network
+
+volumes:
+  caddy-data:
+  caddy-config:
