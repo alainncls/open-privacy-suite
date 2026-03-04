@@ -749,10 +749,12 @@ func TestExplorerAPI_LocalhostMiddleware(t *testing.T) {
 		expectedStatus int
 	}{
 		{
-			name:           "localhost via X-Forwarded-For",
+			// External TCP peer spoofing localhost via XFF — blocked.
+			// Middleware checks RemoteAddr (TCP peer), not X-Forwarded-For.
+			name:           "localhost via X-Forwarded-For (blocked: external TCP peer)",
 			forwardedFor:   "127.0.0.1",
 			remoteAddr:     "1.2.3.4:12345",
-			expectedStatus: http.StatusBadRequest, // Missing wallet param
+			expectedStatus: http.StatusForbidden,
 		},
 		{
 			name:           "localhost via RemoteAddr",
