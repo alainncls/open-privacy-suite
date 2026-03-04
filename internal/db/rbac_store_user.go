@@ -487,6 +487,25 @@ func (d *DB) DeleteMembership(ctx context.Context, id string) error {
 	return err
 }
 
+// HasAdminClaim checks whether a user (identified by internal ID) has the "admin"
+// claim via any of their group memberships.  It performs a single DB query joining
+// user_memberships → group_access and checking the claims array.
+func (d *DB) HasAdminClaim(ctx context.Context, userID string) (bool, error) {
+	query := `SELECT EXISTS(
+		SELECT 1
+		FROM user_memberships m
+		JOIN group_access ga ON ga.group_id = m.group_id
+		WHERE m.user_id = $1
+		  AND 'admin' = ANY(ga.claims)
+	)`
+
+	var exists bool
+	if err := d.conn.QueryRowContext(ctx, query, userID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to check admin claim: %w", err)
+	}
+	return exists, nil
+}
+
 func (d *DB) DeleteExpiredMemberships(ctx context.Context) (int64, error) {
 	result, err := d.conn.ExecContext(ctx,
 		`DELETE FROM user_memberships WHERE expires_at IS NOT NULL AND expires_at < $1`,
