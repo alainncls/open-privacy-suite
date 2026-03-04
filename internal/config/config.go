@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/audit"
 )
 
 type Config struct {
@@ -21,7 +23,7 @@ type Config struct {
 	Environment                string        // "production" or "development"
 	BillionsIssuerDID          string        // Billions issuer DID for ProofOfHumanity verification
 	RequireProofOfHumanity     bool          // Whether to require ProofOfHumanity credential (default: true in prod)
-	AllowUnregisteredAddresses bool          // If true, addresses not in RBAC bypass permission checks (default: true)
+	AdminAPIToken              string        // Shared token required for admin API access (required in production)
 	ENSResolverURL             string        // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins         string        // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
 	MockSignatures             bool          // If true, accept any signature without verification (dev/demo only, NEVER in production)
@@ -43,6 +45,26 @@ type Config struct {
 	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
 	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
 
+	// Audit configuration
+	AuditLogParams bool // If true, log redacted request parameters in access_logs (default: false)
+
+	// Retention policy configuration (0 = keep forever)
+	RetentionAccessLogs      time.Duration // Retention for access_logs (default: 90 days)
+	RetentionComplianceLogs  time.Duration // Retention for compliance_logs (default: 7 years)
+	RetentionRBACAuditLogs   time.Duration // Retention for rbac_audit_log (default: 1 year)
+	RetentionTravelRecords   time.Duration // Retention for used travel_rule_records (default: 7 years)
+	RetentionCleanupInterval time.Duration // How often retention cleanup runs (default: 1 hour)
+
+	// SIEM webhook configuration
+	SIEMWebhookURL    string        // SIEM webhook endpoint (empty = disabled)
+	SIEMAuthHeader    string        // Authorization header for SIEM webhook
+	SIEMBatchSize     int           // Events per SIEM batch (default: 100)
+	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
+	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
+
+	// Tunnel URL file path — cloudflared writes the public URL here (auto-detected)
+	TunnelURLFile string
+
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 }
@@ -56,13 +78,6 @@ func Load() *Config {
 		requirePoHBool = true
 	} else if requirePoH == "false" {
 		requirePoHBool = false
-	}
-
-	// Default AllowUnregisteredAddresses to true (addresses not in RBAC bypass permission checks)
-	allowUnregistered := getEnv("ALLOW_UNREGISTERED_ADDRESSES", "")
-	allowUnregisteredBool := true // Default to true (bypass enabled)
-	if allowUnregistered == "false" {
-		allowUnregisteredBool = false
 	}
 
 	// Default CORS origins: "*" in dev, must be configured in production
@@ -158,6 +173,27 @@ func Load() *Config {
 		}
 	}
 
+	// Audit configuration
+	auditLogParams := getEnv("AUDIT_LOG_PARAMS", "false") == "true"
+
+	// Retention policy configuration
+	retentionAccessLogs := parseDurationEnv("RETENTION_ACCESS_LOGS", 90*24*time.Hour)       // 90 days
+	retentionComplianceLogs := parseDurationEnv("RETENTION_COMPLIANCE_LOGS", 7*365*24*time.Hour) // ~7 years
+	retentionRBACAuditLogs := parseDurationEnv("RETENTION_RBAC_AUDIT_LOGS", 365*24*time.Hour)    // 1 year
+	retentionTravelRecords := parseDurationEnv("RETENTION_TRAVEL_RECORDS", 7*365*24*time.Hour)   // ~7 years
+	retentionCleanupInterval := parseDurationEnv("RETENTION_CLEANUP_INTERVAL", 1*time.Hour)
+
+	// SIEM webhook configuration
+	siemWebhookURL := getEnv("SIEM_WEBHOOK_URL", "")
+	siemAuthHeader := getEnv("SIEM_AUTH_HEADER", "")
+	siemBatchSize := 100
+	if bsStr := getEnv("SIEM_BATCH_SIZE", ""); bsStr != "" {
+		if n, err := strconv.Atoi(bsStr); err == nil && n > 0 {
+			siemBatchSize = n
+		}
+	}
+	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
+
 	return &Config{
 		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -171,7 +207,7 @@ func Load() *Config {
 		Environment:                env,
 		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
 		RequireProofOfHumanity:     requirePoHBool,
-		AllowUnregisteredAddresses: allowUnregisteredBool,
+		AdminAPIToken:              getEnv("ADMIN_API_TOKEN", ""),
 		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:         corsOrigins,
 		MockSignatures:             mockSigs,
@@ -186,6 +222,18 @@ func Load() *Config {
 		TravelRecordExpiry:         travelRecordExpiry,
 		PriceFetchInterval:         priceFetchInterval,
 		PriceStalenessThreshold:    priceStalenessThreshold,
+		AuditLogParams:             auditLogParams,
+		RetentionAccessLogs:        retentionAccessLogs,
+		RetentionComplianceLogs:    retentionComplianceLogs,
+		RetentionRBACAuditLogs:     retentionRBACAuditLogs,
+		RetentionTravelRecords:     retentionTravelRecords,
+		RetentionCleanupInterval:   retentionCleanupInterval,
+		SIEMWebhookURL:             siemWebhookURL,
+		SIEMAuthHeader:             siemAuthHeader,
+		SIEMBatchSize:              siemBatchSize,
+		SIEMFlushInterval:          siemFlushInterval,
+		SIEMFallbackLogPath:        getEnv("SIEM_FALLBACK_LOG_PATH", ""),
+		TunnelURLFile:              getEnv("TUNNEL_URL_FILE", ""),
 		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
 	}
 }
@@ -230,6 +278,16 @@ func (c *Config) Validate() error {
 	if c.VerifierID == "" {
 		return errors.New("VERIFIER_ID is required in production for authentication")
 	}
+	if c.AdminAPIToken == "" {
+		return errors.New("ADMIN_API_TOKEN is required in production for admin API authentication")
+	}
+
+	// Validate SIEM webhook URL against SSRF if configured.
+	if c.SIEMWebhookURL != "" {
+		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -239,4 +297,22 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseDurationEnv reads an environment variable as a time.Duration.
+// Returns the default value if the variable is empty or unparseable.
+// A value of "0" returns 0 (keep forever for retention settings).
+func parseDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	s := os.Getenv(key)
+	if s == "" {
+		return defaultValue
+	}
+	if s == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultValue
+	}
+	return d
 }

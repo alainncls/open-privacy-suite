@@ -1,21 +1,34 @@
-FROM node:20-alpine
+# ── Dev image (Vite dev server with hot-reload) ───────────────────────────────
+FROM node:20-alpine AS dev
 
-# Install wget for healthcheck
 RUN apk add --no-cache wget
 
 WORKDIR /app
 
-# Copy package files
 COPY package.json package-lock.json* ./
-
-# Install dependencies (skip native build scripts - bufferutil/utf-8-validate are optional)
 RUN npm install --ignore-scripts && npm rebuild esbuild
 
-# Copy source code
 COPY . .
 
-# Expose Vite dev server port
 EXPOSE 5173
-
-# Start dev server
 CMD ["npm", "run", "dev"]
+
+# ── Production build ──────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder-prod
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm install --ignore-scripts && npm rebuild esbuild
+
+COPY . .
+RUN npm run build
+
+# ── Production image (nginx serving compiled static files) ────────────────────
+FROM nginx:alpine AS prod
+
+COPY --from=builder-prod /app/dist /usr/share/nginx/html
+COPY nginx.prod.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

@@ -91,6 +91,7 @@ type ComplianceLog struct {
 	Decision           string       `json:"decision"` // "allowed" or "denied"
 	DenialReason       *string      `json:"denial_reason,omitempty"`
 	TravelRuleRecordID *string      `json:"travel_rule_record_id,omitempty"`
+	CorrelationID      string       `json:"correlation_id,omitempty"`
 	CreatedAt          time.Time    `json:"created_at"`
 }
 

@@ -158,14 +158,14 @@ export default function ContractForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Contract Address
         </label>
         <div className="relative">
@@ -184,7 +184,7 @@ export default function ContractForm({
             <button
               type="button"
               onClick={() => setShowSuggestions(!showSuggestions)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#6B7280] hover:text-[#374151] transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-neutral-500 hover:text-neutral-700 transition-colors"
               title="Select from pre-registered addresses"
             >
               <ChevronDown className={`w-4 h-4 transition-transform ${showSuggestions ? 'rotate-180' : ''}`} />
@@ -194,9 +194,9 @@ export default function ContractForm({
 
         {/* Pre-registered addresses dropdown */}
         {showSuggestions && availablePreregistered.length > 0 && (
-          <div className="mt-1 border border-[#E2E8F0] rounded-lg bg-white shadow-lg max-h-48 overflow-y-auto">
-            <div className="px-3 py-2 bg-[#F8FAFC] border-b border-[#E2E8F0]">
-              <p className="text-xs font-medium text-[#6B7280] flex items-center gap-1">
+          <div className="mt-1 border border-neutral-200 rounded-lg bg-white shadow-lg max-h-48 overflow-y-auto">
+            <div className="px-3 py-2 bg-neutral-100 border-b border-neutral-200">
+              <p className="text-xs font-medium text-neutral-500 flex items-center gap-1">
                 <MapPin className="w-3 h-3" />
                 Pre-registered Addresses ({availablePreregistered.length} available)
               </p>
@@ -206,13 +206,13 @@ export default function ContractForm({
                 key={prereg.id}
                 type="button"
                 onClick={() => handleSelectPreregistered(prereg)}
-                className="w-full px-3 py-2 text-left hover:bg-[#F1F5F9] transition-colors border-b border-[#E2E8F0] last:border-b-0"
+                className="w-full px-3 py-2 text-left hover:bg-neutral-100 transition-colors border-b border-neutral-200 last:border-b-0"
               >
-                <div className="font-mono text-sm text-[#374151] truncate">
+                <div className="font-mono text-sm text-neutral-700 truncate">
                   {prereg.address}
                 </div>
                 {prereg.note && (
-                  <div className="text-xs text-[#6B7280] truncate mt-0.5">
+                  <div className="text-xs text-neutral-500 truncate mt-0.5">
                     {prereg.note}
                   </div>
                 )}
@@ -221,18 +221,18 @@ export default function ContractForm({
           </div>
         )}
 
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           The contract's Ethereum address
           {!isEditing && availablePreregistered.length > 0 && (
-            <span className="text-[#8950FA]"> • {availablePreregistered.length} pre-registered addresses available</span>
+            <span className="text-primary"> • {availablePreregistered.length} pre-registered addresses available</span>
           )}
         </p>
       </div>
 
       {/* Show hint about pre-registered addresses */}
       {!isEditing && !loadingPreregistered && availablePreregistered.length > 0 && !address && (
-        <div className="p-3 rounded-lg bg-[#F0F9FF] border border-[#BAE6FD]">
-          <p className="text-sm text-[#0369A1]">
+        <div className="p-3 rounded-lg bg-sky-50 border border-sky-200">
+          <p className="text-sm text-sky-700">
             <strong>Tip:</strong> You have {availablePreregistered.length} pre-registered CREATE3
             {availablePreregistered.length === 1 ? ' address' : ' addresses'} available.
             Click the dropdown arrow to select one.
@@ -241,7 +241,7 @@ export default function ContractForm({
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Name (optional)
         </label>
         <Input
@@ -250,7 +250,7 @@ export default function ContractForm({
           onChange={e => setName(e.target.value)}
           placeholder="e.g., MyToken, Governance Contract"
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           A human-readable name for this contract
         </p>
       </div>
@@ -258,14 +258,14 @@ export default function ContractForm({
       {/* ABI Upload - only show when editing */}
       {isEditing && (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-[#374151]">
+          <label className="block text-sm font-medium text-neutral-700">
             Contract ABI
           </label>
           <div className="flex items-center gap-3">
             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
               hasAbi
-                ? 'bg-[#DCFCE7] border-[#86EFAC] text-[#166534]'
-                : 'bg-[#F1F5F9] border-[#E2E8F0] text-[#6B7280]'
+                ? 'bg-success-light border-green-300 text-success-dark'
+                : 'bg-neutral-100 border-neutral-200 text-neutral-500'
             }`}>
               {hasAbi ? (
                 <>
@@ -279,7 +279,7 @@ export default function ContractForm({
                 </>
               )}
             </div>
-            <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] cursor-pointer transition-colors">
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100 cursor-pointer transition-colors">
               <input
                 type="file"
                 accept=".json,application/json"
@@ -289,31 +289,31 @@ export default function ContractForm({
               />
               {uploadingAbi ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin text-[#6B7280]" />
-                  <span className="text-sm text-[#6B7280]">Uploading...</span>
+                  <Loader2 className="w-4 h-4 animate-spin text-neutral-500" />
+                  <span className="text-sm text-neutral-500">Uploading...</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-4 h-4 text-[#6B7280]" />
-                  <span className="text-sm text-[#6B7280]">{hasAbi ? 'Replace' : 'Upload'} ABI</span>
+                  <Upload className="w-4 h-4 text-neutral-500" />
+                  <span className="text-sm text-neutral-500">{hasAbi ? 'Replace' : 'Upload'} ABI</span>
                 </>
               )}
             </label>
           </div>
           {abiSuccess && (
-            <p className="text-xs text-[#166534] flex items-center gap-1">
+            <p className="text-xs text-success-dark flex items-center gap-1">
               <Check className="w-3 h-3" />
               {abiSuccess}
             </p>
           )}
-          <p className="text-xs text-[#94A3B8]">
+          <p className="text-xs text-neutral-400">
             Upload the contract ABI JSON to enable function-level access control
           </p>
         </div>
       )}
 
-      <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
-        <p className="text-sm text-[#6B3DD4]">
+      <div className="p-3 rounded-lg bg-primary-50 border border-primary-200">
+        <p className="text-sm text-primary-600">
           <strong>Tip:</strong> After registering the contract, add grants to specify
           which groups can access it and with what claims (read, write, admin, upgrade).
         </p>

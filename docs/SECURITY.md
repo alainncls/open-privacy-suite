@@ -63,7 +63,7 @@ Contract deployments require the `deploy` claim:
 
 | Method | Deployment Detection | Validation |
 |--------|---------------------|------------|
-| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim |
+| `eth_sendTransaction` | Missing/empty/null `to` field | Requires `deploy` claim + pre-registers address |
 | `eth_estimateGas` | Missing/empty/null `to` field | Requires `deploy` claim |
 
 **Bytecode validation** is performed on deployments:
@@ -73,6 +73,8 @@ Contract deployments require the `deploy` claim:
 When `ENABLE_RUNTIME_TRACING=true` (default), dynamic calls are **allowed** at deployment because they are validated at runtime via transaction tracing.
 
 **CREATE3 factory deployments** additionally require the `admin` claim.
+
+**Plain CREATE address pre-registration:** For `eth_sendTransaction` deployments, the proxy computes the deterministic CREATE address before forwarding and pre-registers it to the deployer's org. This eliminates the window where a freshly deployed but unregistered contract could be accessed by users in other organizations.
 
 ### Runtime Transaction Validation
 
@@ -109,10 +111,22 @@ When a user accesses a contract:
 
 **Isolation Rules:**
 - Users can only access contracts owned by organizations they belong to
-- Unregistered contracts are only accessible to users with `deploy` or `admin` claims
+- Unregistered contracts (no registered owner at all) are only accessible to users with `deploy` or `admin` claims — the deploy-claim fallback only fires when `ownerOrgID == ""`. A contract registered to another org is always denied regardless of the user's claims.
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
 - Regular `read`/`write` users must use registered contracts with explicit grants (ContractGrant)
 - Contract registered to Org A cannot be accessed by Org B users, even with deploy/admin claims
+
+**Plain CREATE pre-registration:**
+When a user with the `deploy` claim sends `eth_sendTransaction` without a `to` address (plain CREATE deployment), the proxy:
+1. Computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` before forwarding
+2. Pre-registers the address to the deployer's organization immediately — closing the cross-org access window
+3. Forwards the transaction to the node
+4. On successful mining: finalizes the pre-registration as a full `Contract` record (`auto_registered: true`, `via: plain_create`)
+5. On revert or failure: deletes the pre-registration
+
+This ensures that from the moment the transaction is forwarded, the freshly deployed address belongs to the deployer's org and cannot be accessed by users in other orgs.
+
+**Location:** `internal/server/jsonrpc_processor.go`, `internal/rbac/access.go`
 
 **Multi-Organization Users:**
 Users can be members of multiple organizations. The system:
@@ -197,7 +211,14 @@ Request bodies are limited to 1MB to prevent memory exhaustion.
 
 ### Admin API Protection
 
-All `/api/*` endpoints restricted to localhost only. In Docker, this includes container network (`172.16.0.0/12`).
+Admin endpoints (`/api/v1/admin/*`, `/api/admin/*`) are protected by two independent layers:
+
+1. **Localhost-only middleware** — requests must originate from `127.0.0.1` or Docker bridge network (`172.16.0.0/12`). This guards against external callers.
+2. **`ADMIN_API_TOKEN`** — when configured, every admin request must supply the token via `X-Admin-Token` header. This guards against SSRF, misconfigured reverse proxies, and other processes sharing the localhost network. Required in production (`config.Validate()` enforces this).
+
+> **Why both layers?** The localhost check is the first gate but can be bypassed by a misconfigured reverse proxy (which forwards external traffic to the backend on localhost), an SSRF vulnerability, or another container on the same Docker network. The token is the backstop when the network gate fails.
+
+**Production requirement:** set `ADMIN_API_TOKEN` to a strong random secret (32+ chars). The `X-Admin-Token` header is the only accepted mechanism — `Authorization: Bearer` is intentionally NOT accepted here to avoid confusion with user JWT tokens.
 
 ### Trusted Proxies
 
@@ -217,12 +238,15 @@ Configured via Gin middleware. Adjust in `internal/server/server.go` for product
 - [ ] Set `ENVIRONMENT=production`
 - [ ] Configure `VERIFIER_ID` with your Privado DID
 - [ ] Set `BASE_URL` to public HTTPS URL
+- [ ] Set `ADMIN_API_TOKEN` to a strong random secret (32+ chars)
 - [ ] Enable `REQUIRE_PROOF_OF_HUMANITY` if using Billions
 - [ ] Configure PostgreSQL with SSL (`sslmode=require`)
 - [ ] Place behind reverse proxy with TLS termination
 - [ ] Restrict admin API access at network level
 - [ ] Set up log aggregation for audit trail
 - [ ] Configure rate limits appropriate for your use case
+- [ ] If using `SIEM_WEBHOOK_URL`: ensure the endpoint is covered by a data processing agreement — audit events contain user DIDs and IP addresses (PII under GDPR)
+- [ ] If using `AUDIT_LOG_PARAMS=true`: review which RPC methods your users call — params for methods not explicitly handled by `RedactParams` are logged verbatim
 
 ---
 

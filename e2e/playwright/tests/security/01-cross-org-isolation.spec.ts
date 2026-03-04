@@ -9,6 +9,7 @@
 
 import { test, expect } from '@playwright/test';
 import { getJWTToken } from '../../helpers/auth.js';
+import { randomAddress } from '../../helpers/address.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
@@ -32,6 +33,32 @@ async function rpcCall(request: any, token: string, method: string, params: any[
   };
 }
 
+async function waitForContractAccess(
+  request: any,
+  token: string,
+  address: string,
+  attempts = 12,
+  delayMs = 100
+) {
+  let lastResult: { status: number; body: any } = { status: 0, body: null };
+
+  for (let i = 0; i < attempts; i++) {
+    const result = await rpcCall(request, token, 'eth_call', [
+      { to: address, data: '0x' },
+      'latest'
+    ]);
+    lastResult = result;
+
+    if (result.status !== 403) {
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return lastResult;
+}
+
 test.describe('Cross-Organization Isolation', () => {
   let orgAId: string;
   let orgBId: string;
@@ -49,7 +76,7 @@ test.describe('Cross-Organization Isolation', () => {
     testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     // Create Organization A - unique per test run
-    const orgAResp = await request.post(`${API_URL}/api/v1/orgs`, {
+    const orgAResp = await request.post(`${API_URL}/api/v1/admin/orgs`, {
       data: { slug: `security-org-a-${testRunId}`, name: 'Security Test Org A' }
     });
     if (orgAResp.ok()) {
@@ -60,7 +87,7 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Create Organization B - unique per test run
-    const orgBResp = await request.post(`${API_URL}/api/v1/orgs`, {
+    const orgBResp = await request.post(`${API_URL}/api/v1/admin/orgs`, {
       data: { slug: `security-org-b-${testRunId}`, name: 'Security Test Org B' }
     });
     if (orgBResp.ok()) {
@@ -74,7 +101,7 @@ test.describe('Cross-Organization Isolation', () => {
     expect(orgBId).toBeDefined();
 
     // Create group A
-    const groupAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/groups`, {
+    const groupAResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgAId}/groups`, {
       data: {
         slug: 'security-group-a',
         name: 'Security Group A'
@@ -88,7 +115,7 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Set group A access permissions via separate endpoint
-    await request.put(`${API_URL}/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
+    await request.put(`${API_URL}/api/v1/admin/orgs/${orgAId}/groups/${groupAId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
         claims: ['deploy'] // deploy needed for unregistered contract access
@@ -96,7 +123,7 @@ test.describe('Cross-Organization Isolation', () => {
     });
 
     // Create group B
-    const groupBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/groups`, {
+    const groupBResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgBId}/groups`, {
       data: {
         slug: 'security-group-b',
         name: 'Security Group B'
@@ -110,28 +137,26 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Set group B access permissions via separate endpoint
-    await request.put(`${API_URL}/api/v1/orgs/${orgBId}/groups/${groupBId}/access`, {
+    await request.put(`${API_URL}/api/v1/admin/orgs/${orgBId}/groups/${groupBId}/access`, {
       data: {
         allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getLogs', 'eth_getCode', 'eth_getStorageAt', 'eth_sendTransaction'],
         claims: ['deploy'] // deploy needed for unregistered contract access
       }
     });
 
-    // Create contracts for each org (unique addresses per test run)
-    // Use the timestamp's hex representation as part of the address
-    // Ethereum addresses are 40 hex chars (20 bytes), so we need: 2 prefix + 8 timestamp + 30 filler = 40
-    const hexTs = Date.now().toString(16).slice(-8);
-    contractA = '0xaa' + hexTs + 'a'.repeat(30); // Unique contract A (40 hex chars)
-    contractB = '0xbb' + hexTs + 'b'.repeat(30); // Unique contract B (40 hex chars)
+    // Create contracts for each org using cryptographically-random addresses
+    // to avoid cross-worker collisions under parallel test execution.
+    contractA = randomAddress('aa');
+    contractB = randomAddress('bb');
 
-    const contractAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/contracts`, {
+    const contractAResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgAId}/contracts`, {
       data: { address: contractA, name: 'Contract A' }
     });
     if (!contractAResp.ok()) {
       throw new Error(`Failed to create contract A: ${await contractAResp.text()}`);
     }
 
-    const contractBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/contracts`, {
+    const contractBResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgBId}/contracts`, {
       data: { address: contractB, name: 'Contract B' }
     });
     if (!contractBResp.ok()) {
@@ -139,7 +164,7 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Grant group A access to contract A (explicit grants required for registered contracts)
-    const grantAResp = await request.post(`${API_URL}/api/v1/orgs/${orgAId}/contracts/${contractA}/grants`, {
+    const grantAResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgAId}/contracts/${contractA}/grants`, {
       data: { group_id: groupAId }
     });
     if (!grantAResp.ok()) {
@@ -147,7 +172,7 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Grant group B access to contract B
-    const grantBResp = await request.post(`${API_URL}/api/v1/orgs/${orgBId}/contracts/${contractB}/grants`, {
+    const grantBResp = await request.post(`${API_URL}/api/v1/admin/orgs/${orgBId}/contracts/${contractB}/grants`, {
       data: { group_id: groupBId }
     });
     if (!grantBResp.ok()) {
@@ -164,7 +189,7 @@ test.describe('Cross-Organization Isolation', () => {
     userBToken = await getJWTToken(request, userBDID);
 
     // Step 2: Find users by external ID to get their internal IDs
-    const usersResp = await request.get(`${API_URL}/api/v1/users`);
+    const usersResp = await request.get(`${API_URL}/api/v1/admin/users`);
     const usersData = await usersResp.json();
     const users = usersData.data;
     const userA = users.find((u: any) => u.external_id === userADID);
@@ -178,16 +203,16 @@ test.describe('Cross-Organization Isolation', () => {
     }
 
     // Step 3: Update KYC status using internal IDs
-    await request.put(`${API_URL}/api/v1/users/${userA.id}`, {
+    await request.put(`${API_URL}/api/v1/admin/users/${userA.id}`, {
       data: { kyc: true }
     });
-    await request.put(`${API_URL}/api/v1/users/${userB.id}`, {
+    await request.put(`${API_URL}/api/v1/admin/users/${userB.id}`, {
       data: { kyc: true }
     });
 
     // Step 4: Add users to their respective groups using internal IDs
     if (groupAId) {
-      const memAResp = await request.post(`${API_URL}/api/v1/users/${userA.id}/memberships`, {
+      const memAResp = await request.post(`${API_URL}/api/v1/admin/users/${userA.id}/memberships`, {
         data: { org_id: orgAId, group_id: groupAId }
       });
       if (!memAResp.ok()) {
@@ -195,7 +220,7 @@ test.describe('Cross-Organization Isolation', () => {
       }
     }
     if (groupBId) {
-      const memBResp = await request.post(`${API_URL}/api/v1/users/${userB.id}/memberships`, {
+      const memBResp = await request.post(`${API_URL}/api/v1/admin/users/${userB.id}/memberships`, {
         data: { org_id: orgBId, group_id: groupBId }
       });
       if (!memBResp.ok()) {
@@ -206,6 +231,13 @@ test.describe('Cross-Organization Isolation', () => {
     // Step 5: Get new JWT tokens with updated KYC status
     userAToken = await getJWTToken(request, userADID);
     userBToken = await getJWTToken(request, userBDID);
+
+    // Warm RBAC/cache state so early test requests don't fail with transient 403s.
+    const userAAccess = await waitForContractAccess(request, userAToken, contractA);
+    expect(userAAccess.status, `User A setup did not propagate for ${contractA}`).not.toBe(403);
+
+    const userBAccess = await waitForContractAccess(request, userBToken, contractB);
+    expect(userBAccess.status, `User B setup did not propagate for ${contractB}`).not.toBe(403);
   });
 
   test('SECURITY-001: User A cannot access Contract B (cross-org isolation)', async ({ request }) => {
@@ -233,11 +265,9 @@ test.describe('Cross-Organization Isolation', () => {
   });
 
   test('SECURITY-003: User A CAN access their own Contract A', async ({ request }) => {
-    // User A reads Contract A (their own org)
-    const result = await rpcCall(request, userAToken, 'eth_call', [
-      { to: contractA, data: '0x' },
-      'latest'
-    ]);
+    // User A reads Contract A (their own org).
+    // Retry briefly to avoid false negatives from short-lived cache propagation delay.
+    const result = await waitForContractAccess(request, userAToken, contractA);
 
     // May fail due to contract not existing on-chain, but should NOT be 403 forbidden
     // 502 (node error) or 200 are acceptable
@@ -278,10 +308,8 @@ test.describe('Cross-Organization Isolation', () => {
   });
 
   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
-    // Create an address that's not registered to any org
-    // Use a unique address unlikely to be registered (40 hex chars)
-    const hexTs = Date.now().toString(16).slice(-8);
-    const publicContract = '0xee' + hexTs + 'e'.repeat(30);
+    // Create an address that's not registered to any org.
+    const publicContract = randomAddress('ee');
 
     // User A should be able to access via claims
     const result = await rpcCall(request, userAToken, 'eth_call', [

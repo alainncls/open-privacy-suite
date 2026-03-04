@@ -76,9 +76,9 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('eth_call')).toBeInTheDocument();
       });
 
-      // Check that selected methods have the checked indicator (bg-[#8950FA])
+      // Check that selected methods have the checked indicator (bg-primary)
       const ethCallLabel = screen.getByText('eth_call').closest('label');
-      expect(ethCallLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
+      expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
     });
 
     it('shows existing claims', async () => {
@@ -165,7 +165,7 @@ describe('GroupAccessForm', () => {
       // After clicking, it should be toggled (check for visual indicator)
       await waitFor(() => {
         const updatedLabel = screen.getByText('eth_estimateGas').closest('label');
-        const checkbox = updatedLabel?.querySelector('.bg-\\[\\#8950FA\\]');
+        const checkbox = updatedLabel?.querySelector('.bg-primary');
         // State should have changed (either now checked or unchecked)
         expect(updatedLabel).toBeInTheDocument();
       });
@@ -187,7 +187,7 @@ describe('GroupAccessForm', () => {
       // After clicking, all read methods should be selected
       await waitFor(() => {
         const ethCallLabel = screen.getByText('eth_call').closest('label');
-        expect(ethCallLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
+        expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
       });
     });
   });
@@ -234,12 +234,12 @@ describe('GroupAccessForm', () => {
       });
 
       // Check that read and write labels have the checked indicator
-      // The component uses a custom checkbox with bg-[#8950FA] when checked
+      // The component uses a custom checkbox with bg-primary when checked
       const readLabel = screen.getByText('Read').closest('label');
       const writeLabel = screen.getByText('Write').closest('label');
 
-      expect(readLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
-      expect(writeLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
+      expect(readLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+      expect(writeLabel?.querySelector('.bg-primary')).toBeInTheDocument();
     });
 
     it('can toggle claims', async () => {
@@ -261,7 +261,7 @@ describe('GroupAccessForm', () => {
       // We can verify by checking if the UI updated (visual indicator changed)
       await waitFor(() => {
         const updatedWriteLabel = screen.getByText('Write').closest('label');
-        expect(updatedWriteLabel?.querySelector('.bg-\\[\\#8950FA\\]')).toBeInTheDocument();
+        expect(updatedWriteLabel?.querySelector('.bg-primary')).toBeInTheDocument();
       });
     });
   });

@@ -7,9 +7,9 @@ const cardVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-white border border-[#E2E8F0] shadow-card",
-        elevated: "bg-white border border-[#E2E8F0] shadow-elevated hover:shadow-lg",
-        feature: "bg-[#F5F3FF] border-2 border-[#C4A8FD] rounded-2xl",
+        default: "bg-white border border-neutral-200 shadow-card",
+        elevated: "bg-white border border-neutral-200 shadow-elevated hover:shadow-lg",
+        feature: "bg-primary-50 border-2 border-primary-200 rounded-2xl",
       },
     },
     defaultVariants: {
@@ -52,7 +52,7 @@ const CardTitle = React.forwardRef<
   <h3
     ref={ref}
     className={cn(
-      "text-xl font-semibold leading-none tracking-tight text-[#0F0F0F]",
+      "text-xl font-semibold leading-none tracking-tight text-neutral-900",
       className
     )}
     {...props}
@@ -66,7 +66,7 @@ const CardDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <p
     ref={ref}
-    className={cn("text-sm text-[#6B7280]", className)}
+    className={cn("text-sm text-neutral-500", className)}
     {...props}
   />
 ))

@@ -23,7 +23,7 @@ function parseJWT(token: string): { sub?: string; exp?: number } | null {
 
 function getClaimColor(claim: string): string {
   switch (claim) {
-    case 'admin': return 'bg-red-100 text-[#991B1B] border-red-300';
+    case 'admin': return 'bg-red-100 text-error-dark border-red-300';
     case 'deployer': return 'bg-purple-100 text-purple-700 border-purple-300';
     case 'upgrade': return 'bg-orange-100 text-orange-700 border-orange-300';
     case 'writer': return 'bg-blue-100 text-blue-700 border-blue-300';
@@ -106,7 +106,7 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-[#F5F3FF] border border-[#E9E0FF] text-sm text-[#6B7280]">
+      <div className="flex items-center gap-2 p-3 rounded-lg bg-primary-50 border border-primary-50 text-sm text-neutral-500">
         <Loader2 className="w-4 h-4 animate-spin" />
         Looking up user...
       </div>
@@ -115,7 +115,7 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
 
   if (error) {
     return (
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-[#FEF9C3] border border-[#FDE047] text-sm text-[#854D0E]">
+      <div className="flex items-center gap-2 p-3 rounded-lg bg-warning-light border border-warning/40 text-sm text-warning-dark">
         <AlertTriangle className="w-4 h-4" />
         {error}
       </div>
@@ -135,11 +135,11 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
   }
 
   return (
-    <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#E9E0FF] space-y-3 animate-fade-in" data-testid="user-context-panel">
+    <div className="p-3 rounded-lg bg-primary-50 border border-primary-50 space-y-3 animate-fade-in" data-testid="user-context-panel">
       {/* Header */}
       <div className="flex items-center gap-2">
         <User className="w-4 h-4 text-purple-600" />
-        <span className="text-sm font-mono text-[#374151] truncate" title={user.external_id}>
+        <span className="text-sm font-mono text-neutral-700 truncate" title={user.external_id}>
           {user.external_id.length > 40
             ? user.external_id.slice(0, 20) + '...' + user.external_id.slice(-12)
             : user.external_id}
@@ -165,10 +165,10 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
       {/* Groups by org */}
       {Object.keys(membershipsByOrg).length > 0 && (
         <div>
-          <div className="text-xs font-medium text-[#6B7280] mb-1.5">Groups</div>
+          <div className="text-xs font-medium text-neutral-500 mb-1.5">Groups</div>
           {Object.entries(membershipsByOrg).map(([orgId, orgMemberships]) => (
             <div key={orgId} className="mb-2">
-              <div className="text-xs text-[#94A3B8] mb-1">{orgNames[orgId] || 'Unknown Org'}</div>
+              <div className="text-xs text-neutral-400 mb-1">{orgNames[orgId] || 'Unknown Org'}</div>
               <div className="space-y-1">
                 {orgMemberships.map((m) => {
                   // Find group access for this group
@@ -178,8 +178,8 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
 
                   return (
                     <div key={m.membership.id} className="flex items-center gap-2 text-sm">
-                      <span className="text-[#374151]">{m.group.name}</span>
-                      <span className="text-[#94A3B8]">&mdash;</span>
+                      <span className="text-neutral-700">{m.group.name}</span>
+                      <span className="text-neutral-400">&mdash;</span>
                       {claims.length > 0 ? (
                         <div className="flex gap-1">
                           {claims.map((claim) => (
@@ -193,7 +193,7 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
                           ))}
                         </div>
                       ) : (
-                        <span className="text-xs text-[#94A3B8]">No claims</span>
+                        <span className="text-xs text-neutral-400">No claims</span>
                       )}
                     </div>
                   );
@@ -207,10 +207,10 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
       {/* ETH Addresses */}
       {linkedAddresses.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-[#6B7280] mb-1">ETH Addresses</div>
+          <div className="text-xs font-medium text-neutral-500 mb-1">ETH Addresses</div>
           <div className="flex flex-wrap gap-1.5">
             {linkedAddresses.map((addr) => (
-              <span key={addr.address} className="text-xs font-mono text-[#374151] bg-white/60 px-1.5 py-0.5 rounded border border-[#E9E0FF]">
+              <span key={addr.address} className="text-xs font-mono text-neutral-700 bg-white/60 px-1.5 py-0.5 rounded border border-primary-50">
                 {addr.address.slice(0, 6)}...{addr.address.slice(-4)}
               </span>
             ))}

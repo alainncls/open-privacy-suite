@@ -63,7 +63,7 @@ export function DisclosureFilters({
       {/* Main filter bar */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
           <Input
             placeholder="Filter by requester DID..."
             value={filter.requester_did || ''}
@@ -76,12 +76,12 @@ export function DisclosureFilters({
           variant="outline"
           size="sm"
           onClick={() => setIsExpanded(!isExpanded)}
-          className={isExpanded ? 'bg-[#F1F5F9]' : ''}
+          className={isExpanded ? 'bg-neutral-100' : ''}
         >
           <Filter className="w-4 h-4 mr-2" />
           Filters
           {hasActiveFilters && (
-            <span className="ml-2 w-2 h-2 rounded-full bg-[#8950FA]" />
+            <span className="ml-2 w-2 h-2 rounded-full bg-primary" />
           )}
         </Button>
 
@@ -95,10 +95,10 @@ export function DisclosureFilters({
 
       {/* Expanded filters */}
       {isExpanded && (
-        <div className="p-4 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0] grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-4 bg-neutral-100 rounded-lg border border-neutral-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {showStatusFilter && (
             <div>
-              <label className="text-xs text-[#6B7280] uppercase tracking-wide mb-1 block">
+              <label className="text-xs text-neutral-500 uppercase tracking-wide mb-1 block">
                 Status
               </label>
               <Select
@@ -123,7 +123,7 @@ export function DisclosureFilters({
           )}
 
           <div>
-            <label className="text-xs text-[#6B7280] uppercase tracking-wide mb-1 block">
+            <label className="text-xs text-neutral-500 uppercase tracking-wide mb-1 block">
               Disclosure Level
             </label>
             <Select
@@ -147,7 +147,7 @@ export function DisclosureFilters({
           </div>
 
           <div>
-            <label className="text-xs text-[#6B7280] uppercase tracking-wide mb-1 block">
+            <label className="text-xs text-neutral-500 uppercase tracking-wide mb-1 block">
               <Calendar className="w-3 h-3 inline mr-1" />
               From Date
             </label>
@@ -163,7 +163,7 @@ export function DisclosureFilters({
           </div>
 
           <div>
-            <label className="text-xs text-[#6B7280] uppercase tracking-wide mb-1 block">
+            <label className="text-xs text-neutral-500 uppercase tracking-wide mb-1 block">
               <Calendar className="w-3 h-3 inline mr-1" />
               To Date
             </label>

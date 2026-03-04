@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/config"
@@ -44,6 +46,10 @@ const (
 
 	// ENS resolution timeout
 	ENSResolutionTimeout = 30 * time.Second
+
+	// devVerifierDID is a valid placeholder DID used in dev mode when VERIFIER_ID is not configured.
+	// Uses did:pkh (public key hash) which the Privado wallet can parse without on-chain resolution.
+	devVerifierDID = "did:pkh:eip155:1:0x0000000000000000000000000000000000000001"
 )
 
 type Server struct {
@@ -65,6 +71,8 @@ type Server struct {
 	jsonrpcProcessor  *JSONRPCProcessor
 	zkRoleExtractor   *auth.ZKRoleExtractor
 	runtimeTracer     *tracer.RuntimeTracer
+	retentionCleaner  *audit.RetentionCleaner
+	siemForwarder     *audit.SIEMForwarder
 }
 
 // DB returns the database instance (for testing)
@@ -98,6 +106,12 @@ func (s *Server) Stop() {
 	}
 	if s.runtimeTracer != nil {
 		s.runtimeTracer.Stop()
+	}
+	if s.siemForwarder != nil {
+		s.siemForwarder.Stop()
+	}
+	if s.retentionCleaner != nil {
+		s.retentionCleaner.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -268,6 +282,44 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}
 
+	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
+	hashChainSeed, err := database.GetLatestAccessLogHash(context.Background())
+	if err != nil {
+		log.Printf("Warning: failed to seed hash chain from DB: %v (starting fresh)", err)
+	}
+	hashChain := audit.NewHashChain(hashChainSeed)
+
+	// Initialize SIEM forwarder if webhook URL is configured
+	var siemForwarder *audit.SIEMForwarder
+	if cfg.SIEMWebhookURL != "" {
+		siemForwarder = audit.NewSIEMForwarder(audit.SIEMConfig{
+			WebhookURL:      cfg.SIEMWebhookURL,
+			AuthHeader:      cfg.SIEMAuthHeader,
+			BatchSize:       cfg.SIEMBatchSize,
+			FlushInterval:   cfg.SIEMFlushInterval,
+			FallbackLogPath: cfg.SIEMFallbackLogPath,
+		})
+		s.siemForwarder = siemForwarder
+		log.Printf("SIEM forwarding enabled (webhook: %s, batch size: %d, flush interval: %s)",
+			cfg.SIEMWebhookURL, cfg.SIEMBatchSize, cfg.SIEMFlushInterval)
+	}
+
+	// Wire enhanced audit into JSON-RPC processor
+	s.jsonrpcProcessor.SetEnhancedAudit(database, hashChain, siemForwarder, cfg.AuditLogParams)
+
+	// Initialize retention cleaner
+	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
+		AccessLogs:      cfg.RetentionAccessLogs,
+		ComplianceLogs:  cfg.RetentionComplianceLogs,
+		RBACAuditLogs:   cfg.RetentionRBACAuditLogs,
+		TravelRecords:   cfg.RetentionTravelRecords,
+		CleanupInterval: cfg.RetentionCleanupInterval,
+	}, database, cfg.EnableTravelRule)
+	s.retentionCleaner = retentionCleaner
+	log.Printf("Retention cleaner started (access: %s, compliance: %s, rbac: %s, travel: %s, interval: %s)",
+		cfg.RetentionAccessLogs, cfg.RetentionComplianceLogs, cfg.RetentionRBACAuditLogs,
+		cfg.RetentionTravelRecords, cfg.RetentionCleanupInterval)
+
 	return s, nil
 }
 
@@ -304,6 +356,9 @@ func (s *Server) setupRouter() *gin.Engine {
 		trustedProxies = append(trustedProxies, s.config.TrustedProxies...)
 	}
 	router.SetTrustedProxies(trustedProxies)
+
+	// Correlation ID middleware (generates/propagates request IDs for audit trail)
+	router.Use(correlationIDMiddleware())
 
 	// CORS middleware for frontend
 	router.Use(s.corsMiddleware())
@@ -411,11 +466,12 @@ func (s *Server) setupRouter() *gin.Engine {
 
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
+	adminAuth := s.adminAuthMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
-		// Admin endpoints - localhost only
+		// Admin endpoints - private network + token auth
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware())
+		admin.Use(s.localhostOnlyMiddleware(), adminAuth)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -444,7 +500,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	api := router.Group("/api")
 	{
 		adminLegacy := api.Group("/admin")
-		adminLegacy.Use(s.localhostOnlyMiddleware())
+		adminLegacy.Use(s.localhostOnlyMiddleware(), adminAuth)
 		adminLegacy.Use(s.deprecationMiddleware("/api/admin", "/api/v1/admin"))
 		{
 			adminLegacy.GET("/logs", s.getLogs)
@@ -507,12 +563,13 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 
 	// Process the request through the business logic layer
 	result := s.jsonrpcProcessor.Process(c.Request.Context(), &ProcessRequest{
-		UserID:   subjectStr,
-		OrgID:    orgID,
-		Method:   method,
-		Params:   params,
-		Body:     body,
-		ClientIP: c.ClientIP(),
+		UserID:        subjectStr,
+		OrgID:         orgID,
+		Method:        method,
+		Params:        params,
+		Body:          body,
+		ClientIP:      c.ClientIP(),
+		CorrelationID: getCorrelationID(c),
 	})
 
 	// Handle errors from processing
@@ -567,13 +624,40 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 
 		if allowOrigin != "" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", allowOrigin)
-			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			if allowOrigin != "*" {
+				c.Writer.Header().Set("Vary", "Origin")
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// adminAuthMiddleware enforces shared-token authentication for admin APIs.
+// If no admin token is configured, the middleware is a no-op and localhost/network
+// controls remain the only gate.
+func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
+	expectedToken := strings.TrimSpace(s.config.AdminAPIToken)
+	if expectedToken == "" {
+		return func(c *gin.Context) { c.Next() }
+	}
+
+	return func(c *gin.Context) {
+		// Only accept X-Admin-Token. Authorization: Bearer is intentionally NOT
+		// accepted — no JWT today carries an admin claim, and accepting arbitrary
+		// Bearer values would create a confusing auth surface.
+		provided := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
+		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing X-Admin-Token"})
+			c.Abort()
 			return
 		}
 
@@ -593,25 +677,33 @@ func (s *Server) deprecationMiddleware(oldPath, newPath string) gin.HandlerFunc 
 	}
 }
 
-// localhostOnlyMiddleware restricts access to localhost only
-// Works both when running locally and in Docker (when accessed from host)
-// When accessed from host via localhost:8080, Docker shows client as gateway IP (172.17.0.1)
-// Gin's ClientIP() with trusted proxies will correctly extract the real client IP
+// localhostOnlyMiddleware restricts admin API access to requests arriving over the local
+// network — localhost, Docker bridge networks, LAN, or Tailscale.
 //
 // SECURITY MODEL:
-// - Gin's SetTrustedProxies ensures only requests FROM trusted IPs can set X-Forwarded-For
-// - External attackers (e.g., 203.0.113.1) cannot spoof X-Forwarded-For: 127.0.0.1 because:
-//  1. Their remote IP (203.0.113.1) is not in the trusted proxy list
-//  2. Gin will ignore X-Forwarded-For and use the actual remote IP
-//  3. Middleware will reject the request
+// We check the *direct TCP peer* (c.Request.RemoteAddr), NOT the logical client IP
+// resolved through X-Forwarded-For. This is intentional:
 //
-// - Only localhost (127.0.0.1, ::1), Docker network IPs (172.x.x.x), and Tailscale IPs are allowed
+//   - When Caddy (or any reverse proxy) sits in front of the backend, the TCP peer is
+//     always the proxy container's IP (e.g., 172.18.0.x) — which IS in the allowed range.
+//   - The browser's real IP arrives in X-Forwarded-For, but we deliberately ignore it here.
+//     The goal is to ensure the request physically traversed the private Docker network,
+//     not to verify where the browser is geographically.
+//   - If the backend port is accidentally exposed to the public internet, an attacker's
+//     direct TCP connection will have a public source IP → blocked by this middleware,
+//     even before the token check.
+//
+// Defense in depth: network boundary check (this middleware) + token auth (adminAuth).
 func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Gin's ClientIP() only trusts X-Forwarded-For if remote IP is in trusted proxy list
-		// External attackers cannot spoof because their IP won't be trusted
-		clientIP := c.ClientIP()
-		ip := net.ParseIP(clientIP)
+		// Use the raw TCP peer address, not the proxy-resolved client IP.
+		host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid remote address"})
+			c.Abort()
+			return
+		}
+		ip := net.ParseIP(host)
 		if ip == nil {
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid client IP"})
 			c.Abort()
@@ -687,11 +779,15 @@ func (s *Server) getStatus(c *gin.Context) {
 
 	// Check if runtime tracing is enabled
 	runtimeTracingEnabled := s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
+	proxyPort := "8080"
+	if s.config != nil && s.config.Port != "" {
+		proxyPort = s.config.Port
+	}
 
 	status := StatusResponse{
 		Proxy: ProxyStatus{
 			Status: "running",
-			Port:   "8080",
+			Port:   proxyPort,
 		},
 		Node: NodeStatus{
 			Status:    nodeHealth.Status,
@@ -791,7 +887,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 				return
 			}
 			var decodeErr error
-			compFrom, compTo, compData, compValue, decodeErr = decodeRawTransaction(rawTxHex)
+			compFrom, compTo, compData, compValue, _, decodeErr = decodeRawTransaction(rawTxHex)
 			if decodeErr != nil {
 				c.JSON(http.StatusBadRequest, TestRequestResponse{
 					Error:    "failed to decode raw transaction: " + decodeErr.Error(),
@@ -804,12 +900,13 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 
 		if needsCheck {
 			compResult, compErr := s.complianceChecker.Check(c.Request.Context(), &compliance.CheckRequest{
-				OrgID:  result.OrgID,
-				UserID: result.UserID,
-				From:   compFrom,
-				To:     compTo,
-				Data:   compData,
-				Value:  compValue,
+				OrgID:         result.OrgID,
+				UserID:        result.UserID,
+				From:          compFrom,
+				To:            compTo,
+				Data:          compData,
+				Value:         compValue,
+				CorrelationID: getCorrelationID(c),
 			})
 			if compErr != nil {
 				c.JSON(http.StatusInternalServerError, TestRequestResponse{

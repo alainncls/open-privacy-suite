@@ -65,7 +65,6 @@ export default function PreregisterForm({
         // User must deploy/configure one for this org
       } catch {
         // Org config not available - factory not configured for this org
-        console.log('No factory configured for this organization');
       }
 
       setCheckingFactory(false);
@@ -153,8 +152,8 @@ export default function PreregisterForm({
   if (checkingFactory) {
     return (
       <div className="flex flex-col items-center justify-center py-8 space-y-4">
-        <Loader2 className="w-8 h-8 animate-spin text-[#8950FA]" />
-        <p className="text-sm text-[#6B7280]">Checking CREATE3 factory...</p>
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-sm text-neutral-500">Checking CREATE3 factory...</p>
       </div>
     );
   }
@@ -164,15 +163,15 @@ export default function PreregisterForm({
     return (
       <div className="space-y-5">
         {error && (
-          <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-            <span className="text-[#991B1B] text-sm">{error}</span>
+          <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+            <span className="text-error-dark text-sm">{error}</span>
           </div>
         )}
 
-        <div className="p-4 rounded-lg bg-[#FEF3C7] border border-[#FDE68A]">
-          <h3 className="font-semibold text-[#92400E] mb-2">Development Mode</h3>
-          <p className="text-sm text-[#92400E] mb-4">
+        <div className="p-4 rounded-lg bg-amber-100 border border-amber-200">
+          <h3 className="font-semibold text-amber-800 mb-2">Development Mode</h3>
+          <p className="text-sm text-amber-800 mb-4">
             No CREATE3 factory contract is deployed on the local chain.
             Click the button below to deploy one automatically using Anvil's default account.
           </p>
@@ -196,11 +195,11 @@ export default function PreregisterForm({
         </div>
 
         <div className="text-center">
-          <span className="text-sm text-[#6B7280]">or</span>
+          <span className="text-sm text-neutral-500">or</span>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-[#374151]">
+          <label className="block text-sm font-medium text-neutral-700">
             Use Existing Factory Address
           </label>
           <Input
@@ -217,7 +216,7 @@ export default function PreregisterForm({
             title="Enter a valid Ethereum address"
             className="font-mono"
           />
-          <p className="text-xs text-[#94A3B8]">
+          <p className="text-xs text-neutral-400">
             If you already have a CREATE3 factory deployed, enter its address here.
           </p>
         </div>
@@ -240,23 +239,23 @@ export default function PreregisterForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       {isDevelopment && factoryDeployed && (
-        <div className="p-3 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0]">
-          <p className="text-sm text-[#065F46]">
+        <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+          <p className="text-sm text-emerald-800">
             <strong>Dev Mode:</strong> CREATE3 factory deployed at{' '}
-            <code className="font-mono text-xs bg-[#D1FAE5] px-1 py-0.5 rounded">{factory}</code>
+            <code className="font-mono text-xs bg-emerald-100 px-1 py-0.5 rounded">{factory}</code>
           </p>
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Factory Address
         </label>
         <Input
@@ -270,13 +269,13 @@ export default function PreregisterForm({
           className="font-mono"
           disabled={isDevelopment && factoryDeployed}
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           The CREATE3 factory contract address used for deployment
         </p>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Salt Prefix
         </label>
         <Input
@@ -286,13 +285,13 @@ export default function PreregisterForm({
           placeholder="e.g., myapp-v1 or 0xdeadbeef"
           required
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           A unique identifier used to derive the salt for each address. Can be hex or text.
         </p>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Count
         </label>
         <Input
@@ -304,13 +303,13 @@ export default function PreregisterForm({
           required
           className="w-32"
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           Number of addresses to pre-register (1-100)
         </p>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-[#374151]">
+        <label className="block text-sm font-medium text-neutral-700">
           Note (optional)
         </label>
         <Input
@@ -319,7 +318,7 @@ export default function PreregisterForm({
           onChange={e => setNote(e.target.value)}
           placeholder="e.g., Implementation contracts for v2 upgrade"
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           A description to help identify these addresses
         </p>
       </div>
@@ -330,24 +329,24 @@ export default function PreregisterForm({
           <button
             type="button"
             onClick={() => setShowPreview(!showPreview)}
-            className="flex items-center gap-2 text-sm text-[#8950FA] hover:text-[#6B3DD4] transition-colors"
+            className="flex items-center gap-2 text-sm text-primary hover:text-primary-600 transition-colors"
           >
             <Eye className="w-4 h-4" />
             {showPreview ? 'Hide' : 'Show'} address preview
           </button>
           {showPreview && previewAddresses.length > 0 && (
-            <div className="p-3 rounded-lg bg-[#F1F5F9] border border-[#E2E8F0]">
-              <p className="text-xs text-[#6B7280] mb-2">
+            <div className="p-3 rounded-lg bg-neutral-100 border border-neutral-200">
+              <p className="text-xs text-neutral-500 mb-2">
                 Addresses will be generated server-side. This is a preview:
               </p>
               <div className="space-y-1 font-mono text-xs">
                 {previewAddresses.map((addr, i) => (
-                  <div key={i} className="text-[#374151] truncate">
+                  <div key={i} className="text-neutral-700 truncate">
                     {i + 1}. {addr}
                   </div>
                 ))}
                 {count > 5 && (
-                  <div className="text-[#94A3B8]">
+                  <div className="text-neutral-400">
                     ... and {count - 5} more
                   </div>
                 )}
@@ -357,8 +356,8 @@ export default function PreregisterForm({
         </div>
       )}
 
-      <div className="p-3 rounded-lg bg-[#F5F3FF] border border-[#C4A8FD]">
-        <p className="text-sm text-[#6B3DD4]">
+      <div className="p-3 rounded-lg bg-primary-50 border border-primary-200">
+        <p className="text-sm text-primary-600">
           <strong>How it works:</strong> CREATE3 addresses are deterministic based on the
           factory and salt. Pre-registering addresses allows you to whitelist future
           deployment targets before the actual bytecode is known.

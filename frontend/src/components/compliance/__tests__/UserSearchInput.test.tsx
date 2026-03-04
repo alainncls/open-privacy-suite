@@ -24,7 +24,7 @@ function renderUserSearch(
   const result = render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <UserSearchInput
             orgId={props.orgId || 'org-1'}
             value={props.value || ''}

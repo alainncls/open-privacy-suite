@@ -233,7 +233,7 @@ export function CreateDisclosureRequestForm({
     <Card variant="default">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Plus className="w-5 h-5 text-[#8950FA]" />
+          <Plus className="w-5 h-5 text-primary" />
           Create Disclosure Request
         </CardTitle>
         <CardDescription>
@@ -245,19 +245,19 @@ export function CreateDisclosureRequestForm({
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Target User */}
           <div className="space-y-2">
-            <label className="text-sm text-[#6B7280]">
-              Target User <span className="text-[#991B1B]">*</span>
+            <label className="text-sm text-neutral-500">
+              Target User <span className="text-error-dark">*</span>
             </label>
 
             {/* Selected User Display */}
             {selectedUser ? (
-              <div className="flex items-center gap-2 p-3 rounded-lg border border-[#8950FA] bg-[#F5F3FF]">
-                <User className="w-5 h-5 text-[#8950FA] flex-shrink-0" />
+              <div className="flex items-center gap-2 p-3 rounded-lg border border-primary bg-primary-50">
+                <User className="w-5 h-5 text-primary flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[#0F0F0F] font-medium truncate">
+                  <p className="text-sm text-neutral-900 font-medium truncate">
                     {selectedUser.external_id}
                   </p>
-                  <p className="text-xs text-[#94A3B8]">
+                  <p className="text-xs text-neutral-400">
                     ID: {selectedUser.id}
                     {selectedUser.kyc && (
                       <Badge variant="success" className="ml-2 text-xs">KYC</Badge>
@@ -282,7 +282,7 @@ export function CreateDisclosureRequestForm({
               /* User Search/Dropdown */
               <div className="relative" ref={dropdownRef}>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
                   <Input
                     value={userSearch}
                     onChange={(e) => {
@@ -295,17 +295,17 @@ export function CreateDisclosureRequestForm({
                     disabled={isLoading || usersLoading}
                   />
                   {usersLoading && (
-                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8] animate-spin" />
+                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 animate-spin" />
                   )}
                 </div>
 
                 {/* Dropdown */}
                 {showUserDropdown && !usersLoading && (
-                  <div className="absolute z-50 w-full mt-1 max-h-60 overflow-auto rounded-lg border border-[#E2E8F0] bg-white shadow-lg">
+                  <div className="absolute z-50 w-full mt-1 max-h-60 overflow-auto rounded-lg border border-neutral-200 bg-white shadow-lg">
                     {usersError ? (
-                      <div className="p-3 text-sm text-[#991B1B]">{usersError}</div>
+                      <div className="p-3 text-sm text-error-dark">{usersError}</div>
                     ) : filteredUsers.length === 0 ? (
-                      <div className="p-3 text-sm text-[#94A3B8]">
+                      <div className="p-3 text-sm text-neutral-400">
                         {userSearch ? 'No users match your search' : 'No users found'}
                       </div>
                     ) : (
@@ -314,15 +314,15 @@ export function CreateDisclosureRequestForm({
                           key={user.id}
                           type="button"
                           onClick={() => handleSelectUser(user)}
-                          className="w-full p-3 text-left hover:bg-[#F5F3FF] transition-colors border-b border-[#E2E8F0] last:border-b-0"
+                          className="w-full p-3 text-left hover:bg-primary-50 transition-colors border-b border-neutral-200 last:border-b-0"
                         >
                           <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-[#94A3B8] flex-shrink-0" />
+                            <User className="w-4 h-4 text-neutral-400 flex-shrink-0" />
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-[#0F0F0F] truncate">
+                              <p className="text-sm text-neutral-900 truncate">
                                 {user.external_id}
                               </p>
-                              <p className="text-xs text-[#94A3B8] flex items-center gap-2">
+                              <p className="text-xs text-neutral-400 flex items-center gap-2">
                                 <span className="truncate">{user.id}</span>
                                 {user.kyc && (
                                   <Badge variant="success" className="text-xs">KYC</Badge>
@@ -341,15 +341,15 @@ export function CreateDisclosureRequestForm({
               </div>
             )}
             {errors.user_external_id && (
-              <p className="text-[#991B1B] text-xs">{errors.user_external_id}</p>
+              <p className="text-error-dark text-xs">{errors.user_external_id}</p>
             )}
           </div>
 
           {/* Requester Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm text-[#6B7280]">
-                Requester Name <span className="text-[#991B1B]">*</span>
+              <label className="text-sm text-neutral-500">
+                Requester Name <span className="text-error-dark">*</span>
               </label>
               <Input
                 value={formData.requester_name || ''}
@@ -358,11 +358,11 @@ export function CreateDisclosureRequestForm({
                 disabled={isLoading}
               />
               {errors.requester_name && (
-                <p className="text-[#991B1B] text-xs">{errors.requester_name}</p>
+                <p className="text-error-dark text-xs">{errors.requester_name}</p>
               )}
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-[#6B7280]">Organization</label>
+              <label className="text-sm text-neutral-500">Organization</label>
               <Input
                 value={formData.requester_org || ''}
                 onChange={(e) => updateField('requester_org', e.target.value)}
@@ -374,22 +374,22 @@ export function CreateDisclosureRequestForm({
 
           {/* Requester DID - for block explorer integration */}
           <div className="space-y-2">
-            <label className="text-sm text-[#6B7280]">
+            <label className="text-sm text-neutral-500">
               Auditor (Who Gets Access)
             </label>
-            <p className="text-xs text-[#94A3B8] mb-2">
+            <p className="text-xs text-neutral-400 mb-2">
               Select the auditor who will access data via the block explorer.
             </p>
 
             {/* Selected Requester Display */}
             {selectedRequester ? (
-              <div className="flex items-center gap-2 p-3 rounded-lg border border-[#166534] bg-[#DCFCE7]">
-                <User className="w-5 h-5 text-[#166534] flex-shrink-0" />
+              <div className="flex items-center gap-2 p-3 rounded-lg border border-success-dark bg-success-light">
+                <User className="w-5 h-5 text-success-dark flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[#0F0F0F] font-medium truncate">
+                  <p className="text-sm text-neutral-900 font-medium truncate">
                     {selectedRequester.external_id}
                   </p>
-                  <p className="text-xs text-[#94A3B8]">
+                  <p className="text-xs text-neutral-400">
                     ID: {selectedRequester.id}
                   </p>
                 </div>
@@ -408,7 +408,7 @@ export function CreateDisclosureRequestForm({
               /* Requester Search/Dropdown */
               <div className="relative" ref={requesterDropdownRef}>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
                   <Input
                     value={requesterSearch}
                     onChange={(e) => {
@@ -421,17 +421,17 @@ export function CreateDisclosureRequestForm({
                     disabled={isLoading || usersLoading}
                   />
                   {usersLoading && (
-                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8] animate-spin" />
+                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400 animate-spin" />
                   )}
                 </div>
 
                 {/* Dropdown */}
                 {showRequesterDropdown && !usersLoading && (
-                  <div className="absolute z-50 w-full mt-1 max-h-60 overflow-auto rounded-lg border border-[#E2E8F0] bg-white shadow-lg">
+                  <div className="absolute z-50 w-full mt-1 max-h-60 overflow-auto rounded-lg border border-neutral-200 bg-white shadow-lg">
                     {usersError ? (
-                      <div className="p-3 text-sm text-[#991B1B]">{usersError}</div>
+                      <div className="p-3 text-sm text-error-dark">{usersError}</div>
                     ) : filteredRequesters.length === 0 ? (
-                      <div className="p-3 text-sm text-[#94A3B8]">
+                      <div className="p-3 text-sm text-neutral-400">
                         {requesterSearch ? 'No users match your search' : 'No users found'}
                       </div>
                     ) : (
@@ -440,15 +440,15 @@ export function CreateDisclosureRequestForm({
                           key={user.id}
                           type="button"
                           onClick={() => handleSelectRequester(user)}
-                          className="w-full p-3 text-left hover:bg-[#F5F3FF] transition-colors border-b border-[#E2E8F0] last:border-b-0"
+                          className="w-full p-3 text-left hover:bg-primary-50 transition-colors border-b border-neutral-200 last:border-b-0"
                         >
                           <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-[#94A3B8] flex-shrink-0" />
+                            <User className="w-4 h-4 text-neutral-400 flex-shrink-0" />
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-[#0F0F0F] truncate">
+                              <p className="text-sm text-neutral-900 truncate">
                                 {user.external_id}
                               </p>
-                              <p className="text-xs text-[#94A3B8] truncate">{user.id}</p>
+                              <p className="text-xs text-neutral-400 truncate">{user.id}</p>
                             </div>
                           </div>
                         </button>
@@ -462,8 +462,8 @@ export function CreateDisclosureRequestForm({
 
           {/* Purpose */}
           <div className="space-y-2">
-            <label className="text-sm text-[#6B7280]">
-              Purpose <span className="text-[#991B1B]">*</span>
+            <label className="text-sm text-neutral-500">
+              Purpose <span className="text-error-dark">*</span>
             </label>
             <Textarea
               value={formData.purpose || ''}
@@ -473,13 +473,13 @@ export function CreateDisclosureRequestForm({
               disabled={isLoading}
             />
             {errors.purpose && (
-              <p className="text-[#991B1B] text-xs">{errors.purpose}</p>
+              <p className="text-error-dark text-xs">{errors.purpose}</p>
             )}
           </div>
 
           {/* Legal Basis */}
           <div className="space-y-2">
-            <label className="text-sm text-[#6B7280]">Legal Basis</label>
+            <label className="text-sm text-neutral-500">Legal Basis</label>
             <Input
               value={formData.legal_basis || ''}
               onChange={(e) => updateField('legal_basis', e.target.value)}
@@ -490,7 +490,7 @@ export function CreateDisclosureRequestForm({
 
           {/* Reference */}
           <div className="space-y-2">
-            <label className="text-sm text-[#6B7280]">Request Reference</label>
+            <label className="text-sm text-neutral-500">Request Reference</label>
             <Input
               value={formData.request_reference || ''}
               onChange={(e) => updateField('request_reference', e.target.value)}
@@ -501,8 +501,8 @@ export function CreateDisclosureRequestForm({
 
           {/* Scope Selection */}
           <div className="space-y-3">
-            <label className="text-sm text-[#6B7280]">
-              Requested Data Scope <span className="text-[#991B1B]">*</span>
+            <label className="text-sm text-neutral-500">
+              Requested Data Scope <span className="text-error-dark">*</span>
             </label>
             <div className="space-y-2">
               {ALL_SCOPES.map((scope) => {
@@ -515,16 +515,16 @@ export function CreateDisclosureRequestForm({
                     disabled={isLoading}
                     className={`w-full p-3 rounded-lg border text-left transition-all ${
                       isSelected
-                        ? 'border-[#8950FA] bg-[#F5F3FF]'
-                        : 'border-[#E2E8F0] bg-white hover:bg-[#F1F5F9]'
+                        ? 'border-primary bg-primary-50'
+                        : 'border-neutral-200 bg-white hover:bg-neutral-100'
                     }`}
                   >
                     <div className="flex items-start gap-3">
                       <div
                         className={`w-5 h-5 rounded border flex items-center justify-center mt-0.5 ${
                           isSelected
-                            ? 'border-[#8950FA] bg-[#8950FA]'
-                            : 'border-[#CBD5E1]'
+                            ? 'border-primary bg-primary'
+                            : 'border-neutral-300'
                         }`}
                       >
                         {isSelected && (
@@ -545,7 +545,7 @@ export function CreateDisclosureRequestForm({
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-[#0F0F0F] font-medium">
+                          <span className="text-neutral-900 font-medium">
                             {SCOPE_LABELS[scope]}
                           </span>
                           {scope === 'full_disclosure' && (
@@ -554,7 +554,7 @@ export function CreateDisclosureRequestForm({
                             </Badge>
                           )}
                         </div>
-                        <p className="text-sm text-[#94A3B8] mt-0.5">
+                        <p className="text-sm text-neutral-400 mt-0.5">
                           {SCOPE_DESCRIPTIONS[scope]}
                         </p>
                       </div>
@@ -564,16 +564,16 @@ export function CreateDisclosureRequestForm({
               })}
             </div>
             {errors.scope && (
-              <p className="text-[#991B1B] text-xs">{errors.scope}</p>
+              <p className="text-error-dark text-xs">{errors.scope}</p>
             )}
           </div>
 
           {/* Disclosure Level Selection */}
           <div className="space-y-3">
-            <label className="text-sm text-[#6B7280]">
-              Disclosure Level <span className="text-[#991B1B]">*</span>
+            <label className="text-sm text-neutral-500">
+              Disclosure Level <span className="text-error-dark">*</span>
             </label>
-            <p className="text-xs text-[#94A3B8]">
+            <p className="text-xs text-neutral-400">
               Controls how much address detail is revealed to the auditor
             </p>
             <div className="space-y-2">
@@ -587,16 +587,16 @@ export function CreateDisclosureRequestForm({
                     disabled={isLoading}
                     className={`w-full p-3 rounded-lg border text-left transition-all ${
                       isSelected
-                        ? 'border-[#8950FA] bg-[#F5F3FF]'
-                        : 'border-[#E2E8F0] bg-white hover:bg-[#F1F5F9]'
+                        ? 'border-primary bg-primary-50'
+                        : 'border-neutral-200 bg-white hover:bg-neutral-100'
                     }`}
                   >
                     <div className="flex items-start gap-3">
                       <div
                         className={`w-5 h-5 rounded-full border flex items-center justify-center mt-0.5 ${
                           isSelected
-                            ? 'border-[#8950FA] bg-[#8950FA]'
-                            : 'border-[#CBD5E1]'
+                            ? 'border-primary bg-primary'
+                            : 'border-neutral-300'
                         }`}
                       >
                         {isSelected && (
@@ -605,7 +605,7 @@ export function CreateDisclosureRequestForm({
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-[#0F0F0F] font-medium">
+                          <span className="text-neutral-900 font-medium">
                             {DISCLOSURE_LEVEL_LABELS[level]}
                           </span>
                           {level === 'full' && (
@@ -624,7 +624,7 @@ export function CreateDisclosureRequestForm({
                             </Badge>
                           )}
                         </div>
-                        <p className="text-sm text-[#94A3B8] mt-0.5">
+                        <p className="text-sm text-neutral-400 mt-0.5">
                           {DISCLOSURE_LEVEL_DESCRIPTIONS[level]}
                         </p>
                       </div>
@@ -634,19 +634,19 @@ export function CreateDisclosureRequestForm({
               })}
             </div>
             {errors.disclosure_level && (
-              <p className="text-[#991B1B] text-xs">{errors.disclosure_level}</p>
+              <p className="text-error-dark text-xs">{errors.disclosure_level}</p>
             )}
           </div>
 
           {/* Validity Period */}
           <div className="space-y-3">
-            <label className="text-sm text-[#6B7280] flex items-center gap-2">
+            <label className="text-sm text-neutral-500 flex items-center gap-2">
               <span>Validity Period</span>
-              <Info className="w-4 h-4 text-[#94A3B8]" />
+              <Info className="w-4 h-4 text-neutral-400" />
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-xs text-[#94A3B8]">Start Date (optional)</label>
+                <label className="text-xs text-neutral-400">Start Date (optional)</label>
                 <Input
                   type="datetime-local"
                   value={formData.valid_from || ''}
@@ -655,7 +655,7 @@ export function CreateDisclosureRequestForm({
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs text-[#94A3B8]">End Date (optional)</label>
+                <label className="text-xs text-neutral-400">End Date (optional)</label>
                 <Input
                   type="datetime-local"
                   value={formData.valid_until || ''}
@@ -663,14 +663,14 @@ export function CreateDisclosureRequestForm({
                   disabled={isLoading}
                 />
                 {errors.valid_until && (
-                  <p className="text-[#991B1B] text-xs">{errors.valid_until}</p>
+                  <p className="text-error-dark text-xs">{errors.valid_until}</p>
                 )}
               </div>
             </div>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-neutral-200">
             {onCancel && (
               <Button
                 type="button"

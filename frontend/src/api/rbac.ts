@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { adminApi } from './adminClient';
 import type {
   Organization,
   Group,
@@ -32,12 +32,7 @@ import type {
   GroupWithAccess,
 } from '../types/rbac';
 
-const api = axios.create({
-  baseURL: '/api/v1/admin',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const api = adminApi;
 
 export const rbacApi = {
   // Organizations

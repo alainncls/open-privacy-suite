@@ -114,8 +114,8 @@ export default function GroupList() {
     return (
       <div key={gwa.group.id} className="animate-fade-in">
         <div
-          className={`flex items-center gap-3 p-3 rounded-lg bg-[#F1F5F9] hover:bg-[#F5F3FF] transition-colors ${
-            level > 0 ? 'ml-6 border-l-2 border-[#E2E8F0]' : ''
+          className={`flex items-center gap-3 p-3 rounded-lg bg-neutral-100 hover:bg-primary-50 transition-colors ${
+            level > 0 ? 'ml-6 border-l-2 border-neutral-200' : ''
           }`}
         >
           <div
@@ -123,24 +123,24 @@ export default function GroupList() {
             style={{ paddingLeft: `${level * 8}px` }}
           >
             {children.length > 0 ? (
-              <FolderOpen className="w-5 h-5 text-[#8950FA] flex-shrink-0" />
+              <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
             ) : (
-              <FolderTree className="w-5 h-5 text-[#8950FA] flex-shrink-0" />
+              <FolderTree className="w-5 h-5 text-primary flex-shrink-0" />
             )}
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-medium truncate text-[#0F0F0F]">{gwa.group.name}</span>
+                <span className="font-medium truncate text-neutral-900">{gwa.group.name}</span>
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
                   {gwa.group.slug}
                 </Badge>
                 {gwa.group.is_org_admin && (
-                  <Badge className="bg-[#FEF9C3] text-[#854D0E] border-[#FDE047] gap-1 flex-shrink-0">
+                  <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
                     <Shield className="w-3 h-3" />
                     Org Admin
                   </Badge>
                 )}
               </div>
-              <div className="flex items-center gap-1 text-xs text-[#94A3B8] mt-0.5">
+              <div className="flex items-center gap-1 text-xs text-neutral-400 mt-0.5">
                 <span className="font-mono">{gwa.group.path}</span>
                 {hasMethods && (
                   <>
@@ -183,7 +183,7 @@ export default function GroupList() {
               variant="ghost"
               size="sm"
               onClick={() => setDeleteTarget(gwa.group)}
-              className="text-[#991B1B] hover:text-[#7F1D1D] hover:bg-[#FEE2E2]"
+              className="text-error-dark hover:text-error-dark hover:bg-error-light"
               title="Delete group"
             >
               <Trash2 className="w-4 h-4" />
@@ -204,8 +204,8 @@ export default function GroupList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-[#374151]">Groups</h3>
-          <p className="text-xs text-[#6B7280] mt-0.5">
+          <h3 className="text-sm font-medium text-neutral-700">Groups</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
             Hierarchical containers defining what methods and addresses users can access
           </p>
         </div>
@@ -217,14 +217,14 @@ export default function GroupList() {
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-[#94A3B8] animate-spin" />
+          <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
         </div>
       ) : groups.length === 0 ? (
         <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-            <FolderTree className="w-8 h-8 text-[#94A3B8]" />
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
+            <FolderTree className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-[#6B7280] mb-4">No groups found</p>
+          <p className="text-neutral-500 mb-4">No groups found</p>
           <Button
             variant="outline"
             onClick={() => setShowForm(true)}

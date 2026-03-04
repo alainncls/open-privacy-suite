@@ -112,6 +112,14 @@ type Store interface {
 	DeletePreregisteredAddress(ctx context.Context, orgID, address string) error
 	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
 	MarkAddressUsed(ctx context.Context, address string) error
+	// PreRegisterPlainCreate inserts a temporary preregistered_addresses row for a plain
+	// CREATE deployment before the tx is forwarded, closing the cross-org race window.
+	// factory and salt are NULL (not applicable for plain CREATE).
+	PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error
+	// DeletePreregisteredAddressByAddress removes a preregistered_addresses row by address
+	// (without org filter, since addresses are unique). Used to clean up plain CREATE
+	// pre-registrations when the tx is rejected or reverts.
+	DeletePreregisteredAddressByAddress(ctx context.Context, address string) error
 	// Constructor ABI operations (for immutable address validation)
 	GetConstructorABI(ctx context.Context, orgID, address string) (string, error)
 	UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error

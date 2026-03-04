@@ -300,6 +300,12 @@ func (m *MockStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID,
 func (m *MockStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
 	return nil
 }
+func (m *MockStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	return nil
+}
+func (m *MockStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	return nil
+}
 func (m *MockStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
 	return false, nil
 }

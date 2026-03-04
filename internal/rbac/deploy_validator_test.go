@@ -158,6 +158,14 @@ func (s *deployValidatorTestStore) UpdateConstructorABI(ctx context.Context, org
 	return nil
 }
 
+func (s *deployValidatorTestStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
+	return nil
+}
+
+func (s *deployValidatorTestStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error {
+	return nil
+}
+
 // normalizeHexAddress normalizes a hex address for comparison.
 func normalizeHexAddress(addr string) string {
 	addr = strings.ToLower(addr)

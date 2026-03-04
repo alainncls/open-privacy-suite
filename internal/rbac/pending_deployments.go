@@ -15,6 +15,10 @@ type PendingDeployment struct {
 	ProxyType   string
 	ProxyInfo   *bytecode.ProxyInfo
 	SubmittedAt time.Time
+	// Fields for plain CREATE pre-registration cleanup/finalization.
+	IsPlainCreate     bool   // true when this is a plain CREATE (not CREATE3/proxy)
+	PreRegisteredAddr string // address inserted into preregistered_addresses; empty if not pre-registered
+	DeployerUserID    string // internal user UUID, for the contract record DeployedByUserID
 }
 
 // PendingDeploymentTracker tracks proxy deployments waiting for confirmation.

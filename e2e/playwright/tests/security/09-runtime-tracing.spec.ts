@@ -14,6 +14,7 @@
 
 import { test, expect } from '@playwright/test';
 import { getJWTToken } from '../../helpers/auth.js';
+import { randomAddress } from '../../helpers/address.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
@@ -108,7 +109,7 @@ test.describe('Runtime Transaction Tracing', () => {
     testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     // Create Organization A
-    const orgAResp = await apiCall(request, 'POST', '/api/v1/orgs', {
+    const orgAResp = await apiCall(request, 'POST', '/api/v1/admin/orgs', {
       slug: `trace-org-a-${testRunId}`,
       name: 'Trace Test Org A'
     });
@@ -118,7 +119,7 @@ test.describe('Runtime Transaction Tracing', () => {
     orgAId = orgAResp.body.id;
 
     // Create Organization B
-    const orgBResp = await apiCall(request, 'POST', '/api/v1/orgs', {
+    const orgBResp = await apiCall(request, 'POST', '/api/v1/admin/orgs', {
       slug: `trace-org-b-${testRunId}`,
       name: 'Trace Test Org B'
     });
@@ -128,7 +129,7 @@ test.describe('Runtime Transaction Tracing', () => {
     orgBId = orgBResp.body.id;
 
     // Create group for org A with appropriate permissions
-    const groupAResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgAId}/groups`, {
+    const groupAResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgAId}/groups`, {
       slug: 'trace-group-a',
       name: 'Trace Group A'
     });
@@ -138,18 +139,17 @@ test.describe('Runtime Transaction Tracing', () => {
     groupAId = groupAResp.body.id;
 
     // Set group access permissions
-    await apiCall(request, 'PUT', `/api/v1/orgs/${orgAId}/groups/${groupAId}/access`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/orgs/${orgAId}/groups/${groupAId}/access`, {
       allowed_methods: ['eth_call', 'eth_sendTransaction', 'eth_estimateGas', 'eth_getBalance'],
       claims: ['deploy'] // deploy needed for unregistered contract access
     });
 
-    // Create contracts - unique addresses per test run
-    const hexTs = Date.now().toString(16).slice(-8);
-    contractA = '0xaa' + hexTs + 'a'.repeat(30);
-    contractB = '0xbb' + hexTs + 'b'.repeat(30);
+    // Create contracts with random addresses to avoid cross-worker collisions.
+    contractA = randomAddress('aa');
+    contractB = randomAddress('bb');
 
     // Register contract A to org A
-    const contractAResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgAId}/contracts`, {
+    const contractAResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgAId}/contracts`, {
       address: contractA,
       name: 'Contract A'
     });
@@ -158,7 +158,7 @@ test.describe('Runtime Transaction Tracing', () => {
     }
 
     // Register contract B to org B
-    const contractBResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgBId}/contracts`, {
+    const contractBResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgBId}/contracts`, {
       address: contractB,
       name: 'Contract B'
     });
@@ -168,7 +168,7 @@ test.describe('Runtime Transaction Tracing', () => {
 
     // Create contract grant linking group A to contract A
     // This is required for group members to access the contract
-    const grantAResp = await apiCall(request, 'POST', `/api/v1/orgs/${orgAId}/contracts/${contractA}/grants`, {
+    const grantAResp = await apiCall(request, 'POST', `/api/v1/admin/orgs/${orgAId}/contracts/${contractA}/grants`, {
       group_id: groupAId,
       functions: null  // null = all functions allowed
     });
@@ -181,15 +181,15 @@ test.describe('Runtime Transaction Tracing', () => {
     userAToken = await getJWTToken(request, userADID);
 
     // Find user and update KYC
-    const usersResp = await apiCall(request, 'GET', '/api/v1/users');
+    const usersResp = await apiCall(request, 'GET', '/api/v1/admin/users');
     const users = usersResp.body.data;
     const userA = users.find((u: any) => u.external_id === userADID);
     if (!userA) {
       throw new Error(`User A not created after auth: ${userADID}`);
     }
 
-    await apiCall(request, 'PUT', `/api/v1/users/${userA.id}`, { kyc: true });
-    await apiCall(request, 'POST', `/api/v1/users/${userA.id}/memberships`, {
+    await apiCall(request, 'PUT', `/api/v1/admin/users/${userA.id}`, { kyc: true });
+    await apiCall(request, 'POST', `/api/v1/admin/users/${userA.id}/memberships`, {
       org_id: orgAId,
       group_id: groupAId
     });
@@ -339,8 +339,7 @@ test.describe('Runtime Transaction Tracing', () => {
       // Use a well-known shared address that should be in the shared_infrastructure table
       // For testing, use an address that is not registered to any specific org
 
-      const hexTs = Date.now().toString(16).slice(-8);
-      const unregisteredAddress = '0x00' + hexTs + '0'.repeat(30);
+      const unregisteredAddress = randomAddress('00');
 
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: unregisteredAddress, data: '0x' },

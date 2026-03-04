@@ -15,7 +15,7 @@ import {
 // Helper to render with providers
 function renderLoginPage(initialRoute = '/login') {
   return render(
-    <MemoryRouter initialEntries={[initialRoute]}>
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialRoute]}>
       <AuthProvider>
         <LoginPage />
       </AuthProvider>
@@ -264,7 +264,7 @@ describe('LoginPage', () => {
 
       // Use BrowserRouter for this test to check navigation
       render(
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
             <LoginPage />
           </AuthProvider>

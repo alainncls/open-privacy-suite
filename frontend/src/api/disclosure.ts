@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { adminApi, createAdminClient } from './adminClient';
 import type {
   DisclosureRequest,
   DisclosureGrant,
@@ -14,16 +15,7 @@ import type {
   DisclosureFilter,
 } from '../types/disclosure';
 
-// Base API client for admin endpoints
-// SECURITY: These endpoints are protected by localhost-only middleware on the backend.
-// No token authentication is needed because network-level access control (localhost only)
-// ensures only the local admin UI can reach these endpoints.
-const api = axios.create({
-  baseURL: '/api/v1/admin',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const api = adminApi;
 
 // Create an authenticated API client
 const createAuthenticatedClient = (accessToken: string) => {
@@ -38,22 +30,12 @@ const createAuthenticatedClient = (accessToken: string) => {
 
 // Create a disclosure token authenticated client
 const createTokenClient = (disclosureToken: string) => {
-  return axios.create({
-    baseURL: '/api/v1/admin',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Disclosure-Token': disclosureToken,
-    },
-  });
+  return createAdminClient({ 'X-Disclosure-Token': disclosureToken });
 };
 
 export const disclosureApi = {
   // ============================================
-  // Admin endpoints (localhost-only)
-  // SECURITY: Authorization is enforced at the network level by the backend.
-  // The backend only accepts requests from localhost (localhostOnlyMiddleware).
-  // No token-based authentication is needed for these endpoints because
-  // only the local admin UI can reach them.
+  // Admin endpoints (localhost/private network + optional shared admin token)
   // ============================================
   admin: {
     // Create a new disclosure request

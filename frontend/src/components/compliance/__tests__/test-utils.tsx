@@ -79,7 +79,7 @@ export function renderWithComplianceContext(
     return (
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <MemoryRouter initialEntries={[initialRoute]}>
+          <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialRoute]}>
             <MockComplianceOrgProvider
               initialOrg={initialOrg}
               organizations={organizations}

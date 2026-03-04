@@ -343,18 +343,21 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 			})
 			return
 		}
-		// Development mode: create mock auth request
+		// Development mode: create mock auth request via the library
 		log.Printf("Warning: VERIFIER_ID not configured - returning mock OAuth auth session for development")
-		authReq = &protocol.AuthorizationRequestMessage{
-			ID:   authSessionID,
-			Typ:  "application/iden3comm-plain-json",
-			Type: "https://iden3-communication.io/authorization/1.0/request",
-			Body: protocol.AuthorizationRequestMessageBody{
-				CallbackURL: callbackURL,
-				Reason:      "Authenticate for OAuth authorization (demo mode)",
-				Scope:       []protocol.ZeroKnowledgeProofRequest{},
-			},
-			From: "did:privado:verifier:demo-mode",
+		authReq, err = s.privadoVerifier.CreateAuthorizationRequest(
+			devVerifierDID,
+			callbackURL,
+			"Authenticate for OAuth authorization (demo mode)",
+		)
+		if err != nil {
+			s.sessionStore.DeleteSession(authSessionID)
+			s.oauthSessionStore.DeleteSession(oauthSessionID)
+			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+				Error:            "server_error",
+				ErrorDescription: "failed to create mock auth request: " + err.Error(),
+			})
+			return
 		}
 	} else {
 		// Use ProofOfHumanity auth request when enabled

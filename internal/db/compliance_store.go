@@ -475,15 +475,21 @@ func (d *DB) ListSanctionedAddresses(ctx context.Context, orgID *string, limit, 
 func (d *DB) CreateComplianceLog(ctx context.Context, entry *compliance.ComplianceLog) (int64, error) {
 	query := `INSERT INTO compliance_logs (org_id, user_id, transfer_type, token_address,
 	          from_address, to_address, amount_wei, amount_usd, threshold_usd,
-	          decision, denial_reason, travel_rule_record_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	          decision, denial_reason, travel_rule_record_id, correlation_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	          RETURNING id, created_at`
+
+	var corrID *string
+	if entry.CorrelationID != "" {
+		corrID = &entry.CorrelationID
+	}
 
 	err := d.conn.QueryRowContext(ctx, query,
 		entry.OrgID, entry.UserID, entry.TransferType, entry.TokenAddress,
 		strings.ToLower(entry.FromAddress), strings.ToLower(entry.ToAddress),
 		entry.AmountWei, entry.AmountUSD, entry.ThresholdUSD,
 		entry.Decision, entry.DenialReason, entry.TravelRuleRecordID,
+		corrID,
 	).Scan(&entry.ID, &entry.CreatedAt)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create compliance log: %w", err)

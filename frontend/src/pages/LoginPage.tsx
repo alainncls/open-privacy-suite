@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Shield, Smartphone, ExternalLink, Loader2, AlertCircle, CheckCircle2, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,8 +9,10 @@ import { authApiMethods, generatePrivadoLink, isMobileDevice, AuthRequestRespons
 
 // Mock login requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true
 const allowMockLogin = import.meta.env.VITE_ALLOW_MOCK_LOGIN === 'true';
+const AUTH_POLL_INTERVAL_MS = 2000;
+const AUTH_MAX_POLLS = 150;
 
-type AuthStep = 'init' | 'loading' | 'ready' | 'polling' | 'success' | 'error' | 'humanity_required';
+type AuthStep = 'init' | 'loading' | 'ready' | 'success' | 'error' | 'humanity_required' | 'timed_out';
 
 interface AuthState {
   step: AuthStep;
@@ -22,7 +24,9 @@ interface AuthState {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login, isAuthenticated, isLoading } = useAuth();
+  const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
   const [state, setState] = useState<AuthState>({
     step: 'init',
     sessionId: null,
@@ -33,12 +37,10 @@ export function LoginPage() {
 
   // Redirect if already authenticated
   useEffect(() => {
-    console.log('[LoginPage] Auth check:', { isAuthenticated, isLoading });
     if (isAuthenticated) {
-      console.log('[LoginPage] Already authenticated, redirecting to /link-wallet');
-      navigate('/link-wallet');
+      navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate, isLoading]);
+  }, [isAuthenticated, navigate, isLoading, from]);
 
   // Start auth request
   const startAuth = useCallback(async () => {
@@ -82,12 +84,12 @@ export function LoginPage() {
       // Step 3: Login
       login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
       setState(prev => ({ ...prev, step: 'success' }));
-      setTimeout(() => navigate('/link-wallet'), 1000);
+      setTimeout(() => navigate(from, { replace: true }), 1000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
     }
-  }, [login, navigate]);
+  }, [login, navigate, from]);
 
   // Auto-start on mount
   useEffect(() => {
@@ -101,19 +103,25 @@ export function LoginPage() {
     if (state.step !== 'ready' || !state.sessionId) return;
 
     let mounted = true;
-    const pollInterval = 2000; // Poll every 2 seconds
-    const maxPolls = 150; // 5 minutes max
     let pollCount = 0;
 
     const poll = async () => {
-      if (!mounted || pollCount >= maxPolls) return;
+      if (!mounted) return;
+      if (pollCount >= AUTH_MAX_POLLS) {
+        setState(prev => ({
+          ...prev,
+          step: 'timed_out',
+          error: 'Authentication timed out. Generate a new QR code and try again.',
+        }));
+        return;
+      }
 
       try {
         const result = await authApiMethods.pollSession(state.sessionId!);
         if (result && mounted) {
           login(result.access_token, result.refresh_token, result.expires_in);
           setState(prev => ({ ...prev, step: 'success' }));
-          setTimeout(() => navigate('/link-wallet'), 1000);
+          setTimeout(() => navigate(from, { replace: true }), 1000);
           return;
         }
       } catch (err) {
@@ -131,13 +139,13 @@ export function LoginPage() {
       }
 
       pollCount++;
-      if (mounted && pollCount < maxPolls) {
-        setTimeout(poll, pollInterval);
+      if (mounted) {
+        setTimeout(poll, AUTH_POLL_INTERVAL_MS);
       }
     };
 
     // Start polling after a short delay
-    const timer = setTimeout(poll, pollInterval);
+    const timer = setTimeout(poll, AUTH_POLL_INTERVAL_MS);
     return () => {
       mounted = false;
       clearTimeout(timer);
@@ -172,7 +180,7 @@ export function LoginPage() {
                 aria-hidden="true"
               />
             </div>
-            <p className="text-sm text-[#6B7280] text-center">
+            <p className="text-center text-sm text-neutral-500">
               Scan with your Privado ID wallet
             </p>
           </div>
@@ -193,8 +201,8 @@ export function LoginPage() {
 
         {/* Desktop: also show button as fallback */}
         {!isMobile && (
-          <div className="pt-4 border-t border-[#E2E8F0]">
-            <p className="text-xs text-[#374151] text-center mb-3">
+          <div className="border-t border-neutral-200 pt-4">
+            <p className="mb-3 text-center text-xs text-neutral-700">
               Or open the wallet on this device
             </p>
             <Button
@@ -210,7 +218,7 @@ export function LoginPage() {
         )}
 
         {/* Polling indicator */}
-        <div className="flex items-center justify-center gap-2 text-[#374151] text-sm" role="status" aria-live="polite">
+        <div className="flex items-center justify-center gap-2 text-sm text-neutral-700" role="status" aria-live="polite">
           <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
           <span>Waiting for wallet confirmation...</span>
         </div>
@@ -219,15 +227,15 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] flex items-center justify-center p-4 overflow-x-hidden" data-testid="login-page">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-100 p-4 overflow-x-hidden" data-testid="login-page">
       <div className="w-full max-w-md animate-fade-in-up">
         {/* Logo Header */}
         <div className="text-center mb-8" data-testid="login-header">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#8950FA] to-[#A478FC] flex items-center justify-center shadow-lg shadow-primary">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary-300 shadow-lg shadow-primary">
             <Shield className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-[#0F0F0F]">Privacy Proxy</h1>
-          <p className="text-[#6B7280] mt-1">Authenticated RPC Access</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Privacy Proxy</h1>
+          <p className="mt-1 text-neutral-500">Authenticated RPC Access</p>
         </div>
 
         {/* Auth Card */}
@@ -242,8 +250,8 @@ export function LoginPage() {
             {/* Loading state */}
             {state.step === 'loading' && (
               <div className="flex flex-col items-center gap-4 py-8" role="status" aria-live="polite" data-testid="auth-loading">
-                <Loader2 className="w-8 h-8 animate-spin text-[#8950FA]" aria-hidden="true" />
-                <p className="text-[#6B7280]">Preparing authentication...</p>
+                <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+                <p className="text-neutral-500">Preparing authentication...</p>
               </div>
             )}
 
@@ -253,23 +261,23 @@ export function LoginPage() {
             {/* Success state */}
             {state.step === 'success' && (
               <div className="flex flex-col items-center gap-4 py-8" data-testid="auth-success">
-                <div className="w-16 h-16 rounded-full bg-[#DCFCE7] flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-[#166534]" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-success-light">
+                  <CheckCircle2 className="h-8 w-8 text-success-dark" />
                 </div>
-                <p className="text-[#0F0F0F] font-medium">Authentication successful!</p>
-                <p className="text-[#6B7280] text-sm">Redirecting to wallet linking...</p>
+                <p className="font-medium text-neutral-900">Authentication successful!</p>
+                <p className="text-sm text-neutral-500">Redirecting to wallet linking...</p>
               </div>
             )}
 
             {/* Humanity verification required */}
             {state.step === 'humanity_required' && (
               <div className="flex flex-col items-center gap-4 py-6">
-                <div className="w-16 h-16 rounded-full bg-[#FEF9C3] flex items-center justify-center">
-                  <AlertCircle className="w-8 h-8 text-[#854D0E]" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-warning-light">
+                  <AlertCircle className="h-8 w-8 text-warning-dark" />
                 </div>
                 <div className="text-center">
-                  <p className="text-[#0F0F0F] font-medium mb-2">Humanity Verification Required</p>
-                  <p className="text-[#6B7280] text-sm mb-4">
+                  <p className="mb-2 font-medium text-neutral-900">Humanity Verification Required</p>
+                  <p className="mb-4 text-sm text-neutral-500">
                     Please complete your ProofOfHumanity verification with Billions to continue.
                   </p>
                 </div>
@@ -293,15 +301,40 @@ export function LoginPage() {
               </div>
             )}
 
+            {/* Polling timeout state */}
+            {state.step === 'timed_out' && (
+              <div className="flex flex-col items-center gap-4 py-6" data-testid="auth-timeout">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-warning-light">
+                  <AlertCircle className="h-8 w-8 text-warning-dark" />
+                </div>
+                <div className="text-center">
+                  <p className="mb-2 font-medium text-neutral-900">Authentication Timed Out</p>
+                  <p className="text-sm text-neutral-500">{state.error}</p>
+                </div>
+                <Button onClick={startAuth} variant="default" className="w-full">
+                  Generate New QR Code
+                </Button>
+                <Button
+                  onClick={handleMobileAuth}
+                  variant="outline"
+                  className="w-full"
+                  disabled={!state.authRequest}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Wallet App
+                </Button>
+              </div>
+            )}
+
             {/* Error state */}
             {state.step === 'error' && (
               <div className="flex flex-col items-center gap-4 py-6" data-testid="auth-error">
-                <div className="w-16 h-16 rounded-full bg-[#FEE2E2] flex items-center justify-center">
-                  <AlertCircle className="w-8 h-8 text-[#991B1B]" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-error-light">
+                  <AlertCircle className="h-8 w-8 text-error-dark" />
                 </div>
                 <div className="text-center">
-                  <p className="text-[#0F0F0F] font-medium mb-2">Authentication Failed</p>
-                  <p className="text-[#6B7280] text-sm">{state.error}</p>
+                  <p className="mb-2 font-medium text-neutral-900">Authentication Failed</p>
+                  <p className="text-sm text-neutral-500">{state.error}</p>
                 </div>
                 <Button onClick={startAuth} variant="default" className="w-full mt-2" data-testid="try-again-btn">
                   Try Again
@@ -313,13 +346,13 @@ export function LoginPage() {
 
         {/* Help text */}
         <div className="mt-6 text-center">
-          <p className="text-[#374151] text-sm">
+          <p className="text-sm text-neutral-700">
             Don't have Privado ID?{' '}
             <a
               href="https://docs.privado.id/docs/wallet/wallet-app/privadoid-app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#8950FA] hover:text-[#A478FC] underline underline-offset-2"
+              className="text-primary underline underline-offset-2 hover:text-primary-300"
             >
               Download the wallet
             </a>
@@ -328,9 +361,9 @@ export function LoginPage() {
 
         {/* Mock login - requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true */}
         {allowMockLogin && (
-          <div className="mt-6 pt-6 border-t border-[#E2E8F0]" data-testid="dev-tools">
+          <div className="mt-6 border-t border-neutral-200 pt-6" data-testid="dev-tools">
             <div className="text-center mb-3">
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#FEF9C3] text-[#854D0E] text-xs font-medium">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-light px-2 py-1 text-xs font-medium text-warning-dark">
                 <FlaskConical className="w-3 h-3" />
                 Development Only
               </span>
@@ -338,7 +371,7 @@ export function LoginPage() {
             <Button
               onClick={handleMockLogin}
               variant="outline"
-              className="w-full border-[#FDE047] text-[#854D0E] hover:bg-[#FEF9C3]"
+              className="w-full border-warning text-warning-dark hover:bg-warning-light"
               disabled={state.step === 'loading'}
               data-testid="mock-login-btn"
             >

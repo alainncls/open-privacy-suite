@@ -410,19 +410,22 @@ Registers:
 
 ### Auto-Registration After Deployment
 
-When deploying through the CREATE3 factory via the privacy proxy, contracts are **automatically registered** in the RBAC system. This happens transparently:
+Contracts deployed through the privacy proxy are **automatically registered** in the RBAC system. Two paths:
 
+**CREATE3 factory deployments:**
 1. You preregister addresses (via API or CLI)
 2. You deploy via the CREATE3 factory
 3. Privacy proxy detects the successful factory deploy
-4. Contract is auto-registered in the `contracts` table with metadata
+4. Contract is auto-registered in the `contracts` table with metadata (`auto_registered: true`, factory address, salt)
 
-**No manual registration step required!**
+**Plain CREATE deployments (`eth_sendTransaction` without `to`):**
+1. Proxy computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` _before_ forwarding
+2. Address is immediately pre-registered to the deployer's org (closes cross-org access window)
+3. Transaction is forwarded to the node
+4. On successful mining: pre-registration is finalized as a full `Contract` record (`auto_registered: true`, `via: plain_create`)
+5. On revert: pre-registration is cleaned up
 
-The auto-registered contract includes:
-- Factory address used for deployment
-- Salt value used
-- `auto_registered: true` flag in metadata
+**No manual registration step required for either path!**
 
 You can then optionally add fine-grained grants (specific claims per group) via the admin API or UI.
 
@@ -450,7 +453,8 @@ These must be pre-approved by org admin via the admin API.
 | Address Ownership | All deployed addresses belong to org | Prepare |
 | Constructor Args | All address params authorized | Prepare |
 | Bytecode Integrity | Hash matches registration | Deploy |
-| Auto-Registration | Contract added to RBAC after deploy | Deploy |
+| Plain CREATE Pre-reg | CREATE address pre-registered before tx forwarded | Deploy |
+| Auto-Registration | Contract added to RBAC after mine | Deploy |
 | Runtime Calls | All call targets authorized | Every tx |
 | State Access | Storage modifications traced | Every tx |
 

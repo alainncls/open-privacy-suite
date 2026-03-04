@@ -2,9 +2,10 @@ import { test, expect } from '@playwright/test';
 import { selectors, roles } from '../../helpers/ui/selectors';
 import { mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
 
-// Generate unique names for test organizations to avoid conflicts
-const generateOrgName = () => `Test Org ${Date.now()}`;
-const generateOrgSlug = () => `test-org-${Date.now()}`;
+// Generate unique names/slugs for test organizations to avoid collisions across workers
+const uniqueSuffix = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const generateOrgName = () => `Test Org ${uniqueSuffix()}`;
+const generateOrgSlug = () => `test-org-${uniqueSuffix()}`;
 
 test.describe('Organization CRUD', () => {
   test.beforeEach(async ({ page }) => {

@@ -21,7 +21,7 @@ async function setupUser(request: any) {
   jwtToken = await getJWTToken(request, USER_DID);
 
   // Step 2: Find the user by external ID to get their internal ID
-  const usersResp = await request.get(`${API_URL}/api/v1/users`);
+  const usersResp = await request.get(`${API_URL}/api/v1/admin/users`);
   const usersData = await usersResp.json();
   const users = usersData.data;
   const user = users.find((u: any) => u.external_id === USER_DID);
@@ -30,23 +30,23 @@ async function setupUser(request: any) {
   }
 
   // Step 3: Update KYC status using internal ID
-  await request.put(`${API_URL}/api/v1/users/${user.id}`, {
+  await request.put(`${API_URL}/api/v1/admin/users/${user.id}`, {
     data: { kyc: true }
   });
 
   // Step 4: Add user to default org's default group using internal ID
-  const orgsResp = await request.get(`${API_URL}/api/v1/orgs`);
+  const orgsResp = await request.get(`${API_URL}/api/v1/admin/orgs`);
   const orgsData = await orgsResp.json();
   const orgs = orgsData.data;
   const defaultOrg = orgs.find((o: any) => o.slug === 'default');
   if (defaultOrg) {
-    const groupsResp = await request.get(`${API_URL}/api/v1/orgs/${defaultOrg.id}/groups`);
+    const groupsResp = await request.get(`${API_URL}/api/v1/admin/orgs/${defaultOrg.id}/groups`);
     const groupsData = await groupsResp.json();
     const groups = groupsData.data.map((g: any) => g.group);
     const defaultGroup = groups.find((g: any) => g.slug === 'default');
     if (defaultGroup) {
       await request.post(
-        `${API_URL}/api/v1/users/${user.id}/memberships`,
+        `${API_URL}/api/v1/admin/users/${user.id}/memberships`,
         { data: { org_id: defaultOrg.id, group_id: defaultGroup.id } }
       );
     }

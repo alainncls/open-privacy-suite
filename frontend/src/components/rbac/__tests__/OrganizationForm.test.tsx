@@ -41,7 +41,7 @@ function renderOrganizationForm(options: RenderOptions = {}) {
   render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <OrganizationForm
             organization={options.organization}
             onClose={onClose}

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -184,16 +185,20 @@ func (d *DB) LogAccess(ctx context.Context, externalID, method string, statusCod
 }
 
 type AccessLog struct {
-	ID         int    `json:"id"`
-	ExternalID string `json:"external_id"`
-	Method     string `json:"method"`
-	StatusCode int    `json:"status_code"`
-	IPAddress  string `json:"ip_address"`
-	CreatedAt  string `json:"created_at"`
+	ID            int              `json:"id"`
+	ExternalID    string           `json:"external_id"`
+	Method        string           `json:"method"`
+	StatusCode    int              `json:"status_code"`
+	IPAddress     string           `json:"ip_address"`
+	CorrelationID *string          `json:"correlation_id,omitempty"`
+	RequestParams *json.RawMessage `json:"request_params,omitempty"`
+	EntryHash     *string          `json:"entry_hash,omitempty"`
+	CreatedAt     string           `json:"created_at"`
 }
 
 func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error) {
-	query := `SELECT id, external_id, method, status_code, ip_address, created_at
+	query := `SELECT id, external_id, method, status_code, ip_address,
+	          correlation_id, request_params, entry_hash, created_at
 	          FROM access_logs
 	          ORDER BY created_at DESC
 	          LIMIT $1`
@@ -208,21 +213,121 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 
 	for rows.Next() {
 		var log AccessLog
+		var correlationID, entryHash sql.NullString
+		var requestParams []byte
+
 		if err := rows.Scan(
 			&log.ID,
 			&log.ExternalID,
 			&log.Method,
 			&log.StatusCode,
 			&log.IPAddress,
+			&correlationID,
+			&requestParams,
+			&entryHash,
 			&log.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
 		}
 
+		if correlationID.Valid {
+			log.CorrelationID = &correlationID.String
+		}
+		if len(requestParams) > 0 {
+			raw := json.RawMessage(requestParams)
+			log.RequestParams = &raw
+		}
+		if entryHash.Valid {
+			log.EntryHash = &entryHash.String
+		}
+
 		logs = append(logs, &log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate logs: %w", err)
 	}
 
 	return logs, nil
+}
+
+// LogAccessEnhanced inserts an access log entry with correlation ID, optional request params, and returns the ID and created_at for hash chain computation.
+func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte) (int64, time.Time, error) {
+	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params)
+	          VALUES ($1, $2, $3, $4, $5, $6)
+	          RETURNING id, created_at`
+
+	var id int64
+	var createdAt time.Time
+	var corrID *string
+	if correlationID != "" {
+		corrID = &correlationID
+	}
+
+	err := d.conn.QueryRowContext(ctx, query, externalID, method, statusCode, ipAddress, corrID, params).Scan(&id, &createdAt)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("failed to log enhanced access: %w", err)
+	}
+	return id, createdAt, nil
+}
+
+// UpdateAccessLogHash sets the entry_hash for an access log entry after hash chain computation.
+func (d *DB) UpdateAccessLogHash(ctx context.Context, id int64, hash string) error {
+	_, err := d.conn.ExecContext(ctx, `UPDATE access_logs SET entry_hash = $2 WHERE id = $1`, id, hash)
+	return err
+}
+
+// GetLatestAccessLogHash returns the entry_hash of the most recent access log entry that has one.
+// Used to seed the hash chain on startup.
+func (d *DB) GetLatestAccessLogHash(ctx context.Context) (string, error) {
+	var hash sql.NullString
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT entry_hash FROM access_logs WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1`,
+	).Scan(&hash)
+	if err == sql.ErrNoRows || !hash.Valid {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest access log hash: %w", err)
+	}
+	return hash.String, nil
+}
+
+// CleanupAccessLogs deletes access log entries older than the given time.
+func (d *DB) CleanupAccessLogs(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := d.conn.ExecContext(ctx, `DELETE FROM access_logs WHERE created_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup access logs: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// CleanupComplianceLogs deletes compliance log entries older than the given time.
+func (d *DB) CleanupComplianceLogs(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := d.conn.ExecContext(ctx, `DELETE FROM compliance_logs WHERE created_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup compliance logs: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// CleanupRBACAuditLogs deletes RBAC audit log entries older than the given time.
+func (d *DB) CleanupRBACAuditLogs(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := d.conn.ExecContext(ctx, `DELETE FROM rbac_audit_log WHERE created_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup RBAC audit logs: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// CleanupUsedTravelRecords deletes used travel rule records older than the given time.
+// Only deletes records that have been used (used_at IS NOT NULL).
+func (d *DB) CleanupUsedTravelRecords(ctx context.Context, olderThan time.Time) (int64, error) {
+	result, err := d.conn.ExecContext(ctx,
+		`DELETE FROM travel_rule_records WHERE used_at IS NOT NULL AND created_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup used travel records: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // RefreshToken represents a refresh token in the database
@@ -441,6 +546,9 @@ func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddres
 			link.ENSResolvedAt = &ensResolvedAt.String
 		}
 		links = append(links, &link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate ETH address links: %w", err)
 	}
 
 	return links, nil

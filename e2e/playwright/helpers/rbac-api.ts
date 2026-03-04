@@ -249,8 +249,10 @@ export class RBACApiClient {
 
   // === Organizations ===
 
-  async listOrganizations(): Promise<Organization[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs`);
+  async listOrganizations(limit = 1000, offset = 0): Promise<Organization[]> {
+    const response = await this.request.get(
+      `${ADMIN_URL}/api/v1/admin/orgs?limit=${limit}&offset=${offset}`
+    );
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list organizations: ${response.status()} - ${body}`);
@@ -260,7 +262,7 @@ export class RBACApiClient {
   }
 
   async createOrganization(input: CreateOrgInput): Promise<Organization> {
-    const response = await this.request.post(`${ADMIN_URL}/api/orgs`, {
+    const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -272,7 +274,7 @@ export class RBACApiClient {
   }
 
   async getOrganization(orgId: string): Promise<Organization | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -284,7 +286,7 @@ export class RBACApiClient {
   }
 
   async updateOrganization(orgId: string, input: UpdateOrgInput): Promise<Organization> {
-    const response = await this.request.put(`${ADMIN_URL}/api/orgs/${orgId}`, {
+    const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -295,10 +297,18 @@ export class RBACApiClient {
     return (await response.json()) as Organization;
   }
 
+  async deleteOrganization(orgId: string): Promise<void> {
+    const response = await this.request.delete(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
+    if (!response.ok() && response.status() !== 404) {
+      const body = await response.text();
+      throw new Error(`Failed to delete organization: ${response.status()} - ${body}`);
+    }
+  }
+
   // === Groups ===
 
   async listGroups(orgId: string): Promise<Group[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/groups`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list groups: ${response.status()} - ${body}`);
@@ -308,7 +318,7 @@ export class RBACApiClient {
   }
 
   async createGroup(orgId: string, input: CreateGroupInput): Promise<Group> {
-    const response = await this.request.post(`${ADMIN_URL}/api/orgs/${orgId}/groups`, {
+    const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -320,7 +330,7 @@ export class RBACApiClient {
   }
 
   async getGroup(orgId: string, groupId: string): Promise<Group | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -332,7 +342,7 @@ export class RBACApiClient {
   }
 
   async updateGroup(orgId: string, groupId: string, input: UpdateGroupInput): Promise<Group> {
-    const response = await this.request.put(`${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}`, {
+    const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -344,7 +354,7 @@ export class RBACApiClient {
   }
 
   async deleteGroup(orgId: string, groupId: string): Promise<void> {
-    const response = await this.request.delete(`${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}`);
+    const response = await this.request.delete(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
       throw new Error(`Failed to delete group: ${response.status()} - ${body}`);
@@ -353,7 +363,7 @@ export class RBACApiClient {
 
   async getGroupAccess(orgId: string, groupId: string): Promise<GroupAccess | null> {
     const response = await this.request.get(
-      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/access`
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`
     );
     if (response.status() === 404) {
       return null;
@@ -371,7 +381,7 @@ export class RBACApiClient {
     input: SetGroupAccessInput
   ): Promise<GroupAccess> {
     const response = await this.request.put(
-      `${ADMIN_URL}/api/orgs/${orgId}/groups/${groupId}/access`,
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: input,
@@ -388,7 +398,7 @@ export class RBACApiClient {
 
   async listUsers(limit = 100, offset = 0): Promise<User[]> {
     const response = await this.request.get(
-      `${ADMIN_URL}/api/users?limit=${limit}&offset=${offset}`
+      `${ADMIN_URL}/api/v1/admin/users?limit=${limit}&offset=${offset}`
     );
     if (!response.ok()) {
       const body = await response.text();
@@ -399,7 +409,7 @@ export class RBACApiClient {
   }
 
   async getUser(userId: string): Promise<User | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/users/${userId}`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -411,7 +421,7 @@ export class RBACApiClient {
   }
 
   async updateUser(userId: string, input: UpdateUserInput): Promise<User> {
-    const response = await this.request.put(`${ADMIN_URL}/api/users/${userId}`, {
+    const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/users/${userId}`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -430,7 +440,7 @@ export class RBACApiClient {
   // === Linked Addresses ===
 
   async getUserLinkedAddresses(userId: string): Promise<LinkedAddress[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/users/${userId}/linked-addresses`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/linked-addresses`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to get user linked addresses: ${response.status()} - ${body}`);
@@ -446,7 +456,7 @@ export class RBACApiClient {
   // === Memberships ===
 
   async listUserMemberships(userId: string): Promise<MembershipWithDetails[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/users/${userId}/memberships`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/memberships`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list user memberships: ${response.status()} - ${body}`);
@@ -456,7 +466,7 @@ export class RBACApiClient {
   }
 
   async createMembership(userId: string, input: CreateMembershipInput): Promise<UserMembership> {
-    const response = await this.request.post(`${ADMIN_URL}/api/users/${userId}/memberships`, {
+    const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/users/${userId}/memberships`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -469,7 +479,7 @@ export class RBACApiClient {
 
   async deleteMembership(userId: string, membershipId: string): Promise<void> {
     const response = await this.request.delete(
-      `${ADMIN_URL}/api/users/${userId}/memberships/${membershipId}`
+      `${ADMIN_URL}/api/v1/admin/users/${userId}/memberships/${membershipId}`
     );
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
@@ -480,7 +490,7 @@ export class RBACApiClient {
   // === Contracts ===
 
   async listContracts(orgId: string): Promise<Contract[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/orgs/${orgId}/contracts`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list contracts: ${response.status()} - ${body}`);
@@ -490,7 +500,7 @@ export class RBACApiClient {
   }
 
   async createContract(orgId: string, input: CreateContractInput): Promise<Contract> {
-    const response = await this.request.post(`${ADMIN_URL}/api/orgs/${orgId}/contracts`, {
+    const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts`, {
       headers: { 'Content-Type': 'application/json' },
       data: input,
     });
@@ -507,7 +517,7 @@ export class RBACApiClient {
     input: UpdateContractInput
   ): Promise<Contract> {
     const response = await this.request.put(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}`,
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: input,
@@ -522,7 +532,7 @@ export class RBACApiClient {
 
   async deleteContract(orgId: string, address: string): Promise<void> {
     const response = await this.request.delete(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}`
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`
     );
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
@@ -532,7 +542,7 @@ export class RBACApiClient {
 
   async getContract(orgId: string, address: string): Promise<Contract | null> {
     const response = await this.request.get(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}`
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`
     );
     if (response.status() === 404) {
       return null;
@@ -546,7 +556,7 @@ export class RBACApiClient {
 
   async updateContractABI(orgId: string, address: string, abi: string): Promise<Contract> {
     const response = await this.request.put(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/abi`,
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/abi`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: { abi },
@@ -563,7 +573,7 @@ export class RBACApiClient {
 
   async listContractGrants(orgId: string, address: string): Promise<ContractGrant[]> {
     const response = await this.request.get(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants`
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants`
     );
     if (!response.ok()) {
       const body = await response.text();
@@ -579,7 +589,7 @@ export class RBACApiClient {
     input: CreateContractGrantInput
   ): Promise<ContractGrant> {
     const response = await this.request.post(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants`,
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: input,
@@ -599,7 +609,7 @@ export class RBACApiClient {
     input: UpdateContractGrantInput
   ): Promise<ContractGrant> {
     const response = await this.request.put(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants/${groupId}`,
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants/${groupId}`,
       {
         headers: { 'Content-Type': 'application/json' },
         data: input,
@@ -614,7 +624,7 @@ export class RBACApiClient {
 
   async deleteContractGrant(orgId: string, address: string, groupId: string): Promise<void> {
     const response = await this.request.delete(
-      `${ADMIN_URL}/api/orgs/${orgId}/contracts/${address}/grants/${groupId}`
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants/${groupId}`
     );
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
@@ -625,7 +635,7 @@ export class RBACApiClient {
   // === Access Control ===
 
   async checkAccess(req: AccessCheckRequest): Promise<AccessCheckResult> {
-    const response = await this.request.post(`${ADMIN_URL}/api/access/check`, {
+    const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/access/check`, {
       headers: { 'Content-Type': 'application/json' },
       data: req,
     });
@@ -638,8 +648,8 @@ export class RBACApiClient {
 
   async getEffectivePermissions(userId: string, orgSlug?: string): Promise<EffectivePermissions> {
     const url = orgSlug
-      ? `${ADMIN_URL}/api/users/${userId}/effective-permissions?org=${orgSlug}`
-      : `${ADMIN_URL}/api/users/${userId}/effective-permissions`;
+      ? `${ADMIN_URL}/api/v1/admin/users/${userId}/effective-permissions?org=${orgSlug}`
+      : `${ADMIN_URL}/api/v1/admin/users/${userId}/effective-permissions`;
     const response = await this.request.get(url);
     if (!response.ok()) {
       const body = await response.text();
@@ -649,7 +659,7 @@ export class RBACApiClient {
   }
 
   async getCacheStats(): Promise<CacheStats> {
-    const response = await this.request.get(`${ADMIN_URL}/api/cache/stats`);
+    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/cache/stats`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to get cache stats: ${response.status()} - ${body}`);

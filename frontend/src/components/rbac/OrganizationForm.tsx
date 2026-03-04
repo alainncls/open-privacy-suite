@@ -63,14 +63,14 @@ export default function OrganizationForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="p-4 rounded-lg bg-[#FEE2E2] border border-[#FECACA] flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#991B1B] flex-shrink-0 mt-0.5" />
-          <span className="text-[#991B1B] text-sm">{error}</span>
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <label htmlFor="org-name" className="block text-sm font-medium text-[#374151]">Name</label>
+        <label htmlFor="org-name" className="block text-sm font-medium text-neutral-700">Name</label>
         <Input
           id="org-name"
           type="text"
@@ -79,11 +79,11 @@ export default function OrganizationForm({
           placeholder="e.g., Acme Corporation"
           required
         />
-        <p className="text-xs text-[#94A3B8]">Display name for the organization</p>
+        <p className="text-xs text-neutral-400">Display name for the organization</p>
       </div>
 
       <div className="space-y-2">
-        <label htmlFor="org-slug" className="block text-sm font-medium text-[#374151]">Slug</label>
+        <label htmlFor="org-slug" className="block text-sm font-medium text-neutral-700">Slug</label>
         <Input
           id="org-slug"
           type="text"
@@ -94,7 +94,7 @@ export default function OrganizationForm({
           pattern="^[a-z0-9]+(-[a-z0-9]+)*$"
           title="Lowercase letters, numbers, and hyphens only"
         />
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-neutral-400">
           URL-friendly identifier (lowercase, hyphens allowed)
         </p>
       </div>

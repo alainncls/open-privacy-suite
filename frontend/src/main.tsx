@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
-import { RainbowKitProvider, darkTheme } from '@rainbow-me/rainbowkit';
+import { RainbowKitProvider, lightTheme } from '@rainbow-me/rainbowkit';
 import '@rainbow-me/rainbowkit/styles.css';
 
 import { wagmiConfig } from './config/wagmi';
@@ -29,17 +29,18 @@ import TravelRuleRecordList from './components/compliance/TravelRuleRecordList';
 import SanctionsList from './components/compliance/SanctionsList';
 import ComplianceLogList from './components/compliance/ComplianceLogList';
 import AddressThresholdList from './components/compliance/AddressThresholdList';
+import { RequireAuth } from './components/auth/RequireAuth';
 import './index.css';
 
 const queryClient = new QueryClient();
 
-// Custom RainbowKit theme to match our glass-morphism design
-const customTheme = darkTheme({
-  accentColor: '#6366f1',
+// Align wallet modal styling to Gateway light theme tokens.
+const customTheme = lightTheme({
+  accentColor: '#8950FA',
   accentColorForeground: 'white',
   borderRadius: 'large',
   fontStack: 'system',
-  overlayBlur: 'small',
+  overlayBlur: 'small'
 });
 
 function Root() {
@@ -57,7 +58,14 @@ function Root() {
                 <Route path="/disclosure" element={<DisclosurePage />} />
 
                 {/* Admin dashboard with nested routes */}
-                <Route path="/admin" element={<AdminApp />}>
+                <Route
+                  path="/admin"
+                  element={(
+                    <RequireAuth>
+                      <AdminApp />
+                    </RequireAuth>
+                  )}
+                >
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<Dashboard />} />
                   <Route path="logs" element={<AccessLogs />} />

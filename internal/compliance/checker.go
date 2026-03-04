@@ -28,12 +28,13 @@ func NewChecker(store Store, recordExpiry time.Duration, priceStalenessThreshold
 
 // CheckRequest contains the parameters for a compliance check.
 type CheckRequest struct {
-	OrgID  string
-	UserID string // internal user UUID
-	From   string // sender address (hex)
-	To     string // recipient address (hex)
-	Data   string // calldata (hex)
-	Value  string // transfer value (hex)
+	OrgID         string
+	UserID        string // internal user UUID
+	From          string // sender address (hex)
+	To            string // recipient address (hex)
+	Data          string // calldata (hex)
+	Value         string // transfer value (hex)
+	CorrelationID string // request correlation ID for audit trail
 }
 
 // CheckResult is the outcome of a compliance check.
@@ -320,6 +321,7 @@ func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *Tran
 		Decision:           decision,
 		DenialReason:       denialReasonPtr,
 		TravelRuleRecordID: recordID,
+		CorrelationID:      req.CorrelationID,
 	}
 
 	_, err := c.store.CreateComplianceLog(ctx, entry)
