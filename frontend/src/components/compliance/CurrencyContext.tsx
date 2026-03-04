@@ -10,6 +10,8 @@ interface CurrencyContextType {
   formatAmount: (amount: number) => string;
   currencyLabel: string; // e.g. "USD", "EUR"
   loading: boolean;
+  coingeckoEnabled: boolean;
+  externalRatesApiEnabled: boolean;
 }
 
 const CurrencyContext = createContext<CurrencyContextType | null>(null);
@@ -20,6 +22,8 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   const [currency, setCurrencyState] = useState('usd');
   const [allCurrencies, setAllCurrencies] = useState<CurrencyInfo[]>([DEFAULT_CURRENCY_INFO]);
   const [loading, setLoading] = useState(true);
+  const [coingeckoEnabled, setCoingeckoEnabled] = useState(true);
+  const [externalRatesApiEnabled, setExternalRatesApiEnabled] = useState(false);
 
   const loadCurrency = useCallback(async () => {
     try {
@@ -29,6 +33,8 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
       if (data.all_currencies?.length) {
         setAllCurrencies(data.all_currencies);
       }
+      setCoingeckoEnabled(data.coingecko_enabled ?? true);
+      setExternalRatesApiEnabled(data.external_rates_api_enabled ?? false);
     } catch {
       // Fallback to USD
     } finally {
@@ -55,7 +61,7 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   const currencyLabel = currency.toUpperCase();
 
   return (
-    <CurrencyContext.Provider value={{ currency, currencyInfo, allCurrencies, setCurrency, formatAmount, currencyLabel, loading }}>
+    <CurrencyContext.Provider value={{ currency, currencyInfo, allCurrencies, setCurrency, formatAmount, currencyLabel, loading, coingeckoEnabled, externalRatesApiEnabled }}>
       {children}
     </CurrencyContext.Provider>
   );

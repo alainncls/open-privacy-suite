@@ -154,6 +154,8 @@ export interface CurrencyInfo {
 export interface CurrencyConfig {
   currency: string;
   all_currencies: CurrencyInfo[];
+  coingecko_enabled: boolean;
+  external_rates_api_enabled: boolean;
 }
 
 export interface APIKey {

@@ -41,7 +41,7 @@ function timeAgo(dateStr: string): string {
 
 export default function TokenPriceList() {
   const { selectedOrg } = useComplianceOrgContext();
-  const { formatAmount, currencyLabel } = useCurrency();
+  const { formatAmount, currencyLabel, coingeckoEnabled } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
@@ -209,13 +209,66 @@ export default function TokenPriceList() {
     );
   }
 
+  const coingeckoPrices = systemPrices.filter(sp => sp.source === 'coingecko');
+
+  const renderPriceCard = (sp: SystemTokenPrice) => (
+    <div
+      key={sp.id}
+      className={`p-4 rounded-lg border ${
+        sp.price_fiat === 0
+          ? 'bg-[#FEF2F2] border-[#FECACA]'
+          : sp.is_stale
+          ? 'bg-[#FFFBEB] border-[#FDE68A]'
+          : 'bg-[#F0FDF4] border-[#BBF7D0]'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-[#374151]">{sp.symbol}</span>
+          {sp.source && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+              {sp.source}
+            </Badge>
+          )}
+        </div>
+        <Badge
+          variant={sp.price_fiat === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
+          className="text-xs"
+        >
+          {sp.price_fiat === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
+        </Badge>
+      </div>
+      <div className="text-xl font-semibold text-[#111827]">
+        {sp.price_fiat === 0 ? '—' : formatAmount(sp.price_fiat)}
+      </div>
+      <div className="text-xs text-[#94A3B8] mt-1">
+        {sp.price_fiat === 0 ? (
+          <span className="text-[#991B1B] flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" />
+            Price unavailable — add manual override
+          </span>
+        ) : sp.is_stale ? (
+          <span className="text-[#92400E] flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            Last updated {timeAgo(sp.updated_at)}
+          </span>
+        ) : (
+          `Updated ${timeAgo(sp.updated_at)}`
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* System Prices Section */}
+      {/* CoinGecko Prices Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-neutral-500 uppercase tracking-wide">
             Auto-Fetched Prices (CoinGecko)
+            {!coingeckoEnabled && (
+              <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0">Disabled</Badge>
+            )}
           </h3>
           <Button variant="ghost" size="sm" onClick={loadSystemPrices}>
             <RefreshCw className="w-3.5 h-3.5 mr-1" />
@@ -223,59 +276,17 @@ export default function TokenPriceList() {
           </Button>
         </div>
 
-        {systemPrices.length === 0 ? (
+        {!coingeckoEnabled ? (
           <div className="p-4 rounded-lg bg-neutral-100 border border-neutral-200 text-sm text-neutral-500">
-            No system prices available. Prices will appear after the first CoinGecko fetch.
+            CoinGecko price fetching is disabled. Set <code className="text-xs bg-neutral-100 px-1 py-0.5 rounded">DISABLE_COINGECKO=false</code> to enable automatic price fetching.
+          </div>
+        ) : coingeckoPrices.length === 0 ? (
+          <div className="p-4 rounded-lg bg-neutral-100 border border-neutral-200 text-sm text-neutral-500">
+            No CoinGecko prices available. Prices will appear after the first CoinGecko fetch.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {systemPrices.map(sp => (
-              <div
-                key={sp.id}
-                className={`p-4 rounded-lg border ${
-                  sp.price_fiat === 0
-                    ? 'bg-red-50 border-error/30'
-                    : sp.is_stale
-                    ? 'bg-amber-50 border-amber-200'
-                    : 'bg-green-50 border-success/30'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-neutral-700">{sp.symbol}</span>
-                    {sp.source && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                        {sp.source}
-                      </Badge>
-                    )}
-                  </div>
-                  <Badge
-                    variant={sp.price_fiat === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
-                    className="text-xs"
-                  >
-                    {sp.price_fiat === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
-                  </Badge>
-                </div>
-                <div className="text-xl font-semibold text-neutral-800">
-                  {sp.price_fiat === 0 ? '—' : formatAmount(sp.price_fiat)}
-                </div>
-                <div className="text-xs text-neutral-400 mt-1">
-                  {sp.price_fiat === 0 ? (
-                    <span className="text-error-dark flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      Price unavailable — add manual override
-                    </span>
-                  ) : sp.is_stale ? (
-                    <span className="text-amber-800 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />
-                      Last updated {timeAgo(sp.updated_at)}
-                    </span>
-                  ) : (
-                    `Updated ${timeAgo(sp.updated_at)}`
-                  )}
-                </div>
-              </div>
-            ))}
+            {coingeckoPrices.map(renderPriceCard)}
           </div>
         )}
       </div>

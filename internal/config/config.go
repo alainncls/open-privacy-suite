@@ -44,6 +44,8 @@ type Config struct {
 	// Token price fetching configuration
 	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
 	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
+	DisableCoinGecko        bool          // If true, disable CoinGecko price fetching (default: false)
+	EnableExternalRatesAPI  bool          // If true, enable external rates API endpoints (default: false)
 
 	// Audit configuration
 	AuditLogParams bool // If true, log redacted request parameters in access_logs (default: false)
@@ -173,6 +175,9 @@ func Load() *Config {
 		}
 	}
 
+	disableCoinGecko := getEnv("DISABLE_COINGECKO", "false") == "true"
+	enableExternalRatesAPI := getEnv("ENABLE_EXTERNAL_RATES_API", "false") == "true"
+
 	// Audit configuration
 	auditLogParams := getEnv("AUDIT_LOG_PARAMS", "false") == "true"
 
@@ -222,6 +227,8 @@ func Load() *Config {
 		TravelRecordExpiry:         travelRecordExpiry,
 		PriceFetchInterval:         priceFetchInterval,
 		PriceStalenessThreshold:    priceStalenessThreshold,
+		DisableCoinGecko:           disableCoinGecko,
+		EnableExternalRatesAPI:     enableExternalRatesAPI,
 		AuditLogParams:             auditLogParams,
 		RetentionAccessLogs:        retentionAccessLogs,
 		RetentionComplianceLogs:    retentionComplianceLogs,

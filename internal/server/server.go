@@ -274,10 +274,14 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor.SetComplianceChecker(checker)
 		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
 
-		// Start background CoinGecko price fetcher
-		priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
-		priceSvc.Start()
-		s.priceService = priceSvc
+		// Start background CoinGecko price fetcher (unless disabled)
+		if !cfg.DisableCoinGecko {
+			priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
+			priceSvc.Start()
+			s.priceService = priceSvc
+		} else {
+			log.Printf("CoinGecko price fetching is DISABLED (DISABLE_COINGECKO=true)")
+		}
 	} else {
 		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
 	}
@@ -461,7 +465,10 @@ func (s *Server) setupRouter() *gin.Engine {
 	s.registerUserProfileRoutes(router)
 
 	// External rates API - authenticated via API keys (separate from JWT/localhost)
-	s.registerExternalRatesRoutes(router)
+	if s.config.EnableExternalRatesAPI {
+		s.registerExternalRatesRoutes(router)
+		log.Printf("External rates API enabled")
+	}
 
 	// Explorer API endpoints - internal APIs for block explorer integration
 	// Protected by localhost-only middleware (called by explorer backend)

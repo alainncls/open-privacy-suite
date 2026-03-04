@@ -12,6 +12,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Loader2, Plus, AlertCircle, Key, Copy, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
+import { useCurrency } from './CurrencyContext';
 import type { APIKey, ExternalRatesSettings, PriceChangeLog } from '@/types/compliance';
 
 function getKeyStatus(key: APIKey): 'active' | 'revoked' | 'expired' {
@@ -27,6 +28,7 @@ const statusBadgeVariant: Record<string, 'success' | 'secondary' | 'destructive'
 };
 
 export default function APIKeyManager() {
+  const { externalRatesApiEnabled, formatAmount } = useCurrency();
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +184,12 @@ export default function APIKeyManager() {
 
   return (
     <div className="space-y-4">
+      {!externalRatesApiEnabled && (
+        <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#FDE68A] text-sm text-[#92400E] flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          External rates API is disabled. API keys can be managed but the endpoints are inactive. Set <code className="text-xs bg-[#FEF3C7] px-1 py-0.5 rounded">ENABLE_EXTERNAL_RATES_API=true</code> to activate.
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h3 className="text-base font-medium text-[#374151]">API Keys</h3>
         <Button size="sm" onClick={openCreateDialog}>
@@ -338,9 +346,9 @@ export default function APIKeyManager() {
                     <TableCell className="text-sm">{log.api_key_name}</TableCell>
                     <TableCell className="font-mono text-xs">{log.symbol}</TableCell>
                     <TableCell className="text-sm">
-                      {log.old_price != null ? `$${log.old_price.toFixed(2)}` : 'N/A'}
+                      {log.old_price != null ? formatAmount(log.old_price) : 'N/A'}
                       {' → '}
-                      ${log.new_price.toFixed(2)}
+                      {formatAmount(log.new_price)}
                     </TableCell>
                     <TableCell className="text-sm">
                       {log.deviation_pct != null ? `${log.deviation_pct.toFixed(1)}%` : 'N/A'}

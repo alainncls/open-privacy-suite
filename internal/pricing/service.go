@@ -27,6 +27,7 @@ type Service struct {
 	interval            time.Duration
 	cancel              context.CancelFunc
 	done                chan struct{}
+	refreshCh           chan struct{} // signals immediate re-fetch
 	consecutiveFailures int
 }
 
@@ -38,6 +39,7 @@ func NewService(store SystemPriceStore, settingsStore SettingsStore, interval ti
 		fetcher:       NewFetcher(),
 		interval:      interval,
 		done:          make(chan struct{}),
+		refreshCh:     make(chan struct{}, 1),
 	}
 }
 
@@ -61,6 +63,8 @@ func (s *Service) Start() {
 				return
 			case <-ticker.C:
 				s.fetchAndUpdate(ctx)
+			case <-s.refreshCh:
+				s.fetchAndUpdate(ctx)
 			}
 		}
 	}()
@@ -75,6 +79,17 @@ func (s *Service) Stop() {
 		<-s.done
 	}
 	log.Printf("Pricing service stopped")
+}
+
+// RefreshNow signals an immediate price re-fetch (e.g. after currency change).
+// Non-blocking: if a refresh is already pending, this is a no-op.
+// All fetches are serialized through the main goroutine, preventing races.
+func (s *Service) RefreshNow() {
+	select {
+	case s.refreshCh <- struct{}{}:
+	default:
+		// Refresh already pending, skip
+	}
 }
 
 func (s *Service) fetchAndUpdate(ctx context.Context) {

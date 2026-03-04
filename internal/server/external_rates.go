@@ -498,8 +498,10 @@ func (s *Server) getBaseCurrency(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"currency":       currency,
-		"all_currencies": allCurrencies,
+		"currency":                   currency,
+		"all_currencies":             allCurrencies,
+		"coingecko_enabled":          !s.config.DisableCoinGecko,
+		"external_rates_api_enabled": s.config.EnableExternalRatesAPI,
 	})
 }
 
@@ -549,7 +551,12 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 		}
 	}
 
-	msg := "Base currency updated. CoinGecko prices have been zeroed and will be re-fetched in the new currency."
+	// Trigger immediate re-fetch in the new currency
+	if s.priceService != nil {
+		s.priceService.RefreshNow()
+	}
+
+	msg := "Base currency updated to " + strings.ToUpper(input.Currency) + ". CoinGecko prices are being re-fetched in the new currency."
 	if zeroErrors > 0 {
 		msg = fmt.Sprintf("Base currency updated. %d CoinGecko price(s) failed to zero — they may show values in the old currency until the next fetch.", zeroErrors)
 	}
