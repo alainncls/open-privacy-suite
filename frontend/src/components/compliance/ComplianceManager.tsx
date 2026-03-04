@@ -22,14 +22,13 @@ import {
   Loader2,
   AlertTriangle,
   MapPin,
-  Key,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 import { CurrencyProvider } from './CurrencyContext';
 import CurrencySelector from './CurrencySelector';
 
-type ComplianceTab = 'config' | 'tokens' | 'travel-rules' | 'address-thresholds' | 'sanctions' | 'logs' | 'api-keys';
+type ComplianceTab = 'config' | 'tokens' | 'travel-rules' | 'address-thresholds' | 'sanctions' | 'logs';
 
 interface ComplianceOrgContextType {
   selectedOrg: Organization | null;
@@ -63,7 +62,6 @@ export default function ComplianceManager() {
     if (path.includes('/address-thresholds')) return 'address-thresholds';
     if (path.includes('/sanctions')) return 'sanctions';
     if (path.includes('/logs')) return 'logs';
-    if (path.includes('/api-keys')) return 'api-keys';
     return 'config';
   };
 
@@ -139,8 +137,7 @@ export default function ComplianceManager() {
   };
 
   // Sanctions is global-only; Token Prices shows system prices without org but still has per-org section
-  // API Keys is global (not per-org)
-  const showOrgSelector = activeTab !== 'sanctions' && activeTab !== 'api-keys';
+  const showOrgSelector = activeTab !== 'sanctions';
   const blockedWithoutOrg = showOrgSelector && activeTab !== 'tokens' && !selectedOrg;
 
   return (
@@ -250,10 +247,6 @@ export default function ComplianceManager() {
               <TabsTrigger value="tokens" className="gap-2">
                 <Coins className="w-4 h-4" />
                 <span>Token Prices</span>
-              </TabsTrigger>
-              <TabsTrigger value="api-keys" className="gap-2">
-                <Key className="w-4 h-4" />
-                <span>API Keys</span>
               </TabsTrigger>
             </TabsList>
           </Tabs>

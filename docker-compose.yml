@@ -58,7 +58,6 @@ services:
       - ENABLE_RUNTIME_TRACING=true  # Enable runtime tracing for cross-org isolation validation (validates dynamic calls at execution time)
       - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
       - DISABLE_COINGECKO=${DISABLE_COINGECKO:-false}  # Set true to disable CoinGecko price fetching
-      - ENABLE_EXTERNAL_RATES_API=${ENABLE_EXTERNAL_RATES_API:-false}  # Set true to enable external rates API endpoints
     depends_on:
       postgres:
         condition: service_healthy

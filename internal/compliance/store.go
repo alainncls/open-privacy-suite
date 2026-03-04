@@ -14,12 +14,9 @@ type Store interface {
 	DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) error
 	ListTokenPrices(ctx context.Context, orgID string) ([]*TokenPrice, error)
 
-	// System token prices (CoinGecko cache + external)
+	// System token prices (CoinGecko cache)
 	GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*SystemTokenPrice, error)
-	GetSystemTokenPriceByAddress(ctx context.Context, tokenAddress string) (*SystemTokenPrice, error)
 	UpsertSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
-	UpdateSystemTokenPriceByID(ctx context.Context, price *SystemTokenPrice) error
-	CreateSystemTokenPrice(ctx context.Context, price *SystemTokenPrice) error
 	ListSystemTokenPrices(ctx context.Context) ([]*SystemTokenPrice, error)
 
 	// Travel rule records
@@ -57,17 +54,4 @@ type Store interface {
 	GetSystemSetting(ctx context.Context, key string) (string, error)
 	SetSystemSetting(ctx context.Context, key, value string) error
 
-	// API keys
-	CreateAPIKey(ctx context.Context, key *APIKey, keyHash string) error
-	GetAPIKeyByHash(ctx context.Context, keyHash string) (*APIKey, error)
-	ListAPIKeys(ctx context.Context) ([]*APIKey, error)
-	RevokeAPIKey(ctx context.Context, id string) error
-	DeleteAPIKey(ctx context.Context, id string) error
-	UpdateAPIKeyLastUsed(ctx context.Context, id string) error
-	UpdateAPIKeyLastIP(ctx context.Context, id, ip string) error
-	GetAPIKeyLastIP(ctx context.Context, id string) (*string, error)
-
-	// Price change audit log
-	CreatePriceChangeLog(ctx context.Context, entry *PriceChangeLog) error
-	ListPriceChangeLogs(ctx context.Context, limit, offset int) ([]*PriceChangeLog, int, error)
 }

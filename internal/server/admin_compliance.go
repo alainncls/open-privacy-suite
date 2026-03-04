@@ -57,15 +57,6 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	adminGroup.GET("/compliance/currency", s.getBaseCurrency)
 	adminGroup.PUT("/compliance/currency", s.setBaseCurrency)
 
-	// API key management
-	adminGroup.GET("/compliance/api-keys", s.listAPIKeys)
-	adminGroup.POST("/compliance/api-keys", s.createAPIKey)
-	adminGroup.DELETE("/compliance/api-keys/:id", s.revokeAPIKey)
-
-	// External rates protection settings and audit log
-	adminGroup.GET("/compliance/price-change-log", s.listPriceChangeLogs)
-	adminGroup.GET("/compliance/external-rates-settings", s.getExternalRatesSettings)
-	adminGroup.PUT("/compliance/external-rates-settings", s.setExternalRatesSettings)
 }
 
 // compliancePaginationParams parses and caps pagination parameters.
@@ -717,17 +708,6 @@ func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAdd
 		}
 	}
 
-	// Try system price by token_address (for externally-pushed prices)
-	if tokenAddr != "native" {
-		sysPrice, err := s.db.GetSystemTokenPriceByAddress(ctx, tokenAddr)
-		if err != nil {
-			return 0, 0, err
-		}
-		if sysPrice != nil && sysPrice.PriceFiat > 0 {
-			return sysPrice.PriceFiat, sysPrice.Decimals, nil
-		}
-	}
-
 	return 0, 0, nil
 }
 
@@ -738,4 +718,99 @@ func lowercasePtr(s *string) *string {
 	}
 	lower := strings.ToLower(*s)
 	return &lower
+}
+
+// Currency admin endpoints
+
+func (s *Server) getBaseCurrency(c *gin.Context) {
+	currency, err := s.db.GetSystemSetting(c.Request.Context(), "base_currency")
+	if err != nil {
+		internalError(c, "failed to get base currency", err)
+		return
+	}
+	if currency == "" {
+		currency = "usd"
+	}
+
+	type currencyInfo struct {
+		Code   string `json:"code"`
+		Name   string `json:"name"`
+		Symbol string `json:"symbol"`
+	}
+
+	allCurrencies := make([]currencyInfo, 0, len(compliance.ValidCurrencies))
+	for code, name := range compliance.ValidCurrencies {
+		allCurrencies = append(allCurrencies, currencyInfo{
+			Code:   string(code),
+			Name:   name,
+			Symbol: compliance.CurrencySymbols[code],
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"currency":          currency,
+		"all_currencies":    allCurrencies,
+		"coingecko_enabled": !s.config.DisableCoinGecko,
+	})
+}
+
+func (s *Server) setBaseCurrency(c *gin.Context) {
+	var input struct {
+		Currency string `json:"currency" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !compliance.IsValidCurrency(input.Currency) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency; valid options: usd, eur, chf, gbp, aed"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Save the new currency
+	if err := s.db.SetSystemSetting(ctx, "base_currency", input.Currency); err != nil {
+		internalError(c, "failed to set base currency", err)
+		return
+	}
+
+	// Zero out CoinGecko-sourced system prices to force re-fetch in new currency
+	prices, err := s.db.ListSystemTokenPrices(ctx)
+	if err != nil {
+		log.Printf("WARNING: failed to list system token prices after currency change: %v", err)
+		c.JSON(http.StatusOK, gin.H{
+			"currency": input.Currency,
+			"message":  "Base currency updated, but failed to zero CoinGecko prices. They may show values in the old currency until the next CoinGecko fetch.",
+		})
+		return
+	}
+
+	var zeroErrors int
+	for _, p := range prices {
+		if p.Source == "coingecko" {
+			p.PriceFiat = 0
+			p.UpdatedAt = time.Now()
+			if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
+				log.Printf("WARNING: failed to zero price for %s: %v", p.Symbol, err)
+				zeroErrors++
+			}
+		}
+	}
+
+	// Trigger immediate re-fetch in the new currency
+	if s.priceService != nil {
+		s.priceService.RefreshNow()
+	}
+
+	msg := "Base currency updated to " + strings.ToUpper(input.Currency) + ". CoinGecko prices are being re-fetched in the new currency."
+	if zeroErrors > 0 {
+		msg = fmt.Sprintf("Base currency updated. %d CoinGecko price(s) failed to zero — they may show values in the old currency until the next fetch.", zeroErrors)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"currency": input.Currency,
+		"message":  msg,
+	})
 }

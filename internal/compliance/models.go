@@ -40,19 +40,6 @@ func IsValidCurrency(c string) bool {
 	return ok
 }
 
-// APIKey represents an API key for external rate push authentication.
-type APIKey struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	KeyPrefix   string     `json:"key_prefix"`
-	Permissions []string   `json:"permissions"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
-	LastIP      *string    `json:"last_ip,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-}
-
 // WeiToFiat converts a wei amount to fiat given the token decimals and price.
 func WeiToFiat(amountWei *big.Int, decimals int, priceFiat float64) (float64, error) {
 	return WeiToUSD(amountWei, decimals, priceFiat)
@@ -90,7 +77,7 @@ type TokenPrice struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// SystemTokenPrice is a global price cache entry populated by CoinGecko or external push.
+// SystemTokenPrice is a global price cache entry populated by CoinGecko.
 type SystemTokenPrice struct {
 	ID           int       `json:"id"`
 	CoingeckoID  *string   `json:"coingecko_id,omitempty"`
@@ -177,17 +164,3 @@ type ComplianceLogFilters struct {
 	Offset       int
 }
 
-// PriceChangeLog records every price change made via the external rates API.
-type PriceChangeLog struct {
-	ID           int        `json:"id"`
-	APIKeyID     string     `json:"api_key_id"`
-	APIKeyName   string     `json:"api_key_name"`
-	TokenAddress string     `json:"token_address"`
-	Symbol       string     `json:"symbol"`
-	OldPrice     *float64   `json:"old_price,omitempty"`
-	NewPrice     float64    `json:"new_price"`
-	DeviationPct *float64   `json:"deviation_pct,omitempty"`
-	IPAddress    string     `json:"ip_address"`
-	IPChanged    bool       `json:"ip_changed"`
-	CreatedAt    time.Time  `json:"created_at"`
-}

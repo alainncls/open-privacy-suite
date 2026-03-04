@@ -15,10 +15,6 @@ import type {
   ComplianceLogFilters,
   PaginatedResponse,
   CurrencyConfig,
-  APIKey,
-  CreateAPIKeyResponse,
-  ExternalRatesSettings,
-  PriceChangeLog,
 } from '../types/compliance';
 
 export const complianceApi = {
@@ -82,27 +78,4 @@ export const complianceApi = {
       api.put<{ currency: string; message: string }>('/compliance/currency', { currency }),
   },
 
-  externalRatesSettings: {
-    get: () =>
-      api.get<ExternalRatesSettings>('/compliance/external-rates-settings'),
-    update: (settings: Partial<ExternalRatesSettings>) =>
-      api.put<ExternalRatesSettings>('/compliance/external-rates-settings', settings),
-  },
-
-  priceChangeLog: {
-    list: (params?: { limit?: number; offset?: number }) =>
-      api.get<PaginatedResponse<PriceChangeLog>>('/compliance/price-change-log', { params }),
-  },
-
-  apiKeys: {
-    list: () =>
-      api.get<{ data: APIKey[] }>('/compliance/api-keys'),
-    create: (name: string, expiresInDays?: number) =>
-      api.post<CreateAPIKeyResponse>('/compliance/api-keys', {
-        name,
-        expires_in_days: expiresInDays || undefined,
-      }),
-    revoke: (id: string) =>
-      api.delete(`/compliance/api-keys/${id}`),
-  },
 };

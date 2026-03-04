@@ -155,46 +155,5 @@ export interface CurrencyConfig {
   currency: string;
   all_currencies: CurrencyInfo[];
   coingecko_enabled: boolean;
-  external_rates_api_enabled: boolean;
 }
 
-export interface APIKey {
-  id: string;
-  name: string;
-  key_prefix: string;
-  permissions: string[];
-  expires_at?: string;
-  revoked_at?: string;
-  last_used_at?: string;
-  last_ip?: string;
-  created_at: string;
-}
-
-export interface PriceChangeLog {
-  id: number;
-  api_key_id: string;
-  api_key_name: string;
-  token_address: string;
-  symbol: string;
-  old_price?: number;
-  new_price: number;
-  deviation_pct?: number;
-  ip_address: string;
-  ip_changed: boolean;
-  created_at: string;
-}
-
-export interface ExternalRatesSettings {
-  max_price_deviation_pct: number;
-  price_update_cooldown_minutes: number;
-}
-
-export interface CreateAPIKeyResponse {
-  key: string;
-  id: string;
-  name: string;
-  key_prefix: string;
-  permissions: string[];
-  expires_at?: string;
-  created_at: string;
-}

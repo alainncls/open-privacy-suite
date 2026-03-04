@@ -145,8 +145,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// 1. Per-org token_prices entry with coingecko_id → system price
 	// 2. Per-org token_prices entry without coingecko_id → manual price
 	// 3. No per-org entry + native token → auto-resolve from system "ethereum" price
-	// 4. No per-org entry + has token_address → try system price by address
-	// 5. No entry → fail closed
+	// 4. No entry → fail closed
 	priceFiat, decimals, err := c.resolveTokenPrice(ctx, req.OrgID, tokenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve token price: %w", err)
@@ -297,23 +296,7 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 		}
 	}
 
-	// Step 4: Try system price by token_address (for externally-pushed prices)
-	if tokenAddr != "native" {
-		sysPrice, err := c.store.GetSystemTokenPriceByAddress(ctx, tokenAddr)
-		if err != nil {
-			return 0, 0, fmt.Errorf("failed to get system token price by address: %w", err)
-		}
-		if sysPrice != nil && sysPrice.PriceFiat > 0 {
-			if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
-				log.Printf("WARNING: external system price for %s is stale (updated %s ago, threshold %s), failing closed",
-					tokenAddr, time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
-				return -1, 0, nil
-			}
-			return sysPrice.PriceFiat, sysPrice.Decimals, nil
-		}
-	}
-
-	// Step 5: Not found → fail closed (signaled by negative price)
+	// Step 4: Not found → fail closed (signaled by negative price)
 	return -1, 0, nil
 }
 

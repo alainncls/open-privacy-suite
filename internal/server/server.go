@@ -464,12 +464,6 @@ func (s *Server) setupRouter() *gin.Engine {
 	// User profile endpoints - protected by JWT but accessible from external IPs
 	s.registerUserProfileRoutes(router)
 
-	// External rates API - authenticated via API keys (separate from JWT/localhost)
-	if s.config.EnableExternalRatesAPI {
-		s.registerExternalRatesRoutes(router)
-		log.Printf("External rates API enabled")
-	}
-
 	// Explorer API endpoints - internal APIs for block explorer integration
 	// Protected by localhost-only middleware (called by explorer backend)
 	s.registerExplorerRoutes(router)

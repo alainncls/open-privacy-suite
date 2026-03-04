@@ -25,9 +25,8 @@ type mockComplianceStore struct {
 	logErr          error // if set, CreateComplianceLog returns this error
 	addrOverrides   map[string]*AddressThresholdOverride // key = lowercased address
 	addrOverrideErr error // if set, GetAddressThresholdOverride returns this error
-	systemPrices       map[string]*SystemTokenPrice // key = coingecko_id
-	systemPricesByAddr map[string]*SystemTokenPrice // key = token_address
-	systemSetting      string                       // value returned by GetSystemSetting (e.g. base_currency)
+	systemPrices  map[string]*SystemTokenPrice // key = coingecko_id
+	systemSetting string                       // value returned by GetSystemSetting (e.g. base_currency)
 }
 
 func (m *mockComplianceStore) GetComplianceConfig(_ context.Context, _ string) (*ComplianceConfig, error) {
@@ -154,22 +153,7 @@ func (m *mockComplianceStore) GetSystemTokenPrice(_ context.Context, coingeckoID
 	return nil, nil
 }
 
-func (m *mockComplianceStore) GetSystemTokenPriceByAddress(_ context.Context, tokenAddress string) (*SystemTokenPrice, error) {
-	if m.systemPricesByAddr != nil {
-		return m.systemPricesByAddr[tokenAddress], nil
-	}
-	return nil, nil
-}
-
 func (m *mockComplianceStore) UpsertSystemTokenPrice(_ context.Context, _ *SystemTokenPrice) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) UpdateSystemTokenPriceByID(_ context.Context, _ *SystemTokenPrice) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) CreateSystemTokenPrice(_ context.Context, _ *SystemTokenPrice) error {
 	panic("not implemented")
 }
 
@@ -185,45 +169,6 @@ func (m *mockComplianceStore) SetSystemSetting(_ context.Context, _, _ string) e
 	panic("not implemented")
 }
 
-func (m *mockComplianceStore) CreateAPIKey(_ context.Context, _ *APIKey, _ string) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) GetAPIKeyByHash(_ context.Context, _ string) (*APIKey, error) {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) ListAPIKeys(_ context.Context) ([]*APIKey, error) {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) RevokeAPIKey(_ context.Context, _ string) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) DeleteAPIKey(_ context.Context, _ string) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) UpdateAPIKeyLastUsed(_ context.Context, _ string) error {
-	panic("not implemented")
-}
-
-func (m *mockComplianceStore) UpdateAPIKeyLastIP(_ context.Context, _, _ string) error {
-	return nil
-}
-
-func (m *mockComplianceStore) GetAPIKeyLastIP(_ context.Context, _ string) (*string, error) {
-	return nil, nil
-}
-
-func (m *mockComplianceStore) CreatePriceChangeLog(_ context.Context, _ *PriceChangeLog) error {
-	return nil
-}
-
-func (m *mockComplianceStore) ListPriceChangeLogs(_ context.Context, _, _ int) ([]*PriceChangeLog, int, error) {
-	return nil, 0, nil
-}
 
 // enabledConfig returns a ComplianceConfig with compliance enabled and the given threshold.
 func enabledConfig(threshold float64) *ComplianceConfig {
