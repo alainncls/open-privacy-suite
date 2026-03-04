@@ -641,8 +641,10 @@ describe('MembershipForm', () => {
       // Select organization
       await selectOption(user, 'Select organization', 'Test Organization');
 
-      // Loading indicator must be visible — groups endpoint is still pending
-      expect(screen.getByText('Loading groups...')).toBeInTheDocument();
+      // Loading indicator must be visible — groups endpoint is still pending.
+      // Use findByText (not getByText) because the useEffect that triggers
+      // the fetch runs asynchronously after React commits the org selection.
+      expect(await screen.findByText('Loading groups...')).toBeInTheDocument();
 
       // Release the endpoint and wait for loading to finish
       resolveGroups();
