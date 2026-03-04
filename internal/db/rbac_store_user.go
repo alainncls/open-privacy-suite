@@ -497,6 +497,7 @@ func (d *DB) HasAdminClaim(ctx context.Context, userID string) (bool, error) {
 		JOIN group_access ga ON ga.group_id = m.group_id
 		WHERE m.user_id = $1
 		  AND 'admin' = ANY(ga.claims)
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 	)`
 
 	var exists bool

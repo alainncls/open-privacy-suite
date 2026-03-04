@@ -735,6 +735,12 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 					return
 				}
 
+				if user.Banned {
+					c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+					c.Abort()
+					return
+				}
+
 				// Check if any of the user's groups grant the admin claim.
 				isAdmin, err := s.db.HasAdminClaim(c.Request.Context(), user.ID)
 				if err != nil {
