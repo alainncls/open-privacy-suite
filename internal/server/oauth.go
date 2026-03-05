@@ -490,7 +490,7 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	// Get user KYC status from RBAC
 	kyc := false
 	if s.rbacAccessCtrl != nil {
-		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc)
+		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err == nil && user != nil {
 			kyc = user.KYC
 		}
@@ -746,7 +746,7 @@ func (s *Server) scheduleOAuthDemoAutoAuth(oauthSessionID, authSessionID string)
 		mockDID := fmt.Sprintf("did:privado:demo_%d", time.Now().UnixNano())
 		kyc := false
 		if s.rbacAccessCtrl != nil {
-			if user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), mockDID, kyc); err == nil && user != nil {
+			if user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), mockDID, kyc, false); err == nil && user != nil {
 				kyc = user.KYC
 			}
 		}

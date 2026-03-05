@@ -59,6 +59,11 @@ func setupTestServerForAzureTenants(t *testing.T) *testServerAzureTenants {
 	conn.ExecContext(ctx, "DELETE FROM users")
 	conn.ExecContext(ctx, "DELETE FROM organizations")
 
+	// Re-create the seeded Default Org and Default Group (deleted above)
+	// so that EnsureUserExists can add users to the default group.
+	conn.ExecContext(ctx, `INSERT INTO organizations (id, slug, name) VALUES ($1, 'default', 'Default Organization')`, rbac.DefaultOrgID)
+	conn.ExecContext(ctx, `INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'default', 'Default Group', 0, 'default')`, rbac.DefaultGroupID, rbac.DefaultOrgID)
+
 	t.Cleanup(func() {
 		database.Close()
 	})
@@ -348,7 +353,7 @@ func TestAzureTenantCallbackValidation(t *testing.T) {
 	t.Run("AutoProvisionDisabledAllowsExistingUsers", func(t *testing.T) {
 		// Create a user first
 		subject := auth.AzureSubject("existing-user-oid")
-		_, ensureErr := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false)
+		_, ensureErr := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false, false)
 		require.NoError(t, ensureErr)
 
 		// The callback would check: auto_provision=false + user exists => allow
@@ -390,7 +395,7 @@ func TestAzureTenantCallbackValidation(t *testing.T) {
 
 		// Create user and simulate the auto-provisioning logic from the callback
 		subject := auth.AzureSubject("provision-test-oid")
-		user, ensureErr := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false)
+		user, ensureErr := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false, false)
 		require.NoError(t, ensureErr)
 		require.NotNil(t, user)
 
@@ -415,5 +420,63 @@ func TestAzureTenantCallbackValidation(t *testing.T) {
 		// Second time: should not create duplicate
 		existing2, _ := s.db.GetMembershipByUserAndGroup(context.Background(), user.ID, group.ID)
 		assert.NotNil(t, existing2, "membership should still exist on second check")
+	})
+
+	t.Run("SkipDefaultGroupWhenTenantGroupConfigured", func(t *testing.T) {
+		// Create a custom org + group for the tenant
+		org := &rbac.Organization{
+			ID:   uuid.New().String(),
+			Slug: "skip-default-org",
+			Name: "Skip Default Org",
+		}
+		require.NoError(t, s.db.CreateOrganization(context.Background(), org))
+
+		group := &rbac.Group{
+			ID:    uuid.New().String(),
+			OrgID: org.ID,
+			Slug:  "skip-default-group",
+			Name:  "Skip Default Group",
+			Path:  "skip-default-group",
+		}
+		require.NoError(t, s.db.CreateGroup(context.Background(), group))
+
+		// EnsureUserExists with skipDefaultGroup=true
+		subject := auth.AzureSubject("skip-default-oid")
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false, true)
+		require.NoError(t, err)
+		require.NotNil(t, user)
+
+		// User should NOT be in the default group
+		defaultMembership, _ := s.db.GetMembershipByUserAndGroup(context.Background(), user.ID, rbac.DefaultGroupID)
+		assert.Nil(t, defaultMembership, "user should NOT be in default group when skipDefaultGroup=true")
+
+		// Now add user to tenant's configured group (as the callback would)
+		membership := &rbac.UserMembership{
+			ID:      uuid.New().String(),
+			UserID:  user.ID,
+			GroupID: group.ID,
+			Source:  "auto_provision",
+		}
+		created, createErr := s.db.CreateMembershipIfNotExists(context.Background(), membership)
+		require.NoError(t, createErr)
+		assert.True(t, created)
+
+		// User should be in the tenant's group only
+		tenantMembership, err := s.db.GetMembershipByUserAndGroup(context.Background(), user.ID, group.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, tenantMembership, "user should be in tenant's configured group")
+	})
+
+	t.Run("DefaultGroupUsedWhenNoTenantGroupConfigured", func(t *testing.T) {
+		// EnsureUserExists with skipDefaultGroup=false (no tenant group configured)
+		subject := auth.AzureSubject("use-default-oid")
+		user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), subject, false, false)
+		require.NoError(t, err)
+		require.NotNil(t, user)
+
+		// User SHOULD be in the default group
+		defaultMembership, err := s.db.GetMembershipByUserAndGroup(context.Background(), user.ID, rbac.DefaultGroupID)
+		require.NoError(t, err)
+		assert.NotNil(t, defaultMembership, "user should be in default group when skipDefaultGroup=false")
 	})
 }

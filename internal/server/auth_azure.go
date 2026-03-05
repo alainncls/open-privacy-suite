@@ -238,7 +238,9 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				return
 			}
 		} else {
-			user, ensureErr := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), subject, kyc)
+			// Skip default group if tenant configures a specific group — user will be added there instead
+			skipDefaultGroup := tenantConfig.DefaultOrgID != nil && tenantConfig.DefaultGroupID != nil
+			user, ensureErr := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), subject, kyc, skipDefaultGroup)
 			if ensureErr != nil {
 				log.Printf("Error: failed to ensure RBAC user for %s: %v", subject, ensureErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to provision user account"})
@@ -257,7 +259,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 					return
 				}
 
-				// Auto-add user to default group if configured (idempotent — safe against concurrent logins)
+				// Auto-add user to tenant's configured group (idempotent — safe against concurrent logins)
 				if tenantConfig.DefaultOrgID != nil && tenantConfig.DefaultGroupID != nil {
 					membership := &rbac.UserMembership{
 						ID:      uuid.New().String(),
@@ -267,7 +269,17 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 					}
 					created, createErr := s.db.CreateMembershipIfNotExists(c.Request.Context(), membership)
 					if createErr != nil {
-						log.Printf("Warning: failed to auto-add user %s to default group %s: %v", subject, *tenantConfig.DefaultGroupID, createErr)
+						// Tenant group assignment failed — fall back to default group so user isn't orphaned
+						log.Printf("Warning: failed to auto-add user %s to tenant group %s, falling back to default group: %v", subject, *tenantConfig.DefaultGroupID, createErr)
+						fallback := &rbac.UserMembership{
+							ID:      uuid.New().String(),
+							UserID:  user.ID,
+							GroupID: rbac.DefaultGroupID,
+							Source:  "auto_provision",
+						}
+						if _, fbErr := s.db.CreateMembershipIfNotExists(c.Request.Context(), fallback); fbErr != nil {
+							log.Printf("Warning: fallback to default group also failed for user %s: %v", subject, fbErr)
+						}
 					} else if created {
 						log.Printf("Auto-provisioned membership for user %s in group %s", subject, *tenantConfig.DefaultGroupID)
 					}
