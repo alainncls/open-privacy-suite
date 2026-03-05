@@ -95,6 +95,7 @@ func ResetTestDatabase(database *DB) error {
 		"contracts",
 		"user_memberships",
 		"group_access",
+		"allowed_azure_tenants",
 		"groups",
 		"users",
 		"organizations",

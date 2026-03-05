@@ -26,7 +26,7 @@ import {
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'preregistered';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'preregistered' | 'azure-tenants';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -59,6 +59,7 @@ export default function RBACManager() {
   // Derive active tab from URL
   const getActiveTab = (): RBACTab => {
     const path = location.pathname;
+    if (path.includes('/azure-tenants')) return 'azure-tenants';
     if (path.includes('/groups')) return 'groups';
     if (path.includes('/users')) return 'users';
     if (path.includes('/preregistered')) return 'preregistered';
@@ -344,6 +345,10 @@ export default function RBACManager() {
                   <span>Pre-registered</span>
                 </TabsTrigger>
               )}
+              <TabsTrigger value="azure-tenants" className="gap-2" data-testid="tab-azure-tenants">
+                <Shield className="w-4 h-4" />
+                <span>Azure AD</span>
+              </TabsTrigger>
             </TabsList>
           </Tabs>
 

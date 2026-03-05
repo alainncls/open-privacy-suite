@@ -644,11 +644,17 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		return
 	}
 
-	// Get user KYC status from RBAC
+	// Get user status from RBAC — block refresh if banned
 	kyc := false
 	if s.rbacAccessCtrl != nil {
 		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), claims.Subject, false)
 		if err == nil && user != nil {
+			if user.Banned {
+				// Revoke the token and reject
+				_ = s.db.RevokeRefreshToken(c.Request.Context(), tokenHash)
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return
+			}
 			kyc = user.KYC
 		}
 	}

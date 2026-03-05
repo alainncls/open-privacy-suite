@@ -9,6 +9,7 @@ import '@rainbow-me/rainbowkit/styles.css';
 import { wagmiConfig } from './config/wagmi';
 import { AuthProvider } from './contexts/AuthContext';
 import { LoginPage } from './pages/LoginPage';
+import { AzureCallbackPage } from './pages/AzureCallbackPage';
 import { LinkWalletPage } from './pages/LinkWalletPage';
 import { SuccessPage } from './pages/SuccessPage';
 import { DisclosurePage } from './pages/DisclosurePage';
@@ -21,6 +22,7 @@ import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
 import PreregisteredAddressList from './components/rbac/PreregisteredAddressList';
+import AzureTenantList from './components/rbac/AzureTenantList';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
 import ComplianceManager from './components/compliance/ComplianceManager';
 import ComplianceConfig from './components/compliance/ComplianceConfig';
@@ -53,6 +55,7 @@ function Root() {
               <Routes>
                 {/* Auth flow routes */}
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/auth/azure/callback" element={<AzureCallbackPage />} />
                 <Route path="/link-wallet" element={<LinkWalletPage />} />
                 <Route path="/success" element={<SuccessPage />} />
                 <Route path="/disclosure" element={<DisclosurePage />} />
@@ -77,6 +80,7 @@ function Root() {
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
                     <Route path="preregistered" element={<PreregisteredAddressList />} />
+                    <Route path="azure-tenants" element={<AzureTenantList />} />
                   </Route>
                   <Route path="compliance" element={<ComplianceManager />}>
                     <Route index element={<Navigate to="config" replace />} />

@@ -13,8 +13,8 @@ import (
 // User operations
 
 func (d *DB) CreateUser(ctx context.Context, user *rbac.User) error {
-	query := `INSERT INTO users (id, external_id, kyc, banned, note, metadata)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+	query := `INSERT INTO users (id, external_id, kyc, banned, note, metadata, auth_tenant_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
 	metadata, err := json.Marshal(user.Metadata)
@@ -23,12 +23,12 @@ func (d *DB) CreateUser(ctx context.Context, user *rbac.User) error {
 	}
 
 	return d.conn.QueryRowContext(ctx, query,
-		user.ID, user.ExternalID, user.KYC, user.Banned, user.Note, metadata,
+		user.ID, user.ExternalID, user.KYC, user.Banned, user.Note, metadata, user.AuthTenantID,
 	).Scan(&user.CreatedAt, &user.UpdatedAt)
 }
 
 func (d *DB) GetUser(ctx context.Context, id string) (*rbac.User, error) {
-	query := `SELECT id, external_id, kyc, banned, note, metadata, created_at, updated_at
+	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users WHERE id = $1`
 
 	user := &rbac.User{}
@@ -36,7 +36,7 @@ func (d *DB) GetUser(ctx context.Context, id string) (*rbac.User, error) {
 	var metadata []byte
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -58,7 +58,7 @@ func (d *DB) GetUser(ctx context.Context, id string) (*rbac.User, error) {
 }
 
 func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.User, error) {
-	query := `SELECT id, external_id, kyc, banned, note, metadata, created_at, updated_at
+	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users WHERE external_id = $1`
 
 	user := &rbac.User{}
@@ -66,7 +66,7 @@ func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.
 	var metadata []byte
 
 	err := d.conn.QueryRowContext(ctx, query, externalID).Scan(
-		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -88,7 +88,7 @@ func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.
 }
 
 func (d *DB) UpdateUser(ctx context.Context, user *rbac.User) error {
-	query := `UPDATE users SET kyc = $2, banned = $3, note = $4, metadata = $5, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE users SET kyc = $2, banned = $3, note = $4, metadata = $5, auth_tenant_id = $6, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	metadata, err := json.Marshal(user.Metadata)
@@ -96,12 +96,12 @@ func (d *DB) UpdateUser(ctx context.Context, user *rbac.User) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	_, err = d.conn.ExecContext(ctx, query, user.ID, user.KYC, user.Banned, user.Note, metadata)
+	_, err = d.conn.ExecContext(ctx, query, user.ID, user.KYC, user.Banned, user.Note, metadata, user.AuthTenantID)
 	return err
 }
 
 func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, error) {
-	query := `SELECT id, external_id, kyc, banned, note, metadata, created_at, updated_at
+	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
 	rows, err := d.conn.QueryContext(ctx, query, limit, offset)
@@ -117,7 +117,7 @@ func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, er
 		var metadata []byte
 
 		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 			&user.CreatedAt, &user.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
@@ -153,7 +153,7 @@ func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, of
 	argNum := 1
 
 	// Build the query dynamically based on filters
-	query := `SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.created_at, u.updated_at
+	query := `SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.auth_tenant_id, u.created_at, u.updated_at
 	          FROM users u`
 
 	// Join with memberships/groups if filtering by org
@@ -209,7 +209,7 @@ func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, of
 		var metadata []byte
 
 		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 			&user.CreatedAt, &user.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
@@ -289,7 +289,7 @@ func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, 
 	}
 
 	// Data query
-	dataQuery := fmt.Sprintf("SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.created_at, u.updated_at %s%s ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", from, where, argNum, argNum+1)
+	dataQuery := fmt.Sprintf("SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.auth_tenant_id, u.created_at, u.updated_at %s%s ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", from, where, argNum, argNum+1)
 	dataArgs := append(args, limit, offset)
 
 	rows, err := d.conn.QueryContext(ctx, dataQuery, dataArgs...)
@@ -305,7 +305,7 @@ func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, 
 		var metadata []byte
 
 		if err := rows.Scan(
-			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+			&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 			&user.CreatedAt, &user.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
@@ -329,6 +329,34 @@ func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, 
 	return users, total, nil
 }
 
+// BanUsersByTenantID bans all users belonging to the given Azure AD tenant.
+// Returns the number of users banned.
+func (d *DB) BanUsersByTenantID(ctx context.Context, tenantID, reason string) (int64, error) {
+	query := `UPDATE users SET banned = true, note = $2, updated_at = CURRENT_TIMESTAMP
+	          WHERE auth_tenant_id = $1 AND banned = false`
+
+	result, err := d.conn.ExecContext(ctx, query, tenantID, reason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// RevokeRefreshTokensByTenantID revokes all active refresh tokens for users belonging
+// to the given Azure AD tenant. Returns the number of tokens revoked.
+func (d *DB) RevokeRefreshTokensByTenantID(ctx context.Context, tenantID string) (int64, error) {
+	query := `UPDATE refresh_tokens
+	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
+	          WHERE revoked = false
+	            AND subject IN (SELECT external_id FROM users WHERE auth_tenant_id = $1)`
+
+	result, err := d.conn.ExecContext(ctx, query, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
 	return err
@@ -345,6 +373,30 @@ func (d *DB) CreateMembership(ctx context.Context, membership *rbac.UserMembersh
 		membership.ID, membership.UserID, membership.GroupID,
 		string(membership.Source), membership.ZKCredentialRef, membership.ExpiresAt,
 	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
+}
+
+// CreateMembershipIfNotExists atomically inserts a membership if no row with the
+// same (user_id, group_id) exists. Uses INSERT ... ON CONFLICT DO NOTHING to
+// avoid TOCTOU races. Returns true if a new row was inserted, false if it
+// already existed.
+func (d *DB) CreateMembershipIfNotExists(ctx context.Context, membership *rbac.UserMembership) (bool, error) {
+	query := `INSERT INTO user_memberships (id, user_id, group_id, source, zk_credential_ref, expires_at)
+	          VALUES ($1, $2, $3, $4, $5, $6)
+	          ON CONFLICT (user_id, group_id) DO NOTHING
+	          RETURNING created_at, updated_at`
+
+	err := d.conn.QueryRowContext(ctx, query,
+		membership.ID, membership.UserID, membership.GroupID,
+		string(membership.Source), membership.ZKCredentialRef, membership.ExpiresAt,
+	).Scan(&membership.CreatedAt, &membership.UpdatedAt)
+	if err == sql.ErrNoRows {
+		// ON CONFLICT DO NOTHING — membership already exists
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to create membership: %w", err)
+	}
+	return true, nil
 }
 
 func (d *DB) GetMembership(ctx context.Context, id string) (*rbac.UserMembership, error) {

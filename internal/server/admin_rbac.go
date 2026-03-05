@@ -76,6 +76,13 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.GET("/sessions", s.listSessions)
 	api.DELETE("/sessions/:session_id", s.deleteSession)
 
+	// Azure AD Tenant Allowlist
+	api.GET("/azure-tenants", s.listAzureTenants)
+	api.POST("/azure-tenants", s.createAzureTenant)
+	api.GET("/azure-tenants/:id", s.getAzureTenant)
+	api.PUT("/azure-tenants/:id", s.updateAzureTenant)
+	api.DELETE("/azure-tenants/:id", s.deleteAzureTenant)
+
 	// Debugging
 	api.GET("/users/:user_id/effective-permissions", s.getEffectivePermissions)
 	api.POST("/access/check", s.checkAccessAPI)

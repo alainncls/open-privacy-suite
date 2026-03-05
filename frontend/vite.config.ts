@@ -63,8 +63,9 @@ export default defineConfig({
         target: process.env.VITE_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       },
-      // Proxy auth callbacks (Privado wallet POSTs to /auth/callback through tunnel → Vite → backend)
-      '/auth': {
+      // Proxy Privado wallet callback (POST /auth/callback) to backend.
+      // Must NOT match /auth/azure/callback — that's a frontend SPA route.
+      '/auth/callback': {
         target: process.env.VITE_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       },

@@ -5,6 +5,7 @@ A privacy-preserving proxy service for Ethereum nodes (Erigon) that enforces acc
 ## Features
 
 - **Privado ID Integration**: Verifies zero-knowledge proofs (JWZ tokens) from Privado ID protocol
+- **Azure AD / Microsoft Entra ID**: Alternative OIDC authentication with tenant allowlist and auto-provisioning
 - **ProofOfHumanity (Billions)**: Requires proof of liveness via Billions ProofOfHumanity credential
 - **JWT Authentication**: Issues and validates JWT tokens for authenticated requests
 - **RBAC Access Control**: Multi-tenant, hierarchical role-based access control with:
@@ -131,6 +132,96 @@ See [SSO_IMPLEMENTATION.md](SSO_IMPLEMENTATION.md) for detailed OAuth/SSO docume
    - Client can revoke refresh tokens
    - Revoked tokens are stored in database
 
+## Azure AD Authentication
+
+Privacy Proxy supports Azure AD (Microsoft Entra ID) as an alternative authentication provider alongside Privado ID ZK proofs. When configured, users see a "Microsoft" tab on the login page and can sign in with any allowlisted Azure AD tenant.
+
+### How It Works
+
+1. User clicks "Continue with Microsoft" on the login page
+2. Browser redirects to Microsoft's OAuth2 authorization endpoint
+3. After Microsoft login, browser redirects back to `/auth/azure/callback` with an authorization code
+4. Backend exchanges the code for an `id_token`, verifies its signature and nonce, then extracts the user's `oid` (object ID) and `tid` (tenant ID)
+5. Backend checks the `tid` against the tenant allowlist -- if the tenant is not listed, login is rejected
+6. If auto-provisioning is enabled for that tenant, the user is created in the RBAC system and optionally placed into a default org/group
+7. Backend issues the same JWT access/refresh token pair used by Privado ID logins
+
+The user's RBAC subject is `azuread:{oid}`, where `oid` is the immutable Azure AD object identifier.
+
+### Setup
+
+**1. Register an application in Azure AD:**
+
+- Go to [Azure Portal](https://portal.azure.com) > Microsoft Entra ID > App registrations > New registration
+- Set the redirect URI to `http://localhost:5173/auth/azure/callback` (adjust host/port for your deployment)
+- Under "Certificates & secrets", create a client secret
+- Note the Application (client) ID and Directory (tenant) ID
+
+**2. Set environment variables:**
+
+```bash
+AZURE_AD_CLIENT_ID=<application-client-id>
+AZURE_AD_CLIENT_SECRET=<client-secret-value>
+AZURE_AD_TENANT_ID=common   # "common" for multi-tenant, or a specific tenant UUID
+```
+
+Setting `AZURE_AD_TENANT_ID` to `common` (the default) allows users from any Azure AD tenant to reach the login page. Actual access is controlled by the tenant allowlist, not this value.
+
+**3. Add tenants to the allowlist:**
+
+Azure AD authentication is blocked until at least one tenant is added to the allowlist. Use the admin API or the management UI (RBAC > Azure AD tab).
+
+```bash
+# Add a tenant via API
+curl -X POST http://localhost:8080/api/azure-tenants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "aaaabbbb-cccc-dddd-eeee-ffffffffffff",
+    "label": "Contoso Corp",
+    "auto_provision": true,
+    "default_org_id": "<org-uuid>",
+    "default_group_id": "<group-uuid>"
+  }'
+```
+
+**4. (Optional) Configure auto-provisioning defaults:**
+
+Each allowlisted tenant can specify a default organization and group. When a user from that tenant logs in for the first time:
+- A new RBAC user is created with subject `azuread:{oid}`
+- A membership with `source: "auto_provision"` is created in the default group
+- Admins can later reassign the user to different orgs/groups via the RBAC UI
+
+If `auto_provision` is set to `false`, only users who already exist in the RBAC system can log in via that tenant.
+
+### Tenant Allowlist
+
+The allowlist separates **authentication** (who can log in) from **authorization** (what they can access):
+
+- **Tenants are identity gates, not hard org bindings.** A tenant's default org/group is initial placement only.
+- **Cross-org validation:** The default group must belong to the default org. The API rejects mismatched pairs.
+- **Without org membership, users cannot access any org data** even if they can authenticate.
+
+Admin API endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/azure-tenants` | List all allowed tenants |
+| `POST` | `/api/azure-tenants` | Add a tenant to the allowlist |
+| `GET` | `/api/azure-tenants/:id` | Get a single tenant |
+| `PUT` | `/api/azure-tenants/:id` | Update tenant config |
+| `DELETE` | `/api/azure-tenants/:id` | Remove a tenant |
+
+The management UI provides the same functionality under **RBAC > Azure AD**.
+
+### Security Model
+
+- **Explicit allowlist:** Only tenants added to `allowed_azure_tenants` can authenticate. No wildcard or default-allow.
+- **`tid` validation:** The tenant ID claim is validated as a UUID before any database lookup.
+- **Single-use CSRF state:** Each login flow generates a cryptographic `(state, nonce)` pair with a 10-minute TTL. The state token is consumed on use.
+- **Nonce replay protection:** The `nonce` embedded in the `id_token` is verified against the stored value.
+- **JWT window on tenant deletion:** Deleting a tenant from the allowlist prevents new logins but does not revoke existing JWTs. Tokens issued before deletion remain valid until their natural expiry (30 minutes for access tokens). Plan accordingly if immediate revocation is needed.
+- **Redirect URI validation:** The callback `redirect_uri` is validated against an allowlist derived from `BASE_URL` and `CORS_ALLOWED_ORIGINS`.
+
 ## Prerequisites
 
 - Go 1.21+
@@ -244,6 +335,11 @@ Environment variables:
 - `JWT_SECRET` - Secret for signing access tokens (strong, random value)
 - `JWT_REFRESH_SECRET` - Secret for signing refresh tokens (strong, random value)
 - `BILLIONS_ISSUER_DID` - Billions issuer DID for ProofOfHumanity verification
+
+### Azure AD (Optional)
+- `AZURE_AD_CLIENT_ID` - Azure app registration client ID (empty = Azure AD disabled)
+- `AZURE_AD_CLIENT_SECRET` - Azure app registration client secret
+- `AZURE_AD_TENANT_ID` - Azure AD tenant ID or `common` for multi-tenant (default: `common`)
 
 ### Optional Configuration
 - `PORT` - Server port (default: 8080)

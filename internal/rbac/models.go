@@ -159,14 +159,15 @@ type GroupAccess struct {
 
 // User represents a user in the RBAC system.
 type User struct {
-	ID         string         `json:"id"`
-	ExternalID string         `json:"external_id"` // User's DID
-	KYC        bool           `json:"kyc"`
-	Banned     bool           `json:"banned"`
-	Note       string         `json:"note,omitempty"`
-	Metadata   map[string]any `json:"metadata"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	ID           string         `json:"id"`
+	ExternalID   string         `json:"external_id"` // User's DID
+	KYC          bool           `json:"kyc"`
+	Banned       bool           `json:"banned"`
+	Note         string         `json:"note,omitempty"`
+	AuthTenantID *string        `json:"auth_tenant_id,omitempty"` // Azure AD tenant ID (nil for Privado users)
+	Metadata     map[string]any `json:"metadata"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 // UserMembership links a user to a group.

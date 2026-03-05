@@ -169,6 +169,20 @@ export const rbacApi = {
       api.put<{ factory: string; configured: boolean }>(`/orgs/${orgId}/config/create3`, { factory }),
   },
 
+  // Azure AD Tenant Allowlist
+  azureTenants: {
+    list: () =>
+      api.get<{ data: import('../types/rbac').AllowedAzureTenant[] }>('/azure-tenants'),
+    get: (id: string) =>
+      api.get<import('../types/rbac').AllowedAzureTenant>(`/azure-tenants/${id}`),
+    create: (input: import('../types/rbac').CreateAzureTenantInput) =>
+      api.post<import('../types/rbac').AllowedAzureTenant>('/azure-tenants', input),
+    update: (id: string, input: import('../types/rbac').UpdateAzureTenantInput) =>
+      api.put<import('../types/rbac').AllowedAzureTenant>(`/azure-tenants/${id}`, input),
+    delete: (id: string) =>
+      api.delete(`/azure-tenants/${id}`),
+  },
+
   // Dev endpoints (only available in development mode)
   dev: {
     getCreate3Factory: () =>

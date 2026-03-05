@@ -58,6 +58,9 @@ services:
       - ENABLE_RUNTIME_TRACING=true  # Enable runtime tracing for cross-org isolation validation (validates dynamic calls at execution time)
       - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
       - DISABLE_COINGECKO=${DISABLE_COINGECKO:-false}  # Set true to disable CoinGecko price fetching
+      - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
+      - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
+      - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
