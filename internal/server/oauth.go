@@ -674,11 +674,11 @@ func (s *Server) handleOAuthSessionStatus(c *gin.Context) {
 	})
 }
 
-// isValidRedirectURI validates that the redirect URI is allowed
-// For security, we only allow:
-// - localhost (any port) for development
+// isValidRedirectURI validates that the redirect URI is allowed.
+// Compares the full origin (scheme + host + port) against an allowlist:
+// - localhost (any port) — development only
 // - The configured BASE_URL origin
-// - Configured CORS allowed origins
+// - Configured CORS allowed origins (explicit list, not "*")
 func (s *Server) isValidRedirectURI(uri string) bool {
 	parsed, err := url.Parse(uri)
 	if err != nil {
@@ -690,29 +690,34 @@ func (s *Server) isValidRedirectURI(uri string) bool {
 		return false
 	}
 
+	// Extract origin (scheme + host + port) from the redirect URI
+	uriOrigin := parsed.Scheme + "://" + parsed.Host // Host includes port if present
+
 	host := parsed.Hostname()
 
-	// Allow localhost (for development)
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return true
-	}
-
-	// Allow the configured BASE_URL origin
-	if s.config.BaseURL != "" {
-		baseURL, err := url.Parse(s.config.BaseURL)
-		if err == nil && baseURL.Hostname() == host {
+	// Allow localhost in development only
+	if !s.config.IsProduction() {
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 			return true
 		}
 	}
 
-	// Allow configured CORS origins
-	if s.config.CORSAllowedOrigins == "*" {
-		return true
+	// Allow the configured BASE_URL origin (full origin match)
+	if s.config.BaseURL != "" {
+		baseURL, err := url.Parse(s.config.BaseURL)
+		if err == nil {
+			baseOrigin := baseURL.Scheme + "://" + baseURL.Host
+			if uriOrigin == baseOrigin {
+				return true
+			}
+		}
 	}
-	if s.config.CORSAllowedOrigins != "" {
+
+	// Allow configured CORS origins (explicit list only, "*" does NOT allow arbitrary redirect URIs)
+	if s.config.CORSAllowedOrigins != "" && s.config.CORSAllowedOrigins != "*" {
 		for _, origin := range strings.Split(s.config.CORSAllowedOrigins, ",") {
-			originURL, err := url.Parse(strings.TrimSpace(origin))
-			if err == nil && originURL.Hostname() == host {
+			origin = strings.TrimSpace(origin)
+			if origin != "" && origin == uriOrigin {
 				return true
 			}
 		}

@@ -625,7 +625,7 @@ func TestOAuth_RedirectURIValidation_CORSOrigins(t *testing.T) {
 	}
 }
 
-// TestOAuth_RedirectURIValidation_WildcardCORS tests that wildcard CORS allows all redirect URIs
+// TestOAuth_RedirectURIValidation_WildcardCORS tests that wildcard CORS does NOT allow arbitrary redirect URIs
 func TestOAuth_RedirectURIValidation_WildcardCORS(t *testing.T) {
 	srv := setupTestServerForOAuth(t)
 	defer srv.db.Close()
@@ -634,13 +634,13 @@ func TestOAuth_RedirectURIValidation_WildcardCORS(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	// Set up wildcard CORS
+	// Set up wildcard CORS — should NOT grant redirect URI access to arbitrary domains
 	srv.config.CORSAllowedOrigins = "*"
 
 	router := gin.New()
 	router.GET("/oauth/authorize", srv.handleOAuthAuthorize)
 
-	// With wildcard CORS, any HTTPS URL should be allowed
+	// Wildcard CORS should NOT allow arbitrary external redirect URIs
 	q := url.Values{}
 	q.Set("client_id", "explorer-app")
 	q.Set("redirect_uri", "https://any-site.com/callback")
@@ -651,7 +651,7 @@ func TestOAuth_RedirectURIValidation_WildcardCORS(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "wildcard CORS must not allow arbitrary redirect URIs")
 }
 
 // TestOAuth_SessionStatus tests the session status polling endpoint

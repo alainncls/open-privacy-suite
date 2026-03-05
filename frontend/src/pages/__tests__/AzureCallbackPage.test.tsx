@@ -96,7 +96,7 @@ describe('AzureCallbackPage', () => {
       });
 
       await waitFor(() => {
-        expect(mockNavigate).toHaveBeenCalledWith('/link-wallet');
+        expect(mockNavigate).toHaveBeenCalledWith('/link-wallet', { replace: true });
       });
     });
   });
