@@ -216,32 +216,28 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		return
 	}
 
-	// Build prices_by_currency: merge existing with new
+	// Build prices_by_currency from input (merge with existing is done atomically in SQL via ||)
 	pricesByCurrency := make(map[string]float64)
-	if existing != nil {
-		for k, v := range existing.PricesByCurrency {
-			pricesByCurrency[k] = v
-		}
-	}
 	for k, v := range input.Prices {
 		pricesByCurrency[k] = v
 	}
 
-	// If legacy price_fiat is provided without prices map, store it under the active currency
-	if len(input.Prices) == 0 && input.PriceFiat > 0 {
-		activeCurrency := "usd"
-		if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
-			activeCurrency = c
-		}
-		pricesByCurrency[activeCurrency] = input.PriceFiat
-	}
-
-	// Resolve price_fiat from prices_by_currency for the active base currency
+	// Read active currency once
 	activeCurrency := "usd"
 	if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
 		activeCurrency = c
 	}
-	priceFiat := pricesByCurrency[activeCurrency] // 0 if not set for this currency
+
+	// If legacy price_fiat is provided without prices map, store it under the active currency
+	if len(input.Prices) == 0 && input.PriceFiat > 0 {
+		pricesByCurrency[activeCurrency] = input.PriceFiat
+	}
+
+	// Resolve price_fiat: check new prices first, then fall back to existing
+	priceFiat := pricesByCurrency[activeCurrency]
+	if priceFiat == 0 && existing != nil && existing.PricesByCurrency != nil {
+		priceFiat = existing.PricesByCurrency[activeCurrency]
+	}
 
 	price := &compliance.TokenPrice{
 		OrgID:            orgID,

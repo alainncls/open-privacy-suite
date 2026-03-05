@@ -155,7 +155,7 @@ func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice)
 	          price_fiat = EXCLUDED.price_fiat,
 	          coingecko_id = EXCLUDED.coingecko_id,
 	          updated_by_user_id = EXCLUDED.updated_by_user_id,
-	          prices_by_currency = EXCLUDED.prices_by_currency,
+	          prices_by_currency = token_prices.prices_by_currency || EXCLUDED.prices_by_currency,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
