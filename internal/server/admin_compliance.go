@@ -156,6 +156,12 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	orgID := c.Param("org_id")
 	tokenAddress := strings.ToLower(c.Param("token_address"))
 
+	// Validate token address: must be "native" or a valid 0x-prefixed 20-byte hex address
+	if tokenAddress != "native" && !auth.IsValidAddress(tokenAddress) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token_address must be 'native' or a valid 0x-prefixed Ethereum address (42 characters)"})
+		return
+	}
+
 	var input struct {
 		Symbol      string             `json:"symbol" binding:"required"`
 		Decimals    int                `json:"decimals"`

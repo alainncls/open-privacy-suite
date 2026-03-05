@@ -145,6 +145,10 @@ export default function TokenPriceList() {
       setFormError('Token address is required');
       return;
     }
+    if (address !== 'native' && !/^0x[0-9a-f]{40}$/.test(address)) {
+      setFormError('Token address must be "native" or a valid 0x-prefixed Ethereum address (42 characters)');
+      return;
+    }
 
     const isCoingecko = formSource !== 'manual';
     const input: UpsertTokenPriceInput = {
