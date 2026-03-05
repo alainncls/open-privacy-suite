@@ -15,7 +15,7 @@ function setupEthPriceHandlers(price: number = 2500) {
     }),
     http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
       return HttpResponse.json({
-        data: [{ id: 'tp-1', org_id: 'org-1', token_address: 'native', symbol: 'ETH', decimals: 18, price_usd: price, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' }],
+        data: [{ id: 'tp-1', org_id: 'org-1', token_address: 'native', symbol: 'ETH', decimals: 18, price_fiat: price, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' }],
       });
     }),
   );

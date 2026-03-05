@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Loader2, Plus, AlertCircle, Pencil, Trash2, Coins, AlertTriangle, RefreshCw } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import type { TokenPrice, UpsertTokenPriceInput, SystemTokenPrice } from '@/types/compliance';
 
 // CoinGecko source options
@@ -40,6 +41,7 @@ function timeAgo(dateStr: string): string {
 
 export default function TokenPriceList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { formatAmount, currencyLabel, coingeckoEnabled, currency } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
@@ -94,11 +96,11 @@ export default function TokenPriceList() {
 
   useEffect(() => {
     loadSystemPrices();
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     loadTokens();
-  }, [orgId]);
+  }, [orgId, currency]);
 
   const openCreateForm = () => {
     setEditing(null);
@@ -116,7 +118,7 @@ export default function TokenPriceList() {
     setFormAddress(token.token_address);
     setFormSymbol(token.symbol);
     setFormDecimals(String(token.decimals));
-    setFormPrice(String(token.price_usd));
+    setFormPrice(String(token.price_fiat));
     setFormSource(token.coingecko_id || 'manual');
     setFormError(null);
     setShowForm(true);
@@ -143,23 +145,29 @@ export default function TokenPriceList() {
       setFormError('Token address is required');
       return;
     }
+    if (address !== 'native' && !/^0x[0-9a-f]{40}$/.test(address)) {
+      setFormError('Token address must be "native" or a valid 0x-prefixed Ethereum address (42 characters)');
+      return;
+    }
 
     const isCoingecko = formSource !== 'manual';
-    const input: UpsertTokenPriceInput = {
-      symbol: formSymbol.trim(),
-      decimals: parseInt(formDecimals) || 18,
-      price_usd: parseFloat(formPrice) || 0,
-      coingecko_id: isCoingecko ? formSource : null,
-    };
+    const priceVal = parseFloat(formPrice) || 0;
 
-    if (!input.symbol) {
+    if (!formSymbol.trim()) {
       setFormError('Symbol is required');
       return;
     }
-    if (!isCoingecko && input.price_usd <= 0) {
+    if (!isCoingecko && priceVal <= 0) {
       setFormError('Price must be greater than 0 for manual pricing');
       return;
     }
+
+    const input: UpsertTokenPriceInput = {
+      symbol: formSymbol.trim(),
+      decimals: parseInt(formDecimals) || 18,
+      coingecko_id: isCoingecko ? formSource : null,
+      prices: isCoingecko ? undefined : { [currency]: priceVal },
+    };
 
     try {
       setFormSaving(true);
@@ -191,12 +199,12 @@ export default function TokenPriceList() {
   const getResolvedPrice = (token: TokenPrice): { price: number; stale: boolean; updatedAt: string | null } => {
     if (token.coingecko_id) {
       const sys = systemPrices.find(s => s.coingecko_id === token.coingecko_id);
-      if (sys && sys.price_usd > 0) {
-        return { price: sys.price_usd, stale: sys.is_stale, updatedAt: sys.updated_at };
+      if (sys && sys.price_fiat > 0) {
+        return { price: sys.price_fiat, stale: sys.is_stale, updatedAt: sys.updated_at };
       }
       return { price: 0, stale: false, updatedAt: null };
     }
-    return { price: token.price_usd, stale: false, updatedAt: token.updated_at };
+    return { price: token.price_fiat, stale: false, updatedAt: token.updated_at };
   };
 
   if (loading) {
@@ -207,13 +215,66 @@ export default function TokenPriceList() {
     );
   }
 
+  const coingeckoPrices = systemPrices.filter(sp => sp.source === 'coingecko');
+
+  const renderPriceCard = (sp: SystemTokenPrice) => (
+    <div
+      key={sp.id}
+      className={`p-4 rounded-lg border ${
+        sp.price_fiat === 0
+          ? 'bg-[#FEF2F2] border-[#FECACA]'
+          : sp.is_stale
+          ? 'bg-[#FFFBEB] border-[#FDE68A]'
+          : 'bg-[#F0FDF4] border-[#BBF7D0]'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-[#374151]">{sp.symbol}</span>
+          {sp.source && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+              {sp.source}
+            </Badge>
+          )}
+        </div>
+        <Badge
+          variant={sp.price_fiat === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
+          className="text-xs"
+        >
+          {sp.price_fiat === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
+        </Badge>
+      </div>
+      <div className="text-xl font-semibold text-[#111827]">
+        {sp.price_fiat === 0 ? '—' : formatAmount(sp.price_fiat)}
+      </div>
+      <div className="text-xs text-[#94A3B8] mt-1">
+        {sp.price_fiat === 0 ? (
+          <span className="text-[#991B1B] flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" />
+            Price unavailable — add manual override
+          </span>
+        ) : sp.is_stale ? (
+          <span className="text-[#92400E] flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" />
+            Last updated {timeAgo(sp.updated_at)}
+          </span>
+        ) : (
+          `Updated ${timeAgo(sp.updated_at)}`
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* System Prices Section */}
+      {/* CoinGecko Prices Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-neutral-500 uppercase tracking-wide">
             Auto-Fetched Prices (CoinGecko)
+            {!coingeckoEnabled && (
+              <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0">Disabled</Badge>
+            )}
           </h3>
           <Button variant="ghost" size="sm" onClick={loadSystemPrices}>
             <RefreshCw className="w-3.5 h-3.5 mr-1" />
@@ -221,58 +282,46 @@ export default function TokenPriceList() {
           </Button>
         </div>
 
-        {systemPrices.length === 0 ? (
+        {!coingeckoEnabled ? (
           <div className="p-4 rounded-lg bg-neutral-100 border border-neutral-200 text-sm text-neutral-500">
-            No system prices available. Prices will appear after the first CoinGecko fetch.
+            CoinGecko price fetching is disabled. Set <code className="text-xs bg-neutral-100 px-1 py-0.5 rounded">DISABLE_COINGECKO=false</code> to enable automatic price fetching.
+          </div>
+        ) : coingeckoPrices.length === 0 ? (
+          <div className="p-4 rounded-lg bg-neutral-100 border border-neutral-200 text-sm text-neutral-500">
+            No CoinGecko prices available. Prices will appear after the first CoinGecko fetch.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {systemPrices.map(sp => (
-              <div
-                key={sp.coingecko_id}
-                className={`p-4 rounded-lg border ${
-                  sp.price_usd === 0
-                    ? 'bg-red-50 border-error/30'
-                    : sp.is_stale
-                    ? 'bg-amber-50 border-amber-200'
-                    : 'bg-green-50 border-success/30'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-neutral-700">{sp.symbol}</span>
-                  <Badge
-                    variant={sp.price_usd === 0 ? 'destructive' : sp.is_stale ? 'warning' : 'success'}
-                    className="text-xs"
-                  >
-                    {sp.price_usd === 0 ? 'Unavailable' : sp.is_stale ? 'Stale' : 'Live'}
-                  </Badge>
-                </div>
-                <div className="text-xl font-semibold text-neutral-800">
-                  {sp.price_usd === 0 ? '—' : `$${sp.price_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                </div>
-                <div className="text-xs text-neutral-400 mt-1">
-                  {sp.price_usd === 0 ? (
-                    <span className="text-error-dark flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      Price unavailable — add manual override
-                    </span>
-                  ) : sp.is_stale ? (
-                    <span className="text-amber-800 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />
-                      Last updated {timeAgo(sp.updated_at)}
-                    </span>
-                  ) : (
-                    `Updated ${timeAgo(sp.updated_at)}`
-                  )}
-                </div>
-              </div>
-            ))}
+            {coingeckoPrices.map(renderPriceCard)}
           </div>
         )}
       </div>
 
       {/* Per-Org Token Prices */}
       <div className="space-y-4">
+        {/* Warning banner for tokens blocking transactions */}
+        {(() => {
+          const blockedTokens = tokens.filter(t => {
+            if (t.coingecko_id) return false; // CoinGecko tokens resolve from system prices
+            return t.price_fiat === 0;
+          });
+          if (blockedTokens.length === 0) return null;
+          return (
+            <div className="flex items-start gap-3 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
+              <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0 text-red-600" />
+              <div>
+                <p className="font-semibold text-sm">
+                  {blockedTokens.length} token{blockedTokens.length > 1 ? 's' : ''} blocking transactions
+                </p>
+                <p className="text-sm mt-1">
+                  The following manual token{blockedTokens.length > 1 ? 's have' : ' has'} no price set for {currencyLabel} and will <strong>block all transactions</strong> until configured:{' '}
+                  {blockedTokens.map(t => t.symbol).join(', ')}
+                </p>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="flex items-center justify-between">
           <h3 className="text-base font-medium text-neutral-700">Per-Organization Token Prices</h3>
           {orgId && (
@@ -315,7 +364,7 @@ export default function TokenPriceList() {
                 <TableHead>Token Address</TableHead>
                 <TableHead>Symbol</TableHead>
                 <TableHead>Source</TableHead>
-                <TableHead>Price (USD)</TableHead>
+                <TableHead>Price ({currencyLabel})</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead className="w-[80px]"></TableHead>
               </TableRow>
@@ -350,7 +399,7 @@ export default function TokenPriceList() {
                         </span>
                       ) : (
                         <span className="flex items-center gap-1">
-                          ${resolved.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {formatAmount(resolved.price)}
                           {resolved.stale && (
                             <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                           )}
@@ -447,7 +496,7 @@ export default function TokenPriceList() {
                 onChange={e => setFormDecimals(e.target.value)}
                 placeholder="18"
                 min="0"
-                max="36"
+                max="77"
                 disabled={formSource !== 'manual'}
               />
             </div>
@@ -455,7 +504,7 @@ export default function TokenPriceList() {
             {formSource === 'manual' && (
               <div>
                 <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                  Price (USD)
+                  Price ({currencyLabel})
                 </label>
                 <Input
                   type="number"

@@ -52,6 +52,11 @@ func (s *Server) registerComplianceRoutes(adminGroup *gin.RouterGroup) {
 	adminGroup.GET("/compliance/sanctions", s.listSanctionedAddresses)
 	adminGroup.POST("/compliance/sanctions", s.addSanctionedAddress)
 	adminGroup.DELETE("/compliance/sanctions/:id", s.removeSanctionedAddress)
+
+	// Currency management
+	adminGroup.GET("/compliance/currency", s.getBaseCurrency)
+	adminGroup.PUT("/compliance/currency", s.setBaseCurrency)
+
 }
 
 // compliancePaginationParams parses and caps pagination parameters.
@@ -77,9 +82,9 @@ func (s *Server) getComplianceConfig(c *gin.Context) {
 	// Return default config if none exists
 	if config == nil {
 		config = &compliance.ComplianceConfig{
-			OrgID:        orgID,
-			Enabled:      false,
-			ThresholdUSD: 1000,
+			OrgID:         orgID,
+			Enabled:       false,
+			ThresholdFiat: 1000,
 		}
 	}
 
@@ -90,8 +95,8 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		Enabled      *bool    `json:"enabled"`
-		ThresholdUSD *float64 `json:"threshold_usd"`
+		Enabled       *bool    `json:"enabled"`
+		ThresholdFiat *float64 `json:"threshold_fiat"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -107,22 +112,22 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 
 	if config == nil {
 		config = &compliance.ComplianceConfig{
-			ID:           uuid.New().String(),
-			OrgID:        orgID,
-			Enabled:      false,
-			ThresholdUSD: 1000,
+			ID:            uuid.New().String(),
+			OrgID:         orgID,
+			Enabled:       false,
+			ThresholdFiat: 1000,
 		}
 	}
 
 	if input.Enabled != nil {
 		config.Enabled = *input.Enabled
 	}
-	if input.ThresholdUSD != nil {
-		if *input.ThresholdUSD < 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_usd must be >= 0"})
+	if input.ThresholdFiat != nil {
+		if *input.ThresholdFiat < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_fiat must be >= 0"})
 			return
 		}
-		config.ThresholdUSD = *input.ThresholdUSD
+		config.ThresholdFiat = *input.ThresholdFiat
 	}
 
 	if err := s.db.UpsertComplianceConfig(c.Request.Context(), config); err != nil {
@@ -151,19 +156,23 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	orgID := c.Param("org_id")
 	tokenAddress := strings.ToLower(c.Param("token_address"))
 
+	// Validate token address: must be "native" or a valid 0x-prefixed 20-byte hex address
+	if tokenAddress != "native" && !auth.IsValidAddress(tokenAddress) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token_address must be 'native' or a valid 0x-prefixed Ethereum address (42 characters)"})
+		return
+	}
+
 	var input struct {
-		Symbol      string  `json:"symbol" binding:"required"`
-		Decimals    int     `json:"decimals"`
-		PriceUSD    float64 `json:"price_usd"`
-		CoingeckoID *string `json:"coingecko_id"` // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
+		Symbol      string             `json:"symbol" binding:"required"`
+		Decimals    int                `json:"decimals"`
+		Prices      map[string]float64 `json:"prices"`                // multi-currency: {"usd": 3500, "eur": 3200}
+		CoingeckoID *string            `json:"coingecko_id"`          // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// When using CoinGecko source, price_usd=0 is OK (will be resolved from system table).
-	// For manual pricing, require price > 0.
 	isCoingecko := input.CoingeckoID != nil && *input.CoingeckoID != ""
 	// Validate coingecko_id against whitelist to prevent arbitrary external API calls
 	validCoingeckoIDs := map[string]bool{"ethereum": true, "tether": true, "usd-coin": true}
@@ -171,10 +180,25 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coingecko_id; valid values are: ethereum, tether, usd-coin"})
 		return
 	}
-	if !isCoingecko && input.PriceUSD <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "price_usd must be greater than 0 for manual pricing"})
+
+	// Validate currency codes in prices map
+	for code := range input.Prices {
+		if !compliance.IsValidCurrency(code) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency in prices: " + code + "; valid options: usd, eur, chf, gbp, aed"})
+			return
+		}
+		if input.Prices[code] <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "price must be greater than 0 for currency: " + code})
+			return
+		}
+	}
+
+	// For manual pricing, require at least one price via prices map
+	if !isCoingecko && len(input.Prices) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "manual pricing requires at least one price; use 'prices' map with currency codes, e.g. {\"usd\": 42.50}"})
 		return
 	}
+
 	// Validate decimals range (EVM tokens use 0-77; standard tokens 0-18)
 	if input.Decimals < 0 || input.Decimals > 77 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "decimals must be between 0 and 77"})
@@ -186,20 +210,40 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+
 	// Check if a price entry already exists
-	existing, err := s.db.GetTokenPrice(c.Request.Context(), orgID, tokenAddress)
+	existing, err := s.db.GetTokenPrice(ctx, orgID, tokenAddress)
 	if err != nil {
 		internalError(c, "failed to look up token price", err)
 		return
 	}
 
+	// Build prices_by_currency from input (merge with existing is done atomically in SQL via ||)
+	pricesByCurrency := make(map[string]float64)
+	for k, v := range input.Prices {
+		pricesByCurrency[k] = v
+	}
+
+	// Read active currency once
+	activeCurrency := "usd"
+	if c, err := s.db.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
+		activeCurrency = c
+	}
+
+	// Resolve price_fiat from the prices being submitted (SQL || will merge with existing).
+	// If the caller didn't provide a price for the active currency, price_fiat stays 0
+	// and the SQL merge will preserve the existing prices_by_currency entry.
+	priceFiat := pricesByCurrency[activeCurrency]
+
 	price := &compliance.TokenPrice{
-		OrgID:        orgID,
-		TokenAddress: tokenAddress,
-		Symbol:       input.Symbol,
-		Decimals:     input.Decimals,
-		PriceUSD:     input.PriceUSD,
-		CoingeckoID:  input.CoingeckoID,
+		OrgID:            orgID,
+		TokenAddress:     tokenAddress,
+		Symbol:           input.Symbol,
+		Decimals:         input.Decimals,
+		PriceFiat:        priceFiat,
+		PricesByCurrency: pricesByCurrency,
+		CoingeckoID:      input.CoingeckoID,
 	}
 
 	if existing != nil {
@@ -208,7 +252,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		price.ID = uuid.New().String()
 	}
 
-	if err := s.db.UpsertTokenPrice(c.Request.Context(), price); err != nil {
+	if err := s.db.UpsertTokenPrice(ctx, price, activeCurrency); err != nil {
 		internalError(c, "failed to save token price", err)
 		return
 	}
@@ -241,36 +285,49 @@ func (s *Server) deleteTokenPrice(c *gin.Context) {
 // System Token Price handlers
 
 func (s *Server) listSystemTokenPrices(c *gin.Context) {
-	prices, err := s.db.ListSystemTokenPrices(c.Request.Context())
+	ctx := c.Request.Context()
+	prices, err := s.db.ListSystemTokenPrices(ctx)
 	if err != nil {
 		internalError(c, "failed to list system token prices", err)
 		return
 	}
 
+	// Get base currency
+	currency, _ := s.db.GetSystemSetting(ctx, "base_currency")
+	if currency == "" {
+		currency = "usd"
+	}
+
 	// Add staleness info
 	type systemPriceResponse struct {
-		CoingeckoID string  `json:"coingecko_id"`
-		Symbol      string  `json:"symbol"`
-		Decimals    int     `json:"decimals"`
-		PriceUSD    float64 `json:"price_usd"`
-		UpdatedAt   string  `json:"updated_at"`
-		IsStale     bool    `json:"is_stale"`
+		ID           int     `json:"id"`
+		CoingeckoID  *string `json:"coingecko_id,omitempty"`
+		Symbol       string  `json:"symbol"`
+		Decimals     int     `json:"decimals"`
+		PriceFiat    float64 `json:"price_fiat"`
+		Source       string  `json:"source"`
+		TokenAddress *string `json:"token_address,omitempty"`
+		UpdatedAt    string  `json:"updated_at"`
+		IsStale      bool    `json:"is_stale"`
 	}
 
 	staleThreshold := s.config.PriceStalenessThreshold
 	result := make([]systemPriceResponse, len(prices))
 	for i, p := range prices {
 		result[i] = systemPriceResponse{
-			CoingeckoID: p.CoingeckoID,
-			Symbol:      p.Symbol,
-			Decimals:    p.Decimals,
-			PriceUSD:    p.PriceUSD,
-			UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
-			IsStale:     time.Since(p.UpdatedAt) > staleThreshold,
+			ID:           p.ID,
+			CoingeckoID:  p.CoingeckoID,
+			Symbol:       p.Symbol,
+			Decimals:     p.Decimals,
+			PriceFiat:    p.PriceFiat,
+			Source:       p.Source,
+			TokenAddress: p.TokenAddress,
+			UpdatedAt:    p.UpdatedAt.Format(time.RFC3339),
+			IsStale:      time.Since(p.UpdatedAt) > staleThreshold,
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": result})
+	c.JSON(http.StatusOK, gin.H{"data": result, "currency": currency})
 }
 
 // Travel Rule Record handlers
@@ -282,8 +339,8 @@ func (s *Server) listSystemTokenPrices(c *gin.Context) {
 func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	orgID := c.Param("org_id")
 
-	// C3: amount_usd is NOT accepted from input — it is computed server-side from
-	// amount_wei and the configured token price to prevent forged USD values.
+	// C3: amount_fiat is NOT accepted from input — it is computed server-side from
+	// amount_wei and the configured token price to prevent forged fiat values.
 	var input struct {
 		OriginatorUserID   string         `json:"originator_user_id" binding:"required"`
 		OriginatorData     map[string]any `json:"originator_data" binding:"required"`
@@ -338,30 +395,37 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		return
 	}
 
-	// C3: Look up the token price and compute amount_usd server-side.
+	// C3: Look up the token price and compute amount_fiat server-side.
 	tokenAddr := "native"
 	if transferType == compliance.TransferTypeERC20 && input.TokenAddress != nil {
 		tokenAddr = strings.ToLower(*input.TokenAddress)
 	}
 
 	ctx := c.Request.Context()
-	priceUSD, decimals, err := s.resolveTokenPriceForRecord(ctx, orgID, tokenAddr)
+
+	// Read base currency — needed for price resolution and audit snapshot
+	currency, _ := s.db.GetSystemSetting(ctx, "base_currency")
+	if currency == "" {
+		currency = "usd"
+	}
+
+	priceFiat, decimals, err := s.resolveTokenPriceForRecord(ctx, orgID, tokenAddr, currency)
 	if err != nil {
 		internalError(c, "failed to look up token price", err)
 		return
 	}
-	if priceUSD <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no token price configured for " + tokenAddr + "; configure it in Token Prices first"})
+	if priceFiat <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no token price configured for " + tokenAddr + " in currency " + strings.ToUpper(currency) + "; configure it in Token Prices first"})
 		return
 	}
 
-	amountUSD, err := compliance.WeiToUSD(amountWei, decimals, priceUSD)
+	amountFiat, err := compliance.WeiToFiat(amountWei, decimals, priceFiat)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to compute USD value: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to compute fiat value: " + err.Error()})
 		return
 	}
-	if amountUSD <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "computed amount_usd must be greater than 0"})
+	if amountFiat <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "computed amount_fiat must be greater than 0"})
 		return
 	}
 
@@ -375,7 +439,8 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		TokenAddress:       lowercasePtr(input.TokenAddress),
 		BeneficiaryAddress: strings.ToLower(input.BeneficiaryAddress),
 		AmountWei:          input.AmountWei,
-		AmountUSD:          amountUSD,
+		AmountFiat:         amountFiat,
+		Currency:           currency,
 		ExpiresAt:          time.Now().Add(travelRuleRecordTTL),
 	}
 
@@ -389,15 +454,15 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 	beneficiary := strings.ToLower(input.BeneficiaryAddress)
 	config, err := s.db.GetComplianceConfig(ctx, orgID)
 	if err == nil && config != nil && config.Enabled {
-		threshold := config.ThresholdUSD
+		threshold := config.ThresholdFiat
 		override, err := s.db.GetAddressThresholdOverride(ctx, orgID, beneficiary)
 		if err == nil && override != nil {
-			threshold = override.ThresholdUSD
+			threshold = override.ThresholdFiat
 		}
-		if amountUSD < threshold {
+		if amountFiat < threshold {
 			record.Warning = fmt.Sprintf(
-				"Record amount $%.2f is below the applicable threshold $%.2f for address %s — this record may never be used.",
-				amountUSD, threshold, beneficiary,
+				"Record amount %.2f is below the applicable threshold %.2f for address %s — this record may never be used.",
+				amountFiat, threshold, beneficiary,
 			)
 		}
 	}
@@ -548,15 +613,15 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 	}
 
 	var input struct {
-		ThresholdUSD float64 `json:"threshold_usd"`
-		Note         string  `json:"note"`
+		ThresholdFiat float64 `json:"threshold_fiat"`
+		Note          string  `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if input.ThresholdUSD < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_usd must be >= 0"})
+	if input.ThresholdFiat < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "threshold_fiat must be >= 0"})
 		return
 	}
 	if len(input.Note) > 1000 {
@@ -572,10 +637,10 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 	}
 
 	override := &compliance.AddressThresholdOverride{
-		OrgID:        orgID,
-		Address:      address,
-		ThresholdUSD: input.ThresholdUSD,
-		Note:         input.Note,
+		OrgID:         orgID,
+		Address:       address,
+		ThresholdFiat: input.ThresholdFiat,
+		Note:          input.Note,
 	}
 
 	if existing != nil {
@@ -649,7 +714,7 @@ func (s *Server) listComplianceLogs(c *gin.Context) {
 
 // resolveTokenPriceForRecord resolves the effective price and decimals for a token,
 // using the same fallback chain as the compliance checker.
-func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAddr string) (float64, int, error) {
+func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAddr, activeCurrency string) (float64, int, error) {
 	tokenPrice, err := s.db.GetTokenPrice(ctx, orgID, tokenAddr)
 	if err != nil {
 		return 0, 0, err
@@ -661,15 +726,32 @@ func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAdd
 			if err != nil {
 				return 0, 0, err
 			}
-			if sysPrice != nil && sysPrice.PriceUSD > 0 {
-				return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+			if sysPrice != nil {
+				if sysPrice.PricesByCurrency != nil {
+					if price, ok := sysPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+						return price, tokenPrice.Decimals, nil
+					}
+				}
+				if sysPrice.PriceFiat > 0 {
+					return sysPrice.PriceFiat, tokenPrice.Decimals, nil
+				}
 			}
-			if tokenPrice.PriceUSD > 0 {
-				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
-			}
+			// System price unavailable — fail closed (no silent fallback)
 			return 0, 0, nil
 		}
-		return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+		// Manual price: resolve from prices_by_currency
+		if len(tokenPrice.PricesByCurrency) > 0 {
+			if price, ok := tokenPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+				return price, tokenPrice.Decimals, nil
+			}
+			// prices_by_currency is populated but doesn't have the active currency
+			return 0, 0, nil
+		}
+		// Legacy: prices_by_currency not populated, use price_fiat
+		if tokenPrice.PriceFiat > 0 {
+			return tokenPrice.PriceFiat, tokenPrice.Decimals, nil
+		}
+		return 0, 0, nil
 	}
 
 	// Auto-resolve native from system ethereum price
@@ -678,8 +760,15 @@ func (s *Server) resolveTokenPriceForRecord(ctx context.Context, orgID, tokenAdd
 		if err != nil {
 			return 0, 0, err
 		}
-		if sysPrice != nil && sysPrice.PriceUSD > 0 {
-			return sysPrice.PriceUSD, sysPrice.Decimals, nil
+		if sysPrice != nil {
+			if sysPrice.PricesByCurrency != nil {
+				if price, ok := sysPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+					return price, sysPrice.Decimals, nil
+				}
+			}
+			if sysPrice.PriceFiat > 0 {
+				return sysPrice.PriceFiat, sysPrice.Decimals, nil
+			}
 		}
 	}
 
@@ -693,4 +782,146 @@ func lowercasePtr(s *string) *string {
 	}
 	lower := strings.ToLower(*s)
 	return &lower
+}
+
+// Currency admin endpoints
+
+func (s *Server) getBaseCurrency(c *gin.Context) {
+	currency, err := s.db.GetSystemSetting(c.Request.Context(), "base_currency")
+	if err != nil {
+		internalError(c, "failed to get base currency", err)
+		return
+	}
+	if currency == "" {
+		currency = "usd"
+	}
+
+	type currencyInfo struct {
+		Code   string `json:"code"`
+		Name   string `json:"name"`
+		Symbol string `json:"symbol"`
+	}
+
+	allCurrencies := make([]currencyInfo, 0, len(compliance.ValidCurrencies))
+	for code, name := range compliance.ValidCurrencies {
+		allCurrencies = append(allCurrencies, currencyInfo{
+			Code:   string(code),
+			Name:   name,
+			Symbol: compliance.CurrencySymbols[code],
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"currency":          currency,
+		"all_currencies":    allCurrencies,
+		"coingecko_enabled": !s.config.DisableCoinGecko,
+	})
+}
+
+func (s *Server) setBaseCurrency(c *gin.Context) {
+	var input struct {
+		Currency string `json:"currency" binding:"required"`
+		Force    bool   `json:"force"` // set true to switch even if manual tokens lack prices for this currency
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !compliance.IsValidCurrency(input.Currency) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency; valid options: usd, eur, chf, gbp, aed"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Check for manual per-org tokens that don't have a price for the target currency
+	manualTokens, err := s.db.ListAllManualTokenPrices(ctx)
+	if err != nil {
+		internalError(c, "failed to list manual token prices for currency switch check", err)
+		return
+	}
+
+	type affectedToken struct {
+		OrgID        string `json:"org_id"`
+		TokenAddress string `json:"token_address"`
+		Symbol       string `json:"symbol"`
+	}
+	var affected []affectedToken
+	for _, tp := range manualTokens {
+		if tp.PricesByCurrency == nil {
+			// Legacy token without multi-currency prices — affected if price_fiat > 0
+			if tp.PriceFiat > 0 {
+				affected = append(affected, affectedToken{OrgID: tp.OrgID, TokenAddress: tp.TokenAddress, Symbol: tp.Symbol})
+			}
+			continue
+		}
+		if _, ok := tp.PricesByCurrency[input.Currency]; !ok {
+			affected = append(affected, affectedToken{OrgID: tp.OrgID, TokenAddress: tp.TokenAddress, Symbol: tp.Symbol})
+		}
+	}
+
+	if len(affected) > 0 && !input.Force {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":           fmt.Sprintf("%d manual token price(s) do not have a price set for %s; these tokens will block transactions until prices are configured. Set force=true to switch anyway.", len(affected), strings.ToUpper(input.Currency)),
+			"affected_tokens": affected,
+			"currency":        input.Currency,
+		})
+		return
+	}
+
+	// Save the new currency
+	if err := s.db.SetSystemSetting(ctx, "base_currency", input.Currency); err != nil {
+		internalError(c, "failed to set base currency", err)
+		return
+	}
+
+	// Update system token price_fiat from stored prices_by_currency
+	sysPrices, err := s.db.ListSystemTokenPrices(ctx)
+	if err != nil {
+		// Revert: currency was set but prices couldn't be loaded — revert is best-effort
+		log.Printf("ERROR: failed to list system token prices after currency change: %v", err)
+		internalError(c, "currency saved but failed to update system prices; retry the switch", err)
+		return
+	}
+	for _, p := range sysPrices {
+		if p.Source == "coingecko" && p.PricesByCurrency != nil {
+			if newPrice, ok := p.PricesByCurrency[input.Currency]; ok {
+				p.PriceFiat = newPrice
+			} else {
+				p.PriceFiat = 0
+			}
+			if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
+				log.Printf("ERROR: failed to update system price for %s during currency switch: %v", p.Symbol, err)
+				internalError(c, "failed to update system prices during currency switch", err)
+				return
+			}
+		}
+	}
+
+	// Update manual per-org token price_fiat from prices_by_currency
+	for _, tp := range manualTokens {
+		if tp.PricesByCurrency != nil {
+			if newPrice, ok := tp.PricesByCurrency[input.Currency]; ok {
+				tp.PriceFiat = newPrice
+			} else {
+				tp.PriceFiat = 0 // No price for this currency — will block transactions (fail closed)
+			}
+			if err := s.db.UpsertTokenPrice(ctx, tp, input.Currency); err != nil {
+				log.Printf("ERROR: failed to update token price for %s/%s during currency switch: %v", tp.OrgID, tp.Symbol, err)
+				internalError(c, "failed to update token prices during currency switch", err)
+				return
+			}
+		}
+	}
+
+	resp := gin.H{
+		"currency": input.Currency,
+		"message":  "Base currency updated to " + strings.ToUpper(input.Currency) + ".",
+	}
+	if len(affected) > 0 {
+		resp["warning"] = fmt.Sprintf("%d manual token(s) lack prices for %s and will block transactions until updated.", len(affected), strings.ToUpper(input.Currency))
+		resp["affected_tokens"] = affected
+	}
+	c.JSON(http.StatusOK, resp)
 }

@@ -171,7 +171,7 @@ export function TestRequestPanel() {
         const tokens = tokensRes.data.data;
         const nativeToken = tokens?.find((t) => t.token_address === 'native');
         if (nativeToken) {
-          setEthPriceUsd(nativeToken.price_usd);
+          setEthPriceUsd(nativeToken.price_fiat);
           setPriceLoadWarning(null);
         }
       } catch {

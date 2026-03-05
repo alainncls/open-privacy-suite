@@ -109,8 +109,8 @@ describe('ComplianceLogList', () => {
       renderWithComplianceContext(<ComplianceLogList />);
 
       await waitFor(() => {
-        expect(screen.getByText('$1,250')).toBeInTheDocument();
-        expect(screen.getByText('$2,000')).toBeInTheDocument();
+        expect(screen.getByText('$1,250.00')).toBeInTheDocument();
+        expect(screen.getByText('$2,000.00')).toBeInTheDocument();
       });
     });
   });

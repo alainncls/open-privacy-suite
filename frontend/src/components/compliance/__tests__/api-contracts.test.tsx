@@ -54,13 +54,13 @@ import AddressThresholdList from '../AddressThresholdList';
 const realisticTokenPrices = [
   {
     id: 'tp-1', org_id: 'org-1', token_address: 'native',
-    symbol: 'ETH', decimals: 18, price_usd: 2500,
+    symbol: 'ETH', decimals: 18, price_fiat: 2500,
     created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z',
   },
 ];
 
 const realisticConfig = {
-  id: 'cfg-1', org_id: 'org-1', enabled: true, threshold_usd: 3000,
+  id: 'cfg-1', org_id: 'org-1', enabled: true, threshold_fiat: 3000,
   created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z',
 };
 
@@ -70,7 +70,7 @@ const realisticTravelRuleRecords = [
     originator_external_id: 'did:polygonid:polygon:main:user123',
     originator_data: { name: 'Alice' }, beneficiary_data: { name: 'Bob' },
     transfer_type: 'eth', beneficiary_address: '0xabcdef1234567890abcdef1234567890abcdef12',
-    amount_wei: '1000000000000000000', amount_usd: 2500,
+    amount_wei: '1000000000000000000', amount_fiat: 2500,
     expires_at: new Date(Date.now() + 86400000).toISOString(),
     created_at: '2024-01-15T00:00:00Z',
   },
@@ -87,7 +87,7 @@ const realisticSanctions = [
 const realisticAddressThresholds = [
   {
     id: 'ato-1', org_id: 'org-1', address: '0xabcdef1234567890abcdef1234567890abcdef12',
-    threshold_usd: 100, note: 'High-risk counterparty',
+    threshold_fiat: 100, note: 'High-risk counterparty',
     created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z',
   },
 ];
@@ -98,8 +98,8 @@ const realisticLogs = [
     user_external_id: 'did:polygonid:polygon:main:user123',
     transfer_type: 'eth', from_address: '0xaaaa00000000000000000000000000000000aaaa',
     to_address: '0xbbbb00000000000000000000000000000000bbbb',
-    amount_wei: '5000000000000000000', amount_usd: 12500,
-    threshold_usd: 3000, decision: 'allowed', created_at: '2024-01-15T10:00:00Z',
+    amount_wei: '5000000000000000000', amount_fiat: 12500,
+    threshold_fiat: 3000, decision: 'allowed', created_at: '2024-01-15T10:00:00Z',
   },
 ];
 
@@ -131,8 +131,8 @@ describe('API Route Path Contract Tests', () => {
     await complianceApi.tokens.list('org-1');
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens');
 
-    await complianceApi.tokens.upsert('org-1', 'native', { symbol: 'ETH', decimals: 18, price_usd: 2500 });
-    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native', { symbol: 'ETH', decimals: 18, price_usd: 2500 });
+    await complianceApi.tokens.upsert('org-1', 'native', { symbol: 'ETH', decimals: 18, prices: { usd: 2500 } });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native', { symbol: 'ETH', decimals: 18, prices: { usd: 2500 } });
 
     await complianceApi.tokens.delete('org-1', 'native');
     expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native');
@@ -140,7 +140,7 @@ describe('API Route Path Contract Tests', () => {
     await complianceApi.travelRules.list('org-1', { limit: 25, offset: 0 });
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/travel-rule-records', { params: { limit: 25, offset: 0 } });
 
-    // C3: amount_usd is no longer sent by the client; server computes it
+    // C3: amount_fiat is no longer sent by the client; server computes it
     await complianceApi.travelRules.create('org-1', {
       originator_user_id: 'u1', originator_data: {}, beneficiary_data: {},
       transfer_type: 'eth', beneficiary_address: '0x1234567890123456789012345678901234567890',
@@ -163,8 +163,8 @@ describe('API Route Path Contract Tests', () => {
     await complianceApi.addressThresholds.list('org-1', { limit: 25, offset: 0 });
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds', { params: { limit: 25, offset: 0 } });
 
-    await complianceApi.addressThresholds.upsert('org-1', '0x1234567890123456789012345678901234567890', { threshold_usd: 100 });
-    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds/0x1234567890123456789012345678901234567890', { threshold_usd: 100 });
+    await complianceApi.addressThresholds.upsert('org-1', '0x1234567890123456789012345678901234567890', { threshold_fiat: 100 });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds/0x1234567890123456789012345678901234567890', { threshold_fiat: 100 });
 
     await complianceApi.addressThresholds.delete('org-1', '0x1234567890123456789012345678901234567890');
     expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/address-thresholds/0x1234567890123456789012345678901234567890');
@@ -261,7 +261,7 @@ describe('Backend Response Contract Tests', () => {
     expect(screen.getByText('did:polygonid:p...')).toBeInTheDocument();
 
     // Verify the amount USD is displayed
-    expect(screen.getByText('$2,500')).toBeInTheDocument();
+    expect(screen.getByText('$2,500.00')).toBeInTheDocument();
 
     // Verify the transfer type badge
     expect(screen.getByText('ETH')).toBeInTheDocument();
@@ -346,7 +346,7 @@ describe('Backend Response Contract Tests', () => {
     expect(screen.getByText('ETH')).toBeInTheDocument();
 
     // Verify amount USD
-    expect(screen.getByText('$12,500')).toBeInTheDocument();
+    expect(screen.getByText('$12,500.00')).toBeInTheDocument();
 
     // Verify decision badge
     expect(screen.getByText('allowed')).toBeInTheDocument();

@@ -79,7 +79,7 @@ describe('ComplianceConfig', () => {
     it('populates threshold from API response', async () => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/compliance/config', () => {
-          return HttpResponse.json({ ...mockComplianceConfig, threshold_usd: 5000 });
+          return HttpResponse.json({ ...mockComplianceConfig, threshold_fiat: 5000 });
         })
       );
 

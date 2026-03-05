@@ -251,7 +251,7 @@ export const mockComplianceConfig: ComplianceConfigType = {
   id: 'config-1',
   org_id: 'org-1',
   enabled: true,
-  threshold_usd: 1000,
+  threshold_fiat: 1000,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -263,7 +263,7 @@ export const mockTokenPrices: TokenPrice[] = [
     token_address: 'native',
     symbol: 'ETH',
     decimals: 18,
-    price_usd: 2500,
+    price_fiat: 2500,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
@@ -273,7 +273,7 @@ export const mockTokenPrices: TokenPrice[] = [
     token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
     symbol: 'USDT',
     decimals: 6,
-    price_usd: 1,
+    price_fiat: 1,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
@@ -290,7 +290,7 @@ export const mockTravelRuleRecords: TravelRuleRecord[] = [
     transfer_type: 'eth',
     beneficiary_address: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
     amount_wei: '1000000000000000000',
-    amount_usd: 2500,
+    amount_fiat: 2500,
     expires_at: new Date(Date.now() + 86400000).toISOString(),
     created_at: '2024-01-01T00:00:00Z',
   },
@@ -305,7 +305,7 @@ export const mockTravelRuleRecords: TravelRuleRecord[] = [
     token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
     beneficiary_address: '0x1234567890123456789012345678901234567890',
     amount_wei: '5000000000',
-    amount_usd: 5000,
+    amount_fiat: 5000,
     expires_at: '2024-01-01T00:00:00Z',
     used_at: '2024-01-02T00:00:00Z',
     used_tx_hash: '0xdeadbeef',
@@ -343,8 +343,8 @@ export const mockComplianceLogs: ComplianceLog[] = [
     from_address: '0x1111111111111111111111111111111111111111',
     to_address: '0x2222222222222222222222222222222222222222',
     amount_wei: '500000000000000000',
-    amount_usd: 1250,
-    threshold_usd: 1000,
+    amount_fiat: 1250,
+    threshold_fiat: 1000,
     decision: 'allowed',
     travel_rule_record_id: 'tr-1',
     created_at: '2024-01-15T10:30:00Z',
@@ -359,8 +359,8 @@ export const mockComplianceLogs: ComplianceLog[] = [
     from_address: '0x3333333333333333333333333333333333333333',
     to_address: '0xbadaddress000000000000000000000000000dead',
     amount_wei: '2000000000',
-    amount_usd: 2000,
-    threshold_usd: 1000,
+    amount_fiat: 2000,
+    threshold_fiat: 1000,
     decision: 'denied',
     denial_reason: 'sanctioned_address',
     created_at: '2024-01-15T11:00:00Z',
@@ -372,7 +372,7 @@ export const mockAddressThresholdOverrides: AddressThresholdOverride[] = [
     id: 'ato-1',
     org_id: 'org-1',
     address: '0xabcdef1234567890abcdef1234567890abcdef12',
-    threshold_usd: 100,
+    threshold_fiat: 100,
     note: 'High-risk counterparty',
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-15T00:00:00Z',
@@ -381,7 +381,7 @@ export const mockAddressThresholdOverrides: AddressThresholdOverride[] = [
     id: 'ato-2',
     org_id: 'org-1',
     address: '0x1111111111111111111111111111111111111111',
-    threshold_usd: 0,
+    threshold_fiat: 0,
     created_at: '2024-01-10T00:00:00Z',
     updated_at: '2024-01-10T00:00:00Z',
   },
@@ -804,11 +804,11 @@ export const handlers = [
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/config', async ({ request }) => {
-    const body = await request.json() as { enabled?: boolean; threshold_usd?: number };
+    const body = await request.json() as { enabled?: boolean; threshold_fiat?: number };
     return HttpResponse.json({
       ...mockComplianceConfig,
       ...(body.enabled !== undefined && { enabled: body.enabled }),
-      ...(body.threshold_usd !== undefined && { threshold_usd: body.threshold_usd }),
+      ...(body.threshold_fiat !== undefined && { threshold_fiat: body.threshold_fiat }),
       updated_at: new Date().toISOString(),
     });
   }),
@@ -816,9 +816,9 @@ export const handlers = [
   // System token prices (CoinGecko cache)
   http.get('/api/v1/admin/compliance/system-token-prices', () => {
     return HttpResponse.json({ data: [
-      { coingecko_id: 'ethereum', symbol: 'ETH', decimals: 18, price_usd: 2500, updated_at: new Date().toISOString(), is_stale: false },
-      { coingecko_id: 'tether', symbol: 'USDT', decimals: 6, price_usd: 1.0, updated_at: new Date().toISOString(), is_stale: false },
-      { coingecko_id: 'usd-coin', symbol: 'USDC', decimals: 6, price_usd: 1.0, updated_at: new Date().toISOString(), is_stale: false },
+      { id: 1, coingecko_id: 'ethereum', source: 'coingecko', token_address: 'native', symbol: 'ETH', decimals: 18, price_fiat: 2500, updated_at: new Date().toISOString(), is_stale: false },
+      { id: 2, coingecko_id: 'tether', source: 'coingecko', token_address: '0xdac17f958d2ee523a2206206994597c13d831ec7', symbol: 'USDT', decimals: 6, price_fiat: 1.0, updated_at: new Date().toISOString(), is_stale: false },
+      { id: 3, coingecko_id: 'usd-coin', source: 'coingecko', token_address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', symbol: 'USDC', decimals: 6, price_fiat: 1.0, updated_at: new Date().toISOString(), is_stale: false },
     ] });
   }),
 
@@ -828,14 +828,16 @@ export const handlers = [
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
-    const body = await request.json() as { symbol: string; decimals: number; price_usd: number };
+    const body = await request.json() as { symbol: string; decimals: number; prices?: Record<string, number> };
+    const priceFiat = body.prices ? (body.prices['usd'] ?? Object.values(body.prices)[0] ?? 0) : 0;
     return HttpResponse.json({
       id: 'token-new',
       org_id: params.orgId as string,
       token_address: params.tokenAddress as string,
       symbol: body.symbol,
       decimals: body.decimals,
-      price_usd: body.price_usd,
+      price_fiat: priceFiat,
+      prices_by_currency: body.prices ?? {},
       created_at: '2024-01-01T00:00:00Z',
       updated_at: new Date().toISOString(),
     });
@@ -918,12 +920,12 @@ export const handlers = [
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/address-thresholds/:address', async ({ request, params }) => {
-    const body = await request.json() as { threshold_usd: number; note?: string };
+    const body = await request.json() as { threshold_fiat: number; note?: string };
     return HttpResponse.json({
       id: 'ato-new',
       org_id: params.orgId as string,
       address: params.address as string,
-      threshold_usd: body.threshold_usd,
+      threshold_fiat: body.threshold_fiat,
       note: body.note || null,
       created_at: '2024-01-01T00:00:00Z',
       updated_at: new Date().toISOString(),
@@ -932,5 +934,28 @@ export const handlers = [
 
   http.delete('/api/v1/admin/orgs/:orgId/compliance/address-thresholds/:address', () => {
     return HttpResponse.json({ message: 'Deleted' });
+  }),
+
+  // Currency settings
+  http.get('/api/v1/admin/compliance/currency', () => {
+    return HttpResponse.json({
+      currency: 'usd',
+      all_currencies: [
+        { code: 'usd', name: 'US Dollar', symbol: '$' },
+        { code: 'eur', name: 'Euro', symbol: '€' },
+        { code: 'chf', name: 'Swiss Franc', symbol: 'CHF' },
+        { code: 'gbp', name: 'British Pound', symbol: '£' },
+        { code: 'aed', name: 'UAE Dirham', symbol: 'AED' },
+      ],
+      coingecko_enabled: true,
+    });
+  }),
+
+  http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
+    const body = await request.json() as { currency: string };
+    return HttpResponse.json({
+      currency: body.currency,
+      message: `Base currency updated to ${body.currency.toUpperCase()}`,
+    });
   }),
 ];

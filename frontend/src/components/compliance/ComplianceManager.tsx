@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
+import { CurrencyProvider } from './CurrencyContext';
+import CurrencySelector from './CurrencySelector';
 
 type ComplianceTab = 'config' | 'tokens' | 'travel-rules' | 'address-thresholds' | 'sanctions' | 'logs';
 
@@ -139,6 +141,7 @@ export default function ComplianceManager() {
   const blockedWithoutOrg = showOrgSelector && activeTab !== 'tokens' && !selectedOrg;
 
   return (
+    <CurrencyProvider>
     <ComplianceOrgContext.Provider
       value={{ selectedOrg, setSelectedOrg, organizations }}
     >
@@ -158,6 +161,8 @@ export default function ComplianceManager() {
             </div>
 
             <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 lg:w-auto">
+              <CurrencySelector />
+              <div className="w-px h-6 bg-neutral-200" />
               <span className="text-sm text-neutral-500 sm:whitespace-nowrap">Scope:</span>
               {loading ? (
                 <div className="flex items-center gap-2 text-neutral-400">
@@ -250,6 +255,7 @@ export default function ComplianceManager() {
         </CardContent>
       </Card>
     </ComplianceOrgContext.Provider>
+    </CurrencyProvider>
   );
 }
 

@@ -68,6 +68,12 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}, nil
 	}
 
+	// Read base currency once for the entire decision — used for audit trail.
+	currency, _ := c.store.GetSystemSetting(ctx, "base_currency")
+	if currency == "" {
+		currency = "usd"
+	}
+
 	// Step 3: Sanctions check (sender, recipient, and tx originator if different)
 
 	// For transferFrom, info.FromAddress is the allowance owner, but req.From is the
@@ -82,7 +88,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 			log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 			// M2: Denial decisions — warn on log failure but still deny. The tx is already
 			// blocked, so a missing audit entry is less severe than letting it through.
-			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 				log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 			}
 			return &CheckResult{
@@ -101,7 +107,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		reason := fmt.Sprintf("recipient address %s is sanctioned", info.ToAddress)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -119,7 +125,7 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		reason := fmt.Sprintf("sender address %s is sanctioned", info.FromAddress)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -140,15 +146,15 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// 2. Per-org token_prices entry without coingecko_id → manual price
 	// 3. No per-org entry + native token → auto-resolve from system "ethereum" price
 	// 4. No entry → fail closed
-	priceUSD, decimals, err := c.resolveTokenPrice(ctx, req.OrgID, tokenAddr)
+	priceFiat, decimals, err := c.resolveTokenPrice(ctx, req.OrgID, tokenAddr, currency)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve token price: %w", err)
 	}
-	if priceUSD < 0 {
+	if priceFiat < 0 {
 		// Sentinel: price unavailable
 		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
 		log.Printf("Compliance denied (fail closed): org=%s user=%s %s", req.OrgID, req.UserID, reason)
-		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -158,10 +164,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}, nil
 	}
 
-	// Convert amountWei to USD: amountWei / 10^decimals * priceUSD
-	amountUSD, err := WeiToUSD(info.AmountWei, decimals, priceUSD)
+	// Convert amountWei to fiat: amountWei / 10^decimals * priceFiat
+	amountFiat, err := WeiToFiat(info.AmountWei, decimals, priceFiat)
 	if err != nil {
-		return nil, fmt.Errorf("failed to calculate USD value: %w", err)
+		return nil, fmt.Errorf("failed to calculate fiat value: %w", err)
 	}
 
 	// Determine threshold: per-address overrides take precedence over org config.
@@ -174,12 +180,12 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// M1: Strict `<` is intentional per FATF guidance. The threshold is the ceiling
 	// below which no travel rule record is needed. A transfer of exactly the threshold
 	// amount requires a record. Example: threshold $1000, transfer $1000 -> record needed.
-	if amountUSD < threshold {
-		reason := fmt.Sprintf("transfer value $%.2f below threshold $%.2f", amountUSD, threshold)
+	if amountFiat < threshold {
+		reason := fmt.Sprintf("transfer value $%.2f below threshold $%.2f", amountFiat, threshold)
 		log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Allowed decision — fail closed on log failure. Allowing a transaction
 		// without an audit trail is a compliance violation. Deny instead.
-		if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "allowed", "", nil); err != nil {
+		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", nil, currency); err != nil {
 			log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
 			return &CheckResult{
 				Allowed:      false,
@@ -197,16 +203,16 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// Step 6: Above threshold -> atomically claim a travel rule record
 	// Uses ClaimUnusedTravelRuleRecord which does UPDATE ... FOR UPDATE SKIP LOCKED
 	// in a single query to prevent TOCTOU race conditions.
-	// The record must cover the transfer amount (amount_usd >= amountUSD).
-	record, err := c.store.ClaimUnusedTravelRuleRecord(ctx, req.OrgID, req.UserID, info.ToAddress, tokenAddr, amountUSD)
+	// The record must cover the transfer amount (amount_fiat >= amountFiat).
+	record, err := c.store.ClaimUnusedTravelRuleRecord(ctx, req.OrgID, req.UserID, info.ToAddress, tokenAddr, amountFiat)
 	if err != nil {
 		return nil, fmt.Errorf("failed to claim travel rule record: %w", err)
 	}
 	if record == nil {
-		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountUSD, threshold)
+		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountFiat, threshold)
 		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 		// M2: Denial — warn on log failure, still deny.
-		if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "denied", reason, nil); err != nil {
+		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "denied", reason, nil, currency); err != nil {
 			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		}
 		return &CheckResult{
@@ -219,10 +225,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// M4: Record consumed even if transfer amount is much less than record amount.
 	// This is intentional per travel rule semantics — each transfer above threshold needs
 	// its own authorization. The record covers a specific planned transfer, not a balance.
-	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountUSD, threshold, record.ID)
+	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountFiat, threshold, record.ID)
 	log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
 	// M2: Allowed decision — fail closed on log failure.
-	if err := c.logDecision(ctx, req, info, &amountUSD, &threshold, "allowed", "", &record.ID); err != nil {
+	if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", &record.ID, currency); err != nil {
 		log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
 		return &CheckResult{
 			Allowed:      false,
@@ -238,8 +244,8 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 }
 
 // resolveTokenPrice implements the price fallback chain.
-// Returns (priceUSD, decimals, error). A negative priceUSD signals "not found".
-func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string) (float64, int, error) {
+// Returns (priceFiat, decimals, error). A negative priceFiat signals "not found / fail closed".
+func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr, activeCurrency string) (float64, int, error) {
 	// Step 1: Check per-org token_prices
 	tokenPrice, err := c.store.GetTokenPrice(ctx, orgID, tokenAddr)
 	if err != nil {
@@ -253,24 +259,40 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 			if err != nil {
 				return 0, 0, fmt.Errorf("failed to get system token price: %w", err)
 			}
-			if sysPrice != nil && sysPrice.PriceUSD > 0 {
-				// Check staleness: if system price is too old, fall through to manual
+			if sysPrice != nil {
+				// Check staleness
 				if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
-					log.Printf("WARNING: system price for %s is stale (updated %s ago, threshold %s), falling back to manual price",
+					log.Printf("WARNING: system price for %s is stale (updated %s ago, threshold %s), failing closed",
 						*tokenPrice.CoingeckoID, time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
-				} else {
-					return sysPrice.PriceUSD, tokenPrice.Decimals, nil
+					return -1, 0, nil
+				}
+				// Use prices_by_currency for the active currency
+				if sysPrice.PricesByCurrency != nil {
+					if price, ok := sysPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+						return price, tokenPrice.Decimals, nil
+					}
+				}
+				// Fall back to price_fiat if prices_by_currency doesn't have the active currency
+				if sysPrice.PriceFiat > 0 {
+					return sysPrice.PriceFiat, tokenPrice.Decimals, nil
 				}
 			}
-			// System price unavailable, zero, or stale — fall back to manual price on the per-org entry
-			if tokenPrice.PriceUSD > 0 {
-				return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
-			}
-			// Both system and manual are zero/unavailable — fail closed
+			// System price unavailable — fail closed (no silent fallback to manual)
 			return -1, 0, nil
 		}
-		// Step 2b: No coingecko_id → use manual price
-		return tokenPrice.PriceUSD, tokenPrice.Decimals, nil
+		// Step 2b: No coingecko_id → manual price, resolve from prices_by_currency
+		if len(tokenPrice.PricesByCurrency) > 0 {
+			if price, ok := tokenPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+				return price, tokenPrice.Decimals, nil
+			}
+			// prices_by_currency is populated but doesn't have the active currency — fail closed
+			return -1, 0, nil
+		}
+		// Legacy: prices_by_currency not populated, use price_fiat
+		if tokenPrice.PriceFiat > 0 {
+			return tokenPrice.PriceFiat, tokenPrice.Decimals, nil
+		}
+		return -1, 0, nil
 	}
 
 	// Step 3: No per-org entry — auto-resolve native token from system "ethereum" price
@@ -279,14 +301,20 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to get system ethereum price: %w", err)
 		}
-		if sysPrice != nil && sysPrice.PriceUSD > 0 {
-			// Check staleness: if system price is too old, fail closed (no manual fallback for auto-resolve)
+		if sysPrice != nil {
 			if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
 				log.Printf("WARNING: system ethereum price is stale (updated %s ago, threshold %s), failing closed",
 					time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
 				return -1, 0, nil
 			}
-			return sysPrice.PriceUSD, sysPrice.Decimals, nil
+			if sysPrice.PricesByCurrency != nil {
+				if price, ok := sysPrice.PricesByCurrency[activeCurrency]; ok && price > 0 {
+					return price, sysPrice.Decimals, nil
+				}
+			}
+			if sysPrice.PriceFiat > 0 {
+				return sysPrice.PriceFiat, sysPrice.Decimals, nil
+			}
 		}
 	}
 
@@ -301,7 +329,7 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr string
 // trade-off: we log the decision at check time because we need the audit trail before
 // forwarding the transaction to the node.
 func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *TransferInfo,
-	amountUSD *float64, thresholdUSD *float64, decision, denialReason string, recordID *string) error {
+	amountFiat *float64, thresholdFiat *float64, decision, denialReason string, recordID *string, currency string) error {
 
 	var denialReasonPtr *string
 	if denialReason != "" {
@@ -316,8 +344,9 @@ func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *Tran
 		FromAddress:        info.FromAddress,
 		ToAddress:          info.ToAddress,
 		AmountWei:          info.AmountWei.String(),
-		AmountUSD:          amountUSD,
-		ThresholdUSD:       thresholdUSD,
+		AmountFiat:         amountFiat,
+		ThresholdFiat:      thresholdFiat,
+		Currency:           currency,
 		Decision:           decision,
 		DenialReason:       denialReasonPtr,
 		TravelRuleRecordID: recordID,
@@ -349,15 +378,15 @@ func (c *Checker) resolveThreshold(ctx context.Context, orgID string, config *Co
 			// Fail closed: if we can't check overrides, we can't make a safe decision
 			return 0, fmt.Errorf("failed to get address threshold override for %s: %w", addr, err)
 		}
-		if override != nil && (lowestOverride == nil || override.ThresholdUSD < lowestOverride.ThresholdUSD) {
+		if override != nil && (lowestOverride == nil || override.ThresholdFiat < lowestOverride.ThresholdFiat) {
 			lowestOverride = override
 		}
 	}
 
 	if lowestOverride != nil {
-		return lowestOverride.ThresholdUSD, nil
+		return lowestOverride.ThresholdFiat, nil
 	}
-	return config.ThresholdUSD, nil
+	return config.ThresholdFiat, nil
 }
 
 // WeiToUSD converts a wei amount to USD given the token decimals and price.

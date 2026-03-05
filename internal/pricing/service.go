@@ -14,23 +14,32 @@ type SystemPriceStore interface {
 	UpsertSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error
 }
 
+// SettingsStore defines the database operations for system settings.
+type SettingsStore interface {
+	GetSystemSetting(ctx context.Context, key string) (string, error)
+}
+
 // Service fetches token prices from CoinGecko on a schedule and updates the system_token_prices table.
 type Service struct {
 	store               SystemPriceStore
+	settingsStore       SettingsStore
 	fetcher             *Fetcher
 	interval            time.Duration
 	cancel              context.CancelFunc
 	done                chan struct{}
+	refreshCh           chan struct{} // signals immediate re-fetch
 	consecutiveFailures int
 }
 
 // NewService creates a new pricing service.
-func NewService(store SystemPriceStore, interval time.Duration) *Service {
+func NewService(store SystemPriceStore, settingsStore SettingsStore, interval time.Duration) *Service {
 	return &Service{
-		store:    store,
-		fetcher:  NewFetcher(),
-		interval: interval,
-		done:     make(chan struct{}),
+		store:         store,
+		settingsStore: settingsStore,
+		fetcher:       NewFetcher(),
+		interval:      interval,
+		done:          make(chan struct{}),
+		refreshCh:     make(chan struct{}, 1),
 	}
 }
 
@@ -54,6 +63,8 @@ func (s *Service) Start() {
 				return
 			case <-ticker.C:
 				s.fetchAndUpdate(ctx)
+			case <-s.refreshCh:
+				s.fetchAndUpdate(ctx)
 			}
 		}
 	}()
@@ -70,6 +81,26 @@ func (s *Service) Stop() {
 	log.Printf("Pricing service stopped")
 }
 
+// RefreshNow signals an immediate price re-fetch (e.g. after currency change).
+// Non-blocking: if a refresh is already pending, this is a no-op.
+// All fetches are serialized through the main goroutine, preventing races.
+func (s *Service) RefreshNow() {
+	select {
+	case s.refreshCh <- struct{}{}:
+	default:
+		// Refresh already pending, skip
+	}
+}
+
+// allCurrencies is the list of supported currencies to fetch from CoinGecko.
+var allCurrencies = func() []string {
+	codes := make([]string, 0, len(compliance.ValidCurrencies))
+	for code := range compliance.ValidCurrencies {
+		codes = append(codes, string(code))
+	}
+	return codes
+}()
+
 func (s *Service) fetchAndUpdate(ctx context.Context) {
 	// Read current system token IDs from DB
 	systemPrices, err := s.store.ListSystemTokenPrices(ctx)
@@ -82,16 +113,31 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		return
 	}
 
-	// Collect IDs to fetch
-	ids := make([]string, len(systemPrices))
+	// Collect IDs to fetch — only CoinGecko-sourced tokens
+	var ids []string
 	priceMap := make(map[string]*compliance.SystemTokenPrice, len(systemPrices))
-	for i, sp := range systemPrices {
-		ids[i] = sp.CoingeckoID
-		priceMap[sp.CoingeckoID] = sp
+	for _, sp := range systemPrices {
+		if sp.Source != "coingecko" || sp.CoingeckoID == nil {
+			continue
+		}
+		ids = append(ids, *sp.CoingeckoID)
+		priceMap[*sp.CoingeckoID] = sp
 	}
 
-	// Fetch from CoinGecko
-	prices, err := s.fetcher.Fetch(ctx, ids)
+	if len(ids) == 0 {
+		return
+	}
+
+	// Read base currency from settings
+	activeCurrency := "usd"
+	if s.settingsStore != nil {
+		if c, err := s.settingsStore.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
+			activeCurrency = c
+		}
+	}
+
+	// Fetch all currencies from CoinGecko in a single request
+	allPrices, err := s.fetcher.FetchAll(ctx, ids, allCurrencies)
 	if err != nil {
 		s.consecutiveFailures++
 		if s.consecutiveFailures >= 3 {
@@ -105,12 +151,20 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 
 	// Upsert each result
 	updated := 0
-	for id, price := range prices {
+	for id, currencyPrices := range allPrices {
 		sp, ok := priceMap[id]
 		if !ok {
 			continue
 		}
-		sp.PriceUSD = price
+		// Filter to only valid currencies (defense against compromised CoinGecko responses)
+		filtered := make(map[string]float64, len(currencyPrices))
+		for code, price := range currencyPrices {
+			if compliance.IsValidCurrency(code) {
+				filtered[code] = price
+			}
+		}
+		sp.PricesByCurrency = filtered
+		sp.PriceFiat = currencyPrices[activeCurrency]
 		sp.UpdatedAt = time.Now()
 		if err := s.store.UpsertSystemTokenPrice(ctx, sp); err != nil {
 			log.Printf("WARNING: failed to update system price for %s: %v", id, err)

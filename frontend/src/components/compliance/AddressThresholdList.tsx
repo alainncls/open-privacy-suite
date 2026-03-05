@@ -12,12 +12,14 @@ import Pagination from '@/components/ui/Pagination';
 import { Loader2, Plus, AlertCircle, MapPin, Trash2, Pencil, Copy, Check } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import type { AddressThresholdOverride } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
 
 export default function AddressThresholdList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [overrides, setOverrides] = useState<AddressThresholdOverride[]>([]);
@@ -88,7 +90,7 @@ export default function AddressThresholdList() {
 
   const openEditForm = (override: AddressThresholdOverride) => {
     setFormAddress(override.address);
-    setFormThreshold(String(override.threshold_usd));
+    setFormThreshold(String(override.threshold_fiat));
     setFormNote(override.note || '');
     setFormError(null);
     setEditMode(true);
@@ -115,7 +117,7 @@ export default function AddressThresholdList() {
       setFormSaving(true);
       setFormError(null);
       await complianceApi.addressThresholds.upsert(orgId, address, {
-        threshold_usd: threshold,
+        threshold_fiat: threshold,
         note: formNote.trim() || undefined,
       });
       setShowForm(false);
@@ -149,7 +151,7 @@ export default function AddressThresholdList() {
         <div>
           <p className="text-sm text-neutral-500">
             Per-address threshold overrides. When set, the address-specific threshold takes precedence
-            over the org-level threshold. Use $0 to require travel rule data for every transfer involving this address.
+            over the org-level threshold. Use {formatAmount(0)} to require travel rule data for every transfer involving this address.
           </p>
         </div>
         <Button onClick={openCreateForm} size="sm" className="gap-2 shrink-0">
@@ -183,7 +185,7 @@ export default function AddressThresholdList() {
             <TableHeader>
               <TableRow>
                 <TableHead>Address</TableHead>
-                <TableHead>Threshold (USD)</TableHead>
+                <TableHead>Threshold ({currencyLabel})</TableHead>
                 <TableHead>Note</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead className="w-[80px]"></TableHead>
@@ -209,10 +211,10 @@ export default function AddressThresholdList() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    {o.threshold_usd === 0 ? (
-                      <span className="text-red-600 font-medium">$0 (all transfers)</span>
+                    {o.threshold_fiat === 0 ? (
+                      <span className="text-red-600 font-medium">{formatAmount(0)} (all transfers)</span>
                     ) : (
-                      <span>${o.threshold_usd.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      <span>{formatAmount(o.threshold_fiat)}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-sm text-neutral-500 max-w-[200px] truncate">
@@ -277,7 +279,7 @@ export default function AddressThresholdList() {
             </div>
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-1">
-                Threshold (USD)
+                Threshold ({currencyLabel})
               </label>
               <Input
                 type="number"
@@ -288,7 +290,7 @@ export default function AddressThresholdList() {
                 step="0.01"
               />
               <p className="text-xs text-neutral-500 mt-1">
-                Set to $0 to require travel rule data for every transfer involving this address.
+                Set to {formatAmount(0)} to require travel rule data for every transfer involving this address.
               </p>
             </div>
             <div>

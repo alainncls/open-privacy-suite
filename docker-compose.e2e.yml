@@ -60,6 +60,7 @@ services:
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
       - ENABLE_RUNTIME_TRACING=true
+      - ENABLE_TRAVEL_RULE=true
     depends_on:
       postgres:
         condition: service_healthy

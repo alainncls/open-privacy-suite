@@ -30,16 +30,21 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-// Fetch retrieves USD prices for the given CoinGecko IDs.
-// Returns a map of coingecko_id -> price_usd.
-func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, error) {
-	if len(ids) == 0 {
+// FetchResult holds prices for a single CoinGecko token across all requested currencies.
+type FetchResult struct {
+	Prices map[string]float64 // currency code -> price
+}
+
+// FetchAll retrieves fiat prices for the given CoinGecko IDs in all specified currencies.
+// Returns a map of coingecko_id -> currency -> price.
+func (f *Fetcher) FetchAll(ctx context.Context, ids []string, currencies []string) (map[string]map[string]float64, error) {
+	if len(ids) == 0 || len(currencies) == 0 {
 		return nil, nil
 	}
 
 	params := url.Values{}
 	params.Set("ids", strings.Join(ids, ","))
-	params.Set("vs_currencies", "usd")
+	params.Set("vs_currencies", strings.Join(currencies, ","))
 	fetchURL := coingeckoBaseURL + "?" + params.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
@@ -59,18 +64,11 @@ func (f *Fetcher) Fetch(ctx context.Context, ids []string) (map[string]float64, 
 		return nil, fmt.Errorf("CoinGecko returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Response format: {"ethereum":{"usd":2500.42},"tether":{"usd":1.0}}
+	// Response format: {"ethereum":{"usd":2500.42,"eur":2300.10},"tether":{"usd":1.0,"eur":0.92}}
 	var result map[string]map[string]float64
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode CoinGecko response: %w", err)
 	}
 
-	prices := make(map[string]float64, len(result))
-	for id, currencies := range result {
-		if usd, ok := currencies["usd"]; ok {
-			prices[id] = usd
-		}
-	}
-
-	return prices, nil
+	return result, nil
 }

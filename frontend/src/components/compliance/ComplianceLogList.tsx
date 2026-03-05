@@ -14,12 +14,14 @@ import Pagination from '@/components/ui/Pagination';
 import { Loader2, AlertCircle, ScrollText, Copy, Check } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useCurrency } from './CurrencyContext';
 import type { ComplianceLog, Decision, TransferType } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
 
 export default function ComplianceLogList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [logs, setLogs] = useState<ComplianceLog[]>([]);
@@ -158,7 +160,7 @@ export default function ComplianceLogList() {
                 <TableHead>Type</TableHead>
                 <TableHead>From</TableHead>
                 <TableHead>To</TableHead>
-                <TableHead>Amount (USD)</TableHead>
+                <TableHead>Amount ({currencyLabel})</TableHead>
                 <TableHead>Decision</TableHead>
               </TableRow>
             </TableHeader>
@@ -217,7 +219,7 @@ export default function ComplianceLogList() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    {log.amount_usd != null ? `$${log.amount_usd.toLocaleString()}` : '—'}
+                    {log.amount_fiat != null ? formatAmount(log.amount_fiat) : '—'}
                   </TableCell>
                   <TableCell>
                     <Badge variant={log.decision === 'allowed' ? 'success' : 'destructive'}>
@@ -319,13 +321,13 @@ export default function ComplianceLogList() {
                 <span className="text-neutral-500 font-medium">Amount (wei)</span>
                 <span className="font-mono text-sm break-all">{selectedLog.amount_wei}</span>
 
-                <span className="text-neutral-500 font-medium">Amount (USD)</span>
-                <span>{selectedLog.amount_usd != null ? `$${selectedLog.amount_usd.toLocaleString()}` : '—'}</span>
+                <span className="text-neutral-500 font-medium">Amount ({currencyLabel})</span>
+                <span>{selectedLog.amount_fiat != null ? formatAmount(selectedLog.amount_fiat) : '—'}</span>
 
-                {selectedLog.threshold_usd != null && (
+                {selectedLog.threshold_fiat != null && (
                   <>
-                    <span className="text-neutral-500 font-medium">Threshold (USD)</span>
-                    <span>${selectedLog.threshold_usd.toLocaleString()}</span>
+                    <span className="text-neutral-500 font-medium">Threshold ({currencyLabel})</span>
+                    <span>{formatAmount(selectedLog.threshold_fiat)}</span>
                   </>
                 )}
 
