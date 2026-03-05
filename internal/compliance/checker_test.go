@@ -41,7 +41,7 @@ func (m *mockComplianceStore) GetTokenPrice(_ context.Context, _, _ string) (*To
 	return m.tokenPrice, m.tokenPriceErr
 }
 
-func (m *mockComplianceStore) UpsertTokenPrice(_ context.Context, _ *TokenPrice) error {
+func (m *mockComplianceStore) UpsertTokenPrice(_ context.Context, _ *TokenPrice, _ string) error {
 	panic("not implemented")
 }
 

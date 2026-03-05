@@ -490,7 +490,7 @@ export default function TokenPriceList() {
                 onChange={e => setFormDecimals(e.target.value)}
                 placeholder="18"
                 min="0"
-                max="36"
+                max="77"
                 disabled={formSource !== 'manual'}
               />
             </div>

@@ -233,11 +233,11 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		pricesByCurrency[activeCurrency] = input.PriceFiat
 	}
 
-	// Resolve price_fiat: check new prices first, then fall back to existing
+	// Resolve price_fiat from the prices being submitted (SQL || will merge with existing).
+	// Do NOT fall back to existing prices here — the atomic SQL merge handles that.
+	// If the caller didn't provide a price for the active currency, price_fiat stays 0
+	// and the SQL merge will preserve the existing prices_by_currency entry.
 	priceFiat := pricesByCurrency[activeCurrency]
-	if priceFiat == 0 && existing != nil && existing.PricesByCurrency != nil {
-		priceFiat = existing.PricesByCurrency[activeCurrency]
-	}
 
 	price := &compliance.TokenPrice{
 		OrgID:            orgID,
@@ -255,7 +255,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		price.ID = uuid.New().String()
 	}
 
-	if err := s.db.UpsertTokenPrice(ctx, price); err != nil {
+	if err := s.db.UpsertTokenPrice(ctx, price, activeCurrency); err != nil {
 		internalError(c, "failed to save token price", err)
 		return
 	}
@@ -841,7 +841,8 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 	// Check for manual per-org tokens that don't have a price for the target currency
 	manualTokens, err := s.db.ListAllManualTokenPrices(ctx)
 	if err != nil {
-		log.Printf("WARNING: failed to list manual token prices for currency switch check: %v", err)
+		internalError(c, "failed to list manual token prices for currency switch check", err)
+		return
 	}
 
 	type affectedToken struct {
@@ -881,18 +882,22 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 	// Update system token price_fiat from stored prices_by_currency
 	sysPrices, err := s.db.ListSystemTokenPrices(ctx)
 	if err != nil {
-		log.Printf("WARNING: failed to list system token prices after currency change: %v", err)
-	} else {
-		for _, p := range sysPrices {
-			if p.Source == "coingecko" && p.PricesByCurrency != nil {
-				if newPrice, ok := p.PricesByCurrency[input.Currency]; ok {
-					p.PriceFiat = newPrice
-				} else {
-					p.PriceFiat = 0
-				}
-				if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
-					log.Printf("WARNING: failed to update system price for %s: %v", p.Symbol, err)
-				}
+		// Revert: currency was set but prices couldn't be loaded — revert is best-effort
+		log.Printf("ERROR: failed to list system token prices after currency change: %v", err)
+		internalError(c, "currency saved but failed to update system prices; retry the switch", err)
+		return
+	}
+	for _, p := range sysPrices {
+		if p.Source == "coingecko" && p.PricesByCurrency != nil {
+			if newPrice, ok := p.PricesByCurrency[input.Currency]; ok {
+				p.PriceFiat = newPrice
+			} else {
+				p.PriceFiat = 0
+			}
+			if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
+				log.Printf("ERROR: failed to update system price for %s during currency switch: %v", p.Symbol, err)
+				internalError(c, "failed to update system prices during currency switch", err)
+				return
 			}
 		}
 	}
@@ -905,8 +910,10 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 			} else {
 				tp.PriceFiat = 0 // No price for this currency — will block transactions (fail closed)
 			}
-			if err := s.db.UpsertTokenPrice(ctx, tp); err != nil {
-				log.Printf("WARNING: failed to update token price for %s/%s: %v", tp.OrgID, tp.Symbol, err)
+			if err := s.db.UpsertTokenPrice(ctx, tp, input.Currency); err != nil {
+				log.Printf("ERROR: failed to update token price for %s/%s during currency switch: %v", tp.OrgID, tp.Symbol, err)
+				internalError(c, "failed to update token prices during currency switch", err)
+				return
 			}
 		}
 	}

@@ -156,7 +156,14 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		sp.PricesByCurrency = currencyPrices
+		// Filter to only valid currencies (defense against compromised CoinGecko responses)
+		filtered := make(map[string]float64, len(currencyPrices))
+		for code, price := range currencyPrices {
+			if compliance.IsValidCurrency(code) {
+				filtered[code] = price
+			}
+		}
+		sp.PricesByCurrency = filtered
 		sp.PriceFiat = currencyPrices[activeCurrency]
 		sp.UpdatedAt = time.Now()
 		if err := s.store.UpsertSystemTokenPrice(ctx, sp); err != nil {

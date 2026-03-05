@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"privacy-proxy/internal/compliance"
@@ -70,7 +71,9 @@ func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*comp
 		sp.TokenAddress = &tokenAddr.String
 	}
 	if len(pricesJSON) > 0 {
-		_ = json.Unmarshal(pricesJSON, &sp.PricesByCurrency)
+		if err := json.Unmarshal(pricesJSON, &sp.PricesByCurrency); err != nil {
+			log.Printf("WARNING: corrupt prices_by_currency JSON for system price %s: %v", sp.Symbol, err)
+		}
 	}
 	return sp, nil
 }
@@ -125,7 +128,9 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 			sp.TokenAddress = &tokenAddr.String
 		}
 		if len(pricesJSON) > 0 {
-			_ = json.Unmarshal(pricesJSON, &sp.PricesByCurrency)
+			if err := json.Unmarshal(pricesJSON, &sp.PricesByCurrency); err != nil {
+			log.Printf("WARNING: corrupt prices_by_currency JSON for system price %s: %v", sp.Symbol, err)
+		}
 		}
 		prices = append(prices, sp)
 	}
@@ -141,7 +146,10 @@ func (d *DB) GetTokenPrice(ctx context.Context, orgID, tokenAddress string) (*co
 	return scanTokenPrice(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(tokenAddress)))
 }
 
-func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice) error {
+// UpsertTokenPrice creates or updates a per-org token price.
+// activeCurrency is the current base currency code (e.g. "usd") used to atomically
+// resolve price_fiat from the merged prices_by_currency in SQL, avoiding TOCTOU races.
+func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice, activeCurrency string) error {
 	pricesByCurrency, err := json.Marshal(price.PricesByCurrency)
 	if err != nil {
 		return fmt.Errorf("failed to marshal prices_by_currency: %w", err)
@@ -152,10 +160,13 @@ func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice)
 	          ON CONFLICT (org_id, token_address) DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
-	          price_fiat = EXCLUDED.price_fiat,
 	          coingecko_id = EXCLUDED.coingecko_id,
 	          updated_by_user_id = EXCLUDED.updated_by_user_id,
 	          prices_by_currency = token_prices.prices_by_currency || EXCLUDED.prices_by_currency,
+	          price_fiat = COALESCE(
+	            ((token_prices.prices_by_currency || EXCLUDED.prices_by_currency) ->> $10)::numeric,
+	            EXCLUDED.price_fiat
+	          ),
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
@@ -163,7 +174,7 @@ func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice)
 		price.ID, price.OrgID, strings.ToLower(price.TokenAddress),
 		price.Symbol, price.Decimals, price.PriceFiat,
 		sql.NullString{String: ptrToString(price.CoingeckoID), Valid: price.CoingeckoID != nil},
-		price.UpdatedByUserID, pricesByCurrency,
+		price.UpdatedByUserID, pricesByCurrency, activeCurrency,
 	).Scan(&price.CreatedAt, &price.UpdatedAt)
 }
 
@@ -650,7 +661,9 @@ func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 		price.UpdatedByUserID = &updatedByUserID.String
 	}
 	if len(pricesByCurrencyJSON) > 0 {
-		_ = json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency)
+		if err := json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency); err != nil {
+			log.Printf("WARNING: corrupt prices_by_currency JSON for token %s: %v", price.TokenAddress, err)
+		}
 	}
 
 	return price, nil
@@ -678,7 +691,9 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 			price.UpdatedByUserID = &updatedByUserID.String
 		}
 		if len(pricesByCurrencyJSON) > 0 {
-			_ = json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency)
+			if err := json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency); err != nil {
+			log.Printf("WARNING: corrupt prices_by_currency JSON for token %s: %v", price.TokenAddress, err)
+		}
 		}
 
 		prices = append(prices, price)

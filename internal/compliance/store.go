@@ -10,7 +10,7 @@ type Store interface {
 
 	// Token pricing
 	GetTokenPrice(ctx context.Context, orgID, tokenAddress string) (*TokenPrice, error)
-	UpsertTokenPrice(ctx context.Context, price *TokenPrice) error
+	UpsertTokenPrice(ctx context.Context, price *TokenPrice, activeCurrency string) error
 	DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) error
 	ListTokenPrices(ctx context.Context, orgID string) ([]*TokenPrice, error)
 	ListAllManualTokenPrices(ctx context.Context) ([]*TokenPrice, error)
