@@ -109,6 +109,56 @@ describe('CurrencySelector', () => {
       expect(putBody?.currency).toBe('eur');
     });
 
+    it('shows conflict warning when backend returns 409', async () => {
+      server.use(
+        http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
+          const body = await request.json() as { currency: string; force?: boolean };
+          if (body.force) {
+            return HttpResponse.json({
+              currency: body.currency,
+              message: `Base currency updated to ${body.currency.toUpperCase()}.`,
+              warning: '1 manual token(s) lack prices for EUR and will block transactions until updated.',
+              affected_tokens: [{ org_id: 'org-1', token_address: 'native', symbol: 'CUSTOM' }],
+            });
+          }
+          return HttpResponse.json({
+            error: '1 manual token price(s) do not have a price set for EUR; these tokens will block transactions until prices are configured. Set force=true to switch anyway.',
+            affected_tokens: [{ org_id: 'org-1', token_address: 'native', symbol: 'CUSTOM' }],
+            currency: 'eur',
+          }, { status: 409 });
+        })
+      );
+
+      const user = userEvent.setup();
+      renderWithComplianceContext(<CurrencySelector />);
+
+      await waitFor(() => {
+        expect(screen.getByText('$ USD')).toBeInTheDocument();
+      });
+
+      // Try to switch to EUR
+      await user.click(screen.getByTestId('currency-selector'));
+      await waitFor(() => {
+        expect(screen.getByText('EUR')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('EUR'));
+
+      // Should show warning dialog
+      await waitFor(() => {
+        expect(screen.getByText('Currency Switch Warning')).toBeInTheDocument();
+      });
+      expect(screen.getByText(/BLOCK ALL TRANSACTIONS/)).toBeInTheDocument();
+      expect(screen.getByText(/CUSTOM/)).toBeInTheDocument();
+
+      // Click "Switch Anyway" to force
+      await user.click(screen.getByRole('button', { name: 'Switch Anyway' }));
+
+      // Dialog should close
+      await waitFor(() => {
+        expect(screen.queryByText('Currency Switch Warning')).not.toBeInTheDocument();
+      });
+    });
+
     it('shows all available currencies in dropdown', async () => {
       const user = userEvent.setup();
       renderWithComplianceContext(<CurrencySelector />);

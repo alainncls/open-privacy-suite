@@ -22,6 +22,7 @@ export interface TokenPrice {
   symbol: string;
   decimals: number;
   price_fiat: number;
+  prices_by_currency?: Record<string, number>;
   coingecko_id?: string;
   updated_by_user_id?: string;
   created_at: string;
@@ -31,8 +32,19 @@ export interface TokenPrice {
 export interface UpsertTokenPriceInput {
   symbol: string;
   decimals: number;
-  price_fiat: number;
+  price_fiat?: number;
+  prices?: Record<string, number>;
   coingecko_id?: string | null;
+}
+
+export interface CurrencySwitchConflict {
+  error: string;
+  affected_tokens: Array<{
+    org_id: string;
+    token_address: string;
+    symbol: string;
+  }>;
+  currency: string;
 }
 
 export interface SystemTokenPrice {

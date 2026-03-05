@@ -7,19 +7,36 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useCurrency } from './CurrencyContext';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { useCurrency, CurrencyConflictError } from './CurrencyContext';
 
 export default function CurrencySelector() {
   const { currency, allCurrencies, setCurrency, currencyInfo, loading } = useCurrency();
   const [switching, setSwitching] = useState(false);
+  const [conflict, setConflict] = useState<CurrencyConflictError | null>(null);
 
   const handleChange = async (code: string) => {
     if (code === currency) return;
     setSwitching(true);
     try {
       await setCurrency(code);
+    } catch (err) {
+      if (err instanceof CurrencyConflictError) {
+        setConflict(err);
+      }
     } finally {
       setSwitching(false);
+    }
+  };
+
+  const handleForceSwitch = async () => {
+    if (!conflict) return;
+    setSwitching(true);
+    try {
+      await setCurrency(conflict.conflict.currency, true);
+    } finally {
+      setSwitching(false);
+      setConflict(null);
     }
   };
 
@@ -31,6 +48,10 @@ export default function CurrencySelector() {
       </div>
     );
   }
+
+  const conflictDescription = conflict
+    ? `${conflict.conflict.affected_tokens.length} manual token price(s) do not have a price set for ${conflict.conflict.currency.toUpperCase()}. Affected: ${conflict.conflict.affected_tokens.map(t => t.symbol).join(', ')}. These tokens will BLOCK ALL TRANSACTIONS until prices are configured for this currency.`
+    : '';
 
   return (
     <div className="flex items-center gap-2">
@@ -60,6 +81,16 @@ export default function CurrencySelector() {
           ))}
         </SelectContent>
       </Select>
+
+      <ConfirmDialog
+        open={!!conflict}
+        onOpenChange={(open) => { if (!open) setConflict(null); }}
+        title="Currency Switch Warning"
+        description={conflictDescription}
+        onConfirm={handleForceSwitch}
+        confirmLabel="Switch Anyway"
+        variant="warning"
+      />
     </div>
   );
 }

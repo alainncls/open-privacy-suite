@@ -74,8 +74,8 @@ export const complianceApi = {
   currency: {
     get: () =>
       api.get<CurrencyConfig>('/compliance/currency'),
-    set: (currency: string) =>
-      api.put<{ currency: string; message: string }>('/compliance/currency', { currency }),
+    set: (currency: string, force?: boolean) =>
+      api.put<{ currency: string; message: string; warning?: string; affected_tokens?: Array<{ org_id: string; token_address: string; symbol: string }> }>('/compliance/currency', { currency, force }),
   },
 
 };

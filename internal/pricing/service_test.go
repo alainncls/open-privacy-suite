@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -65,13 +66,18 @@ func (f *fakeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 		time.Sleep(f.delay)
 	}
 
-	currency := req.URL.Query().Get("vs_currencies")
-	if currency == "" {
-		currency = "usd"
+	currencies := strings.Split(req.URL.Query().Get("vs_currencies"), ",")
+	if len(currencies) == 0 {
+		currencies = []string{"usd"}
 	}
 
+	// Return a price for each requested currency
+	ethPrices := map[string]float64{}
+	for _, c := range currencies {
+		ethPrices[c] = 3500.0
+	}
 	resp := map[string]map[string]float64{
-		"ethereum": {currency: 3500.0},
+		"ethereum": ethPrices,
 	}
 	body, _ := json.Marshal(resp)
 

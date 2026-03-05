@@ -65,28 +65,30 @@ type ComplianceConfig struct {
 
 // TokenPrice stores admin-configured fiat valuation for a token.
 type TokenPrice struct {
-	ID              string    `json:"id"`
-	OrgID           string    `json:"org_id"`
-	TokenAddress    string    `json:"token_address"` // "native" for ETH, or lowercase 0x-prefixed contract address
-	Symbol          string    `json:"symbol"`
-	Decimals        int       `json:"decimals"`
-	PriceFiat       float64   `json:"price_fiat"`
-	CoingeckoID     *string   `json:"coingecko_id,omitempty"` // when set, price resolves from system_token_prices
-	UpdatedByUserID *string   `json:"updated_by_user_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID               string             `json:"id"`
+	OrgID            string             `json:"org_id"`
+	TokenAddress     string             `json:"token_address"` // "native" for ETH, or lowercase 0x-prefixed contract address
+	Symbol           string             `json:"symbol"`
+	Decimals         int                `json:"decimals"`
+	PriceFiat        float64            `json:"price_fiat"`          // price in the active base currency
+	PricesByCurrency map[string]float64 `json:"prices_by_currency"` // all manually-set currency prices
+	CoingeckoID      *string            `json:"coingecko_id,omitempty"` // when set, price resolves from system_token_prices
+	UpdatedByUserID  *string            `json:"updated_by_user_id,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 // SystemTokenPrice is a global price cache entry populated by CoinGecko.
 type SystemTokenPrice struct {
-	ID           int       `json:"id"`
-	CoingeckoID  *string   `json:"coingecko_id,omitempty"`
-	Symbol       string    `json:"symbol"`
-	Decimals     int       `json:"decimals"`
-	PriceFiat    float64   `json:"price_fiat"`
-	Source       string    `json:"source"`
-	TokenAddress *string   `json:"token_address,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                int                `json:"id"`
+	CoingeckoID       *string            `json:"coingecko_id,omitempty"`
+	Symbol            string             `json:"symbol"`
+	Decimals          int                `json:"decimals"`
+	PriceFiat         float64            `json:"price_fiat"`          // price in the active base currency
+	Source            string             `json:"source"`
+	TokenAddress      *string            `json:"token_address,omitempty"`
+	PricesByCurrency  map[string]float64 `json:"prices_by_currency"` // all fetched currency prices
+	UpdatedAt         time.Time          `json:"updated_at"`
 }
 
 // TravelRuleRecord stores IVMS101 compliance data submitted before a transfer.

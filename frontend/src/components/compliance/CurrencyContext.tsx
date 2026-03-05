@@ -1,12 +1,21 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { complianceApi } from '@/api/compliance';
-import type { CurrencyInfo } from '@/types/compliance';
+import type { CurrencyInfo, CurrencySwitchConflict } from '@/types/compliance';
+
+export class CurrencyConflictError extends Error {
+  public conflict: CurrencySwitchConflict;
+  constructor(conflict: CurrencySwitchConflict) {
+    super(conflict.error);
+    this.name = 'CurrencyConflictError';
+    this.conflict = conflict;
+  }
+}
 
 interface CurrencyContextType {
   currency: string;
   currencyInfo: CurrencyInfo | null;
   allCurrencies: CurrencyInfo[];
-  setCurrency: (code: string) => Promise<void>;
+  setCurrency: (code: string, force?: boolean) => Promise<void>;
   formatAmount: (amount: number) => string;
   currencyLabel: string; // e.g. "USD", "EUR"
   loading: boolean;
@@ -43,9 +52,19 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
     loadCurrency();
   }, [loadCurrency]);
 
-  const setCurrency = useCallback(async (code: string) => {
-    await complianceApi.currency.set(code);
-    setCurrencyState(code);
+  const setCurrency = useCallback(async (code: string, force?: boolean) => {
+    try {
+      await complianceApi.currency.set(code, force);
+      setCurrencyState(code);
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { status?: number; data?: CurrencySwitchConflict } };
+        if (axiosErr.response?.status === 409 && axiosErr.response?.data?.affected_tokens) {
+          throw new CurrencyConflictError(axiosErr.response.data);
+        }
+      }
+      throw err;
+    }
   }, []);
 
   const currencyInfo = allCurrencies.find(c => c.code === currency) || DEFAULT_CURRENCY_INFO;

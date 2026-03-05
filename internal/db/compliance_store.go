@@ -47,14 +47,15 @@ func (d *DB) UpsertComplianceConfig(ctx context.Context, config *compliance.Comp
 // System Token Price operations
 
 func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*compliance.SystemTokenPrice, error) {
-	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at
+	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, prices_by_currency, updated_at
 	          FROM system_token_prices WHERE coingecko_id = $1`
 
 	sp := &compliance.SystemTokenPrice{}
 	var coingecko sql.NullString
 	var tokenAddr sql.NullString
+	var pricesJSON []byte
 	err := d.conn.QueryRowContext(ctx, query, coingeckoID).Scan(
-		&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &sp.UpdatedAt,
+		&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &pricesJSON, &sp.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -68,29 +69,38 @@ func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*comp
 	if tokenAddr.Valid {
 		sp.TokenAddress = &tokenAddr.String
 	}
+	if len(pricesJSON) > 0 {
+		_ = json.Unmarshal(pricesJSON, &sp.PricesByCurrency)
+	}
 	return sp, nil
 }
 
 func (d *DB) UpsertSystemTokenPrice(ctx context.Context, price *compliance.SystemTokenPrice) error {
-	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	pricesJSON, err := json.Marshal(price.PricesByCurrency)
+	if err != nil {
+		return fmt.Errorf("failed to marshal prices_by_currency: %w", err)
+	}
+
+	query := `INSERT INTO system_token_prices (coingecko_id, symbol, decimals, price_fiat, source, token_address, prices_by_currency, updated_at)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          ON CONFLICT (coingecko_id) WHERE coingecko_id IS NOT NULL DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
 	          price_fiat = EXCLUDED.price_fiat,
 	          source = EXCLUDED.source,
 	          token_address = EXCLUDED.token_address,
+	          prices_by_currency = EXCLUDED.prices_by_currency,
 	          updated_at = EXCLUDED.updated_at`
 
-	_, err := d.conn.ExecContext(ctx, query,
+	_, err = d.conn.ExecContext(ctx, query,
 		price.CoingeckoID, price.Symbol, price.Decimals, price.PriceFiat,
-		price.Source, price.TokenAddress, price.UpdatedAt,
+		price.Source, price.TokenAddress, pricesJSON, price.UpdatedAt,
 	)
 	return err
 }
 
 func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTokenPrice, error) {
-	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, updated_at
+	query := `SELECT id, coingecko_id, symbol, decimals, price_fiat, source, token_address, prices_by_currency, updated_at
 	          FROM system_token_prices ORDER BY symbol`
 
 	rows, err := d.conn.QueryContext(ctx, query)
@@ -104,7 +114,8 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 		sp := &compliance.SystemTokenPrice{}
 		var coingecko sql.NullString
 		var tokenAddr sql.NullString
-		if err := rows.Scan(&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &sp.UpdatedAt); err != nil {
+		var pricesJSON []byte
+		if err := rows.Scan(&sp.ID, &coingecko, &sp.Symbol, &sp.Decimals, &sp.PriceFiat, &sp.Source, &tokenAddr, &pricesJSON, &sp.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan system token price: %w", err)
 		}
 		if coingecko.Valid {
@@ -112,6 +123,9 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 		}
 		if tokenAddr.Valid {
 			sp.TokenAddress = &tokenAddr.String
+		}
+		if len(pricesJSON) > 0 {
+			_ = json.Unmarshal(pricesJSON, &sp.PricesByCurrency)
 		}
 		prices = append(prices, sp)
 	}
@@ -121,21 +135,27 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 // Token Price operations
 
 func (d *DB) GetTokenPrice(ctx context.Context, orgID, tokenAddress string) (*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, prices_by_currency, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 AND token_address = $2`
 
 	return scanTokenPrice(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(tokenAddress)))
 }
 
 func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice) error {
-	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	pricesByCurrency, err := json.Marshal(price.PricesByCurrency)
+	if err != nil {
+		return fmt.Errorf("failed to marshal prices_by_currency: %w", err)
+	}
+
+	query := `INSERT INTO token_prices (id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, prices_by_currency)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	          ON CONFLICT (org_id, token_address) DO UPDATE SET
 	          symbol = EXCLUDED.symbol,
 	          decimals = EXCLUDED.decimals,
 	          price_fiat = EXCLUDED.price_fiat,
 	          coingecko_id = EXCLUDED.coingecko_id,
 	          updated_by_user_id = EXCLUDED.updated_by_user_id,
+	          prices_by_currency = EXCLUDED.prices_by_currency,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
@@ -143,7 +163,7 @@ func (d *DB) UpsertTokenPrice(ctx context.Context, price *compliance.TokenPrice)
 		price.ID, price.OrgID, strings.ToLower(price.TokenAddress),
 		price.Symbol, price.Decimals, price.PriceFiat,
 		sql.NullString{String: ptrToString(price.CoingeckoID), Valid: price.CoingeckoID != nil},
-		price.UpdatedByUserID,
+		price.UpdatedByUserID, pricesByCurrency,
 	).Scan(&price.CreatedAt, &price.UpdatedAt)
 }
 
@@ -155,12 +175,25 @@ func (d *DB) DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) e
 }
 
 func (d *DB) ListTokenPrices(ctx context.Context, orgID string) ([]*compliance.TokenPrice, error) {
-	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, created_at, updated_at
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, prices_by_currency, created_at, updated_at
 	          FROM token_prices WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list token prices: %w", err)
+	}
+	defer rows.Close()
+
+	return scanTokenPrices(rows)
+}
+
+func (d *DB) ListAllManualTokenPrices(ctx context.Context) ([]*compliance.TokenPrice, error) {
+	query := `SELECT id, org_id, token_address, symbol, decimals, price_fiat, coingecko_id, updated_by_user_id, prices_by_currency, created_at, updated_at
+	          FROM token_prices WHERE coingecko_id IS NULL ORDER BY org_id, created_at DESC`
+
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list manual token prices: %w", err)
 	}
 	defer rows.Close()
 
@@ -596,11 +629,12 @@ func (d *DB) ListComplianceLogs(ctx context.Context, orgID string, filters *comp
 func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 	price := &compliance.TokenPrice{}
 	var updatedByUserID, coingeckoID sql.NullString
+	var pricesByCurrencyJSON []byte
 
 	err := row.Scan(
 		&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
 		&price.Decimals, &price.PriceFiat, &coingeckoID, &updatedByUserID,
-		&price.CreatedAt, &price.UpdatedAt,
+		&pricesByCurrencyJSON, &price.CreatedAt, &price.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -615,6 +649,9 @@ func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 	if updatedByUserID.Valid {
 		price.UpdatedByUserID = &updatedByUserID.String
 	}
+	if len(pricesByCurrencyJSON) > 0 {
+		_ = json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency)
+	}
 
 	return price, nil
 }
@@ -624,11 +661,12 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 	for rows.Next() {
 		price := &compliance.TokenPrice{}
 		var updatedByUserID, coingeckoID sql.NullString
+		var pricesByCurrencyJSON []byte
 
 		if err := rows.Scan(
 			&price.ID, &price.OrgID, &price.TokenAddress, &price.Symbol,
 			&price.Decimals, &price.PriceFiat, &coingeckoID, &updatedByUserID,
-			&price.CreatedAt, &price.UpdatedAt,
+			&pricesByCurrencyJSON, &price.CreatedAt, &price.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan token price: %w", err)
 		}
@@ -638,6 +676,9 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 		}
 		if updatedByUserID.Valid {
 			price.UpdatedByUserID = &updatedByUserID.String
+		}
+		if len(pricesByCurrencyJSON) > 0 {
+			_ = json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency)
 		}
 
 		prices = append(prices, price)

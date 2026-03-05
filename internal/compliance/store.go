@@ -13,6 +13,7 @@ type Store interface {
 	UpsertTokenPrice(ctx context.Context, price *TokenPrice) error
 	DeleteTokenPrice(ctx context.Context, orgID, tokenAddress string) error
 	ListTokenPrices(ctx context.Context, orgID string) ([]*TokenPrice, error)
+	ListAllManualTokenPrices(ctx context.Context) ([]*TokenPrice, error)
 
 	// System token prices (CoinGecko cache)
 	GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*SystemTokenPrice, error)

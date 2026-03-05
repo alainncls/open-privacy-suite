@@ -53,6 +53,10 @@ func (m *mockComplianceStore) ListTokenPrices(_ context.Context, _ string) ([]*T
 	panic("not implemented")
 }
 
+func (m *mockComplianceStore) ListAllManualTokenPrices(_ context.Context) ([]*TokenPrice, error) {
+	panic("not implemented")
+}
+
 func (m *mockComplianceStore) CreateTravelRuleRecord(_ context.Context, _ *TravelRuleRecord) error {
 	panic("not implemented")
 }
@@ -201,6 +205,32 @@ func erc20Price(addr, symbol string, decimals int, priceFiat float64) *TokenPric
 		Symbol:       symbol,
 		Decimals:     decimals,
 		PriceFiat:    priceFiat,
+	}
+}
+
+// nativePriceMultiCurrency returns a TokenPrice for native ETH with prices_by_currency set.
+func nativePriceMultiCurrency(prices map[string]float64) *TokenPrice {
+	return &TokenPrice{
+		ID:               "tp-1",
+		OrgID:            "org-1",
+		TokenAddress:     "native",
+		Symbol:           "ETH",
+		Decimals:         18,
+		PriceFiat:        prices["usd"], // legacy field
+		PricesByCurrency: prices,
+	}
+}
+
+// coingeckoLinkedPrice returns a per-org TokenPrice linked to a CoinGecko system price.
+func coingeckoLinkedPrice(cgID string) *TokenPrice {
+	return &TokenPrice{
+		ID:           "tp-cg",
+		OrgID:        "org-1",
+		TokenAddress: "native",
+		Symbol:       "ETH",
+		Decimals:     18,
+		PriceFiat:    0,
+		CoingeckoID:  &cgID,
 	}
 }
 
@@ -1140,18 +1170,18 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 			wantReason:  "sanctioned",
 		},
 		{
-			name: "$0 price allows any amount below threshold (misconfiguration)",
+			name: "$0 price fails closed (misconfiguration)",
 			store: &mockComplianceStore{
 				config:     enabledConfig(1000),
-				tokenPrice: nativePrice(0), // $0/ETH — misconfiguration
+				tokenPrice: nativePrice(0), // $0/ETH — misconfiguration → fail closed
 			},
 			req: &CheckRequest{
 				OrgID: orgID, UserID: userID,
 				From: from, To: to,
-				Value: hexThousandETH, // 1000 ETH * $0 = $0 < $1000
+				Value: hexThousandETH, // 1000 ETH * $0 = no valid price → fail closed
 			},
-			wantAllowed: true,
-			wantReason:  "below threshold",
+			wantAllowed: false,
+			wantReason:  "no price configured",
 		},
 		{
 			name: "per-address override + record interaction: above override, record exists = allowed",
@@ -1253,6 +1283,158 @@ func TestCheckerCheck_InteractionEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			checker := NewChecker(tt.store, 24*time.Hour, 15*time.Minute)
 			result, err := checker.Check(ctx, tt.req)
+			if err != nil {
+				t.Fatalf("Check() returned unexpected error: %v", err)
+			}
+			if result.Allowed != tt.wantAllowed {
+				t.Errorf("Check() Allowed = %v, want %v (reason: %s)", result.Allowed, tt.wantAllowed, result.Reason)
+			}
+			if !strings.Contains(result.Reason, tt.wantReason) {
+				t.Errorf("Check() Reason = %q, want substring %q", result.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestResolveTokenPrice_MultiCurrency(t *testing.T) {
+	const orgID = "org-1"
+	const userID = "user-1"
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	tests := []struct {
+		name        string
+		store       *mockComplianceStore
+		wantAllowed bool
+		wantReason  string
+	}{
+		{
+			name: "manual token: uses prices_by_currency for active currency (EUR)",
+			store: &mockComplianceStore{
+				config: enabledConfig(5000),
+				tokenPrice: nativePriceMultiCurrency(map[string]float64{
+					"usd": 3500,
+					"eur": 3200,
+				}),
+				systemSetting: "eur",
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold", // 1 ETH * €3200 = €3200 < €5000
+		},
+		{
+			name: "manual token: fails closed when active currency not in prices_by_currency",
+			store: &mockComplianceStore{
+				config: enabledConfig(5000),
+				tokenPrice: nativePriceMultiCurrency(map[string]float64{
+					"usd": 3500,
+				}),
+				systemSetting: "eur",
+			},
+			wantAllowed: false,
+			wantReason:  "no price configured",
+		},
+		{
+			name: "manual token: legacy fallback when prices_by_currency is nil",
+			store: &mockComplianceStore{
+				config:        enabledConfig(5000),
+				tokenPrice:    nativePrice(3500),
+				systemSetting: "usd",
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold", // 1 ETH * $3500 = $3500 < $5000
+		},
+		{
+			name: "coingecko-linked: uses system prices_by_currency for active currency",
+			store: &mockComplianceStore{
+				config:     enabledConfig(5000),
+				tokenPrice: coingeckoLinkedPrice("ethereum"),
+				systemPrices: map[string]*SystemTokenPrice{
+					"ethereum": {
+						ID:        1,
+						Symbol:    "ETH",
+						Decimals:  18,
+						PriceFiat: 3500,
+						PricesByCurrency: map[string]float64{
+							"usd": 3500,
+							"eur": 3200,
+							"gbp": 2800,
+						},
+						UpdatedAt: time.Now(),
+					},
+				},
+				systemSetting: "gbp",
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold", // 1 ETH * £2800 = £2800 < £5000
+		},
+		{
+			name: "coingecko-linked: fails closed when system price unavailable",
+			store: &mockComplianceStore{
+				config:        enabledConfig(5000),
+				tokenPrice:    coingeckoLinkedPrice("ethereum"),
+				systemPrices:  map[string]*SystemTokenPrice{},
+				systemSetting: "usd",
+			},
+			wantAllowed: false,
+			wantReason:  "no price configured",
+		},
+		{
+			name: "coingecko-linked: fails closed when stale (no fallback to manual)",
+			store: &mockComplianceStore{
+				config:     enabledConfig(5000),
+				tokenPrice: coingeckoLinkedPrice("ethereum"),
+				systemPrices: map[string]*SystemTokenPrice{
+					"ethereum": {
+						ID:        1,
+						Symbol:    "ETH",
+						Decimals:  18,
+						PriceFiat: 3500,
+						PricesByCurrency: map[string]float64{
+							"usd": 3500,
+						},
+						UpdatedAt: time.Now().Add(-2 * time.Hour), // stale
+					},
+				},
+				systemSetting: "usd",
+			},
+			wantAllowed: false,
+			wantReason:  "no price configured",
+		},
+		{
+			name: "auto-resolve native: uses system prices_by_currency",
+			store: &mockComplianceStore{
+				config:     enabledConfig(5000),
+				tokenPrice: nil, // no per-org entry
+				systemPrices: map[string]*SystemTokenPrice{
+					"ethereum": {
+						ID:        1,
+						Symbol:    "ETH",
+						Decimals:  18,
+						PriceFiat: 3500,
+						PricesByCurrency: map[string]float64{
+							"usd": 3500,
+							"chf": 3100,
+						},
+						UpdatedAt: time.Now(),
+					},
+				},
+				systemSetting: "chf",
+			},
+			wantAllowed: true,
+			wantReason:  "below threshold", // 1 ETH * CHF 3100 = CHF 3100 < CHF 5000
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(tt.store, 24*time.Hour, 1*time.Hour)
+			result, err := checker.Check(context.Background(), &CheckRequest{
+				OrgID:  orgID,
+				UserID: userID,
+				From:   from,
+				To:     to,
+				Value:  "0xde0b6b3a7640000", // 1 ETH
+			})
 			if err != nil {
 				t.Fatalf("Check() returned unexpected error: %v", err)
 			}

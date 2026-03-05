@@ -92,6 +92,15 @@ func (s *Service) RefreshNow() {
 	}
 }
 
+// allCurrencies is the list of supported currencies to fetch from CoinGecko.
+var allCurrencies = func() []string {
+	codes := make([]string, 0, len(compliance.ValidCurrencies))
+	for code := range compliance.ValidCurrencies {
+		codes = append(codes, string(code))
+	}
+	return codes
+}()
+
 func (s *Service) fetchAndUpdate(ctx context.Context) {
 	// Read current system token IDs from DB
 	systemPrices, err := s.store.ListSystemTokenPrices(ctx)
@@ -120,15 +129,15 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 	}
 
 	// Read base currency from settings
-	currency := "usd"
+	activeCurrency := "usd"
 	if s.settingsStore != nil {
 		if c, err := s.settingsStore.GetSystemSetting(ctx, "base_currency"); err == nil && c != "" {
-			currency = c
+			activeCurrency = c
 		}
 	}
 
-	// Fetch from CoinGecko
-	prices, err := s.fetcher.Fetch(ctx, ids, currency)
+	// Fetch all currencies from CoinGecko in a single request
+	allPrices, err := s.fetcher.FetchAll(ctx, ids, allCurrencies)
 	if err != nil {
 		s.consecutiveFailures++
 		if s.consecutiveFailures >= 3 {
@@ -142,12 +151,13 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 
 	// Upsert each result
 	updated := 0
-	for id, price := range prices {
+	for id, currencyPrices := range allPrices {
 		sp, ok := priceMap[id]
 		if !ok {
 			continue
 		}
-		sp.PriceFiat = price
+		sp.PricesByCurrency = currencyPrices
+		sp.PriceFiat = currencyPrices[activeCurrency]
 		sp.UpdatedAt = time.Now()
 		if err := s.store.UpsertSystemTokenPrice(ctx, sp); err != nil {
 			log.Printf("WARNING: failed to update system price for %s: %v", id, err)
