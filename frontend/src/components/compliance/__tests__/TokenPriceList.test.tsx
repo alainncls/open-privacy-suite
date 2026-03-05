@@ -302,6 +302,83 @@ describe('TokenPriceList', () => {
     });
   });
 
+  describe('Blocked Tokens Warning', () => {
+    it('shows warning banner when manual tokens have zero price', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+          return HttpResponse.json({ data: [
+            {
+              id: 'token-ok',
+              org_id: 'org-1',
+              token_address: 'native',
+              symbol: 'ETH',
+              decimals: 18,
+              price_fiat: 2500,
+              created_at: '2024-01-01T00:00:00Z',
+              updated_at: '2024-01-01T00:00:00Z',
+            },
+            {
+              id: 'token-blocked',
+              org_id: 'org-1',
+              token_address: '0xabc',
+              symbol: 'BLOCKED',
+              decimals: 18,
+              price_fiat: 0, // no price for active currency
+              created_at: '2024-01-01T00:00:00Z',
+              updated_at: '2024-01-01T00:00:00Z',
+            },
+          ] });
+        })
+      );
+
+      renderWithComplianceContext(<TokenPriceList />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 token blocking transactions/)).toBeInTheDocument();
+      });
+      expect(screen.getAllByText(/BLOCKED/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText(/block all transactions/)).toBeInTheDocument();
+    });
+
+    it('does not show warning when all tokens have prices', async () => {
+      renderWithComplianceContext(<TokenPriceList />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
+      });
+
+      expect(screen.queryByText(/blocking transactions/)).not.toBeInTheDocument();
+    });
+
+    it('does not warn about CoinGecko-linked tokens with zero price_fiat', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/compliance/tokens', () => {
+          return HttpResponse.json({ data: [
+            {
+              id: 'token-cg',
+              org_id: 'org-1',
+              token_address: 'native',
+              symbol: 'ETH',
+              decimals: 18,
+              price_fiat: 0, // zero but CoinGecko-linked — resolves from system
+              coingecko_id: 'ethereum',
+              created_at: '2024-01-01T00:00:00Z',
+              updated_at: '2024-01-01T00:00:00Z',
+            },
+          ] });
+        })
+      );
+
+      renderWithComplianceContext(<TokenPriceList />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('ETH').length).toBeGreaterThanOrEqual(1);
+      });
+
+      expect(screen.queryByText(/blocking transactions/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('Error Handling', () => {
     it('shows error when token list fails to load', async () => {
       server.use(

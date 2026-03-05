@@ -100,7 +100,7 @@ export default function TokenPriceList() {
 
   useEffect(() => {
     loadTokens();
-  }, [orgId]);
+  }, [orgId, currency]);
 
   const openCreateForm = () => {
     setEditing(null);
@@ -293,6 +293,29 @@ export default function TokenPriceList() {
 
       {/* Per-Org Token Prices */}
       <div className="space-y-4">
+        {/* Warning banner for tokens blocking transactions */}
+        {(() => {
+          const blockedTokens = tokens.filter(t => {
+            if (t.coingecko_id) return false; // CoinGecko tokens resolve from system prices
+            return t.price_fiat === 0;
+          });
+          if (blockedTokens.length === 0) return null;
+          return (
+            <div className="flex items-start gap-3 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
+              <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0 text-red-600" />
+              <div>
+                <p className="font-semibold text-sm">
+                  {blockedTokens.length} token{blockedTokens.length > 1 ? 's' : ''} blocking transactions
+                </p>
+                <p className="text-sm mt-1">
+                  The following manual token{blockedTokens.length > 1 ? 's have' : ' has'} no price set for {currencyLabel} and will <strong>block all transactions</strong> until configured:{' '}
+                  {blockedTokens.map(t => t.symbol).join(', ')}
+                </p>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="flex items-center justify-between">
           <h3 className="text-base font-medium text-neutral-700">Per-Organization Token Prices</h3>
           {orgId && (
