@@ -263,7 +263,9 @@ export function SuccessPage() {
                   <Shield className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-neutral-900">Privado ID</p>
+                  <p className="text-sm font-medium text-neutral-900">
+                    {userDID?.startsWith('azuread:') ? 'Microsoft Entra ID' : 'Privado ID'}
+                  </p>
                   <p className="truncate font-mono text-xs text-neutral-400" title={userDID || 'Connected'}>
                     {userDID || 'Connected'}
                   </p>
