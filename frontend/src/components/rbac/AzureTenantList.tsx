@@ -253,11 +253,14 @@ interface AzureTenantFormProps {
   onSave: () => void;
 }
 
+const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_GROUP_ID = '00000000-0000-0000-0000-000000000001';
+
 function AzureTenantForm({ tenant, onClose, onSave }: AzureTenantFormProps) {
   const [tenantId, setTenantId] = useState(tenant?.tenant_id || '');
   const [label, setLabel] = useState(tenant?.label || '');
-  const [defaultOrgId, setDefaultOrgId] = useState(tenant?.default_org_id || '');
-  const [defaultGroupId, setDefaultGroupId] = useState(tenant?.default_group_id || '');
+  const [defaultOrgId, setDefaultOrgId] = useState(tenant?.default_org_id || DEFAULT_ORG_ID);
+  const [defaultGroupId, setDefaultGroupId] = useState(tenant?.default_group_id || DEFAULT_GROUP_ID);
   const [autoProvision, setAutoProvision] = useState(tenant?.auto_provision ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -375,24 +378,21 @@ function AzureTenantForm({ tenant, onClose, onSave }: AzureTenantFormProps) {
         <label htmlFor="default-org" className="block text-sm font-medium text-neutral-700">
           Default Organization
         </label>
-        <Select value={defaultOrgId || '__none__'} onValueChange={v => {
-          setDefaultOrgId(v === '__none__' ? '' : v);
-          setDefaultGroupId('');
+        <Select value={defaultOrgId} onValueChange={v => {
+          setDefaultOrgId(v);
+          setDefaultGroupId(v === DEFAULT_ORG_ID ? DEFAULT_GROUP_ID : '');
         }}>
           <SelectTrigger id="default-org">
-            <SelectValue placeholder="Default Organization (automatic)" />
+            <SelectValue placeholder="Select organization" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__none__">Default Organization (automatic)</SelectItem>
             {organizations.map(org => (
-              <SelectItem key={org.id} value={org.id}>{org.name} ({org.slug})</SelectItem>
+              <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <p className="text-xs text-neutral-400">
-          {defaultOrgId
-            ? 'New users from this tenant will be placed in this org'
-            : 'New users will be added to the Default Organization and Default Group'}
+          New users from this tenant will be placed in this organization
         </p>
       </div>
 
@@ -401,14 +401,13 @@ function AzureTenantForm({ tenant, onClose, onSave }: AzureTenantFormProps) {
           <label htmlFor="default-group" className="block text-sm font-medium text-neutral-700">
             Default Group
           </label>
-          <Select value={defaultGroupId || '__none__'} onValueChange={v => setDefaultGroupId(v === '__none__' ? '' : v)}>
+          <Select value={defaultGroupId} onValueChange={v => setDefaultGroupId(v)}>
             <SelectTrigger id="default-group">
-              <SelectValue placeholder="Select a group" />
+              <SelectValue placeholder="Select group" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__none__">None (falls back to Default Group)</SelectItem>
               {groups.map(g => (
-                <SelectItem key={g.id} value={g.id}>{g.name} ({g.slug})</SelectItem>
+                <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
