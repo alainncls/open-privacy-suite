@@ -828,14 +828,16 @@ export const handlers = [
   }),
 
   http.put('/api/v1/admin/orgs/:orgId/compliance/tokens/:tokenAddress', async ({ request, params }) => {
-    const body = await request.json() as { symbol: string; decimals: number; price_fiat: number };
+    const body = await request.json() as { symbol: string; decimals: number; prices?: Record<string, number> };
+    const priceFiat = body.prices ? (body.prices['usd'] ?? Object.values(body.prices)[0] ?? 0) : 0;
     return HttpResponse.json({
       id: 'token-new',
       org_id: params.orgId as string,
       token_address: params.tokenAddress as string,
       symbol: body.symbol,
       decimals: body.decimals,
-      price_fiat: body.price_fiat,
+      price_fiat: priceFiat,
+      prices_by_currency: body.prices ?? {},
       created_at: '2024-01-01T00:00:00Z',
       updated_at: new Date().toISOString(),
     });

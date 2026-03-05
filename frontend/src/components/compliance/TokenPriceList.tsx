@@ -151,21 +151,23 @@ export default function TokenPriceList() {
     }
 
     const isCoingecko = formSource !== 'manual';
-    const input: UpsertTokenPriceInput = {
-      symbol: formSymbol.trim(),
-      decimals: parseInt(formDecimals) || 18,
-      price_fiat: parseFloat(formPrice) || 0,
-      coingecko_id: isCoingecko ? formSource : null,
-    };
+    const priceVal = parseFloat(formPrice) || 0;
 
-    if (!input.symbol) {
+    if (!formSymbol.trim()) {
       setFormError('Symbol is required');
       return;
     }
-    if (!isCoingecko && input.price_fiat <= 0) {
+    if (!isCoingecko && priceVal <= 0) {
       setFormError('Price must be greater than 0 for manual pricing');
       return;
     }
+
+    const input: UpsertTokenPriceInput = {
+      symbol: formSymbol.trim(),
+      decimals: parseInt(formDecimals) || 18,
+      coingecko_id: isCoingecko ? formSource : null,
+      prices: isCoingecko ? undefined : { [currency]: priceVal },
+    };
 
     try {
       setFormSaving(true);

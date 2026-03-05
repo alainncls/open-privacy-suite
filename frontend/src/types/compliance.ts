@@ -32,8 +32,7 @@ export interface TokenPrice {
 export interface UpsertTokenPriceInput {
   symbol: string;
   decimals: number;
-  price_fiat?: number;
-  prices?: Record<string, number>;
+  prices?: Record<string, number>;  // e.g. {"usd": 42.50, "eur": 39.00}
   coingecko_id?: string | null;
 }
 

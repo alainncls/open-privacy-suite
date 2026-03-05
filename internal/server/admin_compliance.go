@@ -165,7 +165,6 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 	var input struct {
 		Symbol      string             `json:"symbol" binding:"required"`
 		Decimals    int                `json:"decimals"`
-		PriceFiat   float64            `json:"price_fiat"`            // legacy: single price (used if prices not provided)
 		Prices      map[string]float64 `json:"prices"`                // multi-currency: {"usd": 3500, "eur": 3200}
 		CoingeckoID *string            `json:"coingecko_id"`          // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
 	}
@@ -194,12 +193,10 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		}
 	}
 
-	// For manual pricing, require at least one price (via prices map or legacy price_fiat)
-	if !isCoingecko {
-		if len(input.Prices) == 0 && input.PriceFiat <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "manual pricing requires at least one price; use 'prices' map with currency codes or 'price_fiat'"})
-			return
-		}
+	// For manual pricing, require at least one price via prices map
+	if !isCoingecko && len(input.Prices) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "manual pricing requires at least one price; use 'prices' map with currency codes, e.g. {\"usd\": 42.50}"})
+		return
 	}
 
 	// Validate decimals range (EVM tokens use 0-77; standard tokens 0-18)
@@ -234,13 +231,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		activeCurrency = c
 	}
 
-	// If legacy price_fiat is provided without prices map, store it under the active currency
-	if len(input.Prices) == 0 && input.PriceFiat > 0 {
-		pricesByCurrency[activeCurrency] = input.PriceFiat
-	}
-
 	// Resolve price_fiat from the prices being submitted (SQL || will merge with existing).
-	// Do NOT fall back to existing prices here — the atomic SQL merge handles that.
 	// If the caller didn't provide a price for the active currency, price_fiat stays 0
 	// and the SQL merge will preserve the existing prices_by_currency entry.
 	priceFiat := pricesByCurrency[activeCurrency]

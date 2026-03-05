@@ -131,8 +131,8 @@ describe('API Route Path Contract Tests', () => {
     await complianceApi.tokens.list('org-1');
     expect(getSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens');
 
-    await complianceApi.tokens.upsert('org-1', 'native', { symbol: 'ETH', decimals: 18, price_fiat: 2500 });
-    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native', { symbol: 'ETH', decimals: 18, price_fiat: 2500 });
+    await complianceApi.tokens.upsert('org-1', 'native', { symbol: 'ETH', decimals: 18, prices: { usd: 2500 } });
+    expect(putSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native', { symbol: 'ETH', decimals: 18, prices: { usd: 2500 } });
 
     await complianceApi.tokens.delete('org-1', 'native');
     expect(deleteSpy).toHaveBeenCalledWith('/orgs/org-1/compliance/tokens/native');
