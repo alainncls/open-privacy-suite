@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 // mockSystemPriceStore implements SystemPriceStore for testing.
 type mockSystemPriceStore struct {
+	mu        sync.Mutex
 	prices    []*compliance.SystemTokenPrice
 	upserted  []*compliance.SystemTokenPrice
 	listCalls atomic.Int32
@@ -21,12 +23,24 @@ type mockSystemPriceStore struct {
 
 func (m *mockSystemPriceStore) ListSystemTokenPrices(_ context.Context) ([]*compliance.SystemTokenPrice, error) {
 	m.listCalls.Add(1)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.prices, nil
 }
 
 func (m *mockSystemPriceStore) UpsertSystemTokenPrice(_ context.Context, price *compliance.SystemTokenPrice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.upserted = append(m.upserted, price)
 	return nil
+}
+
+func (m *mockSystemPriceStore) getUpserted() []*compliance.SystemTokenPrice {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*compliance.SystemTokenPrice, len(m.upserted))
+	copy(result, m.upserted)
+	return result
 }
 
 // mockSettingsStore implements SettingsStore for testing.
@@ -124,11 +138,12 @@ func TestRefreshNow_TriggersImmediateFetch(t *testing.T) {
 
 	// Verify upserts happened (initial + refresh = 2).
 	time.Sleep(50 * time.Millisecond)
-	if len(store.upserted) < 2 {
-		t.Fatalf("expected at least 2 upserts (initial + refresh), got %d", len(store.upserted))
+	upserted := store.getUpserted()
+	if len(upserted) < 2 {
+		t.Fatalf("expected at least 2 upserts (initial + refresh), got %d", len(upserted))
 	}
-	if store.upserted[len(store.upserted)-1].PriceFiat != 3500.0 {
-		t.Errorf("expected price 3500.0, got %f", store.upserted[len(store.upserted)-1].PriceFiat)
+	if upserted[len(upserted)-1].PriceFiat != 3500.0 {
+		t.Errorf("expected price 3500.0, got %f", upserted[len(upserted)-1].PriceFiat)
 	}
 }
 
