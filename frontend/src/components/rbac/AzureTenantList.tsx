@@ -380,17 +380,19 @@ function AzureTenantForm({ tenant, onClose, onSave }: AzureTenantFormProps) {
           setDefaultGroupId('');
         }}>
           <SelectTrigger id="default-org">
-            <SelectValue placeholder="None (no default org)" />
+            <SelectValue placeholder="Default Organization (automatic)" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__none__">None</SelectItem>
+            <SelectItem value="__none__">Default Organization (automatic)</SelectItem>
             {organizations.map(org => (
               <SelectItem key={org.id} value={org.id}>{org.name} ({org.slug})</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <p className="text-xs text-neutral-400">
-          New users from this tenant will be placed in this org
+          {defaultOrgId
+            ? 'New users from this tenant will be placed in this org'
+            : 'New users will be added to the Default Organization and Default Group'}
         </p>
       </div>
 
@@ -401,10 +403,10 @@ function AzureTenantForm({ tenant, onClose, onSave }: AzureTenantFormProps) {
           </label>
           <Select value={defaultGroupId || '__none__'} onValueChange={v => setDefaultGroupId(v === '__none__' ? '' : v)}>
             <SelectTrigger id="default-group">
-              <SelectValue placeholder="None (no default group)" />
+              <SelectValue placeholder="Select a group" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__none__">None</SelectItem>
+              <SelectItem value="__none__">None (falls back to Default Group)</SelectItem>
               {groups.map(g => (
                 <SelectItem key={g.id} value={g.id}>{g.name} ({g.slug})</SelectItem>
               ))}
