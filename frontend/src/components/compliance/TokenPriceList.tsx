@@ -41,7 +41,7 @@ function timeAgo(dateStr: string): string {
 
 export default function TokenPriceList() {
   const { selectedOrg } = useComplianceOrgContext();
-  const { formatAmount, currencyLabel, coingeckoEnabled } = useCurrency();
+  const { formatAmount, currencyLabel, coingeckoEnabled, currency } = useCurrency();
   const orgId = selectedOrg?.id;
 
   const [tokens, setTokens] = useState<TokenPrice[]>([]);
@@ -96,7 +96,7 @@ export default function TokenPriceList() {
 
   useEffect(() => {
     loadSystemPrices();
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     loadTokens();

@@ -945,6 +945,15 @@ export const handlers = [
         { code: 'gbp', name: 'British Pound', symbol: '£' },
         { code: 'aed', name: 'UAE Dirham', symbol: 'AED' },
       ],
+      coingecko_enabled: true,
+    });
+  }),
+
+  http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
+    const body = await request.json() as { currency: string };
+    return HttpResponse.json({
+      currency: body.currency,
+      message: `Base currency updated to ${body.currency.toUpperCase()}`,
     });
   }),
 ];

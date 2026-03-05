@@ -5,6 +5,7 @@ import { http, HttpResponse, delay } from 'msw';
 import { server } from '@/test/mocks/server';
 import { renderWithComplianceContext } from './test-utils';
 import { mockTokenPrices } from '@/test/mocks/handlers';
+import { useCurrency } from '../CurrencyContext';
 
 vi.mock('../ComplianceManager', async () => {
   const { TestComplianceOrgContext, useComplianceOrgContext } = await import('./test-utils');
@@ -228,6 +229,76 @@ describe('TokenPriceList', () => {
           expect(deleteCalled).toBe(true);
         });
       }
+    });
+  });
+
+  describe('Currency Change', () => {
+    it('reloads system prices when currency changes', async () => {
+      let systemPriceCallCount = 0;
+      let currentCurrency = 'usd';
+
+      server.use(
+        http.get('/api/v1/admin/compliance/currency', () => {
+          return HttpResponse.json({
+            currency: currentCurrency,
+            all_currencies: [
+              { code: 'usd', name: 'US Dollar', symbol: '$' },
+              { code: 'eur', name: 'Euro', symbol: '€' },
+            ],
+            coingecko_enabled: true,
+          });
+        }),
+        http.put('/api/v1/admin/compliance/currency', async ({ request }) => {
+          const body = await request.json() as { currency: string };
+          currentCurrency = body.currency;
+          return HttpResponse.json({
+            currency: body.currency,
+            message: `Base currency updated to ${body.currency.toUpperCase()}`,
+          });
+        }),
+        http.get('/api/v1/admin/compliance/system-token-prices', () => {
+          systemPriceCallCount++;
+          const ethPrice = currentCurrency === 'eur' ? 2300 : 2500;
+          return HttpResponse.json({ data: [
+            { id: 1, coingecko_id: 'ethereum', source: 'coingecko', symbol: 'ETH', decimals: 18, price_fiat: ethPrice, updated_at: new Date().toISOString(), is_stale: false },
+          ] });
+        }),
+      );
+
+      // Render TokenPriceList with a button that triggers currency change
+      // This simulates what CurrencySelector does
+      function TestWrapper() {
+        const { setCurrency } = useCurrency();
+        return (
+          <>
+            <button data-testid="switch-eur" onClick={() => setCurrency('eur')}>Switch EUR</button>
+            <TokenPriceList />
+          </>
+        );
+      }
+
+      renderWithComplianceContext(<TestWrapper />);
+
+      // Wait for initial load with USD prices
+      await waitFor(() => {
+        expect(screen.getByText('Auto-Fetched Prices (CoinGecko)')).toBeInTheDocument();
+      });
+
+      const initialCallCount = systemPriceCallCount;
+
+      // Switch currency to EUR
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('switch-eur'));
+
+      // System prices should be re-fetched
+      await waitFor(() => {
+        expect(systemPriceCallCount).toBeGreaterThan(initialCallCount);
+      });
+
+      // New EUR price should be displayed with € symbol
+      await waitFor(() => {
+        expect(screen.getByText('€2,300.00')).toBeInTheDocument();
+      });
     });
   });
 
