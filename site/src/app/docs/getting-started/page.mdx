@@ -1,0 +1,87 @@
+import { Step } from "@/components/mdx/step"
+import { Callout } from "@/components/mdx/callout"
+
+export const metadata = {
+  title: "Getting Started",
+  description: "Set up Privacy Proxy and run it locally in minutes.",
+}
+
+# Getting Started
+
+Set up Privacy Proxy and run it locally in minutes.
+
+## Prerequisites
+
+- **Docker** and **Docker Compose** v2+
+- **Make**
+- **Git**
+
+<Callout variant="info" title="Development mode">
+  In development mode, the proxy uses mock ZK verification. No real Privado wallet needed — use the flask icon on the login page for instant mock authentication.
+</Callout>
+
+## Installation
+
+<Step number={1} title="Clone the repository">
+```bash
+git clone https://github.com/gateway-fm/privacy-proxy.git
+cd privacy-proxy
+```
+</Step>
+
+<Step number={2} title="Start the stack">
+```bash
+make run
+```
+This starts PostgreSQL, Anvil (local Ethereum node), the proxy backend, and the admin frontend.
+</Step>
+
+<Step number={3} title="Open the admin UI">
+```bash
+open http://localhost:5173
+```
+Click the flask icon below the QR code for instant mock login.
+</Step>
+
+## Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| proxy-backend | 8080 | API server |
+| proxy-frontend | 5173 | Admin UI |
+| postgres | 5432 | Database |
+| anvil | 8545 | Local Ethereum node |
+
+## Useful Commands
+
+| Command | Description |
+|---------|-------------|
+| `make run` | Start all services |
+| `make stop` | Stop all services |
+| `make restart` | Restart all services |
+| `make logs` | View live logs |
+| `make status` | Show service status |
+| `make clean` | Stop and remove volumes |
+
+## LAN Access
+
+To access from other devices on your network:
+
+```bash
+BASE_URL="http://YOUR_LAN_IP:8080" make run
+```
+
+Replace `localhost` with your LAN IP in all URLs.
+
+## Custom Ports
+
+```bash
+BACKEND_HOST_PORT=8081 POSTGRES_HOST_PORT=5433 BASE_URL="http://YOUR_IP:8081" make run
+```
+
+## Next Steps
+
+- [Architecture](/docs/architecture) — understand the system design
+- [Authentication](/docs/authentication) — ZK-proof auth and SSO flows
+- [RBAC](/docs/rbac) — role-based access control
+- [Configuration](/docs/configuration) — environment variables reference

@@ -1,0 +1,409 @@
+import { Callout } from "@/components/mdx/callout";
+import { ApiEndpoint } from "@/components/mdx/api-endpoint";
+
+export const metadata = {
+  title: "API Reference",
+  description:
+    "Complete API reference for the Privacy Proxy authentication, JSON-RPC proxy, and admin endpoints.",
+};
+
+# API Reference
+
+## Authentication Endpoints
+
+<ApiEndpoint method="POST" path="/auth/request" description="Initiate Privado ID authentication flow" />
+
+**Response:**
+
+```json
+{
+  "session_id": "uuid",
+  "auth_request": {
+    "id": "request-id",
+    "type": "https://iden3-communication.io/authorization/1.0/request",
+    "body": {
+      "callbackUrl": "http://localhost:8080/auth/callback?session=uuid",
+      "reason": "Authenticate and verify humanity to access Ethereum node",
+      "scope": []
+    }
+  }
+}
+```
+
+---
+
+<ApiEndpoint method="POST" path="/auth/callback?session={session_id}" description="Wallet callback endpoint for ZK proof submission" />
+
+**Body:** JWZ token (raw)
+
+**Response:**
+
+```json
+{
+  "access_token": "jwt",
+  "refresh_token": "jwt",
+  "token_type": "Bearer",
+  "expires_in": 1800
+}
+```
+
+---
+
+<ApiEndpoint method="POST" path="/auth/verify" description="Manual proof submission (development only)" />
+
+<Callout variant="warning" title="Development only">
+
+This endpoint is disabled when `ENVIRONMENT=production`.
+
+</Callout>
+
+**Body:**
+
+```json
+{
+  "session_id": "uuid",
+  "jwz_token": "token"
+}
+```
+
+**Response:** Same as `/auth/callback`.
+
+---
+
+<ApiEndpoint method="POST" path="/refresh" description="Refresh an access token" />
+
+**Body:**
+
+```json
+{
+  "refresh_token": "jwt"
+}
+```
+
+**Response:**
+
+```json
+{
+  "access_token": "jwt",
+  "refresh_token": "jwt",
+  "token_type": "Bearer",
+  "expires_in": 1800
+}
+```
+
+---
+
+<ApiEndpoint method="POST" path="/revoke" description="Revoke a refresh token" />
+
+**Body:**
+
+```json
+{
+  "refresh_token": "jwt"
+}
+```
+
+**Response:** `204 No Content`
+
+---
+
+<ApiEndpoint method="GET" path="/health" description="Health check" />
+
+**Response:**
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+## JSON-RPC Proxy
+
+<ApiEndpoint method="POST" path="/" description="Forward JSON-RPC request to Ethereum node" />
+
+**Headers:** `Authorization: Bearer <access_token>`
+
+**Body:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_call",
+  "params": ["..."],
+  "id": 1
+}
+```
+
+**Access control pipeline:**
+
+1. Validates JWT
+2. Checks user KYC status and ban flag
+3. Validates method against allowlist
+4. Validates contract address (if applicable)
+5. Enforces rate limits
+
+---
+
+## ETH Address Linking
+
+All endpoints in this section require a valid JWT in the `Authorization` header.
+
+<ApiEndpoint method="POST" path="/eth/link/challenge" description="Request a signing challenge" />
+
+**Response:**
+
+```json
+{
+  "nonce": "hex",
+  "message": "Link Ethereum address to DID\n\nI authorize linking this Ethereum address to my decentralized identity.\n\nDID: did:privado:...\nNonce: hex..."
+}
+```
+
+---
+
+<ApiEndpoint method="POST" path="/eth/link/verify" description="Submit signed challenge to link an address" />
+
+**Body:**
+
+```json
+{
+  "nonce": "hex",
+  "address": "0x...",
+  "signature": "0x..."
+}
+```
+
+**Response:**
+
+```json
+{
+  "message": "address linked successfully",
+  "address": "0x..."
+}
+```
+
+---
+
+<ApiEndpoint method="GET" path="/eth/addresses" description="List linked Ethereum addresses" />
+
+**Response:**
+
+```json
+{
+  "addresses": [
+    { "address": "0x...", "verified_at": "2024-01-15T10:30:00Z" }
+  ]
+}
+```
+
+---
+
+<ApiEndpoint method="DELETE" path="/eth/addresses/:address" description="Unlink an Ethereum address" />
+
+**Response:**
+
+```json
+{
+  "message": "address unlinked successfully"
+}
+```
+
+---
+
+## Admin API
+
+<Callout variant="info" title="Authentication required">
+
+Admin endpoints require either the `X-Admin-Token` header or a valid admin JWT.
+In development, these endpoints are also accessible from localhost without authentication.
+
+</Callout>
+
+### Debugging
+
+<ApiEndpoint method="GET" path="/api/logs?limit=N" description="Retrieve access logs" />
+<ApiEndpoint method="GET" path="/api/status" description="Proxy and node health status" />
+<ApiEndpoint method="POST" path="/api/test-request" description="Test method access for a user" />
+
+**Test request body:**
+
+```json
+{
+  "user_id": "did:...",
+  "method": "eth_call"
+}
+```
+
+<ApiEndpoint method="GET" path="/api/users/:id/effective-permissions" description="Get computed effective permissions for a user" />
+<ApiEndpoint method="POST" path="/api/access/check" description="Test an access decision" />
+
+**Access check body:**
+
+```json
+{
+  "user_id": "did:...",
+  "method": "eth_call",
+  "contract_address": "0x..."
+}
+```
+
+<ApiEndpoint method="GET" path="/api/cache/stats" description="Cache statistics" />
+
+---
+
+### Organizations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/orgs` | List organizations |
+| POST | `/api/orgs` | Create organization |
+| GET | `/api/orgs/:id` | Get organization |
+| PUT | `/api/orgs/:id` | Update organization |
+
+**Create / Update body:**
+
+```json
+{
+  "slug": "myorg",
+  "name": "My Organization",
+  "settings": {}
+}
+```
+
+---
+
+### Groups
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/orgs/:org_id/groups` | List groups |
+| POST | `/api/orgs/:org_id/groups` | Create group |
+| GET | `/api/orgs/:org_id/groups/:id` | Get group |
+| PUT | `/api/orgs/:org_id/groups/:id` | Update group |
+| DELETE | `/api/orgs/:org_id/groups/:id` | Delete group |
+| GET | `/api/orgs/:org_id/groups/:id/permissions` | Get permissions |
+| PUT | `/api/orgs/:org_id/groups/:id/permissions` | Set permissions |
+
+**Create group:**
+
+```json
+{
+  "slug": "engineering",
+  "name": "Engineering",
+  "parent_id": "uuid"
+}
+```
+
+**Set permissions:**
+
+```json
+{
+  "allow_methods": ["eth_call", "eth_getBalance"],
+  "allow_contracts": ["0x..."],
+  "owned_contracts": ["0x..."],
+  "rate_limit_rps": 100,
+  "rate_limit_daily": 10000
+}
+```
+
+---
+
+### Roles
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/orgs/:org_id/roles` | List roles |
+| POST | `/api/orgs/:org_id/roles` | Create role |
+| GET | `/api/orgs/:org_id/roles/:id` | Get role |
+| PUT | `/api/orgs/:org_id/roles/:id` | Update role |
+| DELETE | `/api/orgs/:org_id/roles/:id` | Delete role |
+
+**Body:**
+
+```json
+{
+  "name": "deployer",
+  "claims": ["reader", "writer", "deployer"]
+}
+```
+
+Available claims: `reader`, `writer`, `deployer`, `admin`, `upgrade`
+
+---
+
+### Users
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/users` | List users |
+| GET | `/api/users/:id` | Get user |
+| PUT | `/api/users/:id` | Update user |
+| GET | `/api/users/:id/memberships` | List memberships |
+| POST | `/api/users/:id/memberships` | Create membership |
+| DELETE | `/api/users/:id/memberships/:mid` | Delete membership |
+
+**Update user:**
+
+```json
+{
+  "kyc": true,
+  "banned": false
+}
+```
+
+**Create membership:**
+
+```json
+{
+  "group_id": "uuid",
+  "role_id": "uuid",
+  "expires_at": "timestamp"
+}
+```
+
+---
+
+### Contracts
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/orgs/:org_id/contracts` | List contracts |
+| POST | `/api/orgs/:org_id/contracts` | Register a contract |
+| PUT | `/api/orgs/:org_id/contracts/:addr` | Update contract |
+| DELETE | `/api/orgs/:org_id/contracts/:addr` | Delete contract |
+
+**Body:**
+
+```json
+{
+  "contract_address": "0x...",
+  "owner_group_id": "uuid",
+  "metadata": {}
+}
+```
+
+---
+
+## Error Responses
+
+All errors follow a consistent format:
+
+```json
+{
+  "error": "error_code",
+  "message": "Human readable message"
+}
+```
+
+### Status Codes
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Bad request or validation error |
+| `401` | Missing or invalid authentication |
+| `403` | Forbidden (banned, no KYC, method not allowed) |
+| `404` | Resource not found |
+| `429` | Rate limit exceeded |
+| `500` | Internal server error |

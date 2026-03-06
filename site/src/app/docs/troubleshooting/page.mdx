@@ -1,0 +1,259 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Troubleshooting",
+  description:
+    "Common issues and solutions for the Privacy Proxy: Docker, database, authentication, RBAC, port conflicts, and build problems.",
+};
+
+# Troubleshooting
+
+This page consolidates common issues and solutions across the Privacy Proxy stack.
+
+---
+
+## Docker Issues
+
+### Containers not starting
+
+```bash
+# Check container status
+docker-compose ps
+
+# View logs for a specific service
+docker-compose logs postgres
+docker-compose logs proxy-backend
+docker-compose logs anvil
+
+# Restart a specific service
+docker-compose restart proxy-backend
+
+# Full reset (destroys volumes)
+docker-compose down -v
+docker-compose up -d
+```
+
+### Container health check failing
+
+If `proxy-backend` stays in "starting" state, check that its dependencies are healthy:
+
+```bash
+docker-compose logs postgres | tail -20
+docker-compose logs anvil | tail -20
+```
+
+The backend waits for both PostgreSQL and the Ethereum node to be reachable before starting.
+
+### Docker network conflicts
+
+If port bindings fail, check for other services using the same ports:
+
+```bash
+lsof -i :8080  # Privacy Proxy
+lsof -i :5173  # Frontend
+lsof -i :5432  # PostgreSQL
+lsof -i :8545  # Anvil / Ethereum node
+```
+
+---
+
+## Database Issues
+
+### Cannot connect to PostgreSQL
+
+```bash
+# Check if PostgreSQL container is running
+docker-compose ps postgres
+
+# Connect manually
+docker-compose exec postgres psql -U postgres -d privacy_proxy
+
+# Check connection string
+echo $DATABASE_URL
+```
+
+### Migration failures
+
+```bash
+# View migration status
+docker-compose logs proxy-backend | grep -i migrat
+
+# Reset database completely (destroys all data)
+docker-compose down -v
+docker-compose up -d
+```
+
+<Callout variant="warning" title="Data loss">
+
+Running `docker-compose down -v` destroys all database volumes. All organizations, users, policies, and audit logs will be lost.
+
+</Callout>
+
+### testcontainers failures in unit tests
+
+If unit tests fail to start PostgreSQL via testcontainers:
+
+1. Verify Docker is running: `docker info`
+2. Check Docker socket permissions
+3. Set `TEST_DATABASE_URL` to use an external PostgreSQL instead:
+
+```bash
+export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/privacy_proxy_test?sslmode=disable"
+go test ./internal/...
+```
+
+---
+
+## Authentication Issues
+
+| Error | Status | Cause | Solution |
+|-------|--------|-------|----------|
+| `missing Authorization header` | 401 | No Bearer token in request | Add `Authorization: Bearer <token>` header |
+| `invalid token` | 401 | Malformed or corrupted JWT | Re-authenticate to get a new token |
+| `session not found or expired` | 401 | Auth session expired (10-min TTL) | Start a new authentication flow |
+| `JWZ verification failed` | 401 | Invalid ZK proof | Ensure wallet is using correct credentials and network |
+| `humanity_verification_required` | 403 | User lacks ProofOfHumanity credential | Complete PoH verification at [Billions](https://app.billions.network) |
+| `user is banned` | 403 | User's policy has `banned: true` | Contact org admin to remove ban |
+| `KYC required` | 403 | User's policy has `kyc: false` | Complete KYC verification |
+
+### Token expiration
+
+Access tokens expire after **30 minutes**. Refresh tokens expire after **7 days**.
+
+```bash
+# Refresh an expired access token
+curl -X POST http://localhost:8080/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "YOUR_REFRESH_TOKEN"}'
+```
+
+If the refresh token is also expired, re-authenticate through the web UI.
+
+### Azure AD authentication failures
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| No Microsoft tab on login | Env vars missing | Check `AZURE_AD_CLIENT_ID` and `AZURE_AD_CLIENT_SECRET` in `.env` |
+| 403 "tenant is not authorized" | Tenant not in allowlist | Add tenant via `POST /api/v1/admin/azure-tenants` with `X-Admin-Token` |
+| AADSTS50011 "redirect URI mismatch" | Wrong URI in Azure Portal | Set to `http://localhost:5173/auth/azure/callback` |
+| "nonce mismatch" | State expired | Retry -- state tokens have 10-minute TTL |
+
+---
+
+## RBAC Issues
+
+| Error | Status | Cause | Solution |
+|-------|--------|-------|----------|
+| `method not allowed` | 403 | JSON-RPC method not in user's allowed methods | Check group permissions in admin UI. Ensure the method is in the group's allowed methods list. |
+| `contract access denied` | 403 | User's org does not own the target contract | Verify the contract is registered to the user's org. Check contract grants. |
+| `cross-org access denied` | 403 | Transaction calls a contract owned by another org | Only interact with contracts owned by your organization. |
+| `deploy claim required` | 403 | User lacks `deploy` permission | Ask org admin to add `deploy` claim to user's group. |
+| `admin claim required` | 403 | Operation requires admin privileges | Ask org admin to grant `admin` claim. |
+| `upgrade claim required` | 403 | Proxy upgrade requires `upgrade` permission | Ask org admin to grant `upgrade` claim. |
+
+### Claims hierarchy
+
+Remember that claims have implied permissions:
+
+- `admin` implies `read + write + deploy + upgrade`
+- `deploy` implies `read + write`
+- `upgrade` implies `read + write`
+- `read` and `write` are independent
+
+A user with `deploy` claim can already read and write -- no need to add those separately.
+
+### Blocked methods
+
+The following method families are **always blocked** regardless of permissions:
+
+```
+debug_*    admin_*    personal_*    miner_*
+txpool_*   clique_*   les_*         eth_sign
+eth_signTransaction   eth_subscribe  eth_unsubscribe
+```
+
+### Multicall blocked
+
+Calls to known Multicall contract addresses are blocked because they allow batching arbitrary contract calls, bypassing method-level restrictions:
+
+- Multicall3: `0xcA11bde05977b3631167028862bE2a173976CA11`
+- Multicall2: `0x5ba1e12693dc8f9c48aad8770482f4739beed696`
+- Multicall1: `0xeefba1e63905ef1d7acba5a8513c70307c1ce441`
+
+<Callout variant="info" title="Runtime tracing as defense-in-depth">
+
+When runtime tracing is enabled, all internal calls are validated regardless of the target address. This means even custom multicall contracts (not in the hardcoded list) are caught because every `CALL`, `DELEGATECALL`, and `STATICCALL` target is verified.
+
+</Callout>
+
+---
+
+## Port Conflicts
+
+| Port | Service | Resolution |
+|------|---------|------------|
+| 8080 | Privacy Proxy | Stop other HTTP servers or change `PORT` env var |
+| 5173 | Frontend (Vite) | Stop other Vite instances or change Vite config port |
+| 5432 | PostgreSQL | Stop local PostgreSQL: `brew services stop postgresql` (macOS) or `sudo systemctl stop postgresql` (Linux) |
+| 8545 | Anvil / Ethereum node | Stop other Anvil or Hardhat instances |
+
+---
+
+## Build Issues
+
+### Go build failures
+
+```bash
+# Clean module cache
+go clean -modcache
+
+# Re-download dependencies
+go mod download
+
+# Verify dependencies
+go mod verify
+```
+
+### Frontend build failures
+
+```bash
+cd frontend
+
+# Clear node_modules and reinstall
+rm -rf node_modules
+npm install
+
+# Clear Vite cache
+rm -rf node_modules/.vite
+npm run dev
+```
+
+### Docker build failures
+
+```bash
+# Rebuild without cache
+docker-compose build --no-cache
+
+# Pull latest base images
+docker-compose pull
+```
+
+---
+
+## Rate Limiting
+
+If you are receiving `429 Too Many Requests`:
+
+- Check your group's rate limit configuration in the admin UI.
+- Per-user sliding window (RPS) and daily counters are enforced.
+- Wait for the rate limit window to reset, or ask your org admin to adjust limits.
+
+---
+
+## Getting Help
+
+If your issue is not covered here:
+
+1. Check the backend logs: `docker-compose logs -f proxy-backend`
+2. Run tests with verbose output: `go test -v ./e2e/...`
+3. Check the [GitHub Issues](https://github.com/gateway-fm/privacy-proxy/issues) for known problems.
