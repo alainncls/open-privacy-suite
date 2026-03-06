@@ -95,7 +95,7 @@ frontend/vite.config.js
 # Foundry artifacts
 cache/
 out/
-lib/
+/lib/
 
 # Vite cache
 .vite/
