@@ -56,3 +56,7 @@ docker-compose -f ../explorer/docker-compose.privacy-proxy.yml up -d
 ```
 
 **Note:** For network access from other devices, see `DEV.local.md` (gitignored) for machine-specific setup.
+
+## Documentation Site
+
+The docs site lives in `site/` (Next.js + MDX). When changing auth, RBAC, security, compliance, or other user-facing logic, update the corresponding docs page in `site/src/app/docs/`. Docs should be updated in the same PR as the code change.

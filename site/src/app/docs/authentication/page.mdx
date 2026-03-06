@@ -1,0 +1,274 @@
+import { Callout } from "@/components/mdx/callout";
+import { ApiEndpoint } from "@/components/mdx/api-endpoint";
+import { EnvTable } from "@/components/mdx/env-table";
+import { Step } from "@/components/mdx/step";
+export const metadata = {
+  title: "Authentication",
+  description:
+    "ZK-proof authentication via Privado ID with optional ProofOfHumanity verification and Azure AD SSO.",
+};
+
+# Authentication
+
+## Overview
+
+The Privacy Proxy authenticates users through **Privado ID zero-knowledge proofs** with optional
+**ProofOfHumanity (PoH)** verification via Billions. Users prove their identity without revealing
+private keys, and can optionally link Ethereum addresses via EIP-191 signatures.
+
+For SSO-based authentication using Microsoft Entra ID, see the [Azure AD / SSO](/docs/azure-ad) guide.
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant C as Client (Wallet)
+    participant P as Privacy Proxy
+    participant R as Privado RPC
+    participant I as IPFS Gateway
+
+    Note over C: User already has PoH credential<br/>issued by Billions
+
+    C->>P: 1. POST /auth/request
+    P->>C: 2. Auth challenge (session + ZK query)
+    C->>P: 3. JWZ Proof (includes PoH)
+    P->>I: 4. Fetch credential schema
+    P->>R: 5. Verify identity state on-chain
+    P->>C: 6. JWT access + refresh tokens
+```
+
+## Auth Flow
+
+<Step number={1} title="Client requests auth challenge">
+
+`POST /auth/request` -- the client initiates authentication by requesting a Privado ID
+authorization challenge. The server generates a session ID, creates an authorization request
+with a ProofOfHumanity ZK query (if enabled), and returns both to the client.
+
+When `RequireProofOfHumanity` is enabled the request includes a ZK query:
+
+```json
+{
+  "id": 1,
+  "circuitId": "credentialAtomicQueryMTPV2",
+  "query": {
+    "allowedIssuers": ["did:polygonid:polygon:amoy:..."],
+    "credentialSubject": { "isHuman": { "$eq": 1 } },
+    "context": "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld",
+    "type": "ProofOfHumanity"
+  }
+}
+```
+
+</Step>
+
+<Step number={2} title="Wallet generates ZK proof">
+
+The client's Privado wallet creates a **JWZ (JSON Web Zero-knowledge)** token that:
+
+- Proves DID ownership without revealing private keys
+- Proves possession of a ProofOfHumanity credential (`isHuman=1`)
+- Is cryptographically bound to the authorization request
+- Cannot be replayed to other verifiers
+
+</Step>
+
+<Step number={3} title="Client submits proof">
+
+The proof is submitted to one of two endpoints:
+
+<ApiEndpoint method="POST" path="/auth/callback?session={session_id}" description="Wallet callback -- the standard flow" />
+<ApiEndpoint method="POST" path="/auth/verify" description="Manual submission (development only)" />
+
+The server retrieves the session, extracts and verifies the JWZ token against the original
+auth request, checks the PoH credential (if required), and extracts the user DID.
+
+</Step>
+
+<Step number={4} title="JWT tokens issued (or rejection)">
+
+On success the server returns an access/refresh token pair:
+
+```json
+{
+  "access_token": "eyJhbGc...",
+  "refresh_token": "eyJhbGc...",
+  "token_type": "Bearer",
+  "expires_in": 1800
+}
+```
+
+If the user lacks a valid ProofOfHumanity credential the server responds with **403 Forbidden**:
+
+```json
+{
+  "error": "humanity_verification_required",
+  "message": "Please complete ProofOfHumanity verification at Billions",
+  "verify_url": "https://app.billions.network"
+}
+```
+
+</Step>
+
+---
+
+## ETH Address Linking
+
+Users can link Ethereum addresses to their DID after authentication using EIP-191 signatures.
+
+<Step number={1} title="Request challenge">
+
+<ApiEndpoint method="POST" path="/eth/link/challenge" description="Request a signing challenge (JWT required)" />
+
+Returns a nonce and a human-readable message for the user to sign.
+
+```json
+{
+  "nonce": "a1b2c3d4e5f6...",
+  "message": "Link Ethereum address to DID\n\nI authorize linking this Ethereum address to my decentralized identity.\n\nDID: did:privado:...\nNonce: a1b2c3d4e5f6..."
+}
+```
+
+</Step>
+
+<Step number={2} title="Sign the message">
+
+The user signs the message with their Ethereum wallet (MetaMask, etc.) using `personal_sign`.
+
+</Step>
+
+<Step number={3} title="Submit signature">
+
+<ApiEndpoint method="POST" path="/eth/link/verify" description="Submit signed challenge (JWT required)" />
+
+```json
+{
+  "nonce": "a1b2c3d4e5f6...",
+  "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f...",
+  "signature": "0x..."
+}
+```
+
+</Step>
+
+<Step number={4} title="View or unlink addresses">
+
+<ApiEndpoint method="GET" path="/eth/addresses" description="List linked addresses (JWT required)" />
+<ApiEndpoint method="DELETE" path="/eth/addresses/:address" description="Unlink an address (JWT required)" />
+
+</Step>
+
+---
+
+## Configuration
+
+<EnvTable vars={[
+  { name: "BILLIONS_ISSUER_DID", default: "(none)", description: "Billions issuer DID for PoH verification" },
+  { name: "REQUIRE_PROOF_OF_HUMANITY", default: "true (prod) / false (dev)", description: "Enable or disable the PoH requirement" },
+  { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint" },
+  { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for credential schemas" },
+  { name: "JWT_SECRET", default: "(auto-generated in dev)", description: "Access token signing secret" },
+  { name: "JWT_REFRESH_SECRET", default: "(auto-generated in dev)", description: "Refresh token signing secret" },
+  { name: "VERIFIER_ID", default: "(required in prod)", description: "DID of the verifier service" },
+  { name: "BASE_URL", default: "http://localhost:8080", description: "Base URL used for callback URLs" },
+  { name: "ENVIRONMENT", default: "development", description: "Set to production to disable /auth/verify endpoint" },
+]} />
+
+<Callout variant="warning" title="Production checklist">
+
+Before deploying to production, ensure you have:
+
+1. Set `BILLIONS_ISSUER_DID` to the production Billions issuer DID
+2. Set `REQUIRE_PROOF_OF_HUMANITY=true`
+3. Configured strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`
+4. Configured `VERIFIER_ID` with your service's DID
+5. Set `BASE_URL` to your public URL
+6. Set `ENVIRONMENT=production` (disables the `/auth/verify` endpoint)
+
+</Callout>
+
+---
+
+## Testing Options
+
+### Option A: Mock Implementation (Development)
+
+Use the `MockPrivadoVerifier` for local development:
+
+```bash
+ENVIRONMENT=development
+REQUIRE_PROOF_OF_HUMANITY=false
+```
+
+- Skips real ZK proof verification
+- Returns configurable responses (`isHuman` true/false)
+- Works without any external infrastructure
+- Supports mock tokens: `mock.{did}` or `mock.jwz.token.{did}`
+
+### Option B: Run Your Own Issuer Node (E2E Testing)
+
+Run a local [Privado ID Issuer Node](https://github.com/0xPolygonID/issuer-node) on Polygon Amoy
+testnet. Clone the repo, configure for Amoy, and create ProofOfHumanity credentials for test users.
+
+**Amoy testnet details:**
+
+| Parameter | Value |
+|-----------|-------|
+| State contract | `0x1a4cC30f2aA0377b0c3bc9848766D90cb4404124` |
+| Chain ID | `80002` |
+| Faucet | [Alchemy Polygon Amoy faucet](https://www.alchemy.com/faucets/polygon-amoy) |
+
+Then configure the proxy:
+
+```bash
+BILLIONS_ISSUER_DID=did:polygonid:polygon:amoy:...
+REQUIRE_PROOF_OF_HUMANITY=true
+```
+
+### Option C: Billions Testnet
+
+Billions is in early alpha. Check [Billions signup](https://signup.billions.network/) for testnet
+access and their Discord for developer API access.
+
+### Testing Matrix
+
+| Scenario | Implementation | Config |
+|----------|---------------|--------|
+| Unit tests | MockPrivadoVerifier | `REQUIRE_PROOF_OF_HUMANITY=false` |
+| Dev local | MockPrivadoVerifier | `REQUIRE_PROOF_OF_HUMANITY=false` |
+| E2E Amoy | Real verifier + own issuer | `BILLIONS_ISSUER_DID=did:polygonid:...` |
+| Production | Real verifier + Billions | `BILLIONS_ISSUER_DID=<billions-prod-did>` |
+
+---
+
+## Error Reference
+
+### Authentication Errors
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| 400 | `session parameter required` | Missing session ID in callback |
+| 400 | `jwz_token required` | Missing proof token |
+| 401 | `session not found or expired` | Invalid or expired session (10 min TTL) |
+| 401 | `JWZ verification failed` | Invalid ZK proof |
+| 403 | `humanity_verification_required` | User lacks PoH credential |
+| 500 | `VERIFIER_ID not configured` | Missing configuration |
+
+### ETH Linking Errors
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| 400 | `invalid or expired nonce` | Challenge expired (5 min TTL) |
+| 400 | `signature verification failed` | Signature does not match address |
+| 403 | `challenge does not belong to this user` | Wrong user for challenge |
+| 404 | `address not found` | Address not linked to user |
+
+### Access Control Errors
+
+| Status | Error | Cause |
+|--------|-------|-------|
+| 401 | `missing Authorization header` | No Bearer token provided |
+| 401 | `invalid token` | Malformed or invalid JWT |
+| 403 | `user is banned` | User's policy has `banned: true` |
+| 403 | `KYC required` | User's policy has `kyc: false` |
+| 403 | `method not allowed` | Method not in user's `allow_methods` |

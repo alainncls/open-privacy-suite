@@ -200,6 +200,22 @@ seed:
 	@echo "Done!"
 
 # ============================================================================
+# Documentation Site
+# ============================================================================
+
+# Run docs site in development mode
+site-dev:
+	cd site && npm run dev
+
+# Build docs site for production (static export)
+site-build:
+	cd site && npm run build
+
+# Install docs site dependencies
+site-install:
+	cd site && npm install
+
+# ============================================================================
 # Contract Development (Foundry)
 # ============================================================================
 

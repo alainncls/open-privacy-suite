@@ -1,0 +1,272 @@
+import { Callout } from "@/components/mdx/callout";
+import { ApiEndpoint } from "@/components/mdx/api-endpoint";
+import { EnvTable } from "@/components/mdx/env-table";
+export const metadata = {
+  title: "Selective Disclosure",
+  description:
+    "Selective disclosure system for sharing address visibility with auditors and regulators while maintaining privacy controls.",
+};
+
+# Selective Disclosure
+
+The Privacy Proxy implements a selective disclosure system that allows users to share address visibility with authorized parties (auditors, regulators, compliance teams) while maintaining privacy controls.
+
+## Overview
+
+The disclosure system provides:
+
+- **Granular control** over what data is shared and how addresses are displayed
+- **Time-limited access** with automatic expiration
+- **Audit trail** of all disclosure access events
+- **Multiple disclosure levels** from full transparency to complete redaction
+
+## Disclosure Levels
+
+| Level | Address Display | Use Case |
+|-------|-----------------|----------|
+| **Full** | Real addresses (`0xa32c...94cd`) | Regulatory subpoenas, law enforcement investigations |
+| **Pseudonymous** | Consistent pseudonyms (`Address-KDCM`) | Financial audits -- allows pattern analysis without revealing identity |
+| **Redacted** | `[REDACTED]` | Minimal disclosure -- proves activity exists without revealing addresses |
+
+## Workflow
+
+```mermaid
+sequenceDiagram
+    participant R as Requester (Auditor)
+    participant U as Target User
+    participant P as Privacy Proxy
+
+    R->>P: 1. Create Request
+    P->>U: 2. Review & Approve
+    U->>P: 3. Approve/Reject
+    P->>R: 4. Grant Created
+    R->>P: 5. Access Data
+    P->>R: 6. Pseudonymized Response
+```
+
+## Data Models
+
+### Disclosure Request
+
+A request from an authorized party to view someone's data:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "requester_did": "did:iden3:privado:main:2SaubQ6...",
+  "target_user_id": "user-123",
+  "org_id": "org-456",
+  "scope": {
+    "addresses": ["0xa32c..."],
+    "date_range": {
+      "start": "2024-01-01T00:00:00Z",
+      "end": "2024-12-31T23:59:59Z"
+    },
+    "disclosure_level": "pseudonymous"
+  },
+  "reason": "Annual financial audit",
+  "legal_basis": "GDPR Article 6(1)(c)",
+  "status": "pending",
+  "requested_at": "2024-06-15T10:30:00Z",
+  "expires_at": "2024-06-22T10:30:00Z"
+}
+```
+
+### Request Status Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Approved
+    Pending --> Rejected
+    Pending --> Expired
+    Approved --> Grant
+    Grant --> Revoked
+```
+
+### Disclosure Grant
+
+An approved disclosure with access permissions:
+
+```json
+{
+  "id": "grant-789",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "scope": {
+    "addresses": ["0xa32c..."],
+    "disclosure_level": "pseudonymous"
+  },
+  "granted_at": "2024-06-16T09:00:00Z",
+  "expires_at": "2024-07-16T09:00:00Z",
+  "revoked_at": null
+}
+```
+
+### Scope Configuration
+
+The scope defines what data can be accessed:
+
+| Field | Description |
+|-------|-------------|
+| `methods` | Specific RPC methods allowed (e.g., `eth_call`, `eth_getLogs`) |
+| `addresses` | Contract addresses to include in disclosure |
+| `date_range` | Time period for transaction/log data |
+| `disclosure_level` | How addresses are displayed (full / pseudonymous / redacted) |
+
+## API Endpoints
+
+### User Disclosure Dashboard
+
+<ApiEndpoint method="GET" path="/api/v1/disclosure/requests?status=pending" description="List pending disclosure requests for your data" />
+
+<ApiEndpoint method="GET" path="/api/v1/disclosure/grants?status=active" description="List active disclosure grants you have given" />
+
+<ApiEndpoint method="POST" path="/api/v1/disclosure/requests/{id}/approve" description="Approve a disclosure request" />
+
+```json
+{
+  "grant_duration_days": 30
+}
+```
+
+<ApiEndpoint method="POST" path="/api/v1/disclosure/requests/{id}/reject" description="Reject a disclosure request" />
+
+```json
+{
+  "reason": "Insufficient justification provided"
+}
+```
+
+### Admin / Auditor Access
+
+<ApiEndpoint method="POST" path="/api/v1/disclosure/requests" description="Create a new disclosure request" />
+
+```json
+{
+  "target_user_id": "user-123",
+  "scope": {
+    "addresses": ["0xa32c..."],
+    "disclosure_level": "pseudonymous",
+    "date_range": {
+      "start": "2024-01-01T00:00:00Z",
+      "end": "2024-12-31T23:59:59Z"
+    }
+  },
+  "reason": "Annual audit",
+  "legal_basis": "GDPR Art. 6(1)(c)"
+}
+```
+
+<ApiEndpoint method="GET" path="/api/v1/admin/disclosure/requests" description="List all disclosure requests (admin only). Supports status and target_user_id filters." />
+
+<ApiEndpoint method="POST" path="/api/v1/admin/disclosure/grants/{id}/revoke" description="Revoke an active grant (admin only)" />
+
+<ApiEndpoint method="DELETE" path="/api/v1/admin/disclosure/requests/{id}" description="Delete a pending request (admin only)" />
+
+### Explorer Integration
+
+When a user views disclosed data in the block explorer:
+
+<ApiEndpoint method="GET" path="/api/v1/explorer/viewable-addresses?did=did:iden3:..." description="Get addresses visible to the authenticated user" />
+
+Response includes own addresses and disclosed addresses with their disclosure level:
+
+```json
+{
+  "viewer_did": "did:iden3:...",
+  "own_addresses": [
+    { "address": "0xabc..." }
+  ],
+  "disclosed_addresses": [
+    {
+      "address": "Address-KDCM",
+      "address_id": "c311e533...",
+      "owner_did": "did:iden3:...",
+      "disclosure_level": "pseudonymous",
+      "grant_id": "265991a8-...",
+      "expires_at": "2024-07-16T09:00:00Z"
+    }
+  ]
+}
+```
+
+<ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}" description="View address details via grant (uses opaque address_id)" />
+
+<ApiEndpoint method="GET" path="/api/v1/explorer/grant/{grant_id}/{address_id}/transactions" description="Get pseudonymized transactions for a disclosed address" />
+
+## Security Model
+
+### Address Protection
+
+For **pseudonymous** and **redacted** disclosures:
+
+1. **Real addresses are never sent to the frontend.** The backend resolves `address_id` to the real address internally. Only pseudonyms or `[REDACTED]` are returned to clients.
+2. **Transaction hashes are hidden.** This prevents lookup on other block explorers to find real addresses. Only block numbers, timestamps, and values are shown.
+3. **Consistent pseudonyms within a grant.** The same address always gets the same pseudonym (e.g., `Address-KDCM`). External addresses get pseudonyms like `External-7E56`. This allows pattern analysis without revealing identity.
+
+### Opaque Address IDs
+
+To prevent address correlation, the system uses opaque `address_id` values:
+
+```
+address_id = SHA256(lowercase(address) + ":" + grant_id)[:16]
+```
+
+This ensures:
+
+- Same address has different IDs across different grants
+- Cannot reverse-engineer the real address from the ID
+- Routes are secure: `/grant/{grant_id}/{address_id}`
+
+### Fail-Safe Defaults
+
+- Unknown disclosure levels default to **redacted**
+- Missing viewer identity returns no disclosed addresses
+- Expired or revoked grants return **403 Forbidden**
+
+## Audit Trail
+
+Every access to disclosed data is logged:
+
+```json
+{
+  "grant_id": "grant-789",
+  "action": "view_transactions",
+  "resource_type": "transactions",
+  "viewer_ip": "192.168.1.100",
+  "accessed_at": "2024-06-20T14:30:00Z",
+  "data_summary": {
+    "record_count": 47,
+    "date_range": {
+      "start": "2024-01-01",
+      "end": "2024-06-20"
+    }
+  }
+}
+```
+
+## Report Types
+
+The system supports generating compliance reports:
+
+| Report Type | Description |
+|-------------|-------------|
+| `activity_summary` | Aggregated activity statistics |
+| `sanctions_check` | Check for interactions with sanctioned addresses |
+| `compliance_report` | Full compliance audit report |
+
+## Configuration
+
+<EnvTable vars={[
+  { name: "DISCLOSURE_REQUEST_TTL", default: "7d", description: "How long pending requests remain valid" },
+  { name: "DISCLOSURE_GRANT_MAX_TTL", default: "365d", description: "Maximum grant duration" },
+  { name: "DISCLOSURE_AUDIT_RETENTION", default: "7y", description: "How long to retain audit logs" },
+]} />
+
+## Best Practices
+
+1. **Always specify a reason and legal basis** for disclosure requests.
+2. **Use the minimum disclosure level needed** -- prefer pseudonymous over full.
+3. **Set appropriate expiration dates** -- do not request indefinite access.
+4. **Review the audit trail** regularly for compliance.
+5. **Revoke grants promptly** when access is no longer needed.
