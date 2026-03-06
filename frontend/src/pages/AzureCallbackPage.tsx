@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,8 +13,13 @@ export function AzureCallbackPage() {
   const [searchParams] = useSearchParams();
   const { login } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const exchangeStarted = useRef(false);
 
   useEffect(() => {
+    // Guard against React StrictMode double-mount consuming the state token twice
+    if (exchangeStarted.current) return;
+    exchangeStarted.current = true;
+
     const code = searchParams.get('code');
     const state = searchParams.get('state');
     const errorParam = searchParams.get('error');
