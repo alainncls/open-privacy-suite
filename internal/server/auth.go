@@ -512,6 +512,10 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 			// Log error but continue - auth can proceed without RBAC user creation
 			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
 		} else if user != nil {
+			if user.Banned {
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return nil, fmt.Errorf("account is banned")
+			}
 			kyc = user.KYC
 		}
 	}

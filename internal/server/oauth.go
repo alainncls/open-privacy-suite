@@ -492,6 +492,10 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	if s.rbacAccessCtrl != nil {
 		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err == nil && user != nil {
+			if user.Banned {
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return
+			}
 			kyc = user.KYC
 		}
 	}

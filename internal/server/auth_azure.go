@@ -227,6 +227,10 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "auto-provisioning is disabled for your tenant and no existing account was found"})
 				return
 			}
+			if existing.Banned {
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return
+			}
 			kyc = existing.KYC
 			// Backfill auth_tenant_id if missing (user may predate this field)
 			if existing.AuthTenantID == nil {
@@ -247,6 +251,10 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				return
 			}
 			if user != nil {
+				if user.Banned {
+					c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+					return
+				}
 				kyc = user.KYC
 
 				// Set auth_tenant_id on user (immutable after first assignment)
