@@ -99,29 +99,32 @@ test.describe('Authentication Flow', () => {
     expect(authenticated).toBe(true);
   });
 
-  // Note: Admin routes are not auth-protected in the frontend.
-  // Admin API security is enforced at the backend via localhost restrictions.
-  test.skip('unauthenticated user is redirected to login', async ({ page }) => {
+  test('unauthenticated user is redirected to login', async ({ page }) => {
+    await clearAuth(page);
+
     // Try to access admin without auth
     await page.goto('/admin/dashboard');
 
     // Should be redirected to login page
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/login/, { timeout: 15000 });
   });
 
-  // Note: Admin routes are not auth-protected in the frontend.
-  test.skip('clearing auth redirects back to login', async ({ page }) => {
+  test('clearing auth redirects back to login', async ({ page }) => {
     // First, authenticate
     await mockLoginViaAPI(page);
     await page.goto('/admin/dashboard');
-    await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
+
+    // Wait for either admin app or access denied (depends on whether user has admin claim)
+    await expect(
+      page.locator(`${selectors.admin.app}, :text("Access Denied")`)
+    ).toBeVisible({ timeout: 15000 });
 
     // Clear auth and reload
     await clearAuth(page);
     await page.reload();
 
     // Should be redirected to login
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/login/, { timeout: 15000 });
   });
 
   test('login page has proper accessibility structure', async ({ page }) => {

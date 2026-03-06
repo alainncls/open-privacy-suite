@@ -317,3 +317,92 @@ func TestAdminStatus_Unauthenticated(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: expired membership & banned user
+// ---------------------------------------------------------------------------
+
+func TestAdminAuth_JWT_ExpiredMembershipDenied(t *testing.T) {
+	srv, router := setupAdminAuthTestServer(t, "my-secret-token")
+	ctx := t.Context()
+
+	// Create user with admin claim but expired membership.
+	org := &rbac.Organization{
+		ID:   uuid.New().String(),
+		Slug: "exp-org-" + uuid.New().String()[:8],
+		Name: "Expired Org",
+	}
+	require.NoError(t, srv.db.CreateOrganization(ctx, org))
+
+	group := &rbac.Group{
+		ID:    uuid.New().String(),
+		OrgID: org.ID,
+		Slug:  "exp-group-" + uuid.New().String()[:8],
+		Name:  "Expired Group",
+		Path:  "expired-group",
+	}
+	require.NoError(t, srv.db.CreateGroup(ctx, group))
+
+	access := &rbac.GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        group.ID,
+		AllowedMethods: []string{"eth_call"},
+		Claims:         []rbac.Claim{rbac.ClaimAdmin},
+	}
+	require.NoError(t, srv.db.CreateGroupAccess(ctx, access))
+
+	userDID := "did:test:expired-" + uuid.New().String()[:8]
+	user := &rbac.User{
+		ID:         uuid.New().String(),
+		ExternalID: userDID,
+		KYC:        true,
+	}
+	require.NoError(t, srv.db.CreateUser(ctx, user))
+
+	pastTime := time.Now().Add(-1 * time.Hour)
+	membership := &rbac.UserMembership{
+		ID:        uuid.New().String(),
+		UserID:    user.ID,
+		GroupID:   group.ID,
+		Source:    rbac.MembershipSourceAdmin,
+		ExpiresAt: &pastTime,
+	}
+	require.NoError(t, srv.db.CreateMembership(ctx, membership))
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/status", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "insufficient permissions")
+}
+
+func TestAdminAuth_JWT_BannedUserDenied(t *testing.T) {
+	srv, router := setupAdminAuthTestServer(t, "my-secret-token")
+	ctx := t.Context()
+
+	// Create user with admin claim but banned.
+	userDID := createTestUserWithClaims(t, srv, []rbac.Claim{rbac.ClaimAdmin})
+
+	// Ban the user.
+	user, err := srv.db.GetUserByExternalID(ctx, userDID)
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	user.Banned = true
+	require.NoError(t, srv.db.UpdateUser(ctx, user))
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/status", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "banned")
+}
