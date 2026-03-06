@@ -241,6 +241,35 @@ access and their Discord for developer API access.
 
 ---
 
+## Admin Authentication
+
+Admin API endpoints (`/api/v1/admin/*`) use a separate authentication layer from the user auth flow described above. The admin middleware accepts two credential types:
+
+### X-Admin-Token (M2M / Bootstrap)
+
+For machine-to-machine access and initial setup. Set via the `ADMIN_API_TOKEN` environment variable and passed in the `X-Admin-Token` request header.
+
+```bash
+curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  http://localhost:8080/api/v1/admin/orgs
+```
+
+### JWT with Admin Claim (Browser-Based)
+
+For admin dashboard access. Users authenticate normally (Privado ID or Azure AD), then the middleware checks whether the user has the `admin` RBAC claim via any of their group memberships. The check filters out expired memberships.
+
+To grant admin access to a user:
+
+1. Create an organization and group via the admin API (using X-Admin-Token)
+2. Set the `admin` claim on the group's access configuration
+3. Add the user as a member of that group
+
+The frontend checks admin status via `GET /api/v1/me/admin-status` (returns `{ "is_admin": true/false }`). Non-admin users see an "Access Denied" page; unauthenticated users are redirected to login.
+
+See [docs/admin-auth-bootstrap.md](https://github.com/gateway-fm/privacy-proxy/blob/main/docs/admin-auth-bootstrap.md) for a step-by-step bootstrap guide.
+
+---
+
 ## Error Reference
 
 ### Authentication Errors
