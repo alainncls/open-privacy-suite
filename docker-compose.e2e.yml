@@ -61,6 +61,7 @@ services:
       - ALLOW_MOCK_LOGIN=true
       - ENABLE_RUNTIME_TRACING=true
       - ENABLE_TRAVEL_RULE=true
+      - ADMIN_API_TOKEN=e2e-test-admin-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,6 +115,7 @@ services:
       - FRONTEND_URL=http://proxy-frontend:5173
       - CI=${CI:-false}
       - ENABLE_RUNTIME_TRACING=true
+      - ADMIN_API_TOKEN=e2e-test-admin-token
     depends_on:
       proxy-backend:
         condition: service_healthy

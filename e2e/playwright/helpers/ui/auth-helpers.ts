@@ -2,6 +2,7 @@ import { Page, expect } from '@playwright/test';
 import { selectors } from './selectors';
 
 const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+const ADMIN_TOKEN = process.env.ADMIN_API_TOKEN || 'e2e-test-admin-token';
 
 interface AuthTokens {
   accessToken: string;
@@ -40,14 +41,28 @@ export async function mockLoginViaUI(page: Page): Promise<void> {
  * Perform mock login via direct API calls and inject tokens into localStorage.
  * This is faster than UI-based login and useful for setting up authenticated state.
  *
+ * By default, grants admin claim so the user can access admin routes.
+ * Pass { admin: false } to create a non-admin user.
+ *
  * @param page - Playwright page object
  * @param userDID - Optional DID for the mock user (defaults to a generated DID)
+ * @param options - Options for login behavior
  */
-export async function mockLoginViaAPI(page: Page, userDID?: string): Promise<void> {
+export async function mockLoginViaAPI(
+  page: Page,
+  userDID?: string,
+  options: { admin?: boolean } = {},
+): Promise<void> {
+  const { admin = true } = options;
   const did = userDID || `did:privado:dev_${Date.now()}`;
 
-  // Get tokens via API
+  // Get tokens via API (also creates the user in the DB)
   const tokens = await getAuthTokens(did);
+
+  // Grant admin claim if needed
+  if (admin) {
+    await ensureAdminClaim(did);
+  }
 
   // Set up localStorage with auth tokens before navigating
   await page.addInitScript((authData) => {
@@ -147,7 +162,7 @@ export async function navigateToAdminAuthenticated(
   page: Page,
   path: string = '/admin/dashboard'
 ): Promise<void> {
-  // First, inject auth tokens via API
+  // First, inject auth tokens via API (with admin claim)
   await mockLoginViaAPI(page);
 
   // Now navigate to the admin page
@@ -155,4 +170,122 @@ export async function navigateToAdminAuthenticated(
 
   // Wait for admin app to be visible
   await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+const adminHeaders = {
+  'Content-Type': 'application/json',
+  'X-Admin-Token': ADMIN_TOKEN,
+};
+
+// Cache: we reuse a single "e2e admin" group across all test users to avoid
+// creating hundreds of orgs/groups. Created lazily on first call.
+let adminGroupCache: { orgId: string; groupId: string } | null = null;
+
+/**
+ * Ensure a shared "e2e admin" org+group exists with the admin claim.
+ * Returns { orgId, groupId }.
+ */
+async function getOrCreateAdminGroup(): Promise<{ orgId: string; groupId: string }> {
+  if (adminGroupCache) return adminGroupCache;
+
+  // Try to find existing org by slug
+  const orgsRes = await fetch(`${ADMIN_URL}/api/v1/admin/orgs?limit=1000`, {
+    headers: adminHeaders,
+  });
+  if (!orgsRes.ok) throw new Error(`Failed to list orgs: ${orgsRes.status}`);
+  const orgs = ((await orgsRes.json()) as { data: { id: string; slug: string }[] }).data ?? [];
+  const existing = orgs.find((o) => o.slug === 'e2e-admin-org');
+
+  if (existing) {
+    // Find the admin group within this org
+    const groupsRes = await fetch(`${ADMIN_URL}/api/v1/admin/orgs/${existing.id}/groups`, {
+      headers: adminHeaders,
+    });
+    if (!groupsRes.ok) throw new Error(`Failed to list groups: ${groupsRes.status}`);
+    const groups = ((await groupsRes.json()) as { data: { group: { id: string; slug: string } }[] }).data ?? [];
+    const adminGroup = groups.find((g) => g.group.slug === 'e2e-admin-group');
+    if (adminGroup) {
+      adminGroupCache = { orgId: existing.id, groupId: adminGroup.group.id };
+      return adminGroupCache;
+    }
+  }
+
+  // Create org
+  const orgRes = await fetch(`${ADMIN_URL}/api/v1/admin/orgs`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ slug: 'e2e-admin-org', name: 'E2E Admin Org' }),
+  });
+  if (!orgRes.ok && orgRes.status !== 409) {
+    throw new Error(`Failed to create admin org: ${orgRes.status} - ${await orgRes.text()}`);
+  }
+  // Re-fetch to get the ID (handles both create and 409 conflict)
+  const orgsRes2 = await fetch(`${ADMIN_URL}/api/v1/admin/orgs?limit=1000`, {
+    headers: adminHeaders,
+  });
+  const orgs2 = ((await orgsRes2.json()) as { data: { id: string; slug: string }[] }).data ?? [];
+  const org = orgs2.find((o) => o.slug === 'e2e-admin-org');
+  if (!org) throw new Error('Failed to find e2e-admin-org after creation');
+
+  // Create group
+  const groupRes = await fetch(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ slug: 'e2e-admin-group', name: 'E2E Admin Group' }),
+  });
+  if (!groupRes.ok && groupRes.status !== 409) {
+    throw new Error(`Failed to create admin group: ${groupRes.status} - ${await groupRes.text()}`);
+  }
+
+  // Get group ID
+  const groupsRes2 = await fetch(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+    headers: adminHeaders,
+  });
+  const groups2 = ((await groupsRes2.json()) as { data: { group: { id: string; slug: string } }[] }).data ?? [];
+  const group = groups2.find((g) => g.group.slug === 'e2e-admin-group');
+  if (!group) throw new Error('Failed to find e2e-admin-group after creation');
+
+  // Set admin claim on the group
+  await fetch(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups/${group.group.id}/access`, {
+    method: 'PUT',
+    headers: adminHeaders,
+    body: JSON.stringify({
+      allowed_methods: ['*'],
+      claims: ['admin'],
+    }),
+  });
+
+  adminGroupCache = { orgId: org.id, groupId: group.group.id };
+  return adminGroupCache;
+}
+
+/**
+ * Grant the admin claim to a user by adding them to the shared e2e admin group.
+ * Idempotent — safe to call multiple times for the same user.
+ */
+async function ensureAdminClaim(userDID: string): Promise<void> {
+  const { groupId } = await getOrCreateAdminGroup();
+
+  // Find the user by external ID
+  const usersRes = await fetch(`${ADMIN_URL}/api/v1/admin/users?limit=1000`, {
+    headers: adminHeaders,
+  });
+  if (!usersRes.ok) throw new Error(`Failed to list users: ${usersRes.status}`);
+  const users = ((await usersRes.json()) as { data: { id: string; external_id: string }[] }).data ?? [];
+  const user = users.find((u) => u.external_id === userDID);
+  if (!user) throw new Error(`User not found for DID: ${userDID}`);
+
+  // Add membership (ignore 409 conflict = already a member)
+  const memberRes = await fetch(`${ADMIN_URL}/api/v1/admin/users/${user.id}/memberships`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ group_id: groupId }),
+  });
+  if (!memberRes.ok && memberRes.status !== 409) {
+    throw new Error(`Failed to add admin membership: ${memberRes.status} - ${await memberRes.text()}`);
+  }
 }

@@ -31,6 +31,7 @@ export default defineConfig({
         baseURL: PROXY_URL,
         extraHTTPHeaders: {
           'Content-Type': 'application/json',
+          'X-Admin-Token': process.env.ADMIN_API_TOKEN || 'e2e-test-admin-token',
         },
       },
     },
