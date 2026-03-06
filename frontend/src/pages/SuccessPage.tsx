@@ -26,6 +26,18 @@ export function SuccessPage() {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
+  // Show nothing while auth state is being restored (prevents "token expired" flash)
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-100">
+        <div className="flex items-center gap-2 text-neutral-500">
+          <Shield className="h-5 w-5 animate-pulse text-primary" />
+          <span className="text-sm">Loading…</span>
+        </div>
+      </div>
+    );
+  }
+
   // Load linked addresses
   useEffect(() => {
     if (!accessToken) return;
