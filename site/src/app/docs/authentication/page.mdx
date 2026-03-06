@@ -264,6 +264,10 @@ To grant admin access to a user:
 2. Set the `admin` claim on the group's access configuration
 3. Add the user as a member of that group
 
+<Callout variant="info" title="Dev mode shortcut">
+  In development builds, mock-login users are automatically granted the `admin` claim on first login. No manual RBAC setup is needed — click the flask icon and access the admin dashboard immediately.
+</Callout>
+
 The frontend checks admin status via `GET /api/v1/me/admin-status` (returns `{ "is_admin": true/false }`). Non-admin users see an "Access Denied" page; unauthenticated users are redirected to login.
 
 See [docs/admin-auth-bootstrap.md](https://github.com/gateway-fm/privacy-proxy/blob/main/docs/admin-auth-bootstrap.md) for a step-by-step bootstrap guide.

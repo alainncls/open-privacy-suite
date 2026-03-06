@@ -1,0 +1,121 @@
+//go:build mockauth
+
+package server
+
+import (
+	"context"
+	"log"
+	"sync"
+
+	"privacy-proxy/internal/rbac"
+
+	"github.com/google/uuid"
+)
+
+// devAdminProvisioner lazily creates a "dev-admin" org+group with the admin
+// claim and adds mock-login users to it. This gives mock users immediate admin
+// dashboard access without manual RBAC setup.
+//
+// Safety: the entire file is gated behind the "mockauth" build tag, which is
+// excluded from production Docker builds. Additionally, the provisioning is
+// guarded by AllowMockLogin at runtime.
+type devAdminProvisioner struct {
+	mu      sync.Mutex
+	groupID string // cached after first successful setup
+}
+
+var devAdmin devAdminProvisioner
+
+// ensureMockUserIsAdmin grants the admin claim to a mock-login user.
+// It lazily creates the dev-admin org+group on first call, then adds the user
+// as a member (idempotent — skips if already a member).
+func (s *Server) ensureMockUserIsAdmin(ctx context.Context, userID string) {
+	if !s.config.AllowMockLogin || s.rbacAccessCtrl == nil {
+		return
+	}
+
+	store := s.rbacAccessCtrl.Store()
+
+	devAdmin.mu.Lock()
+	defer devAdmin.mu.Unlock()
+
+	// Lazy-init: create org + group + access if not yet done
+	if devAdmin.groupID == "" {
+		groupID, err := bootstrapDevAdminGroup(ctx, store)
+		if err != nil {
+			log.Printf("Warning: failed to bootstrap dev-admin group: %v", err)
+			return
+		}
+		devAdmin.groupID = groupID
+	}
+
+	// Check if user already has membership
+	existing, _ := store.GetMembershipByUserAndGroup(ctx, userID, devAdmin.groupID)
+	if existing != nil {
+		return
+	}
+
+	membership := &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  userID,
+		GroupID: devAdmin.groupID,
+		Source:  rbac.MembershipSourceAdmin,
+	}
+	if err := store.CreateMembership(ctx, membership); err != nil {
+		log.Printf("Warning: failed to add mock user %s to dev-admin group: %v", userID, err)
+	}
+}
+
+func bootstrapDevAdminGroup(ctx context.Context, store rbac.Store) (string, error) {
+	const orgSlug = "dev-admin-org"
+	const groupSlug = "dev-admin-group"
+
+	// Find or create org
+	org, err := store.GetOrganizationBySlug(ctx, orgSlug)
+	if err != nil {
+		return "", err
+	}
+	if org == nil {
+		org = &rbac.Organization{
+			ID:   uuid.New().String(),
+			Slug: orgSlug,
+			Name: "Dev Admin Org (auto-created)",
+		}
+		if err := store.CreateOrganization(ctx, org); err != nil {
+			return "", err
+		}
+	}
+
+	// Find or create group
+	group, err := store.GetGroupBySlug(ctx, org.ID, groupSlug)
+	if err != nil {
+		return "", err
+	}
+	if group == nil {
+		group = &rbac.Group{
+			ID:    uuid.New().String(),
+			OrgID: org.ID,
+			Slug:  groupSlug,
+			Name:  "Dev Admin Group (auto-created)",
+		}
+		if err := store.CreateGroup(ctx, group); err != nil {
+			return "", err
+		}
+	}
+
+	// Ensure admin claim on the group
+	access, _ := store.GetGroupAccess(ctx, group.ID)
+	if access == nil {
+		access = &rbac.GroupAccess{
+			ID:             uuid.New().String(),
+			GroupID:        group.ID,
+			AllowedMethods: []string{"*"},
+			Claims:         []rbac.Claim{rbac.ClaimAdmin},
+		}
+		if err := store.CreateGroupAccess(ctx, access); err != nil {
+			return "", err
+		}
+	}
+
+	return group.ID, nil
+}

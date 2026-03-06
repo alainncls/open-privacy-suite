@@ -460,9 +460,13 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	var zkClaims *auth.ZKRoleClaims
 
 	// Support mock tokens for testing - only in non-production builds
+	isMockLogin := false
 	userDID, err = s.tryMockLogin(c, jwzToken)
 	if err != nil {
 		return nil, err
+	}
+	if userDID != "" {
+		isMockLogin = true
 	}
 
 	if userDID == "" {
@@ -518,6 +522,11 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 			}
 			kyc = user.KYC
 		}
+	}
+
+	// Auto-grant admin claim to mock-login users (dev builds only, no-op in prod)
+	if isMockLogin && user != nil {
+		s.ensureMockUserIsAdmin(c.Request.Context(), user.ID)
 	}
 
 	// Process ZK role claims if available and user exists

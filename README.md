@@ -12,7 +12,7 @@ make run
 open http://localhost:5173
 ```
 
-In development mode, click the flask icon on the login page for instant mock authentication.
+In development mode, click the flask icon on the login page for instant mock authentication. Mock users are automatically granted admin access.
 
 ## Architecture
 
