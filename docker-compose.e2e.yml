@@ -80,6 +80,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: dev
     # No port mapping - only playwright container needs access
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
