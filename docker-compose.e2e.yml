@@ -76,28 +76,27 @@ services:
       retries: 3
       start_period: 15s
 
-  # Frontend dev server for UI testing
+  # Frontend (production build with nginx + API proxy to backend)
   proxy-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: dev
+      target: e2e
+      args:
+        - VITE_ALLOW_MOCK_LOGIN=true
+        - VITE_BACKEND_URL=http://proxy-backend:8080
     # No port mapping - only playwright container needs access
-    environment:
-      - VITE_API_TARGET=http://proxy-backend:8080
-      - VITE_BACKEND_URL=http://proxy-backend:8080
-      - VITE_ALLOW_MOCK_LOGIN=true
     depends_on:
       proxy-backend:
         condition: service_healthy
     networks:
       - e2e-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:5173 || exit 1"]
-      interval: 10s
-      timeout: 10s
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:80 || exit 1"]
+      interval: 5s
+      timeout: 5s
       retries: 12
-      start_period: 60s
+      start_period: 30s
 
   # Playwright test runner
   playwright:
@@ -112,7 +111,7 @@ services:
     environment:
       - PROXY_URL=http://proxy-backend:8080
       - ADMIN_URL=http://proxy-backend:8080
-      - FRONTEND_URL=http://proxy-frontend:5173
+      - FRONTEND_URL=http://proxy-frontend:80
       - CI=${CI:-false}
       - ENABLE_RUNTIME_TRACING=true
       - ADMIN_API_TOKEN=e2e-test-admin-token
