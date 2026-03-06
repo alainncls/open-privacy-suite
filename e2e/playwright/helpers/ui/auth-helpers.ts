@@ -64,8 +64,11 @@ export async function mockLoginViaAPI(
     await ensureAdminClaim(did);
   }
 
-  // Set up localStorage with auth tokens before navigating
+  // Set up localStorage with auth tokens before navigating.
+  // The init script checks for a "cleared" flag so that clearAuth() can
+  // prevent re-injection on subsequent page loads/reloads.
   await page.addInitScript((authData) => {
+    if (localStorage.getItem('privacy_proxy_auth_cleared')) return;
     const storageKey = 'privacy_proxy_auth';
     const auth = {
       accessToken: authData.accessToken,
@@ -148,6 +151,8 @@ export async function isAuthenticated(page: Page): Promise<boolean> {
 export async function clearAuth(page: Page): Promise<void> {
   await page.evaluate(() => {
     localStorage.removeItem('privacy_proxy_auth');
+    // Set flag so that addInitScript won't re-inject tokens on reload
+    localStorage.setItem('privacy_proxy_auth_cleared', '1');
   });
 }
 

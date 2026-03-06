@@ -87,8 +87,10 @@ func (d *DB) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.
 	return user, nil
 }
 
+// UpdateUser updates mutable user fields. auth_tenant_id is deliberately
+// excluded — use SetAuthTenantID to set it once (immutable after first write).
 func (d *DB) UpdateUser(ctx context.Context, user *rbac.User) error {
-	query := `UPDATE users SET kyc = $2, banned = $3, note = $4, metadata = $5, auth_tenant_id = $6, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE users SET kyc = $2, banned = $3, note = $4, metadata = $5, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	metadata, err := json.Marshal(user.Metadata)
@@ -96,8 +98,24 @@ func (d *DB) UpdateUser(ctx context.Context, user *rbac.User) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	_, err = d.conn.ExecContext(ctx, query, user.ID, user.KYC, user.Banned, user.Note, metadata, user.AuthTenantID)
+	_, err = d.conn.ExecContext(ctx, query, user.ID, user.KYC, user.Banned, user.Note, metadata)
 	return err
+}
+
+// SetAuthTenantID pins a user to an Azure AD tenant. The update only succeeds
+// when auth_tenant_id is currently NULL, enforcing immutability at the DB level.
+// Returns true if the value was set, false if it was already set (no-op).
+func (d *DB) SetAuthTenantID(ctx context.Context, userID string, tenantID string) (bool, error) {
+	result, err := d.conn.ExecContext(ctx,
+		`UPDATE users SET auth_tenant_id = $2, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND auth_tenant_id IS NULL`,
+		userID, tenantID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to set auth_tenant_id: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
 }
 
 func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, error) {

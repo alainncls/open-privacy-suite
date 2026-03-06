@@ -27,8 +27,10 @@ function getStoredAdminToken(): string {
 }
 
 export function getAdminToken(): string {
-  const envToken = (import.meta.env.VITE_ADMIN_API_TOKEN as string | undefined)?.trim();
-  return envToken || getStoredAdminToken();
+  // SECURITY: Admin tokens are read only from browser storage (localStorage /
+  // sessionStorage), never from environment variables. Vite env vars are baked
+  // into the JS bundle at build time and would be visible to every visitor.
+  return getStoredAdminToken();
 }
 
 /** Read the user's JWT access token from AuthContext's localStorage entry. */

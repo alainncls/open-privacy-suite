@@ -18,10 +18,10 @@ FROM node:20-alpine AS builder-prod
 
 WORKDIR /app
 
-# Accept VITE_* env vars as build args (baked into static JS at build time)
+# Accept VITE_* env vars as build args (baked into static JS at build time).
+# SECURITY: Never pass secrets here — everything becomes part of the JS bundle.
 ARG VITE_ALLOW_MOCK_LOGIN=false
 ARG VITE_BACKEND_URL=
-ARG VITE_ADMIN_API_TOKEN=
 
 COPY package.json package-lock.json* ./
 RUN npm install --ignore-scripts && npm rebuild esbuild

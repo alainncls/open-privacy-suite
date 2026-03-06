@@ -22,16 +22,18 @@ test.describe('Admin Auth API', () => {
   });
 
   test('wrong X-Admin-Token returns 401', async ({ playwright }) => {
-    const ctx = await playwright.request.newContext();
-    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`, {
-      headers: { 'X-Admin-Token': 'wrong-token-value' },
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: { 'X-Admin-Token': 'wrong-token-value' },
     });
+    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`);
     expect(response.status()).toBe(401);
     await ctx.dispose();
   });
 
   test('no auth returns 401', async ({ playwright }) => {
-    const ctx = await playwright.request.newContext();
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: {},
+    });
     const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`);
     expect(response.status()).toBe(401);
     await ctx.dispose();
@@ -61,10 +63,10 @@ test.describe('Admin Auth API', () => {
     await rbac.createMembership(user!.id, { group_id: group.id });
 
     // Use fresh context with only JWT (no X-Admin-Token)
-    const ctx = await playwright.request.newContext();
-    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
     });
+    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`);
     expect(response.status()).toBe(200);
     await ctx.dispose();
 
@@ -92,10 +94,10 @@ test.describe('Admin Auth API', () => {
     await rbac.createMembership(user!.id, { group_id: group.id });
 
     // Use fresh context with only JWT (no X-Admin-Token)
-    const ctx = await playwright.request.newContext();
-    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
     });
+    const response = await ctx.get(`${PROXY_URL}/api/v1/admin/orgs`);
     expect(response.status()).toBe(403);
     await ctx.dispose();
 
@@ -133,10 +135,10 @@ test.describe('Admin Auth API', () => {
     expect(user).not.toBeNull();
     await rbac.createMembership(user!.id, { group_id: group.id });
 
-    const ctx = await playwright.request.newContext();
-    const response = await ctx.get(`${PROXY_URL}/api/v1/me/admin-status`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
     });
+    const response = await ctx.get(`${PROXY_URL}/api/v1/me/admin-status`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.is_admin).toBe(true);
@@ -149,10 +151,10 @@ test.describe('Admin Auth API', () => {
     const userDID = `did:test:nonadminstatus_${Date.now()}`;
     const token = await getJWTToken(request, userDID);
 
-    const ctx = await playwright.request.newContext();
-    const response = await ctx.get(`${PROXY_URL}/api/v1/me/admin-status`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const ctx = await playwright.request.newContext({
+      extraHTTPHeaders: { Authorization: `Bearer ${token}` },
     });
+    const response = await ctx.get(`${PROXY_URL}/api/v1/me/admin-status`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.is_admin).toBe(false);

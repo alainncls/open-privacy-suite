@@ -35,13 +35,12 @@ describe('adminClient header selection', () => {
     vi.unstubAllEnvs();
   });
 
-  it('attaches X-Admin-Token from env when available', async () => {
+  it('does NOT read admin token from env vars (security: would leak into JS bundle)', async () => {
     vi.stubEnv('VITE_ADMIN_API_TOKEN', 'env-token-123');
 
-    // Dynamic import to pick up env stub
     const mod = await import('../adminClient');
-    // Force re-evaluation by calling getAdminToken directly
-    expect(mod.getAdminToken()).toBe('env-token-123');
+    // Env var must be ignored — only browser storage is safe
+    expect(mod.getAdminToken()).toBe('');
   });
 
   it('attaches X-Admin-Token from localStorage', async () => {

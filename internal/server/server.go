@@ -345,6 +345,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		cfg.RetentionAccessLogs, cfg.RetentionComplianceLogs, cfg.RetentionRBACAuditLogs,
 		cfg.RetentionTravelRecords, cfg.RetentionCleanupInterval)
 
+	// Security: warn loudly if admin API has no token configured.
+	// Without a token, admin endpoints are open to the entire private network.
+	if cfg.AdminAPIToken == "" {
+		log.Printf("WARNING: ADMIN_API_TOKEN is not set. Admin API is unprotected — any request from the private network will be accepted without authentication. Set ADMIN_API_TOKEN for production deployments.")
+	}
+
 	return s, nil
 }
 
