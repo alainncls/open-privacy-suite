@@ -232,10 +232,12 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				return
 			}
 			kyc = existing.KYC
-			// Backfill auth_tenant_id if missing (user may predate this field)
+			// Pin auth_tenant_id if not yet set (immutable after first write).
 			if existing.AuthTenantID == nil {
+				if _, err := s.db.SetAuthTenantID(c.Request.Context(), existing.ID, identity.TenantID); err != nil {
+					log.Printf("Warning: failed to set auth_tenant_id for user %s: %v", subject, err)
+				}
 				existing.AuthTenantID = &identity.TenantID
-				_ = s.db.UpdateUser(c.Request.Context(), existing)
 			} else if *existing.AuthTenantID != identity.TenantID {
 				log.Printf("Warning: user %s has auth_tenant_id=%s but logged in from tenant %s", subject, *existing.AuthTenantID, identity.TenantID)
 				c.JSON(http.StatusForbidden, gin.H{"error": "account is associated with a different Azure AD tenant"})
@@ -257,10 +259,12 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				}
 				kyc = user.KYC
 
-				// Set auth_tenant_id on user (immutable after first assignment)
+				// Pin auth_tenant_id if not yet set (immutable after first write).
 				if user.AuthTenantID == nil {
+					if _, err := s.db.SetAuthTenantID(c.Request.Context(), user.ID, identity.TenantID); err != nil {
+						log.Printf("Warning: failed to set auth_tenant_id for user %s: %v", subject, err)
+					}
 					user.AuthTenantID = &identity.TenantID
-					_ = s.db.UpdateUser(c.Request.Context(), user)
 				} else if *user.AuthTenantID != identity.TenantID {
 					log.Printf("Warning: user %s has auth_tenant_id=%s but logged in from tenant %s", subject, *user.AuthTenantID, identity.TenantID)
 					c.JSON(http.StatusForbidden, gin.H{"error": "account is associated with a different Azure AD tenant"})

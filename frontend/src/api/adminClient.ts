@@ -7,6 +7,9 @@ const ADMIN_TOKEN_STORAGE_KEYS = [
   'admin_api_token',
 ] as const;
 
+/** Storage key used by AuthContext to persist the user's JWT session. */
+const AUTH_STORAGE_KEY = 'privacy_proxy_auth';
+
 function getStoredAdminToken(): string {
   for (const key of ADMIN_TOKEN_STORAGE_KEYS) {
     const localValue = window.localStorage.getItem(key)?.trim();
@@ -24,25 +27,54 @@ function getStoredAdminToken(): string {
 }
 
 export function getAdminToken(): string {
-  const envToken = (import.meta.env.VITE_ADMIN_API_TOKEN as string | undefined)?.trim();
-  return envToken || getStoredAdminToken();
+  // SECURITY: Admin tokens are read only from browser storage (localStorage /
+  // sessionStorage), never from environment variables. Vite env vars are baked
+  // into the JS bundle at build time and would be visible to every visitor.
+  return getStoredAdminToken();
+}
+
+/** Read the user's JWT access token from AuthContext's localStorage entry. */
+function getStoredAccessToken(): string {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return '';
+    const parsed = JSON.parse(raw) as { accessToken?: string; expiresAt?: number };
+    // Only use the token if it has not expired (with 1 minute buffer).
+    if (parsed.accessToken && parsed.expiresAt && parsed.expiresAt > Date.now() + 60_000) {
+      return parsed.accessToken;
+    }
+  } catch {
+    // Ignore parse errors.
+  }
+  return '';
 }
 
 function applyAdminHeaders(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
-  const token = getAdminToken();
-  if (!token) {
-    return config;
-  }
-
   const headers = config.headers instanceof AxiosHeaders
     ? config.headers
     : new AxiosHeaders(config.headers);
 
-  if (!headers.has('X-Admin-Token') && !headers.has('Authorization')) {
-    headers.set('X-Admin-Token', token);
+  // Already has auth headers — don't override.
+  if (headers.has('X-Admin-Token') || headers.has('Authorization')) {
+    config.headers = headers;
+    return config;
   }
-  config.headers = headers;
 
+  // Prefer X-Admin-Token (M2M / bootstrap).
+  const adminToken = getAdminToken();
+  if (adminToken) {
+    headers.set('X-Admin-Token', adminToken);
+    config.headers = headers;
+    return config;
+  }
+
+  // Fall back to user's JWT (browser-based admin access).
+  const accessToken = getStoredAccessToken();
+  if (accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
+  config.headers = headers;
   return config;
 }
 

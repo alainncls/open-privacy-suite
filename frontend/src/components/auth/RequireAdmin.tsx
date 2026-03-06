@@ -1,0 +1,95 @@
+import { ReactNode, useEffect, useState } from 'react';
+import { Loader2, ShieldAlert } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+
+interface RequireAdminProps {
+  children: ReactNode;
+}
+
+type AdminCheckState = 'loading' | 'admin' | 'denied' | 'error';
+
+export function RequireAdmin({ children }: RequireAdminProps) {
+  const { accessToken, isLoading: authLoading } = useAuth();
+  const [state, setState] = useState<AdminCheckState>('loading');
+
+  useEffect(() => {
+    // Wait for AuthProvider to finish restoring session from localStorage.
+    if (authLoading) return;
+
+    if (!accessToken) {
+      setState('denied');
+      return;
+    }
+
+    let cancelled = false;
+
+    async function checkAdminStatus() {
+      try {
+        const response = await fetch('/api/v1/me/admin-status', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (cancelled) return;
+
+        if (!response.ok) {
+          setState('error');
+          return;
+        }
+
+        const data = await response.json();
+        setState(data.is_admin ? 'admin' : 'denied');
+      } catch {
+        if (!cancelled) {
+          setState('error');
+        }
+      }
+    }
+
+    checkAdminStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, authLoading]);
+
+  if (state === 'loading') {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center" role="status" aria-live="polite">
+        <div className="flex items-center gap-2 text-neutral-500">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span className="text-sm">Checking admin privileges...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'denied') {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="mx-auto max-w-md rounded-lg border border-red-200 bg-red-50 p-8 text-center">
+          <ShieldAlert className="mx-auto mb-4 h-12 w-12 text-red-500" />
+          <h2 className="mb-2 text-xl font-semibold text-red-900">Access Denied</h2>
+          <p className="text-sm text-red-700">
+            You don't have admin privileges. Contact your organization administrator.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="mx-auto max-w-md rounded-lg border border-amber-200 bg-amber-50 p-8 text-center">
+          <ShieldAlert className="mx-auto mb-4 h-12 w-12 text-amber-500" />
+          <h2 className="mb-2 text-xl font-semibold text-amber-900">Unable to verify admin status</h2>
+          <p className="text-sm text-amber-700">
+            An error occurred while checking your permissions. Please try again later.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}

@@ -22,6 +22,7 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
 | `JWT_SECRET` | Secret for signing access tokens |
 | `JWT_REFRESH_SECRET` | Secret for signing refresh tokens |
 | `VERIFIER_ID` | Your Privado verifier DID |
+| `ADMIN_API_TOKEN` | Shared token for admin API authentication (M2M / bootstrap) |
 | `DATABASE_URL` | PostgreSQL connection string |
 
 ---
@@ -46,7 +47,12 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
   { name: "JWT_SECRET", default: "(auto in dev)", description: "Access token signing secret" },
   { name: "JWT_REFRESH_SECRET", default: "(auto in dev)", description: "Refresh token signing secret" },
   { name: "VERIFIER_ID", default: "(required in prod)", description: "Privado verifier DID" },
+  { name: "ADMIN_API_TOKEN", default: "(required in prod)", description: "Shared token for admin API access via X-Admin-Token header" },
 ]} />
+
+<Callout variant="danger" title="Never expose ADMIN_API_TOKEN to the frontend">
+  Do not pass `ADMIN_API_TOKEN` as a Vite build arg or environment variable to the frontend. Vite bakes `VITE_*` vars into the static JS bundle, making them visible to every browser visitor. For browser-based admin access, use JWT authentication (login grants admin claim via RBAC). For bootstrap, use `curl` with `X-Admin-Token` directly against the backend API.
+</Callout>
 
 ---
 
@@ -122,6 +128,7 @@ Exceeding either limit returns HTTP 429 Too Many Requests.
 - JWT secrets required (server will not start without them)
 - `REQUIRE_PROOF_OF_HUMANITY` defaults to `true`
 - `VERIFIER_ID` required
+- `ADMIN_API_TOKEN` required (server will not start without it)
 
 <Callout variant="warning" title="Development-only features">
   Mock tokens and the `/auth/verify` endpoint are disabled in production mode. Do not rely on them for integration testing against a production deployment.
@@ -219,6 +226,9 @@ REQUIRE_PROOF_OF_HUMANITY=true
 
 # Runtime Tracing (recommended for production)
 ENABLE_RUNTIME_TRACING=true
+
+# Admin API
+ADMIN_API_TOKEN=your-admin-token-here
 
 # Public URL
 BASE_URL=https://your-domain.com

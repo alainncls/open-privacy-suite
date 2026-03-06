@@ -90,7 +90,9 @@ services:
       - VITE_API_TARGET=http://proxy-backend:8080
       - VITE_BACKEND_URL=http://localhost:${BACKEND_HOST_PORT:-8080}
       - VITE_ALLOW_MOCK_LOGIN=true
-      - VITE_ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
+      # SECURITY: Do NOT pass ADMIN_API_TOKEN to the frontend — it would be
+      # visible in the browser. Use JWT-based admin auth or paste the token
+      # into the browser console / localStorage for bootstrap only.
     depends_on:
       proxy-backend:
         condition: service_started

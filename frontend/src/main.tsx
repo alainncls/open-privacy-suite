@@ -32,6 +32,7 @@ import SanctionsList from './components/compliance/SanctionsList';
 import ComplianceLogList from './components/compliance/ComplianceLogList';
 import AddressThresholdList from './components/compliance/AddressThresholdList';
 import { RequireAuth } from './components/auth/RequireAuth';
+import { RequireAdmin } from './components/auth/RequireAdmin';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -65,7 +66,9 @@ function Root() {
                   path="/admin"
                   element={(
                     <RequireAuth>
-                      <AdminApp />
+                      <RequireAdmin>
+                        <AdminApp />
+                      </RequireAdmin>
                     </RequireAuth>
                   )}
                 >

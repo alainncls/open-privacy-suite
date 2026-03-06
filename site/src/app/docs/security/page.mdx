@@ -222,18 +222,44 @@ graph TD
 
 ## Admin API Protection
 
-Admin endpoints (`/api/v1/admin/*`, `/api/admin/*`) are protected by two independent layers:
+Admin endpoints (`/api/v1/admin/*`, `/api/admin/*`) are protected by three independent layers:
 
-1. **Localhost-only middleware** -- requests must originate from `127.0.0.1` or Docker bridge network (`172.16.0.0/12`). Guards against external callers.
-2. **`ADMIN_API_TOKEN`** -- when configured, every admin request must supply the token via the `X-Admin-Token` header. Guards against SSRF, misconfigured reverse proxies, and other processes sharing the localhost network.
+1. **Localhost-only middleware** -- requests must originate from private networks (`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`). Guards against external callers. Uses the raw TCP peer address, not `X-Forwarded-For`.
+2. **`X-Admin-Token` header** -- M2M / bootstrap authentication. Timing-safe comparison via `crypto/subtle.ConstantTimeCompare`. Required in production.
+3. **JWT with admin claim** -- browser-based admin access. The middleware validates the JWT, looks up the user, checks ban status, then queries `HasAdminClaim()` which joins `user_memberships → group_access` and filters expired memberships.
+
+The middleware tries these in order: X-Admin-Token first, then JWT Bearer token. If neither is present and `ADMIN_API_TOKEN` is unset (dev mode only), requests pass through.
 
 <Callout variant="warning" title="Why both layers?">
-  The localhost check is the first gate but can be bypassed by a misconfigured reverse proxy that forwards external traffic on localhost, an SSRF vulnerability, or another container on the same Docker network. The token is the backstop when the network gate fails.
+  The localhost check is the first gate but can be bypassed by a misconfigured reverse proxy that forwards external traffic on localhost, an SSRF vulnerability, or another container on the same Docker network. The token/JWT is the backstop when the network gate fails.
 </Callout>
 
 <Callout variant="danger" title="Production requirement">
-  Set `ADMIN_API_TOKEN` to a strong random secret (32+ characters). The `X-Admin-Token` header is the only accepted mechanism -- `Authorization: Bearer` is intentionally **not** accepted here to avoid confusion with user JWT tokens.
+  Set `ADMIN_API_TOKEN` to a strong random secret (32+ characters). Never pass this token to the frontend as a `VITE_*` environment variable -- Vite bakes env vars into the JS bundle, exposing them to every visitor. For browser-based admin access, users authenticate via Privado ID or Azure AD and receive a JWT with an admin RBAC claim.
 </Callout>
+
+### Frontend Admin Gate
+
+The admin dashboard (`/admin/*`) is protected client-side by two nested components:
+
+1. **`RequireAuth`** -- redirects unauthenticated users to `/login`
+2. **`RequireAdmin`** -- calls `/api/v1/me/admin-status` to verify the user has the admin claim server-side. Non-admin users see an "Access Denied" page.
+
+The frontend gate is a UX convenience. The actual security boundary is the backend `adminAuthMiddleware` -- admin API calls without valid credentials are rejected regardless of what the frontend shows.
+
+### Nginx Security Headers
+
+The production and E2E nginx configs include:
+
+- `X-Frame-Options: DENY` -- prevents clickjacking
+- `X-Content-Type-Options: nosniff` -- prevents MIME-type sniffing
+- `Content-Security-Policy` -- restricts script/style/connect sources to same origin
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy` -- disables camera, microphone, geolocation, payment
+
+### Azure AD Tenant Pinning
+
+When a user first authenticates via Azure AD, their `auth_tenant_id` is set in the database. This field is **immutable after first assignment** -- enforced at the SQL level (`UPDATE ... WHERE auth_tenant_id IS NULL`). If a user later attempts to log in from a different Azure AD tenant, the request is rejected with HTTP 403. When an Azure AD tenant is deleted from the allowlist, all users bound to that tenant are automatically banned and their refresh tokens revoked.
 
 ### Trusted Proxies
 

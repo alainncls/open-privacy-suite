@@ -345,6 +345,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		cfg.RetentionAccessLogs, cfg.RetentionComplianceLogs, cfg.RetentionRBACAuditLogs,
 		cfg.RetentionTravelRecords, cfg.RetentionCleanupInterval)
 
+	// Security: warn loudly if admin API has no token configured.
+	// Without a token, admin endpoints are open to the entire private network.
+	if cfg.AdminAPIToken == "" {
+		log.Printf("WARNING: ADMIN_API_TOKEN is not set. Admin API is unprotected — any request from the private network will be accepted without authentication. Set ADMIN_API_TOKEN for production deployments.")
+	}
+
 	return s, nil
 }
 
@@ -672,27 +678,104 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-// adminAuthMiddleware enforces shared-token authentication for admin APIs.
-// If no admin token is configured, the middleware is a no-op and localhost/network
-// controls remain the only gate.
+// adminAuthMiddleware enforces authentication for admin APIs.
+// Accepts EITHER:
+//   - X-Admin-Token header (M2M / bootstrap / scripts)
+//   - Authorization: Bearer <JWT> where the user has the "admin" RBAC claim
+//
+// If no admin token is configured AND no JWT is provided, the middleware is a
+// no-op (dev mode) — localhost/network controls remain the only gate.
 func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 	expectedToken := strings.TrimSpace(s.config.AdminAPIToken)
-	if expectedToken == "" {
-		return func(c *gin.Context) { c.Next() }
-	}
 
 	return func(c *gin.Context) {
-		// Only accept X-Admin-Token. Authorization: Bearer is intentionally NOT
-		// accepted — no JWT today carries an admin claim, and accepting arbitrary
-		// Bearer values would create a confusing auth surface.
-		provided := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
-		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) != 1 {
+		// --- Path 1: X-Admin-Token (M2M / bootstrap) ---
+		if provided := strings.TrimSpace(c.GetHeader("X-Admin-Token")); provided != "" {
+			if expectedToken != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1 {
+				c.Set("auth_method", "admin_token")
+				c.Next()
+				return
+			}
+			// Token provided but wrong — reject immediately.
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing X-Admin-Token"})
 			c.Abort()
 			return
 		}
 
-		c.Next()
+		// --- Path 2: JWT Bearer with admin claim ---
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString := parts[1]
+
+				// Validate the JWT (reuses the same logic as JWTAuthMiddleware).
+				claims, err := s.jwtService.ValidateAccessToken(tokenString)
+				if err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+					c.Abort()
+					return
+				}
+
+				// Check revocation.
+				if s.db != nil {
+					tokenID := auth.HashToken(tokenString)
+					revoked, revErr := s.db.IsAccessTokenRevoked(c.Request.Context(), tokenID)
+					if revErr != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check token revocation"})
+						c.Abort()
+						return
+					}
+					if revoked {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
+						c.Abort()
+						return
+					}
+				}
+
+				// Look up user by external ID (DID / subject).
+				user, err := s.db.GetUserByExternalID(c.Request.Context(), claims.Subject)
+				if err != nil || user == nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+					c.Abort()
+					return
+				}
+
+				if user.Banned {
+					c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+					c.Abort()
+					return
+				}
+
+				// Check if any of the user's groups grant the admin claim.
+				isAdmin, err := s.db.HasAdminClaim(c.Request.Context(), user.ID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check admin claim"})
+					c.Abort()
+					return
+				}
+				if !isAdmin {
+					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: admin claim required"})
+					c.Abort()
+					return
+				}
+
+				c.Set("auth_method", "jwt_admin")
+				c.Set("admin_subject", claims.Subject)
+				c.Next()
+				return
+			}
+		}
+
+		// --- Path 3: No credentials supplied ---
+		if expectedToken == "" {
+			// Dev mode: no token configured, allow through (existing no-op behaviour).
+			c.Next()
+			return
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "admin authentication required"})
+		c.Abort()
 	}
 }
 
@@ -1019,7 +1102,32 @@ func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
 	me.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
 	{
 		me.GET("/orgs", s.getMyOrganizations)
+		me.GET("/admin-status", s.getMyAdminStatus)
 	}
+}
+
+// getMyAdminStatus returns whether the authenticated user has admin privileges.
+func (s *Server) getMyAdminStatus(c *gin.Context) {
+	subject, exists := c.Get("subject")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing subject in context"})
+		return
+	}
+
+	user, err := s.db.GetUserByExternalID(c.Request.Context(), subject.(string))
+	if err != nil || user == nil {
+		// User not in DB yet — not an admin.
+		c.JSON(http.StatusOK, gin.H{"is_admin": false})
+		return
+	}
+
+	isAdmin, err := s.db.HasAdminClaim(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check admin status"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"is_admin": isAdmin})
 }
 
 // UserOrgResponse represents an organization the user belongs to.
