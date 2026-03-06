@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { LoginPage } from '../LoginPage';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { authApiMethods } from '@/api/auth';
 import {
   mockTokenResponse,
   setSessionCompleted,
@@ -36,7 +37,7 @@ describe('LoginPage', () => {
 
       expect(screen.getByText('Privacy Proxy')).toBeInTheDocument();
       expect(
-        screen.getByText('Authenticate with Privado ID')
+        screen.getByText('Sign In')
       ).toBeInTheDocument();
     });
 
@@ -315,6 +316,110 @@ describe('LoginPage', () => {
           expect(button).toBeVisible();
         });
       });
+    });
+  });
+
+  describe('Azure AD Provider', () => {
+    it('should show Azure tab when azuread provider is available', async () => {
+      server.use(
+        http.get('/api/v1/auth/providers', () => {
+          return HttpResponse.json({ providers: ['privado', 'azuread'] });
+        })
+      );
+
+      renderLoginPage();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('tab-azuread')).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId('tab-privado')).toBeInTheDocument();
+      expect(screen.getByText('Microsoft')).toBeInTheDocument();
+    });
+
+    it('should hide Azure tab when only privado provider is available', async () => {
+      server.use(
+        http.get('/api/v1/auth/providers', () => {
+          return HttpResponse.json({ providers: ['privado'] });
+        })
+      );
+
+      renderLoginPage();
+
+      // Wait for the QR code to appear (providers loaded)
+      await waitFor(() => {
+        expect(screen.getByText('Scan with your Privado ID wallet')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('tab-azuread')).not.toBeInTheDocument();
+    });
+
+    it('should call getAzureAuthURL and redirect on Azure button click', async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get('/api/v1/auth/providers', () => {
+          return HttpResponse.json({ providers: ['privado', 'azuread'] });
+        }),
+        http.get('/api/v1/auth/azure/url', ({ request }) => {
+          const url = new URL(request.url);
+          const redirectUri = url.searchParams.get('redirect_uri');
+          return HttpResponse.json({
+            url: `https://login.microsoftonline.com/authorize?redirect_uri=${redirectUri}`,
+            state: 'mock-state',
+          });
+        })
+      );
+
+      // Spy on getAzureAuthURL
+      const getAzureAuthURLSpy = vi.spyOn(authApiMethods, 'getAzureAuthURL');
+
+      // Mock window.location.href setter to capture the redirect
+      const originalLocation = window.location;
+      const locationMock = {
+        ...originalLocation,
+        href: originalLocation.href,
+        origin: originalLocation.origin,
+      };
+      Object.defineProperty(window, 'location', {
+        value: locationMock,
+        writable: true,
+        configurable: true,
+      });
+
+      renderLoginPage();
+
+      // Wait for Azure tab to appear and click it
+      await waitFor(() => {
+        expect(screen.getByTestId('tab-azuread')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('tab-azuread'));
+
+      // Wait for Azure sign-in section
+      await waitFor(() => {
+        expect(screen.getByTestId('azure-signin-btn')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('azure-signin-btn'));
+
+      await waitFor(() => {
+        expect(getAzureAuthURLSpy).toHaveBeenCalledWith(
+          expect.stringContaining('/auth/azure/callback')
+        );
+      });
+
+      await waitFor(() => {
+        expect(window.location.href).toContain('https://login.microsoftonline.com/authorize');
+      });
+
+      // Restore
+      Object.defineProperty(window, 'location', {
+        value: originalLocation,
+        writable: true,
+        configurable: true,
+      });
+      getAzureAuthURLSpy.mockRestore();
     });
   });
 });

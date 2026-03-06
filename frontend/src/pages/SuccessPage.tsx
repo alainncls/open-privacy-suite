@@ -107,6 +107,18 @@ export function SuccessPage() {
     }
   };
 
+  // Show nothing while auth state is being restored (prevents stale-state flash)
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-100">
+        <div className="flex items-center gap-2 text-neutral-500">
+          <Shield className="h-5 w-5 animate-pulse text-primary" />
+          <span className="text-sm">Loading…</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-100 p-4" data-testid="success-page">
       <div className="w-full max-w-lg animate-fade-in-up">
@@ -263,7 +275,9 @@ export function SuccessPage() {
                   <Shield className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-neutral-900">Privado ID</p>
+                  <p className="text-sm font-medium text-neutral-900">
+                    {userDID?.startsWith('azuread:') ? 'Microsoft Entra ID' : 'Privado ID'}
+                  </p>
                   <p className="truncate font-mono text-xs text-neutral-400" title={userDID || 'Connected'}>
                     {userDID || 'Connected'}
                   </p>

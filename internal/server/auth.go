@@ -330,7 +330,7 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 		mockDID := fmt.Sprintf("did:privado:demo_%d", time.Now().UnixNano())
 		kyc := false
 		if s.rbacAccessCtrl != nil {
-			if user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), mockDID, kyc); err == nil && user != nil {
+			if user, err := s.rbacAccessCtrl.EnsureUserExists(context.Background(), mockDID, kyc, false); err == nil && user != nil {
 				kyc = user.KYC
 			}
 		}
@@ -507,11 +507,15 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	var user *rbac.User
 	if s.rbacAccessCtrl != nil {
 		var err error
-		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc)
+		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err != nil {
 			// Log error but continue - auth can proceed without RBAC user creation
 			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
 		} else if user != nil {
+			if user.Banned {
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return nil, fmt.Errorf("account is banned")
+			}
 			kyc = user.KYC
 		}
 	}
@@ -644,11 +648,17 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		return
 	}
 
-	// Get user KYC status from RBAC
+	// Get user status from RBAC — block refresh if banned
 	kyc := false
 	if s.rbacAccessCtrl != nil {
-		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), claims.Subject, false)
+		user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), claims.Subject, false, false)
 		if err == nil && user != nil {
+			if user.Banned {
+				// Revoke the token and reject
+				_ = s.db.RevokeRefreshToken(c.Request.Context(), tokenHash)
+				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
+				return
+			}
 			kyc = user.KYC
 		}
 	}

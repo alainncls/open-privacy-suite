@@ -1682,7 +1682,9 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 // This is used during authentication to ensure users are in the RBAC system.
 // The kyc parameter is only used for NEW users; existing users retain their KYC status
 // (KYC status should be managed via admin API, not overwritten during auth).
-func (c *AccessController) EnsureUserExists(ctx context.Context, externalID string, kyc bool) (*User, error) {
+// If skipDefaultGroup is true, the user is NOT added to the default group on creation
+// (used when a specific group will be assigned by the caller, e.g. Azure AD tenant config).
+func (c *AccessController) EnsureUserExists(ctx context.Context, externalID string, kyc bool, skipDefaultGroup bool) (*User, error) {
 	user, err := c.store.GetUserByExternalID(ctx, externalID)
 	if err != nil {
 		return nil, err
@@ -1707,17 +1709,19 @@ func (c *AccessController) EnsureUserExists(ctx context.Context, externalID stri
 		return nil, err
 	}
 
-	// Add user to default group
-	membership := &UserMembership{
-		ID:      uuid.New().String(),
-		UserID:  user.ID,
-		GroupID: DefaultGroupID,
-		Source:  MembershipSourceAdmin,
-	}
+	// Add user to default group unless caller will assign a specific group
+	if !skipDefaultGroup {
+		membership := &UserMembership{
+			ID:      uuid.New().String(),
+			UserID:  user.ID,
+			GroupID: DefaultGroupID,
+			Source:  MembershipSourceAdmin,
+		}
 
-	if err := c.store.CreateMembership(ctx, membership); err != nil {
-		// Log but don't fail - user is created
-		log.Printf("Warning: failed to add user %s to default group: %v", user.ID, err)
+		if err := c.store.CreateMembership(ctx, membership); err != nil {
+			// Log but don't fail - user is created
+			log.Printf("Warning: failed to add user %s to default group: %v", user.ID, err)
+		}
 	}
 
 	// Audit log

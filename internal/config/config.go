@@ -68,6 +68,11 @@ type Config struct {
 
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
+
+	// Azure AD / Microsoft Entra ID authentication
+	AzureADClientID     string // AZURE_AD_CLIENT_ID
+	AzureADClientSecret string // AZURE_AD_CLIENT_SECRET
+	AzureADTenantID     string // AZURE_AD_TENANT_ID (default: "common" for multi-tenant)
 }
 
 func Load() *Config {
@@ -239,6 +244,9 @@ func Load() *Config {
 		SIEMFallbackLogPath:        getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		TunnelURLFile:              getEnv("TUNNEL_URL_FILE", ""),
 		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
+		AzureADClientID:            getEnv("AZURE_AD_CLIENT_ID", ""),
+		AzureADClientSecret:        getEnv("AZURE_AD_CLIENT_SECRET", ""),
+		AzureADTenantID:            getEnv("AZURE_AD_TENANT_ID", "common"),
 	}
 }
 
@@ -261,6 +269,12 @@ func getSliceEnv(key, sep string) []string {
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production"
+}
+
+// AzureADEnabled returns true if Azure AD authentication is configured.
+// Requires all three: client ID, client secret, and tenant ID.
+func (c *Config) AzureADEnabled() bool {
+	return c.AzureADClientID != "" && c.AzureADClientSecret != "" && c.AzureADTenantID != ""
 }
 
 // Validate checks that required configuration is present.

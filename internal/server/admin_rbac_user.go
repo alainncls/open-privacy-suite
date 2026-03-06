@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -99,6 +100,16 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 
 	// Invalidate cache for this user
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), user.ID)
+
+	// If user was just banned, revoke all their refresh tokens for immediate session termination
+	if input.Banned != nil && *input.Banned {
+		revoked, revokeErr := s.db.RevokeRefreshTokensBySubject(c.Request.Context(), user.ExternalID)
+		if revokeErr != nil {
+			log.Printf("Warning: failed to revoke refresh tokens for banned user %s: %v", user.ExternalID, revokeErr)
+		} else if revoked > 0 {
+			log.Printf("Revoked %d refresh token(s) for banned user %s", revoked, user.ExternalID)
+		}
+	}
 
 	c.JSON(http.StatusOK, user)
 }

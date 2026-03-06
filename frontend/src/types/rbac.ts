@@ -362,6 +362,34 @@ export function getClaimForMethod(method: string): 'read' | 'write' | null {
   return null;
 }
 
+// Azure AD Tenant Allowlist
+export interface AllowedAzureTenant {
+  id: string;
+  tenant_id: string;
+  label: string;
+  default_org_id?: string | null;
+  default_group_id?: string | null;
+  auto_provision: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAzureTenantInput {
+  tenant_id: string;
+  label?: string;
+  default_org_id?: string | null;
+  default_group_id?: string | null;
+  auto_provision?: boolean;
+}
+
+export interface UpdateAzureTenantInput {
+  tenant_id?: string;
+  label?: string;
+  default_org_id?: string | null;
+  default_group_id?: string | null;
+  auto_provision?: boolean;
+}
+
 // Preregistered Address - for CREATE3 address pre-registration
 export interface PreregisteredAddress {
   id: string;

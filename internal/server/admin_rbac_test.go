@@ -62,6 +62,7 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	conn.ExecContext(ctx, "DELETE FROM preregistered_addresses")
 	conn.ExecContext(ctx, "DELETE FROM user_memberships")
 	conn.ExecContext(ctx, "DELETE FROM group_access")
+	conn.ExecContext(ctx, "DELETE FROM allowed_azure_tenants")
 	conn.ExecContext(ctx, "DELETE FROM groups")
 	conn.ExecContext(ctx, "DELETE FROM users")
 	conn.ExecContext(ctx, "DELETE FROM organizations")
@@ -642,6 +643,99 @@ func TestUserAPI(t *testing.T) {
 
 		assert.Equal(t, true, response["banned"])
 	})
+}
+
+func TestBanUserRevokesRefreshTokens(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	// Create a user with a refresh token
+	user := &rbac.User{
+		ID:         uuid.New().String(),
+		ExternalID: "did:test:ban-revoke",
+		Metadata:   map[string]any{},
+	}
+	err := server.db.CreateUser(context.Background(), user)
+	require.NoError(t, err)
+
+	// Save a refresh token for the user
+	tokenHash := auth.HashToken("test-refresh-token")
+	err = server.db.SaveRefreshToken(context.Background(), tokenHash, user.ExternalID, time.Now().Add(24*time.Hour))
+	require.NoError(t, err)
+
+	// Verify token exists and is not revoked
+	stored, err := server.db.GetRefreshToken(context.Background(), tokenHash)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.False(t, stored.Revoked)
+
+	// Ban the user via API
+	body, _ := json.Marshal(map[string]any{"banned": true})
+	req := httptest.NewRequest(http.MethodPut, "/api/users/"+user.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify refresh token was revoked
+	stored, err = server.db.GetRefreshToken(context.Background(), tokenHash)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.True(t, stored.Revoked, "refresh token should be revoked after banning user")
+}
+
+func TestDeleteAzureTenantBansUsersAndRevokesTokens(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	tenantID := uuid.New().String()
+
+	// Create tenant in allowlist
+	body, _ := json.Marshal(map[string]any{
+		"tenant_id":      tenantID,
+		"label":          "Test Tenant",
+		"auto_provision": true,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/azure-tenants", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var tenantResp db.AllowedAzureTenant
+	err := json.Unmarshal(w.Body.Bytes(), &tenantResp)
+	require.NoError(t, err)
+
+	// Create a user belonging to this tenant
+	user := &rbac.User{
+		ID:           uuid.New().String(),
+		ExternalID:   "azuread:" + uuid.New().String(),
+		AuthTenantID: &tenantID,
+		Metadata:     map[string]any{},
+	}
+	err = server.db.CreateUser(context.Background(), user)
+	require.NoError(t, err)
+
+	// Save a refresh token for the user
+	tokenHash := auth.HashToken("tenant-user-token")
+	err = server.db.SaveRefreshToken(context.Background(), tokenHash, user.ExternalID, time.Now().Add(24*time.Hour))
+	require.NoError(t, err)
+
+	// Delete the tenant
+	req = httptest.NewRequest(http.MethodDelete, "/api/azure-tenants/"+tenantResp.ID, nil)
+	w = httptest.NewRecorder()
+	server.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify user was banned
+	updatedUser, err := server.db.GetUser(context.Background(), user.ID)
+	require.NoError(t, err)
+	assert.True(t, updatedUser.Banned, "user should be banned after tenant deletion")
+	assert.Equal(t, "Azure AD tenant removed", updatedUser.Note)
+
+	// Verify refresh token was revoked
+	stored, err := server.db.GetRefreshToken(context.Background(), tokenHash)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.True(t, stored.Revoked, "refresh token should be revoked after tenant deletion")
 }
 
 func TestMembershipAPI(t *testing.T) {

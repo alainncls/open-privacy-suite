@@ -31,7 +31,7 @@ import (
 // TTL constants for various components
 const (
 	// JWT token TTLs
-	AccessTokenTTL  = 30 * time.Minute
+	AccessTokenTTL  = 5 * time.Minute
 	RefreshTokenTTL = 7 * 24 * time.Hour
 
 	// Cache and store TTLs
@@ -73,6 +73,8 @@ type Server struct {
 	runtimeTracer     *tracer.RuntimeTracer
 	retentionCleaner  *audit.RetentionCleaner
 	siemForwarder     *audit.SIEMForwarder
+	azureAuthenticator *auth.AzureADAuthenticator
+	azureStateStore    *AzureStateStore
 }
 
 // DB returns the database instance (for testing)
@@ -112,6 +114,9 @@ func (s *Server) Stop() {
 	}
 	if s.retentionCleaner != nil {
 		s.retentionCleaner.Stop()
+	}
+	if s.azureStateStore != nil {
+		s.azureStateStore.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -217,6 +222,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		}
 	}
 
+	// Initialize Azure AD authenticator (optional — only when credentials are configured)
+	var azureAuthenticator *auth.AzureADAuthenticator
+	var azureStateStore *AzureStateStore
+	if cfg.AzureADEnabled() {
+		azureAuthenticator, err = auth.NewAzureADAuthenticator(cfg.AzureADClientID, cfg.AzureADClientSecret, cfg.AzureADTenantID)
+		if err != nil {
+			// Log warning but don't fail — Azure AD is optional
+			fmt.Printf("Warning: failed to initialize Azure AD authenticator: %v\n", err)
+		} else {
+			azureStateStore = NewAzureStateStore(AzureStateTTL, AzureStateCleanupInterval)
+			fmt.Printf("Azure AD authentication enabled (tenant: %s)\n", cfg.AzureADTenantID)
+		}
+	}
+
 	// Initialize ZK role extractor for extracting role claims from Privado proofs
 	zkRoleExtractor := auth.NewZKRoleExtractor(database)
 
@@ -243,21 +262,23 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	s := &Server{
-		db:                database,
-		rbacAccessCtrl:    rbacAccessCtrl,
-		proxy:             proxySvc,
-		privadoVerifier:   privadoVerifier,
-		jwtService:        jwtService,
-		sessionStore:      sessionStore,
-		oauthSessionStore: oauthSessionStore,
-		challengeStore:    challengeStore,
-		rateLimiter:       rateLimiter,
-		authRateLimiter:   authRateLimiter,
-		disclosureService: disclosureService,
-		config:            cfg,
-		ensResolver:       ensResolver,
-		zkRoleExtractor:   zkRoleExtractor,
-		runtimeTracer:     runtimeTracer,
+		db:                 database,
+		rbacAccessCtrl:     rbacAccessCtrl,
+		proxy:              proxySvc,
+		privadoVerifier:    privadoVerifier,
+		jwtService:         jwtService,
+		sessionStore:       sessionStore,
+		oauthSessionStore:  oauthSessionStore,
+		challengeStore:     challengeStore,
+		rateLimiter:        rateLimiter,
+		authRateLimiter:    authRateLimiter,
+		disclosureService:  disclosureService,
+		config:             cfg,
+		ensResolver:        ensResolver,
+		zkRoleExtractor:    zkRoleExtractor,
+		runtimeTracer:      runtimeTracer,
+		azureAuthenticator: azureAuthenticator,
+		azureStateStore:    azureStateStore,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
@@ -406,6 +427,12 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/api/refresh", authRL, deprecation, s.handleRefresh)
 	router.POST("/api/revoke", authRL, deprecation, s.handleRevoke)
 	router.POST("/api/introspect", authRL, deprecation, s.handleIntrospect)
+
+	// Azure AD / Microsoft Entra ID authentication endpoints
+	// Always registered; handlers return 404 when Azure AD is not configured.
+	router.GET("/api/v1/auth/azure/url", authRL, s.handleAzureAuthURL)
+	router.POST("/api/v1/auth/azure/callback", authRL, s.handleAzureCallback)
+	router.GET("/api/v1/auth/providers", s.handleAuthProviders)
 
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {

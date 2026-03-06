@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/iden3/iden3comm/v2/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,7 +222,7 @@ func TestHandleAuthCallback_Success(t *testing.T) {
 	assert.NotEmpty(t, response.AccessToken)
 	assert.NotEmpty(t, response.RefreshToken)
 	assert.Equal(t, "Bearer", response.TokenType)
-	assert.Equal(t, 1800, response.ExpiresIn)
+	assert.Equal(t, int(AccessTokenTTL.Seconds()), response.ExpiresIn)
 }
 
 func TestHandleAuthCallback_VerificationFailure(t *testing.T) {
@@ -451,6 +452,57 @@ func TestHandleRefresh_RevokedToken(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandleRefresh_BannedUser(t *testing.T) {
+	srv, jwtService := setupTestServerForAuth(t)
+	defer srv.db.Close()
+
+	// Create a user and issue a refresh token
+	subject := "did:privado:banned-user"
+	user := &rbac.User{
+		ID:         uuid.New().String(),
+		ExternalID: subject,
+		Metadata:   map[string]any{},
+	}
+	err := srv.db.CreateUser(context.Background(), user)
+	require.NoError(t, err)
+
+	refreshToken, err := jwtService.IssueRefreshToken(subject)
+	require.NoError(t, err)
+
+	tokenHash := auth.HashToken(refreshToken)
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	err = srv.db.SaveRefreshToken(context.Background(), tokenHash, subject, expiresAt)
+	require.NoError(t, err)
+
+	// Ban the user
+	user.Banned = true
+	err = srv.db.UpdateUser(context.Background(), user)
+	require.NoError(t, err)
+
+	// Attempt to refresh — should be rejected
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/refresh", srv.handleRefresh)
+
+	reqBody, _ := json.Marshal(map[string]any{"refresh_token": refreshToken})
+	req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	var response map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.Equal(t, "account is banned", response["error"])
+
+	// Verify the refresh token was also revoked in DB
+	stored, err := srv.db.GetRefreshToken(context.Background(), tokenHash)
+	require.NoError(t, err)
+	assert.True(t, stored.Revoked, "refresh token should be revoked for banned user")
 }
 
 func TestHandleRevoke_Success(t *testing.T) {

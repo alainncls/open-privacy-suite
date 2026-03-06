@@ -264,8 +264,8 @@ func (t *Tx) DeleteMembershipsByGroup(ctx context.Context, groupID string) error
 // User operations on transaction
 
 func (t *Tx) CreateUser(ctx context.Context, user *rbac.User) error {
-	query := `INSERT INTO users (id, external_id, kyc, banned, note, metadata)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+	query := `INSERT INTO users (id, external_id, kyc, banned, note, metadata, auth_tenant_id)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
 	metadata, err := json.Marshal(user.Metadata)
@@ -274,12 +274,12 @@ func (t *Tx) CreateUser(ctx context.Context, user *rbac.User) error {
 	}
 
 	return t.tx.QueryRowContext(ctx, query,
-		user.ID, user.ExternalID, user.KYC, user.Banned, user.Note, metadata,
+		user.ID, user.ExternalID, user.KYC, user.Banned, user.Note, metadata, user.AuthTenantID,
 	).Scan(&user.CreatedAt, &user.UpdatedAt)
 }
 
 func (t *Tx) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.User, error) {
-	query := `SELECT id, external_id, kyc, banned, note, metadata, created_at, updated_at
+	query := `SELECT id, external_id, kyc, banned, note, metadata, auth_tenant_id, created_at, updated_at
 	          FROM users WHERE external_id = $1`
 
 	user := &rbac.User{}
@@ -287,7 +287,7 @@ func (t *Tx) GetUserByExternalID(ctx context.Context, externalID string) (*rbac.
 	var metadata []byte
 
 	err := t.tx.QueryRowContext(ctx, query, externalID).Scan(
-		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata,
+		&user.ID, &user.ExternalID, &user.KYC, &user.Banned, &note, &metadata, &user.AuthTenantID,
 		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {

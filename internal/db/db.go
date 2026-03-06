@@ -395,6 +395,20 @@ func (d *DB) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+// RevokeRefreshTokensBySubject revokes all active refresh tokens for a given subject.
+// Used when banning a user to force immediate session termination.
+func (d *DB) RevokeRefreshTokensBySubject(ctx context.Context, subject string) (int64, error) {
+	query := `UPDATE refresh_tokens
+	          SET revoked = true, revoked_at = CURRENT_TIMESTAMP
+	          WHERE subject = $1 AND revoked = false`
+
+	result, err := d.conn.ExecContext(ctx, query, subject)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // RevokeAccessToken stores a revoked access token (for blacklist checking)
 func (d *DB) RevokeAccessToken(ctx context.Context, tokenID, subject string, expiresAt time.Time) error {
 	query := `INSERT INTO revoked_tokens (token_id, subject, expires_at)
