@@ -1281,3 +1281,178 @@ func TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing(t *testing.T) {
 		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
 	}
 }
+
+// =============================================================================
+// Security tests: PUSH argument bytes must not be misdetected as opcodes
+// =============================================================================
+
+// TestValidateDeployment_CREATE_InPUSH32Args_NotBlocked verifies that 0xf0 (CREATE)
+// bytes inside PUSH32 arguments do not cause a false positive CREATE detection.
+// P0: if this fails, legitimate contracts with 0xf0 in their constants are wrongly blocked.
+func TestValidateDeployment_CREATE_InPUSH32Args_NotBlocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// PUSH32 (0x7f) + 32 bytes of 0xf0 + STOP (0x00)
+	bytecodeHex := "0x7f" + strings.Repeat("f0", 32) + "00"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+	if result.HasCreate {
+		t.Error("HasCreate should be false: 0xf0 bytes are PUSH32 data, not CREATE opcodes")
+	}
+}
+
+// TestValidateDeployment_CREATE2_InPUSH32Args_NotBlocked verifies that 0xf5 (CREATE2)
+// bytes inside PUSH32 arguments do not cause a false positive CREATE2 detection.
+func TestValidateDeployment_CREATE2_InPUSH32Args_NotBlocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// PUSH32 (0x7f) + 32 bytes of 0xf5 + STOP (0x00)
+	bytecodeHex := "0x7f" + strings.Repeat("f5", 32) + "00"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+	if result.HasCreate2 {
+		t.Error("HasCreate2 should be false: 0xf5 bytes are PUSH32 data, not CREATE2 opcodes")
+	}
+}
+
+// TestValidateDeployment_AllZerosBytecode verifies that a bytecode consisting
+// entirely of STOP opcodes (0x00) is allowed to deploy.
+func TestValidateDeployment_AllZerosBytecode(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// 8 STOP opcodes
+	bytecodeHex := "0x0000000000000000"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+}
+
+// TestValidateDeployment_SingleSTOP verifies that a single STOP opcode bytecode
+// is allowed to deploy.
+func TestValidateDeployment_SingleSTOP(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	bytecodeHex := "0x00"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+}
+
+// TestValidateDeployment_SingleCREATE_Blocked verifies that a bare CREATE opcode
+// is correctly detected and blocked.
+func TestValidateDeployment_SingleCREATE_Blocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Single CREATE opcode
+	bytecodeHex := "0xf0"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for bare CREATE opcode")
+	}
+	if !result.HasCreate {
+		t.Error("expected HasCreate to be true")
+	}
+}
+
+// TestValidateDeployment_SingleCREATE2_Blocked verifies that a bare CREATE2 opcode
+// is correctly detected and blocked.
+func TestValidateDeployment_SingleCREATE2_Blocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// Single CREATE2 opcode
+	bytecodeHex := "0xf5"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected deployment to be denied for bare CREATE2 opcode")
+	}
+	if !result.HasCreate2 {
+		t.Error("expected HasCreate2 to be true")
+	}
+}
+
+// TestValidateDeployment_PUSH1_CREATE_AsArg_NotBlocked verifies that 0xf0 (CREATE)
+// appearing as a PUSH1 argument is correctly treated as data, not an opcode.
+// P0 critical case: without proper PUSH argument skipping, this would be a false positive.
+func TestValidateDeployment_PUSH1_CREATE_AsArg_NotBlocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// PUSH1 0xf0 STOP — the 0xf0 is data for PUSH1, not a CREATE opcode
+	bytecodeHex := "0x60f000"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+	if result.HasCreate {
+		t.Error("HasCreate should be false: 0xf0 is PUSH1 data, not a CREATE opcode")
+	}
+}
+
+// TestValidateDeployment_PUSH1_CREATE2_AsArg_NotBlocked verifies that 0xf5 (CREATE2)
+// appearing as a PUSH1 argument is correctly treated as data, not an opcode.
+func TestValidateDeployment_PUSH1_CREATE2_AsArg_NotBlocked(t *testing.T) {
+	store := newDeployValidatorTestStore()
+	validator := NewDeploymentValidator(store)
+
+	// PUSH1 0xf5 STOP — the 0xf5 is data for PUSH1, not a CREATE2 opcode
+	bytecodeHex := "0x60f500"
+
+	result, err := validator.ValidateDeployment(context.Background(), "", bytecodeHex, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed, got denied: %s", result.Reason)
+	}
+	if result.HasCreate2 {
+		t.Error("HasCreate2 should be false: 0xf5 is PUSH1 data, not a CREATE2 opcode")
+	}
+}

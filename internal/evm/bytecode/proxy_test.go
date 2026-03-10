@@ -480,6 +480,56 @@ func TestDetectProxyPattern_PUSH32WithoutSLOAD(t *testing.T) {
 	}
 }
 
+// TestDetectProxyPattern_EIP1167MinimalProxy documents behavior for EIP-1167 minimal
+// proxy contracts. The canonical minimal proxy uses DELEGATECALL to a hardcoded address
+// without SLOAD, so it does NOT match the storage-based proxy detection patterns.
+// This test documents this known limitation.
+func TestDetectProxyPattern_EIP1167MinimalProxy(t *testing.T) {
+	// EIP-1167 canonical minimal proxy bytecode:
+	// 363d3d373d3d3d363d73<20_byte_impl_addr>5af43d82803e903d91602b57fd5bf3
+	implAddr := make([]byte, 20)
+	for i := range implAddr {
+		implAddr[i] = 0xaa
+	}
+
+	minimalProxy := []byte{
+		0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73, // prefix
+	}
+	minimalProxy = append(minimalProxy, implAddr...)
+	minimalProxy = append(minimalProxy,
+		0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d,
+		0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b, 0xf3, // suffix
+	)
+
+	bc, err := Parse(minimalProxy)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	info := DetectProxyPattern(bc)
+
+	// EIP-1167 minimal proxies use DELEGATECALL to a hardcoded address (via PUSH20),
+	// not from a storage slot (no SLOAD). The current proxy detector requires
+	// SLOAD-based patterns (ERC-1967 slots or PUSH32+SLOAD+DELEGATECALL).
+	// Therefore, EIP-1167 is NOT detected as a proxy by the current implementation.
+	//
+	// This is acceptable because:
+	// 1. Minimal proxies are not upgradeable (implementation is hardcoded)
+	// 2. The DELEGATECALL target is a constant address that will be validated
+	//    by the deploy validator's constant address check
+	if info.IsProxy {
+		t.Log("EIP-1167 was detected as a proxy (unexpected but not wrong). " +
+			"ProxyType:", info.ProxyType)
+	} else {
+		t.Log("EIP-1167 minimal proxy NOT detected as a proxy (expected: no SLOAD-based pattern)")
+	}
+
+	// The important thing is that DELEGATECALL IS detected
+	if !bc.HasOpcode(DELEGATECALL) {
+		t.Error("expected DELEGATECALL to be present in minimal proxy bytecode")
+	}
+}
+
 func TestDetectProxyPattern_MultipleSlots(t *testing.T) {
 	// Test bytecode with all three ERC-1967 slots
 	implementationSlot, _ := hex.DecodeString("360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")
