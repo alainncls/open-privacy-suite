@@ -476,6 +476,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		if verifyErr != nil {
 			// Check if this is a humanity verification failure
 			if strings.Contains(verifyErr.Error(), "humanity") || strings.Contains(verifyErr.Error(), "ProofOfHumanity") {
+				s.recordAuthAttempt("privado", "humanity_required")
 				c.JSON(http.StatusForbidden, HumanityVerificationError{
 					Error:     "humanity_verification_required",
 					Message:   "Please complete ProofOfHumanity verification at Billions",
@@ -483,6 +484,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 				})
 				return nil, verifyErr
 			}
+			s.recordAuthAttempt("privado", "error")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "JWZ verification failed: " + verifyErr.Error()})
 			return nil, verifyErr
 		}
@@ -566,6 +568,12 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		// The wallet still gets the tokens directly from the callback response
 		slog.Warn("failed to complete session", "session_id", sessionID, "error", err)
 	}
+
+	provider := "privado"
+	if isMockLogin {
+		provider = "mock"
+	}
+	s.recordAuthAttempt(provider, "success")
 
 	return &AuthResponse{
 		AccessToken:  accessToken,
@@ -700,6 +708,8 @@ func (s *Server) handleRefresh(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save new refresh token: " + err.Error()})
 		return
 	}
+
+	s.recordTokenRefresh("success")
 
 	c.JSON(http.StatusOK, AuthResponse{
 		AccessToken:  accessToken,

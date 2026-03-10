@@ -1,6 +1,6 @@
 # Production Readiness Assessment
 
-Last updated: 2026-03-10 | Branch: `main`
+Last updated: 2026-03-10 | Branch: `feat/prometheus-metrics`
 
 ## Overall Status: Ready for MVP
 
@@ -117,6 +117,7 @@ Logs `WARNING: ADMIN_API_TOKEN is not set...` in dev mode. In production, the se
 | Security headers | Done | CSP, X-Frame-Options, nosniff, Referrer-Policy |
 | Cross-org isolation | Done | Contracts bound to orgs, pre-registration for CREATE |
 | Structured logging | Done | `log/slog` across all files, JSON in production, text in dev |
+| Prometheus metrics | Done | HTTP, JSON-RPC, RBAC, compliance, auth, pricing, SIEM, DB pool metrics; `/metrics` endpoint (private network only) |
 
 ### Production Environment Variables
 
@@ -216,7 +217,7 @@ Minor items only — no production blockers:
 
 1. **Auto-set KYC from ProofOfHumanity verification** — Remove manual admin step (pending Billions schema clarification)
 2. ~~**Structured logging**~~ — **Done.** Migrated all `log.Printf` to `log/slog` across 21 files. JSON output in production (`ENVIRONMENT=production`), text in dev. Structured key-value pairs on all log entries.
-3. **Prometheus metrics** — Request latency, auth failures, cache hit rates, DB pool stats
+3. ~~**Prometheus metrics**~~ — **Done.** Dedicated registry with HTTP, JSON-RPC, RBAC, compliance, auth, pricing, SIEM, and DB pool metrics. `/metrics` endpoint restricted to private network. Custom `sql.DB` stats collector.
 
 ### Medium-term
 

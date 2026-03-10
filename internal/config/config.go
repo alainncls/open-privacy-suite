@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	Version                    string // Set by cmd/server/main.go from build-time constant
 	NodeURL                    string
 	DatabaseURL                string
 	PrivadoRPCURL              string

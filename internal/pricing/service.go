@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"privacy-proxy/internal/compliance"
 )
 
@@ -29,6 +31,18 @@ type Service struct {
 	done                chan struct{}
 	refreshCh           chan struct{} // signals immediate re-fetch
 	consecutiveFailures int
+
+	// Prometheus metrics (optional, set via SetMetrics)
+	fetchesTotal        *prometheus.CounterVec
+	fetchDuration       prometheus.Histogram
+	consecutiveFailGauge prometheus.Gauge
+}
+
+// SetMetrics configures Prometheus metrics for the pricing service.
+func (s *Service) SetMetrics(fetches *prometheus.CounterVec, duration prometheus.Histogram, failures prometheus.Gauge) {
+	s.fetchesTotal = fetches
+	s.fetchDuration = duration
+	s.consecutiveFailGauge = failures
 }
 
 // NewService creates a new pricing service.
@@ -102,6 +116,8 @@ var allCurrencies = func() []string {
 }()
 
 func (s *Service) fetchAndUpdate(ctx context.Context) {
+	fetchStart := time.Now()
+
 	// Read current system token IDs from DB
 	systemPrices, err := s.store.ListSystemTokenPrices(ctx)
 	if err != nil {
@@ -138,8 +154,17 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 
 	// Fetch all currencies from CoinGecko in a single request
 	allPrices, err := s.fetcher.FetchAll(ctx, ids, allCurrencies)
+	if s.fetchDuration != nil {
+		s.fetchDuration.Observe(time.Since(fetchStart).Seconds())
+	}
 	if err != nil {
 		s.consecutiveFailures++
+		if s.fetchesTotal != nil {
+			s.fetchesTotal.WithLabelValues("error").Inc()
+		}
+		if s.consecutiveFailGauge != nil {
+			s.consecutiveFailGauge.Set(float64(s.consecutiveFailures))
+		}
 		if s.consecutiveFailures >= 3 {
 			slog.Error("CoinGecko fetch failed multiple times, prices may be stale", "consecutive_failures", s.consecutiveFailures, "error", err)
 		} else {
@@ -148,6 +173,9 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		return
 	}
 	s.consecutiveFailures = 0
+	if s.consecutiveFailGauge != nil {
+		s.consecutiveFailGauge.Set(0)
+	}
 
 	// Upsert each result
 	updated := 0
@@ -171,6 +199,10 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 			continue
 		}
 		updated++
+	}
+
+	if s.fetchesTotal != nil {
+		s.fetchesTotal.WithLabelValues("success").Inc()
 	}
 
 	slog.Info("pricing service: updated token prices from CoinGecko", "updated", updated, "total", len(ids))
