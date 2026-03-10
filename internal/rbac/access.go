@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -1720,7 +1720,7 @@ func (c *AccessController) EnsureUserExists(ctx context.Context, externalID stri
 
 		if err := c.store.CreateMembership(ctx, membership); err != nil {
 			// Log but don't fail - user is created
-			log.Printf("Warning: failed to add user %s to default group: %v", user.ID, err)
+			slog.Warn("failed to add user to default group", "user_id", user.ID, "error", err)
 		}
 	}
 
@@ -1875,8 +1875,7 @@ func (c *AccessController) NotifyDeploymentMined(
 		if contractAddress == "" {
 			// Transaction reverted or receipt had no contract address — clean up.
 			if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
-				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
-					deployment.PreRegisteredAddr, err)
+				slog.Warn("failed to clean up plain CREATE pre-registration", "address", deployment.PreRegisteredAddr, "error", err)
 			}
 			return fmt.Errorf("plain CREATE deployment reverted or produced no contract address")
 		}
@@ -1897,13 +1896,11 @@ func (c *AccessController) NotifyDeploymentMined(
 		}
 		contract.DeployedAt = &now
 		if err := c.store.CreateContract(ctx, contract); err != nil {
-			log.Printf("Warning: failed to create contract record for plain CREATE %s: %v",
-				contractAddress, err)
+			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
 			// Still clean up pre-registration even if contract creation failed.
 		}
 		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
-			log.Printf("Warning: failed to delete pre-registration for %s after finalization: %v",
-				deployment.PreRegisteredAddr, err)
+			slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)
 		}
 		return nil
 	}

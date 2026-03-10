@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -344,7 +344,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 			return
 		}
 		// Development mode: create mock auth request via the library
-		log.Printf("Warning: VERIFIER_ID not configured - returning mock OAuth auth session for development")
+		slog.Warn("VERIFIER_ID not configured, returning mock OAuth auth session for development")
 		authReq, err = s.privadoVerifier.CreateAuthorizationRequest(
 			devVerifierDID,
 			callbackURL,
@@ -512,7 +512,7 @@ func (s *Server) handleOAuthCallback(c *gin.Context) {
 	// Mark auth session as completed (for status polling)
 	// We don't store the actual tokens here - those are issued at the token endpoint
 	if err := s.sessionStore.CompleteSession(authSessionID, "", ""); err != nil {
-		log.Printf("Warning: failed to complete auth session %s: %v", authSessionID, err)
+		slog.Warn("failed to complete auth session", "session_id", authSessionID, "error", err)
 	}
 
 	// Build redirect URL with code and state
@@ -758,16 +758,16 @@ func (s *Server) scheduleOAuthDemoAutoAuth(oauthSessionID, authSessionID string)
 		// Generate authorization code
 		code := generateSecureCode()
 		if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc); err != nil {
-			log.Printf("Demo OAuth auto-auth: failed to set code: %v", err)
+			slog.Error("demo OAuth auto-auth: failed to set code", "error", err)
 			return
 		}
 
 		// Mark auth session as completed
 		if err := s.sessionStore.CompleteSession(authSessionID, "", ""); err != nil {
-			log.Printf("Demo OAuth auto-auth: failed to complete auth session: %v", err)
+			slog.Error("demo OAuth auto-auth: failed to complete auth session", "error", err)
 		}
 
-		log.Printf("Demo OAuth auto-auth: session %s completed with DID %s", oauthSessionID, mockDID)
+		slog.Info("demo OAuth auto-auth: session completed", "session_id", oauthSessionID, "did", mockDID)
 	}()
 }
 

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"privacy-proxy/internal/compliance"
@@ -72,7 +72,7 @@ func (d *DB) GetSystemTokenPrice(ctx context.Context, coingeckoID string) (*comp
 	}
 	if len(pricesJSON) > 0 {
 		if err := json.Unmarshal(pricesJSON, &sp.PricesByCurrency); err != nil {
-			log.Printf("WARNING: corrupt prices_by_currency JSON for system price %s: %v", sp.Symbol, err)
+			slog.Warn("corrupt prices_by_currency JSON for system price", "symbol", sp.Symbol, "error", err)
 		}
 	}
 	return sp, nil
@@ -129,7 +129,7 @@ func (d *DB) ListSystemTokenPrices(ctx context.Context) ([]*compliance.SystemTok
 		}
 		if len(pricesJSON) > 0 {
 			if err := json.Unmarshal(pricesJSON, &sp.PricesByCurrency); err != nil {
-			log.Printf("WARNING: corrupt prices_by_currency JSON for system price %s: %v", sp.Symbol, err)
+			slog.Warn("corrupt prices_by_currency JSON for system price", "symbol", sp.Symbol, "error", err)
 		}
 		}
 		prices = append(prices, sp)
@@ -662,7 +662,7 @@ func scanTokenPrice(row *sql.Row) (*compliance.TokenPrice, error) {
 	}
 	if len(pricesByCurrencyJSON) > 0 {
 		if err := json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency); err != nil {
-			log.Printf("WARNING: corrupt prices_by_currency JSON for token %s: %v", price.TokenAddress, err)
+			slog.Warn("corrupt prices_by_currency JSON for token", "token_address", price.TokenAddress, "error", err)
 		}
 	}
 
@@ -692,7 +692,7 @@ func scanTokenPrices(rows *sql.Rows) ([]*compliance.TokenPrice, error) {
 		}
 		if len(pricesByCurrencyJSON) > 0 {
 			if err := json.Unmarshal(pricesByCurrencyJSON, &price.PricesByCurrency); err != nil {
-			log.Printf("WARNING: corrupt prices_by_currency JSON for token %s: %v", price.TokenAddress, err)
+			slog.Warn("corrupt prices_by_currency JSON for token", "token_address", price.TokenAddress, "error", err)
 		}
 		}
 

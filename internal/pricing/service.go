@@ -2,7 +2,7 @@ package pricing
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"privacy-proxy/internal/compliance"
@@ -69,7 +69,7 @@ func (s *Service) Start() {
 		}
 	}()
 
-	log.Printf("Pricing service started (interval: %s)", s.interval)
+	slog.Info("pricing service started", "interval", s.interval)
 }
 
 // Stop gracefully stops the background fetching.
@@ -78,7 +78,7 @@ func (s *Service) Stop() {
 		s.cancel()
 		<-s.done
 	}
-	log.Printf("Pricing service stopped")
+	slog.Info("pricing service stopped")
 }
 
 // RefreshNow signals an immediate price re-fetch (e.g. after currency change).
@@ -105,7 +105,7 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 	// Read current system token IDs from DB
 	systemPrices, err := s.store.ListSystemTokenPrices(ctx)
 	if err != nil {
-		log.Printf("WARNING: pricing service failed to list system token prices: %v", err)
+		slog.Warn("pricing service failed to list system token prices", "error", err)
 		return
 	}
 
@@ -141,9 +141,9 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 	if err != nil {
 		s.consecutiveFailures++
 		if s.consecutiveFailures >= 3 {
-			log.Printf("ERROR: CoinGecko fetch failed %d consecutive times, prices may be stale: %v", s.consecutiveFailures, err)
+			slog.Error("CoinGecko fetch failed multiple times, prices may be stale", "consecutive_failures", s.consecutiveFailures, "error", err)
 		} else {
-			log.Printf("WARNING: CoinGecko fetch failed, keeping existing prices: %v", err)
+			slog.Warn("CoinGecko fetch failed, keeping existing prices", "error", err)
 		}
 		return
 	}
@@ -167,11 +167,11 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		sp.PriceFiat = currencyPrices[activeCurrency]
 		sp.UpdatedAt = time.Now()
 		if err := s.store.UpsertSystemTokenPrice(ctx, sp); err != nil {
-			log.Printf("WARNING: failed to update system price for %s: %v", id, err)
+			slog.Warn("failed to update system price", "coingecko_id", id, "error", err)
 			continue
 		}
 		updated++
 	}
 
-	log.Printf("Pricing service: updated %d/%d token prices from CoinGecko", updated, len(ids))
+	slog.Info("pricing service: updated token prices from CoinGecko", "updated", updated, "total", len(ids))
 }

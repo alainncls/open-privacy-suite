@@ -3,7 +3,7 @@ package rbac
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -151,7 +151,7 @@ func (c *DeploymentConfirmer) handleReceipt(
 // It will continue until the context is cancelled.
 func (c *DeploymentConfirmer) Start(ctx context.Context) {
 	if c.ethClient == nil {
-		log.Printf("Warning: DeploymentConfirmer started without ethClient, background polling disabled")
+		slog.Warn("DeploymentConfirmer started without ethClient, background polling disabled")
 		return
 	}
 
@@ -172,7 +172,7 @@ func (c *DeploymentConfirmer) Start(ctx context.Context) {
 			if cleanupCounter >= 10 {
 				removed := c.tracker.Cleanup()
 				if removed > 0 {
-					log.Printf("Cleaned up %d expired pending deployments", removed)
+					slog.Info("cleaned up expired pending deployments", "count", removed)
 				}
 				cleanupCounter = 0
 			}
@@ -198,7 +198,7 @@ func (c *DeploymentConfirmer) pollPendingDeployments(ctx context.Context) {
 			// Log but continue with other deployments
 			// Note: ConfirmDeployment puts the deployment back if receipt fetch fails
 			if !strings.Contains(err.Error(), "no pending deployment") {
-				log.Printf("Error confirming deployment %s: %v", txHash, err)
+				slog.Error("error confirming deployment", "tx_hash", txHash, "error", err)
 			}
 		}
 	}

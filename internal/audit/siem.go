@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -243,18 +243,15 @@ func (s *SIEMForwarder) send(events []SIEMEvent) error {
 func (s *SIEMForwarder) handleFailedBatch(events []SIEMEvent, sendErr error) {
 	if s.cfg.FallbackLogPath != "" {
 		if err := s.writeFallback(events); err != nil {
-			log.Printf("ERROR: SIEM flush failed (%v) and fallback write also failed (%v), dropping %d events",
-				sendErr, err, len(events))
+			slog.Error("SIEM flush failed and fallback write also failed, dropping events", "send_error", sendErr, "fallback_error", err, "count", len(events))
 		} else {
-			log.Printf("WARN: SIEM flush failed (%v), wrote %d events to fallback log %s",
-				sendErr, len(events), s.cfg.FallbackLogPath)
+			slog.Warn("SIEM flush failed, wrote events to fallback log", "error", sendErr, "count", len(events), "fallback_path", s.cfg.FallbackLogPath)
 		}
 		return
 	}
 
 	// No fallback configured - log at ERROR level with count.
-	log.Printf("ERROR: SIEM flush failed (%v), dropping %d events (no fallback path configured)",
-		sendErr, len(events))
+	slog.Error("SIEM flush failed, dropping events (no fallback path configured)", "error", sendErr, "count", len(events))
 }
 
 // writeFallback appends events as JSON lines to the fallback log file.

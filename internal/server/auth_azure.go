@@ -3,7 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -186,7 +186,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 	// Exchange authorization code for verified Azure identity
 	identity, err := s.azureAuthenticator.ExchangeCode(c.Request.Context(), req.Code, req.RedirectURI, nonce)
 	if err != nil {
-		log.Printf("Azure AD code exchange failed: %v", err)
+		slog.Error("Azure AD code exchange failed", "error", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Azure AD authentication failed"})
 		return
 	}
@@ -201,7 +201,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 	// Check if the user's Azure AD tenant is in the allowlist.
 	tenantConfig, err := s.db.GetAllowedAzureTenantByTenantID(c.Request.Context(), identity.TenantID)
 	if err != nil {
-		log.Printf("Error checking Azure tenant allowlist for tid=%s: %v", identity.TenantID, err)
+		slog.Error("failed to check Azure tenant allowlist", "tenant_id", identity.TenantID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check tenant authorization"})
 		return
 	}
@@ -219,7 +219,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 			// Auto-provision disabled: only allow login if user already exists
 			existing, getErr := s.db.GetUserByExternalID(c.Request.Context(), subject)
 			if getErr != nil {
-				log.Printf("Warning: failed to check user existence for %s: %v", subject, getErr)
+				slog.Warn("failed to check user existence", "subject", subject, "error", getErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check user status"})
 				return
 			}
@@ -235,11 +235,11 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 			// Pin auth_tenant_id if not yet set (immutable after first write).
 			if existing.AuthTenantID == nil {
 				if _, err := s.db.SetAuthTenantID(c.Request.Context(), existing.ID, identity.TenantID); err != nil {
-					log.Printf("Warning: failed to set auth_tenant_id for user %s: %v", subject, err)
+					slog.Warn("failed to set auth_tenant_id", "subject", subject, "error", err)
 				}
 				existing.AuthTenantID = &identity.TenantID
 			} else if *existing.AuthTenantID != identity.TenantID {
-				log.Printf("Warning: user %s has auth_tenant_id=%s but logged in from tenant %s", subject, *existing.AuthTenantID, identity.TenantID)
+				slog.Warn("user tenant mismatch", "subject", subject, "existing_tenant", *existing.AuthTenantID, "login_tenant", identity.TenantID)
 				c.JSON(http.StatusForbidden, gin.H{"error": "account is associated with a different Azure AD tenant"})
 				return
 			}
@@ -248,7 +248,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 			skipDefaultGroup := tenantConfig.DefaultOrgID != nil && tenantConfig.DefaultGroupID != nil
 			user, ensureErr := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), subject, kyc, skipDefaultGroup)
 			if ensureErr != nil {
-				log.Printf("Error: failed to ensure RBAC user for %s: %v", subject, ensureErr)
+				slog.Error("failed to ensure RBAC user", "subject", subject, "error", ensureErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to provision user account"})
 				return
 			}
@@ -262,11 +262,11 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 				// Pin auth_tenant_id if not yet set (immutable after first write).
 				if user.AuthTenantID == nil {
 					if _, err := s.db.SetAuthTenantID(c.Request.Context(), user.ID, identity.TenantID); err != nil {
-						log.Printf("Warning: failed to set auth_tenant_id for user %s: %v", subject, err)
+						slog.Warn("failed to set auth_tenant_id", "subject", subject, "error", err)
 					}
 					user.AuthTenantID = &identity.TenantID
 				} else if *user.AuthTenantID != identity.TenantID {
-					log.Printf("Warning: user %s has auth_tenant_id=%s but logged in from tenant %s", subject, *user.AuthTenantID, identity.TenantID)
+					slog.Warn("user tenant mismatch", "subject", subject, "existing_tenant", *user.AuthTenantID, "login_tenant", identity.TenantID)
 					c.JSON(http.StatusForbidden, gin.H{"error": "account is associated with a different Azure AD tenant"})
 					return
 				}
@@ -282,7 +282,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 					created, createErr := s.db.CreateMembershipIfNotExists(c.Request.Context(), membership)
 					if createErr != nil {
 						// Tenant group assignment failed — fall back to default group so user isn't orphaned
-						log.Printf("Warning: failed to auto-add user %s to tenant group %s, falling back to default group: %v", subject, *tenantConfig.DefaultGroupID, createErr)
+						slog.Warn("failed to auto-add user to tenant group, falling back to default", "subject", subject, "group_id", *tenantConfig.DefaultGroupID, "error", createErr)
 						fallback := &rbac.UserMembership{
 							ID:      uuid.New().String(),
 							UserID:  user.ID,
@@ -290,10 +290,10 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 							Source:  "auto_provision",
 						}
 						if _, fbErr := s.db.CreateMembershipIfNotExists(c.Request.Context(), fallback); fbErr != nil {
-							log.Printf("Warning: fallback to default group also failed for user %s: %v", subject, fbErr)
+							slog.Warn("fallback to default group also failed", "subject", subject, "error", fbErr)
 						}
 					} else if created {
-						log.Printf("Auto-provisioned membership for user %s in group %s", subject, *tenantConfig.DefaultGroupID)
+						slog.Info("auto-provisioned membership for user", "subject", subject, "group_id", *tenantConfig.DefaultGroupID)
 					}
 				}
 			}

@@ -1,6 +1,6 @@
 # Production Readiness Assessment
 
-Last updated: 2026-03-06 | Branch: `feat/admin-rbac-auth`
+Last updated: 2026-03-10 | Branch: `main`
 
 ## Overall Status: Ready for MVP
 
@@ -116,6 +116,7 @@ Logs `WARNING: ADMIN_API_TOKEN is not set...` in dev mode. In production, the se
 | Token revocation | Done | DB blacklist, ban cascades to refresh tokens |
 | Security headers | Done | CSP, X-Frame-Options, nosniff, Referrer-Policy |
 | Cross-org isolation | Done | Contracts bound to orgs, pre-registration for CREATE |
+| Structured logging | Done | `log/slog` across all files, JSON in production, text in dev |
 
 ### Production Environment Variables
 
@@ -204,8 +205,6 @@ Minor items only — no production blockers:
 
 | Location | Issue | Severity |
 |----------|-------|----------|
-| `e2e/.../05-input-validation.spec.ts:128` | Server returns 500 for invalid UUID, should return 400 | Low |
-| `e2e/.../06-admin-api-access.spec.ts:34` | Same invalid UUID error code issue | Low |
 | `e2e/.../20-cache-invalidation.spec.ts:176` | Intermittent test failure (cache race condition) | Medium |
 | `e2e/.../07-historical-state.spec.ts:239` | Privacy gap check for historical state queries | Medium |
 
@@ -215,8 +214,8 @@ Minor items only — no production blockers:
 
 ### Short-term (recommended for first production sprint)
 
-1. **Auto-set KYC from ProofOfHumanity verification** — Remove manual admin step
-2. **Structured logging** — Replace `log.Printf` with `slog` (Go 1.21+) for JSON output, log levels, and correlation IDs
+1. **Auto-set KYC from ProofOfHumanity verification** — Remove manual admin step (pending Billions schema clarification)
+2. ~~**Structured logging**~~ — **Done.** Migrated all `log.Printf` to `log/slog` across 21 files. JSON output in production (`ENVIRONMENT=production`), text in dev. Structured key-value pairs on all log entries.
 3. **Prometheus metrics** — Request latency, auth failures, cache hit rates, DB pool stats
 
 ### Medium-term

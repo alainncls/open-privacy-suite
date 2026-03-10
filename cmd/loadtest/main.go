@@ -21,7 +21,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -64,7 +64,8 @@ func main() {
 	flag.Parse()
 
 	if cfg.FundingKey == "" {
-		log.Fatal("--funding-key is required")
+		slog.Error("--funding-key is required")
+		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -82,14 +83,16 @@ func main() {
 	// Initialize load tester
 	lt, err := NewLoadTester(cfg)
 	if err != nil {
-		log.Fatalf("Failed to initialize load tester: %v", err)
+		slog.Error("failed to initialize load tester", "error", err)
+		os.Exit(1)
 	}
 
 	// Phase 1: Setup
 	if !cfg.SkipSetup {
 		fmt.Println("=== Phase 1: Setup ===")
 		if err := lt.Setup(ctx); err != nil {
-			log.Fatalf("Setup failed: %v", err)
+			slog.Error("setup failed", "error", err)
+			os.Exit(1)
 		}
 		fmt.Println("Setup complete!")
 		fmt.Println()
@@ -101,7 +104,8 @@ func main() {
 	fmt.Println()
 
 	if err := lt.Run(ctx); err != nil {
-		log.Fatalf("Load test failed: %v", err)
+		slog.Error("load test failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Print results

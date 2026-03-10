@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -139,8 +139,8 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 		)
 		hash := p.hashChain.ComputeNext(entryContent)
 		if err := p.enhancedLogger.UpdateAccessLogHash(ctx, id, hash); err != nil {
-			// L1 fix: use log.Printf so this goes to the structured log stream
-			log.Printf("Warning: failed to update access log hash for id=%d: %v", id, err)
+			// L1 fix: use slog so this goes to the structured log stream
+			slog.Warn("failed to update access log hash", "id", id, "error", err)
 		}
 
 		// Forward to SIEM if configured
@@ -308,7 +308,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			if preErr != nil {
 				// Non-fatal: log and continue without pre-registration.
 				// The cross-org window remains open for this tx, but the tx still proceeds.
-				log.Printf("Warning: plain CREATE pre-registration failed: %v", preErr)
+				slog.Warn("plain CREATE pre-registration failed", "error", preErr)
 				plainCreatePreRegAddr = ""
 			}
 		}
@@ -351,8 +351,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			// Node rejected the tx — delete the pre-registration immediately.
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 				context.Background(), plainCreatePreRegAddr); delErr != nil {
-				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
-					plainCreatePreRegAddr, delErr)
+				slog.Warn("failed to clean up plain CREATE pre-registration", "address", plainCreatePreRegAddr, "error", delErr)
 			}
 		}
 	}
@@ -724,7 +723,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		addrStr := strings.ToLower(contractAddr.Hex())
 		note := fmt.Sprintf("plain CREATE pending (raw tx): deployer=%s org=%s", result.UserID, result.OrgID)
 		if preErr := p.rbacAccessCtrl.Store().PreRegisterPlainCreate(ctx, result.OrgID, addrStr, note); preErr != nil {
-			log.Printf("Warning: plain CREATE pre-registration failed for raw tx: %v", preErr)
+			slog.Warn("plain CREATE pre-registration failed for raw tx", "error", preErr)
 		} else {
 			rawTxPlainCreateAddr = addrStr
 		}
@@ -737,8 +736,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		if rawTxPlainCreateAddr != "" {
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 				context.Background(), rawTxPlainCreateAddr); delErr != nil {
-				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
-					rawTxPlainCreateAddr, delErr)
+				slog.Warn("failed to clean up plain CREATE pre-registration", "address", rawTxPlainCreateAddr, "error", delErr)
 			}
 		}
 		p.logAccess(ctx, req, http.StatusBadGateway)
@@ -770,8 +768,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			// Node rejected the tx — delete the pre-registration immediately.
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 				context.Background(), rawTxPlainCreateAddr); delErr != nil {
-				log.Printf("Warning: failed to clean up plain CREATE pre-registration %s: %v",
-					rawTxPlainCreateAddr, delErr)
+				slog.Warn("failed to clean up plain CREATE pre-registration", "address", rawTxPlainCreateAddr, "error", delErr)
 			}
 		}
 	}
@@ -1083,17 +1080,16 @@ func (p *JSONRPCProcessor) pollAndFinalizePlainCreate(txHash, preRegisteredAddr,
 			// Receipt obtained (contractAddr is "" on revert).
 			if err := p.rbacAccessCtrl.NotifyDeploymentMined(ctx, txHash, contractAddr); err != nil {
 				// Revert or finalization issue — logged inside NotifyDeploymentMined.
-				log.Printf("plain CREATE finalization for %s: %v", txHash, err)
+				slog.Warn("plain CREATE finalization failed", "tx_hash", txHash, "error", err)
 			}
 			return
 		}
 
 		// Exhausted retries — clean up the pre-registration to avoid orphaned rows.
-		log.Printf("plain CREATE: exhausted receipt retries for tx %s, cleaning up pre-registration %s",
-			txHash, preRegisteredAddr)
+		slog.Warn("plain CREATE: exhausted receipt retries, cleaning up pre-registration", "tx_hash", txHash, "address", preRegisteredAddr)
 		if err := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 			context.Background(), preRegisteredAddr); err != nil {
-			log.Printf("plain CREATE: failed to clean up pre-registration %s: %v", preRegisteredAddr, err)
+			slog.Error("plain CREATE: failed to clean up pre-registration", "address", preRegisteredAddr, "error", err)
 		}
 	}()
 }

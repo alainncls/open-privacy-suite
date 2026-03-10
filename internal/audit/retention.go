@@ -2,7 +2,7 @@ package audit
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -117,23 +117,23 @@ func (r *RetentionManager) cleanup() {
 		cutoff := now.Add(-tc.duration)
 
 		// M3 fix: log BEFORE deletion so operators have an auditable trail of retention events.
-		log.Printf("Retention: deleting %s older than %s (cutoff: %s)", tc.name, tc.duration, cutoff.Format(time.RFC3339))
+		slog.Info("retention: deleting old records", "table", tc.name, "retention", tc.duration, "cutoff", cutoff.Format(time.RFC3339))
 
 		deleted, err := tc.fn(ctx, cutoff)
 		if err != nil {
-			log.Printf("Retention: error cleaning %s: %v", tc.name, err)
+			slog.Error("retention: error cleaning table", "table", tc.name, "error", err)
 			continue
 		}
 		if deleted > 0 {
-			log.Printf("Retention: deleted %d rows from %s", deleted, tc.name)
+			slog.Info("retention: deleted rows", "table", tc.name, "count", deleted)
 		}
 	}
 
 	// Always clean up expired records regardless of config.
 	expired, err := r.store.CleanupExpiredRecords(ctx)
 	if err != nil {
-		log.Printf("Retention: error cleaning expired records: %v", err)
+		slog.Error("retention: error cleaning expired records", "error", err)
 	} else if expired > 0 {
-		log.Printf("Retention: deleted %d expired records", expired)
+		slog.Info("retention: deleted expired records", "count", expired)
 	}
 }

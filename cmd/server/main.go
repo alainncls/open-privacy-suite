@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,29 +16,37 @@ import (
 const Version = "0.1.0"
 
 func main() {
+	// Set up structured logging: JSON in production, text in dev
+	var logHandler slog.Handler
+	if os.Getenv("ENVIRONMENT") == "production" {
+		logHandler = slog.NewJSONHandler(os.Stdout, nil)
+	} else {
+		logHandler = slog.NewTextHandler(os.Stdout, nil)
+	}
+	slog.SetDefault(slog.New(logHandler))
+
 	cfg := config.Load()
 
 	// Validate configuration (fails fast in production if required values missing)
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		slog.Error("configuration error", "error", err)
+		os.Exit(1)
 	}
 
 	// Warn loudly if mock signatures mode is enabled
 	if cfg.MockSignatures {
-		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-		log.Println("!!! WARNING: MOCK_SIGNATURES=true - Signature verification DISABLED")
-		log.Println("!!! This should ONLY be used for demo recording, never in production!")
-		log.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		slog.Warn("MOCK_SIGNATURES=true - signature verification DISABLED - only for demo, never production")
 	}
 
 	// Log if demo auto-auth is enabled
 	if cfg.DemoAutoAuthDelay > 0 {
-		log.Printf("!!! DEMO MODE: Auth sessions will auto-complete after %v", cfg.DemoAutoAuthDelay)
+		slog.Warn("demo mode: auth sessions will auto-complete", "delay", cfg.DemoAutoAuthDelay)
 	}
 
 	srv, err := server.New(cfg) // Migrations run automatically in db.New()
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		slog.Error("failed to create server", "error", err)
+		os.Exit(1)
 	}
 
 	port := os.Getenv("PORT")
@@ -56,8 +64,8 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Starting privacy proxy server on port %s", port)
-		log.Printf("Node URL: %s", cfg.NodeURL)
+		slog.Info("starting privacy proxy server", "port", port)
+		slog.Info("node URL configured", "url", cfg.NodeURL)
 		serverErrors <- srv.RunWithServer(httpServer)
 	}()
 
@@ -68,10 +76,11 @@ func main() {
 	// Block until we receive a signal or server error
 	select {
 	case err := <-serverErrors:
-		log.Fatalf("Server error: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 
 	case sig := <-shutdown:
-		log.Printf("Received signal %v, shutting down...", sig)
+		slog.Info("received signal, shutting down", "signal", sig)
 
 		// Give outstanding requests 10 seconds to complete
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -79,12 +88,12 @@ func main() {
 
 		// Stop accepting new requests and wait for existing ones
 		if err := httpServer.Shutdown(ctx); err != nil {
-			log.Printf("HTTP server shutdown error: %v", err)
+			slog.Error("http server shutdown error", "error", err)
 			httpServer.Close()
 		}
 
 		// Stop background goroutines
 		srv.Stop()
-		log.Println("Server stopped gracefully")
+		slog.Info("server stopped gracefully")
 	}
 }
