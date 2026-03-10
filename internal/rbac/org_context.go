@@ -41,7 +41,7 @@ type OrgContext struct {
 //   - Error if cross-org isolation is violated
 func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress string) (*OrgContext, error) {
 	// Pre-load user's org memberships
-	userOrgIDs, err := getUserOrgIDs(ctx, store, user.ID)
+	userOrgIDs, err := GetUserOrgIDs(ctx, store, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user organizations: %w", err)
 	}
@@ -88,7 +88,7 @@ func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress s
 // Used when the organization is already known (e.g., deployments using user's default org).
 func NewOrgContextForOrg(ctx context.Context, store Store, user *User, orgID string) (*OrgContext, error) {
 	// Pre-load user's org memberships
-	userOrgIDs, err := getUserOrgIDs(ctx, store, user.ID)
+	userOrgIDs, err := GetUserOrgIDs(ctx, store, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user organizations: %w", err)
 	}
@@ -294,8 +294,8 @@ func (oc *OrgContext) ValidateFactoryCallOrgs(
 	return nil, nil
 }
 
-// getUserOrgIDs returns the set of organization IDs the user belongs to.
-func getUserOrgIDs(ctx context.Context, store Store, userID string) (map[string]bool, error) {
+// GetUserOrgIDs returns the set of organization IDs the user belongs to.
+func GetUserOrgIDs(ctx context.Context, store Store, userID string) (map[string]bool, error) {
 	memberships, err := store.ListUserMembershipsWithDetails(ctx, userID)
 	if err != nil {
 		return nil, err

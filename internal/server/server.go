@@ -55,26 +55,26 @@ const (
 )
 
 type Server struct {
-	db                *db.DB
-	rbacAccessCtrl    *rbac.AccessController
-	proxy             *proxy.Proxy
-	privadoVerifier   PrivadoVerifier
-	jwtService        *auth.JWTService
-	sessionStore      SessionManager
-	oauthSessionStore *OAuthSessionStore
-	challengeStore    *ChallengeStore
-	rateLimiter       RateLimiterInterface
-	authRateLimiter   *AuthRateLimiter
-	disclosureService *disclosure.DefaultService
-	complianceChecker *compliance.Checker
-	priceService      *pricing.Service
-	config            *config.Config
-	ensResolver       *ens.Resolver
-	jsonrpcProcessor  *JSONRPCProcessor
-	zkRoleExtractor   *auth.ZKRoleExtractor
-	runtimeTracer     *tracer.RuntimeTracer
-	retentionCleaner  *audit.RetentionCleaner
-	siemForwarder     *audit.SIEMForwarder
+	db                 *db.DB
+	rbacAccessCtrl     *rbac.AccessController
+	proxy              *proxy.Proxy
+	privadoVerifier    PrivadoVerifier
+	jwtService         *auth.JWTService
+	sessionStore       SessionManager
+	oauthSessionStore  *OAuthSessionStore
+	challengeStore     *ChallengeStore
+	rateLimiter        RateLimiterInterface
+	authRateLimiter    *AuthRateLimiter
+	disclosureService  *disclosure.DefaultService
+	complianceChecker  *compliance.Checker
+	priceService       *pricing.Service
+	config             *config.Config
+	ensResolver        *ens.Resolver
+	jsonrpcProcessor   *JSONRPCProcessor
+	zkRoleExtractor    *auth.ZKRoleExtractor
+	runtimeTracer      *tracer.RuntimeTracer
+	retentionCleaner   *audit.RetentionCleaner
+	siemForwarder      *audit.SIEMForwarder
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
@@ -467,7 +467,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.GET("/oauth/authorize", authRL, s.handleOAuthAuthorize)
 	router.POST("/oauth/callback", authRL, s.handleOAuthCallback)
 	router.POST("/oauth/token", authRL, s.handleOAuthToken)
-	router.GET("/oauth/session/:id/status", s.handleOAuthSessionStatus)
+	router.GET("/oauth/session/:id/status", authRL, s.handleOAuthSessionStatus)
 
 	// ETH address linking endpoints - available at multiple paths for flexibility:
 	// - /api/v1/eth/* - versioned API (primary)
@@ -498,12 +498,12 @@ func (s *Server) setupRouter() *gin.Engine {
 	eth.Use(auth.JWTAuthMiddleware(s.jwtService, s.db))
 	ethEndpoints(eth)
 
-	// JSON-RPC proxy endpoint - protected by JWT
+	// JSON-RPC proxy endpoint - protected by optional JWT
 	// Support both "/" (direct access) and "/rpc" (frontend proxy)
 	// For users with multiple org memberships, use "/rpc/:org_id" to specify org
-	router.POST("/", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
-	router.POST("/rpc", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
-	router.POST("/rpc/:org_id", auth.JWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
+	router.POST("/", auth.OptionalJWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
+	router.POST("/rpc", auth.OptionalJWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
+	router.POST("/rpc/:org_id", auth.OptionalJWTAuthMiddleware(s.jwtService, s.db), s.handleJSONRPC)
 
 	// User disclosure endpoints - protected by JWT but accessible from external IPs
 	s.registerUserDisclosureRoutes(router)
@@ -582,18 +582,9 @@ func (s *Server) setupRouter() *gin.Engine {
 const MaxRequestBodySize = 1 << 20 // 1MB
 
 func (s *Server) handleJSONRPC(c *gin.Context) {
-	// Extract identity from JWT (set by middleware)
-	subject, exists := c.Get("subject")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing identity in context"})
-		return
-	}
-
-	subjectStr, ok := subject.(string)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid identity in context"})
-		return
-	}
+	// Extract identity from JWT (set by middleware if optional JWT is provided)
+	subject, _ := c.Get("subject")
+	subjectStr, _ := subject.(string) // Default to empty string if not found or not a string
 
 	// Read request body with size limit to prevent DoS
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, MaxRequestBodySize+1))

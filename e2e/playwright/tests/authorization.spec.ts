@@ -3,9 +3,9 @@ import { makeUnauthenticatedRPCRequest, makeRPCRequest } from '../helpers/auth.j
 
 test.describe('Authorization', () => {
   test('denies unauthenticated request', async ({ request }) => {
-    const { status, body } = await makeUnauthenticatedRPCRequest(request, 'eth_blockNumber');
+    const { status, body } = await makeUnauthenticatedRPCRequest(request, 'eth_getBalance', ['0x0000000000000000000000000000000000000001', 'latest']);
 
-    expect(status).toBe(401);
+    expect(status).toBe(403);
     expect(body).toHaveProperty('error');
   });
 
@@ -43,13 +43,13 @@ test.describe('Authorization', () => {
       },
       data: {
         jsonrpc: '2.0',
-        method: 'eth_blockNumber',
-        params: [],
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
         id: 1,
       },
     });
 
-    expect(response.status()).toBe(401);
+    expect(response.status()).toBe(403);
     const body = await response.json();
     expect(body).toHaveProperty('error');
   });

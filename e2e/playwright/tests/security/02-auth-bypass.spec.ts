@@ -11,21 +11,23 @@ const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
 
 test.describe('Authentication Bypass Attempts', () => {
 
-  test('AUTH-001: Request without Authorization header is denied', async ({ request }) => {
+  test('AUTH-001: Request without Authorization header is denied for auth-required methods (403)', async ({ request }) => {
+    // eth_getBalance requires 'read' claim — must be denied without auth.
+    // (eth_blockNumber is claim-free and intentionally allowed anonymously.)
     const resp = await request.post(`${API_URL}/`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         jsonrpc: '2.0',
-        method: 'eth_blockNumber',
-        params: [],
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
         id: 1
       }
     });
 
-    expect(resp.status()).toBe(401);
+    expect(resp.status()).toBe(403);
   });
 
-  test('AUTH-002: Request with empty Authorization header is denied', async ({ request }) => {
+  test('AUTH-002: Request with empty Authorization header is denied for auth-required methods', async ({ request }) => {
     const resp = await request.post(`${API_URL}/`, {
       headers: {
         'Authorization': '',
@@ -33,13 +35,13 @@ test.describe('Authentication Bypass Attempts', () => {
       },
       data: {
         jsonrpc: '2.0',
-        method: 'eth_blockNumber',
-        params: [],
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
         id: 1
       }
     });
 
-    expect(resp.status()).toBe(401);
+    expect(resp.status()).toBe(403);
   });
 
   test('AUTH-003: Request with "Bearer" only (no token) is denied', async ({ request }) => {
@@ -195,32 +197,36 @@ test.describe('Authentication Bypass Attempts', () => {
   });
 
   test('AUTH-010: Token in query parameter is not accepted', async ({ request }) => {
+    // Proxy must not treat ?token= as authentication.
+    // Uses eth_getBalance (requires auth) to verify the query param is ignored.
     const resp = await request.post(`${API_URL}/?token=mock.did:test:user`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         jsonrpc: '2.0',
-        method: 'eth_blockNumber',
-        params: [],
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
         id: 1
       }
     });
 
-    expect(resp.status()).toBe(401);
+    expect(resp.status()).toBe(403);
   });
 
   test('AUTH-011: Token in request body is not accepted', async ({ request }) => {
+    // Proxy must not treat a body "token" field as authentication.
+    // Uses eth_getBalance (requires auth) to verify the body field is ignored.
     const resp = await request.post(`${API_URL}/`, {
       headers: { 'Content-Type': 'application/json' },
       data: {
         jsonrpc: '2.0',
-        method: 'eth_blockNumber',
-        params: [],
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
         id: 1,
         token: 'mock.did:test:user'
       }
     });
 
-    expect(resp.status()).toBe(401);
+    expect(resp.status()).toBe(403);
   });
 
   test('AUTH-012: Multiple Authorization headers are handled safely', async ({ request }) => {
@@ -322,5 +328,126 @@ test.describe('Session Security', () => {
 
       expect([404, 400]).toContain(resp.status());
     }
+  });
+});
+
+test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
+  // On a private network only pure chain metadata is allowed without auth.
+  // Block/transaction/balance data always requires authentication.
+
+  test('ANON-001: eth_blockNumber is accessible without authentication', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }
+    });
+    expect(resp.status()).toBe(200);
+  });
+
+  test('ANON-002: eth_chainId is accessible without authentication', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { jsonrpc: '2.0', method: 'eth_chainId', params: [], id: 1 }
+    });
+    expect(resp.status()).toBe(200);
+  });
+
+  test('ANON-003: eth_gasPrice is accessible without authentication', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: { jsonrpc: '2.0', method: 'eth_gasPrice', params: [], id: 1 }
+    });
+    expect(resp.status()).toBe(200);
+  });
+
+  test('ANON-004: eth_getBalance requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_getBalance',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-005: eth_getLogs requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_getLogs',
+        params: [{ fromBlock: 'latest', toBlock: 'latest' }],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-006: eth_newFilter (log filter) requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_newFilter',
+        params: [{ fromBlock: 'latest', toBlock: 'latest' }],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-007: eth_getBlockByNumber requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_getBlockByNumber',
+        params: ['latest', false],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-008: eth_getTransactionByHash requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_getTransactionByHash',
+        params: ['0x0000000000000000000000000000000000000000000000000000000000000001'],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-009: eth_getProof requires authentication (403)', async ({ request }) => {
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'eth_getProof',
+        params: ['0x0000000000000000000000000000000000000001', [], 'latest'],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
+  });
+
+  test('ANON-010: Case-insensitive bypass attempt is blocked (ETH_GETBALANCE)', async ({ request }) => {
+    // ClassifyOperation normalises to lowercase — uppercase method must not bypass auth.
+    const resp = await request.post(`${API_URL}/`, {
+      headers: { 'Content-Type': 'application/json' },
+      data: {
+        jsonrpc: '2.0',
+        method: 'ETH_GETBALANCE',
+        params: ['0x0000000000000000000000000000000000000001', 'latest'],
+        id: 1
+      }
+    });
+    expect(resp.status()).toBe(403);
   });
 });
