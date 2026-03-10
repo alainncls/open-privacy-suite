@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -232,7 +232,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 			return
 		}
 		// Development mode: return mock session for demo/testing
-		log.Printf("Warning: VERIFIER_ID not configured - returning mock auth session for development")
+		slog.Warn("VERIFIER_ID not configured, returning mock auth session for development")
 
 		// Create a mock auth request via the library so ThreadID and fields are set correctly
 		callbackURL := fmt.Sprintf("%s/auth/callback?session=%s", baseURL, sessionID)
@@ -337,28 +337,28 @@ func (s *Server) scheduleDemoAutoAuth(sessionID string) {
 
 		accessToken, err := s.jwtService.IssueAccessToken(mockDID, kyc)
 		if err != nil {
-			log.Printf("Demo auto-auth: failed to issue access token: %v", err)
+			slog.Error("demo auto-auth: failed to issue access token", "error", err)
 			return
 		}
 		refreshToken, err := s.jwtService.IssueRefreshToken(mockDID)
 		if err != nil {
-			log.Printf("Demo auto-auth: failed to issue refresh token: %v", err)
+			slog.Error("demo auto-auth: failed to issue refresh token", "error", err)
 			return
 		}
 
 		tokenHash := auth.HashToken(refreshToken)
 		expiresAt := time.Now().Add(RefreshTokenTTL)
 		if err := s.db.SaveRefreshToken(context.Background(), tokenHash, mockDID, expiresAt); err != nil {
-			log.Printf("Demo auto-auth: failed to save refresh token: %v", err)
+			slog.Error("demo auto-auth: failed to save refresh token", "error", err)
 			return
 		}
 
 		if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
-			log.Printf("Demo auto-auth: failed to complete session: %v", err)
+			slog.Error("demo auto-auth: failed to complete session", "error", err)
 			return
 		}
 
-		log.Printf("Demo auto-auth: session %s completed with DID %s", sessionID, mockDID)
+		slog.Info("demo auto-auth: session completed", "session_id", sessionID, "did", mockDID)
 	}()
 }
 
@@ -494,7 +494,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 			for _, proofData := range verificationResult.ProofData {
 				claims, extractErr := s.zkRoleExtractor.ExtractRoleClaims(proofData)
 				if extractErr != nil {
-					log.Printf("Warning: failed to extract ZK role claims: %v", extractErr)
+					slog.Warn("failed to extract ZK role claims", "error", extractErr)
 					continue
 				}
 				if claims != nil && (len(claims.Groups) > 0 || len(claims.Claims) > 0) {
@@ -514,7 +514,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 		user, err = s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), userDID, kyc, false)
 		if err != nil {
 			// Log error but continue - auth can proceed without RBAC user creation
-			log.Printf("Warning: failed to ensure RBAC user exists for %s: %v", userDID, err)
+			slog.Warn("failed to ensure RBAC user exists", "user", userDID, "error", err)
 		} else if user != nil {
 			if user.Banned {
 				c.JSON(http.StatusForbidden, gin.H{"error": "account is banned"})
@@ -533,7 +533,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	// This synchronizes RBAC memberships based on ZK-attested credentials
 	if s.zkRoleExtractor != nil && user != nil && zkClaims != nil {
 		if err := s.zkRoleExtractor.ProcessZKMemberships(c.Request.Context(), user.ID, zkClaims); err != nil {
-			log.Printf("Warning: failed to process ZK memberships for %s: %v", userDID, err)
+			slog.Warn("failed to process ZK memberships", "user", userDID, "error", err)
 		}
 	}
 
@@ -564,7 +564,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 	if err := s.sessionStore.CompleteSession(sessionID, accessToken, refreshToken); err != nil {
 		// Session may have been deleted or expired - log but continue
 		// The wallet still gets the tokens directly from the callback response
-		log.Printf("Warning: failed to complete session %s: %v", sessionID, err)
+		slog.Warn("failed to complete session", "session_id", sessionID, "error", err)
 	}
 
 	return &AuthResponse{
@@ -690,7 +690,7 @@ func (s *Server) handleRefresh(c *gin.Context) {
 	// Revoke old refresh token
 	if err := s.db.RevokeRefreshToken(c.Request.Context(), tokenHash); err != nil {
 		// Log error but continue (non-critical)
-		log.Printf("Warning: failed to revoke old refresh token: %v", err)
+		slog.Warn("failed to revoke old refresh token", "error", err)
 	}
 
 	// Store new refresh token

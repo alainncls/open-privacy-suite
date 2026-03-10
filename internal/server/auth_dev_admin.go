@@ -4,7 +4,7 @@ package server
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 
 	"privacy-proxy/internal/rbac"
@@ -43,7 +43,7 @@ func (s *Server) ensureMockUserIsAdmin(ctx context.Context, userID string) {
 	if devAdmin.groupID == "" {
 		groupID, err := bootstrapDevAdminGroup(ctx, store)
 		if err != nil {
-			log.Printf("Warning: failed to bootstrap dev-admin group: %v", err)
+			slog.Warn("failed to bootstrap dev-admin group", "error", err)
 			return
 		}
 		devAdmin.groupID = groupID
@@ -62,7 +62,7 @@ func (s *Server) ensureMockUserIsAdmin(ctx context.Context, userID string) {
 		Source:  rbac.MembershipSourceAdmin,
 	}
 	if err := store.CreateMembership(ctx, membership); err != nil {
-		log.Printf("Warning: failed to add mock user %s to dev-admin group: %v", userID, err)
+		slog.Warn("failed to add mock user to dev-admin group", "user_id", userID, "error", err)
 	}
 }
 

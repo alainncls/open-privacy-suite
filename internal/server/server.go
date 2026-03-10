@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"privacy-proxy/internal/audit"
@@ -190,7 +190,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 				Source:       "environment variable",
 			})
 		}
-		fmt.Printf("Loaded %d additional trusted factory hashes from config\n", len(cfg.TrustedFactoryHashes))
+		slog.Info("loaded additional trusted factory hashes from config", "count", len(cfg.TrustedFactoryHashes))
 	}
 
 	// Initialize session store
@@ -218,7 +218,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		ensResolver, err = ens.NewResolver(cfg.ENSResolverURL)
 		if err != nil {
 			// Log warning but don't fail - ENS resolution is optional
-			fmt.Printf("Warning: failed to create ENS resolver: %v\n", err)
+			slog.Warn("failed to create ENS resolver", "error", err)
 		}
 	}
 
@@ -229,10 +229,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator, err = auth.NewAzureADAuthenticator(cfg.AzureADClientID, cfg.AzureADClientSecret, cfg.AzureADTenantID)
 		if err != nil {
 			// Log warning but don't fail — Azure AD is optional
-			fmt.Printf("Warning: failed to initialize Azure AD authenticator: %v\n", err)
+			slog.Warn("failed to initialize Azure AD authenticator", "error", err)
 		} else {
 			azureStateStore = NewAzureStateStore(AzureStateTTL, AzureStateCleanupInterval)
-			fmt.Printf("Azure AD authentication enabled (tenant: %s)\n", cfg.AzureADTenantID)
+			slog.Info("Azure AD authentication enabled", "tenant", cfg.AzureADTenantID)
 		}
 	}
 
@@ -257,8 +257,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			TieredEnabled: cfg.TraceTieredValidation,
 		})
 		traceValidator = rbac.NewTraceValidator(database)
-		fmt.Printf("Runtime tracing enabled (cache TTL: %v, timeout: %v, tiered: %v)\n",
-			cfg.TraceCacheTTL, cfg.TraceTimeout, cfg.TraceTieredValidation)
+		slog.Info("runtime tracing enabled", "cache_ttl", cfg.TraceCacheTTL, "timeout", cfg.TraceTimeout, "tiered", cfg.TraceTieredValidation)
 	}
 
 	s := &Server{
@@ -293,7 +292,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		checker := compliance.NewChecker(database, cfg.TravelRecordExpiry, cfg.PriceStalenessThreshold)
 		s.complianceChecker = checker
 		s.jsonrpcProcessor.SetComplianceChecker(checker)
-		log.Printf("Travel rule compliance enabled (record expiry: %s)", cfg.TravelRecordExpiry)
+		slog.Info("travel rule compliance enabled", "record_expiry", cfg.TravelRecordExpiry)
 
 		// Start background CoinGecko price fetcher (unless disabled)
 		if !cfg.DisableCoinGecko {
@@ -301,16 +300,16 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			priceSvc.Start()
 			s.priceService = priceSvc
 		} else {
-			log.Printf("CoinGecko price fetching is DISABLED (DISABLE_COINGECKO=true)")
+			slog.Info("CoinGecko price fetching is DISABLED")
 		}
 	} else {
-		log.Printf("WARNING: Travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false). Value transfers will NOT be checked against thresholds or sanctions lists.")
+		slog.Warn("travel rule compliance is DISABLED (ENABLE_TRAVEL_RULE=false) - value transfers will NOT be checked against thresholds or sanctions lists")
 	}
 
 	// Initialize enhanced audit: hash chain, SIEM forwarder, retention cleaner
 	hashChainSeed, err := database.GetLatestAccessLogHash(context.Background())
 	if err != nil {
-		log.Printf("Warning: failed to seed hash chain from DB: %v (starting fresh)", err)
+		slog.Warn("failed to seed hash chain from DB, starting fresh", "error", err)
 	}
 	hashChain := audit.NewHashChain(hashChainSeed)
 
@@ -325,8 +324,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			FallbackLogPath: cfg.SIEMFallbackLogPath,
 		})
 		s.siemForwarder = siemForwarder
-		log.Printf("SIEM forwarding enabled (webhook: %s, batch size: %d, flush interval: %s)",
-			cfg.SIEMWebhookURL, cfg.SIEMBatchSize, cfg.SIEMFlushInterval)
+		slog.Info("SIEM forwarding enabled", "webhook", cfg.SIEMWebhookURL, "batch_size", cfg.SIEMBatchSize, "flush_interval", cfg.SIEMFlushInterval)
 	}
 
 	// Wire enhanced audit into JSON-RPC processor
@@ -341,14 +339,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		CleanupInterval: cfg.RetentionCleanupInterval,
 	}, database, cfg.EnableTravelRule)
 	s.retentionCleaner = retentionCleaner
-	log.Printf("Retention cleaner started (access: %s, compliance: %s, rbac: %s, travel: %s, interval: %s)",
-		cfg.RetentionAccessLogs, cfg.RetentionComplianceLogs, cfg.RetentionRBACAuditLogs,
-		cfg.RetentionTravelRecords, cfg.RetentionCleanupInterval)
+	slog.Info("retention cleaner started", "access", cfg.RetentionAccessLogs, "compliance", cfg.RetentionComplianceLogs, "rbac", cfg.RetentionRBACAuditLogs, "travel", cfg.RetentionTravelRecords, "interval", cfg.RetentionCleanupInterval)
 
 	// Security: warn loudly if admin API has no token configured.
 	// Without a token, admin endpoints are open to the entire private network.
 	if cfg.AdminAPIToken == "" {
-		log.Printf("WARNING: ADMIN_API_TOKEN is not set. Admin API is unprotected — any request from the private network will be accepted without authentication. Set ADMIN_API_TOKEN for production deployments.")
+		slog.Warn("ADMIN_API_TOKEN is not set - admin API is unprotected, any request from the private network will be accepted without authentication")
 	}
 
 	return s, nil

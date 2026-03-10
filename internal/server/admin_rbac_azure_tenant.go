@@ -1,7 +1,7 @@
 package server
 
 import (
-	"log"
+	"log/slog"
 	"strings"
 
 	"privacy-proxy/internal/db"
@@ -15,7 +15,7 @@ import (
 func (s *Server) listAzureTenants(c *gin.Context) {
 	tenants, err := s.db.ListAllowedAzureTenants(c.Request.Context())
 	if err != nil {
-		log.Printf("Error listing Azure tenants: %v", err)
+		slog.Error("failed to list Azure tenants", "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -45,7 +45,7 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 	if input.DefaultOrgID != nil && input.DefaultGroupID != nil {
 		group, err := s.db.GetGroup(c.Request.Context(), *input.DefaultGroupID)
 		if err != nil {
-			log.Printf("Error looking up group %s: %v", *input.DefaultGroupID, err)
+			slog.Error("failed to look up group", "group_id", *input.DefaultGroupID, "error", err)
 			respondInternalError(c, "internal server error")
 			return
 		}
@@ -79,7 +79,7 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 			respondConflict(c, "tenant with this tenant_id already exists")
 			return
 		}
-		log.Printf("Error creating Azure tenant: %v", err)
+		slog.Error("failed to create Azure tenant", "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -91,7 +91,7 @@ func (s *Server) getAzureTenant(c *gin.Context) {
 	id := c.Param("id")
 	tenant, err := s.db.GetAllowedAzureTenant(c.Request.Context(), id)
 	if err != nil {
-		log.Printf("Error getting Azure tenant %s: %v", id, err)
+		slog.Error("failed to get Azure tenant", "id", id, "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -107,7 +107,7 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 
 	tenant, err := s.db.GetAllowedAzureTenant(c.Request.Context(), id)
 	if err != nil {
-		log.Printf("Error getting Azure tenant %s for update: %v", id, err)
+		slog.Error("failed to get Azure tenant for update", "id", id, "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -161,7 +161,7 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 	if tenant.DefaultOrgID != nil && tenant.DefaultGroupID != nil {
 		group, err := s.db.GetGroup(c.Request.Context(), *tenant.DefaultGroupID)
 		if err != nil {
-			log.Printf("Error looking up group %s: %v", *tenant.DefaultGroupID, err)
+			slog.Error("failed to look up group", "group_id", *tenant.DefaultGroupID, "error", err)
 			respondInternalError(c, "internal server error")
 			return
 		}
@@ -181,7 +181,7 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 			respondConflict(c, "tenant with this tenant_id already exists")
 			return
 		}
-		log.Printf("Error updating Azure tenant %s: %v", id, err)
+		slog.Error("failed to update Azure tenant", "id", id, "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -195,7 +195,7 @@ func (s *Server) deleteAzureTenant(c *gin.Context) {
 	// Look up the tenant to get its Azure tenant_id before deleting
 	tenant, err := s.db.GetAllowedAzureTenant(c.Request.Context(), id)
 	if err != nil {
-		log.Printf("Error looking up Azure tenant %s: %v", id, err)
+		slog.Error("failed to look up Azure tenant", "id", id, "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -209,7 +209,7 @@ func (s *Server) deleteAzureTenant(c *gin.Context) {
 			respondNotFound(c, "azure tenant not found")
 			return
 		}
-		log.Printf("Error deleting Azure tenant %s: %v", id, err)
+		slog.Error("failed to delete Azure tenant", "id", id, "error", err)
 		respondInternalError(c, "internal server error")
 		return
 	}
@@ -217,16 +217,16 @@ func (s *Server) deleteAzureTenant(c *gin.Context) {
 	// Ban all users from this tenant and revoke their sessions
 	banned, banErr := s.db.BanUsersByTenantID(c.Request.Context(), tenant.TenantID, "Azure AD tenant removed")
 	if banErr != nil {
-		log.Printf("Warning: failed to ban users for tenant %s: %v", tenant.TenantID, banErr)
+		slog.Warn("failed to ban users for tenant", "tenant_id", tenant.TenantID, "error", banErr)
 	} else if banned > 0 {
-		log.Printf("Banned %d user(s) from deleted Azure tenant %s", banned, tenant.TenantID)
+		slog.Info("banned users from deleted Azure tenant", "count", banned, "tenant_id", tenant.TenantID)
 	}
 
 	revoked, revokeErr := s.db.RevokeRefreshTokensByTenantID(c.Request.Context(), tenant.TenantID)
 	if revokeErr != nil {
-		log.Printf("Warning: failed to revoke refresh tokens for tenant %s: %v", tenant.TenantID, revokeErr)
+		slog.Warn("failed to revoke refresh tokens for tenant", "tenant_id", tenant.TenantID, "error", revokeErr)
 	} else if revoked > 0 {
-		log.Printf("Revoked %d refresh token(s) for users of deleted Azure tenant %s", revoked, tenant.TenantID)
+		slog.Info("revoked refresh tokens for deleted Azure tenant", "count", revoked, "tenant_id", tenant.TenantID)
 	}
 
 	respondDeleted(c, "azure tenant")

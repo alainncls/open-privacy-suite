@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -26,7 +26,7 @@ const maxPaginationLimit = 1000
 
 // internalError logs the real error server-side and returns a generic message to the client.
 func internalError(c *gin.Context, msg string, err error) {
-	log.Printf("ERROR: %s: %v", msg, err)
+	slog.Error(msg, "error", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
 }
 
@@ -880,7 +880,7 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 	sysPrices, err := s.db.ListSystemTokenPrices(ctx)
 	if err != nil {
 		// Revert: currency was set but prices couldn't be loaded — revert is best-effort
-		log.Printf("ERROR: failed to list system token prices after currency change: %v", err)
+		slog.Error("failed to list system token prices after currency change", "error", err)
 		internalError(c, "currency saved but failed to update system prices; retry the switch", err)
 		return
 	}
@@ -892,7 +892,7 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 				p.PriceFiat = 0
 			}
 			if err := s.db.UpsertSystemTokenPrice(ctx, p); err != nil {
-				log.Printf("ERROR: failed to update system price for %s during currency switch: %v", p.Symbol, err)
+				slog.Error("failed to update system price during currency switch", "symbol", p.Symbol, "error", err)
 				internalError(c, "failed to update system prices during currency switch", err)
 				return
 			}
@@ -908,7 +908,7 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 				tp.PriceFiat = 0 // No price for this currency — will block transactions (fail closed)
 			}
 			if err := s.db.UpsertTokenPrice(ctx, tp, input.Currency); err != nil {
-				log.Printf("ERROR: failed to update token price for %s/%s during currency switch: %v", tp.OrgID, tp.Symbol, err)
+				slog.Error("failed to update token price during currency switch", "org_id", tp.OrgID, "symbol", tp.Symbol, "error", err)
 				internalError(c, "failed to update token prices during currency switch", err)
 				return
 			}

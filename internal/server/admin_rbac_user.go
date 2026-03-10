@@ -1,7 +1,7 @@
 package server
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -105,9 +105,9 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	if input.Banned != nil && *input.Banned {
 		revoked, revokeErr := s.db.RevokeRefreshTokensBySubject(c.Request.Context(), user.ExternalID)
 		if revokeErr != nil {
-			log.Printf("Warning: failed to revoke refresh tokens for banned user %s: %v", user.ExternalID, revokeErr)
+			slog.Warn("failed to revoke refresh tokens for banned user", "user", user.ExternalID, "error", revokeErr)
 		} else if revoked > 0 {
-			log.Printf("Revoked %d refresh token(s) for banned user %s", revoked, user.ExternalID)
+			slog.Info("revoked refresh tokens for banned user", "count", revoked, "user", user.ExternalID)
 		}
 	}
 

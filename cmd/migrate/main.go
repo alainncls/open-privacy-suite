@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 
 	"privacy-proxy/internal/config"
@@ -17,39 +17,41 @@ func main() {
 	// Create a temporary DB connection just for migration status
 	database, err := openDBWithoutMigrate(cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		slog.Error("failed to open database", "error", err)
+		os.Exit(1)
 	}
 	defer database.Close()
 
 	// Check current status
 	currentVersion, pending, err := database.GetMigrationStatus(ctx)
 	if err != nil {
-		log.Printf("Could not get migration status (may be first run): %v", err)
+		slog.Warn("could not get migration status (may be first run)", "error", err)
 	} else {
-		log.Printf("Current schema version: %d", currentVersion)
-		log.Printf("Pending migrations: %d", pending)
+		slog.Info("current schema version", "version", currentVersion)
+		slog.Info("pending migrations", "count", pending)
 	}
 
 	if pending == 0 && err == nil {
-		log.Println("Database is up to date")
+		slog.Info("database is up to date")
 		os.Exit(0)
 	}
 
-	log.Println("Running database migrations...")
+	slog.Info("running database migrations")
 
 	err = database.MigrateWithProgress(ctx, func(sequence int32, name, direction, _ string) {
-		log.Printf("Applying migration %03d_%s (%s)...", sequence, name, direction)
+		slog.Info("applying migration", "sequence", sequence, "name", name, "direction", direction)
 	})
 	if err != nil {
-		log.Fatalf("Migration failed: %v", err)
+		slog.Error("migration failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Show final status
 	finalVersion, _, err := database.GetMigrationStatus(ctx)
 	if err != nil {
-		log.Printf("Warning: could not get final status: %v", err)
+		slog.Warn("could not get final status", "error", err)
 	} else {
-		log.Printf("Migrations completed. Schema version: %d", finalVersion)
+		slog.Info("migrations completed", "schema_version", finalVersion)
 	}
 }
 

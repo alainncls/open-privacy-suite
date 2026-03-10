@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 )
 
@@ -16,7 +16,8 @@ func generateVerifierDID() string {
 	// Generate 32 random bytes (256 bits) for uniqueness
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		log.Fatalf("Failed to generate random bytes: %v", err)
+		slog.Error("failed to generate random bytes", "error", err)
+		os.Exit(1)
 	}
 
 	// Convert to hex and format as DID

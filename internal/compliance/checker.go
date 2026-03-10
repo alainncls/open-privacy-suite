@@ -3,7 +3,7 @@ package compliance
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"math/big"
 	"strings"
@@ -85,11 +85,11 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		}
 		if sanctionedSpender {
 			reason := fmt.Sprintf("transaction sender %s is sanctioned", req.From)
-			log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+			slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
 			// M2: Denial decisions — warn on log failure but still deny. The tx is already
 			// blocked, so a missing audit entry is less severe than letting it through.
 			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-				log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+				slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
 			}
 			return &CheckResult{
 				Allowed:      false,
@@ -105,10 +105,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 	if sanctionedTo {
 		reason := fmt.Sprintf("recipient address %s is sanctioned", info.ToAddress)
-		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		// M2: Denial — warn on log failure, still deny.
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
 		}
 		return &CheckResult{
 			Allowed:      false,
@@ -123,10 +123,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 	if sanctionedFrom {
 		reason := fmt.Sprintf("sender address %s is sanctioned", info.FromAddress)
-		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		// M2: Denial — warn on log failure, still deny.
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
 		}
 		return &CheckResult{
 			Allowed:      false,
@@ -153,9 +153,9 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	if priceFiat < 0 {
 		// Sentinel: price unavailable
 		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
-		log.Printf("Compliance denied (fail closed): org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		slog.Warn("compliance denied (fail closed)", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
 		}
 		return &CheckResult{
 			Allowed:      false,
@@ -182,11 +182,11 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// amount requires a record. Example: threshold $1000, transfer $1000 -> record needed.
 	if amountFiat < threshold {
 		reason := fmt.Sprintf("transfer value $%.2f below threshold $%.2f", amountFiat, threshold)
-		log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		slog.Info("compliance allowed", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		// M2: Allowed decision — fail closed on log failure. Allowing a transaction
 		// without an audit trail is a compliance violation. Deny instead.
 		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", nil, currency); err != nil {
-			log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			slog.Error("failed to log allowed decision, failing closed", "org", req.OrgID, "user", req.UserID, "error", err)
 			return &CheckResult{
 				Allowed:      false,
 				Reason:       "compliance audit log unavailable, failing closed",
@@ -210,10 +210,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 	if record == nil {
 		reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f and no travel rule record found", amountFiat, threshold)
-		log.Printf("Compliance denied: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		// M2: Denial — warn on log failure, still deny.
 		if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "denied", reason, nil, currency); err != nil {
-			log.Printf("WARNING: failed to log denial decision for org=%s user=%s: %v", req.OrgID, req.UserID, err)
+			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
 		}
 		return &CheckResult{
 			Allowed:      false,
@@ -226,10 +226,10 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	// This is intentional per travel rule semantics — each transfer above threshold needs
 	// its own authorization. The record covers a specific planned transfer, not a balance.
 	reason := fmt.Sprintf("transfer value $%.2f exceeds threshold $%.2f, travel rule record %s applied", amountFiat, threshold, record.ID)
-	log.Printf("Compliance allowed: org=%s user=%s %s", req.OrgID, req.UserID, reason)
+	slog.Info("compliance allowed", "org", req.OrgID, "user", req.UserID, "reason", reason)
 	// M2: Allowed decision — fail closed on log failure.
 	if err := c.logDecision(ctx, req, info, &amountFiat, &threshold, "allowed", "", &record.ID, currency); err != nil {
-		log.Printf("ERROR: failed to log allowed decision, failing closed: org=%s user=%s: %v", req.OrgID, req.UserID, err)
+		slog.Error("failed to log allowed decision, failing closed", "org", req.OrgID, "user", req.UserID, "error", err)
 		return &CheckResult{
 			Allowed:      false,
 			Reason:       "compliance audit log unavailable, failing closed",
@@ -262,8 +262,7 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr, activ
 			if sysPrice != nil {
 				// Check staleness
 				if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
-					log.Printf("WARNING: system price for %s is stale (updated %s ago, threshold %s), failing closed",
-						*tokenPrice.CoingeckoID, time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+					slog.Warn("system price is stale, failing closed", "coingecko_id", *tokenPrice.CoingeckoID, "age", time.Since(sysPrice.UpdatedAt).Round(time.Second), "threshold", c.priceStalenessThreshold)
 					return -1, 0, nil
 				}
 				// Use prices_by_currency for the active currency
@@ -303,8 +302,7 @@ func (c *Checker) resolveTokenPrice(ctx context.Context, orgID, tokenAddr, activ
 		}
 		if sysPrice != nil {
 			if c.priceStalenessThreshold > 0 && time.Since(sysPrice.UpdatedAt) > c.priceStalenessThreshold {
-				log.Printf("WARNING: system ethereum price is stale (updated %s ago, threshold %s), failing closed",
-					time.Since(sysPrice.UpdatedAt).Round(time.Second), c.priceStalenessThreshold)
+				slog.Warn("system ethereum price is stale, failing closed", "age", time.Since(sysPrice.UpdatedAt).Round(time.Second), "threshold", c.priceStalenessThreshold)
 				return -1, 0, nil
 			}
 			if sysPrice.PricesByCurrency != nil {
@@ -355,7 +353,7 @@ func (c *Checker) logDecision(ctx context.Context, req *CheckRequest, info *Tran
 
 	_, err := c.store.CreateComplianceLog(ctx, entry)
 	if err != nil {
-		log.Printf("Warning: failed to create compliance log: %v", err)
+		slog.Warn("failed to create compliance log", "error", err)
 	}
 	return err
 }

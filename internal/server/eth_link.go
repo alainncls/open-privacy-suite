@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
@@ -223,7 +223,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 
 	// Verify the signature (unless mock mode is enabled for demos)
 	if s.config.MockSignatures {
-		log.Printf("Warning: Mock signature mode enabled - skipping signature verification for address %s", normalizedAddr)
+		slog.Warn("mock signature mode enabled, skipping signature verification", "address", normalizedAddr)
 	} else {
 		if err := auth.VerifyAddressOwnership(normalizedAddr, challenge.Message, req.Signature); err != nil {
 			respondBadRequest(c, "signature verification failed")
@@ -244,7 +244,7 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 			respondForbidden(c, "ETH address link has been revoked — contact an administrator")
 			return
 		}
-		log.Printf("Error linking address %s for user %s: %v", normalizedAddr, userDID, err)
+		slog.Error("failed to link address", "address", normalizedAddr, "user", userDID, "error", err)
 		respondInternalError(c, "failed to link address")
 		return
 	}
@@ -278,7 +278,7 @@ func (s *Server) handleGetEthAddresses(c *gin.Context) {
 	// Get linked addresses
 	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), userDID)
 	if err != nil {
-		log.Printf("Error getting addresses for user %s: %v", userDID, err)
+		slog.Error("failed to get addresses for user", "user", userDID, "error", err)
 		respondInternalError(c, "failed to get addresses")
 		return
 	}
@@ -418,6 +418,6 @@ func (s *Server) resolveAndStoreENS(address string) {
 	}
 
 	if err := s.db.UpdateENSName(ctx, address, ensNamePtr); err != nil {
-		log.Printf("Warning: failed to update ENS name for %s: %v", address, err)
+		slog.Warn("failed to update ENS name", "address", address, "error", err)
 	}
 }
