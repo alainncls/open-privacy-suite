@@ -97,6 +97,8 @@ func bootstrapDevAdminGroup(ctx context.Context, store rbac.Store) (string, erro
 			OrgID: org.ID,
 			Slug:  groupSlug,
 			Name:  "Dev Admin Group (auto-created)",
+			Depth: 0,
+			Path:  groupSlug,
 		}
 		if err := store.CreateGroup(ctx, group); err != nil {
 			return "", err

@@ -277,6 +277,7 @@ func (oc *OrgContext) ValidateFactoryCallOrgs(
 		if result.IsFactoryCall && result.IsDeployCall {
 			// If allowed, return success immediately
 			if result.Allowed {
+				result.OrgID = org.ID
 				return result, nil
 			}
 			// If denied, save the result but continue checking other orgs

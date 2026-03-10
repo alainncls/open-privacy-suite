@@ -129,7 +129,7 @@ print_header "Privacy Proxy Full Workflow Demo"
 print_step "Step 1: Checking Configuration"
 
 # Environment variables with defaults
-: "${PROXY_API_URL:=http://localhost:8080/api}"
+: "${PROXY_API_URL:=http://localhost:8080/api/v1/admin}"
 : "${PROXY_RPC_URL:=http://localhost:8080}"
 : "${ANVIL_URL:=http://localhost:8545}"
 : "${PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -257,7 +257,7 @@ print_step "Step 4: User and Group Setup"
 
 # Get user info
 print_substep "Getting user info..."
-USERS_RESP=$(api_call "GET" "/v1/users")
+USERS_RESP=$(api_call "GET" "/users")
 USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 
 if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
@@ -268,18 +268,18 @@ print_success "User ID: $USER_ID"
 
 # Set KYC status
 print_substep "Setting KYC status (required for RPC access)..."
-KYC_RESP=$(curl -s -X PUT "${PROXY_API_URL}/v1/users/${USER_ID}" \
+KYC_RESP=$(curl -s -X PUT "${PROXY_API_URL}/users/${USER_ID}" \
     -H "Content-Type: application/json" \
     -d '{"kyc": true}')
 print_success "KYC status set to true"
 
 # Set up deployers group with deploy claim
 print_substep "Setting up deployers group..."
-GROUPS_RESP=$(api_call "GET" "/v1/orgs/$ORG_ID/groups")
+GROUPS_RESP=$(api_call "GET" "/orgs/$ORG_ID/groups")
 DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
-    GROUP_CREATE_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups" \
+    GROUP_CREATE_RESP=$(curl -s -X POST "${PROXY_API_URL}/orgs/$ORG_ID/groups" \
         -H "Content-Type: application/json" \
         -d '{
             "slug": "demo-deployers",
@@ -294,19 +294,19 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
 fi
 
 # Always configure group access (in case group was created earlier without proper config)
-curl -s -X PUT "${PROXY_API_URL}/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+curl -s -X PUT "${PROXY_API_URL}/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $AUTH_TOKEN" \
     -d '{
         "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
-        "claims": ["deploy"]
+        "allowed_methods": ["*"], "claims": ["deploy"]
     }' > /dev/null
 
 print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
 
 # Add user to group
 print_substep "Adding user to deployers group..."
-MEMBERSHIP_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/users/${USER_ID}/memberships" \
+MEMBERSHIP_RESP=$(curl -s -X POST "${PROXY_API_URL}/users/${USER_ID}/memberships" \
     -H "Content-Type: application/json" \
     -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}")
 print_success "User added to deployers group"
@@ -352,6 +352,7 @@ if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
     # Remove any copied local artifacts (these are gitignored but cp -r copies them)
     rm -rf lib out cache
     mkdir -p lib
+    git clone --quiet --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std || { print_error "Failed to clone forge-std"; exit 1; }
     git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git lib/openzeppelin-contracts-upgradeable || { print_error "Failed to clone openzeppelin-contracts-upgradeable"; exit 1; }
     git clone --quiet --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts || { print_error "Failed to clone openzeppelin-contracts"; exit 1; }
 
@@ -361,6 +362,7 @@ if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
     FACTORY_RESULT=$(forge create src/CREATE3Factory.sol:CREATE3Factory \
         --rpc-url "$ANVIL_URL" \
         --private-key "$PRIVATE_KEY" \
+        --broadcast \
         --json 2>&1) || true
     CREATE3_FACTORY=$(echo "$FACTORY_RESULT" | jq -r '.deployedTo // empty' 2>/dev/null)
     if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
@@ -393,7 +395,7 @@ else
         print_info "Factory has no code (chain may have been reset), deploying new factory..."
 
         # Deploy new factory via dev endpoint
-        DEPLOY_RESP=$(curl -s -X POST "${PROXY_API_URL}/v1/dev/create3-factory")
+        DEPLOY_RESP=$(curl -s -X POST "${PROXY_API_URL}/dev/create3-factory")
         CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
         if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
@@ -414,7 +416,7 @@ else
 fi
 
 # =============================================================================
-# Step 6: Preregister Addresses
+# Step 6: Preregister Addresses (or compute locally if runtime tracing is on)
 # =============================================================================
 
 print_step "Step 6: Preregister Addresses"
@@ -433,27 +435,64 @@ PREREGISTER_RESPONSE=$(curl -s -X POST "${PROXY_API_URL}/orgs/$ORG_ID/addresses/
         \"note\": \"Demo DeFi deployment addresses\"
     }")
 
-if ! echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+if echo "$PREREGISTER_RESPONSE" | jq -e '.addresses' > /dev/null 2>&1; then
+    # Extract addresses and salts from preregistration response
+    TOKEN_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
+    TOKEN_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
+    POOL_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
+    POOL_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
+    ROUTER_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
+    ROUTER_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
+    TOKEN_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].address')
+    TOKEN_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].salt')
+    POOL_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].address')
+    POOL_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].salt')
+    ROUTER_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].address')
+    ROUTER_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].salt')
+    print_success "Addresses preregistered"
+elif echo "$PREREGISTER_RESPONSE" | jq -r '.error' 2>/dev/null | grep -q "runtime tracing"; then
+    # Runtime tracing is enabled — preregistration not needed.
+    # Compute salts and addresses locally using the same algorithm as the server:
+    #   salt[i] = keccak256(orgID || saltPrefix || big.Int(i).Bytes())
+    # big.Int(0).Bytes() == "" (empty), big.Int(i).Bytes() == hex(i) for i 1..5
+    print_info "Runtime tracing enabled — computing addresses locally (no preregistration needed)"
+
+    ORG_HEX=$(printf '%s' "$ORG_ID" | xxd -p | tr -d '\n')
+    PREFIX_HEX=$(printf '%s' "$SALT_PREFIX" | xxd -p | tr -d '\n')
+
+    # Counter bytes: i=0 → empty, i=1..5 → single byte (big-endian)
+    COUNTER_HEX=("" "01" "02" "03" "04" "05")
+
+    compute_create3_salt() {
+        local idx="$1"
+        cast keccak "0x${ORG_HEX}${PREFIX_HEX}${COUNTER_HEX[$idx]}"
+    }
+
+    compute_create3_addr() {
+        local salt="$1"
+        cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$salt" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]'
+    }
+
+    TOKEN_IMPL_SALT=$(compute_create3_salt 0)
+    TOKEN_IMPL_ADDR=$(compute_create3_addr "$TOKEN_IMPL_SALT")
+    POOL_IMPL_SALT=$(compute_create3_salt 1)
+    POOL_IMPL_ADDR=$(compute_create3_addr "$POOL_IMPL_SALT")
+    ROUTER_IMPL_SALT=$(compute_create3_salt 2)
+    ROUTER_IMPL_ADDR=$(compute_create3_addr "$ROUTER_IMPL_SALT")
+    TOKEN_PROXY_SALT=$(compute_create3_salt 3)
+    TOKEN_PROXY_ADDR=$(compute_create3_addr "$TOKEN_PROXY_SALT")
+    POOL_PROXY_SALT=$(compute_create3_salt 4)
+    POOL_PROXY_ADDR=$(compute_create3_addr "$POOL_PROXY_SALT")
+    ROUTER_PROXY_SALT=$(compute_create3_salt 5)
+    ROUTER_PROXY_ADDR=$(compute_create3_addr "$ROUTER_PROXY_SALT")
+    print_success "Addresses computed locally"
+else
     print_error "Failed to preregister addresses"
     echo "$PREREGISTER_RESPONSE" | jq '.' 2>/dev/null || echo "$PREREGISTER_RESPONSE"
     exit 1
 fi
 
-# Extract addresses and salts
-TOKEN_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].address')
-TOKEN_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[0].salt')
-POOL_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].address')
-POOL_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[1].salt')
-ROUTER_IMPL_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].address')
-ROUTER_IMPL_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[2].salt')
-TOKEN_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].address')
-TOKEN_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[3].salt')
-POOL_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].address')
-POOL_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[4].salt')
-ROUTER_PROXY_ADDR=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].address')
-ROUTER_PROXY_SALT=$(echo "$PREREGISTER_RESPONSE" | jq -r '.addresses[5].salt')
-
-print_success "Addresses preregistered"
+print_success "Addresses ready"
 echo ""
 echo -e "  ${WHITE}Preregistered Addresses:${NC}"
 echo -e "  ${CYAN}┌─────────────────────────────────────────────────────────────────┐${NC}"
@@ -578,7 +617,7 @@ EOF
 
     DEPLOY_RESULT=$(rpc_call "eth_sendTransaction" "$TX_PARAMS")
     TX_HASH=$(echo "$DEPLOY_RESULT" | jq -r '.result // empty' 2>/dev/null)
-    DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r '.error.message // .error // empty' 2>/dev/null)
+    DEPLOY_ERROR=$(echo "$DEPLOY_RESULT" | jq -r '(.error.message? // .error?) // empty' 2>/dev/null)
 
     if [ -z "$TX_HASH" ] || [ "$TX_HASH" = "null" ]; then
         if [ -n "$DEPLOY_ERROR" ] && [ "$DEPLOY_ERROR" != "null" ]; then

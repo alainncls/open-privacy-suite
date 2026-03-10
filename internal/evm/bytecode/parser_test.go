@@ -506,10 +506,11 @@ func TestStripCBORMetadata_WithConstructorArgs(t *testing.T) {
 	// Strip CBOR
 	stripped := StripCBORMetadata(bytecodeWithCBORAndArgs)
 
-	// Should have removed CBOR metadata (including "solc" which looks like PUSH20)
-	expectedLen := len(code) + len(constructorArgs)
+	// Should have removed CBOR metadata AND constructor args (which follow CBOR and are data, not code).
+	// Constructor args must not be analyzed as opcodes — they can contain false positive opcode bytes.
+	expectedLen := len(code)
 	if len(stripped) != expectedLen {
-		t.Errorf("expected length %d, got %d (removed %d bytes)",
+		t.Errorf("expected length %d (code only), got %d (removed %d bytes)",
 			expectedLen, len(stripped), len(bytecodeWithCBORAndArgs)-len(stripped))
 	}
 
@@ -519,17 +520,10 @@ func TestStripCBORMetadata_WithConstructorArgs(t *testing.T) {
 		t.Error("'solc' bytes should be removed after stripping CBOR")
 	}
 
-	// Verify the code content is preserved at the beginning
+	// Verify the code content is preserved
 	for i, b := range code {
 		if stripped[i] != b {
 			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
-		}
-	}
-
-	// Verify constructor args are preserved at the end
-	for i, b := range constructorArgs {
-		if stripped[len(code)+i] != b {
-			t.Errorf("constructor arg byte %d: expected %#x, got %#x", i, b, stripped[len(code)+i])
 		}
 	}
 }
@@ -548,6 +542,237 @@ func TestStripCBORMetadata_NoCBOR(t *testing.T) {
 		if stripped[i] != b {
 			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
 		}
+	}
+}
+
+// Regression test: proxy creation bytecode can have 0xf5/0xf0 bytes in
+// constructor args (e.g. from address values in ABI-encoded init data).
+// These must not be flagged as CREATE2/CREATE opcodes.
+func TestStripCBORMetadata_ConstructorArgs_NoFalsePositiveCreate2(t *testing.T) {
+	// Minimal "code" portion
+	code := []byte{PUSH1, 0x80, PUSH1, 0x40, STOP}
+
+	// Build CBOR metadata with "ipfs" and "solc" keys (same structure as WithConstructorArgs test)
+	cborContent := []byte{
+		0xa2, // Map with 2 elements
+		0x65, // Text string of length 5
+		0x69, 0x70, 0x66, 0x73, 0x58, // "ipfs" + bytes type marker
+		0x22, // 34 bytes follow
+	}
+	for i := 0; i < 34; i++ {
+		cborContent = append(cborContent, byte(i))
+	}
+	cborContent = append(cborContent,
+		0x64,                   // Text string of length 4
+		0x73, 0x6f, 0x6c, 0x63, // "solc"
+		0x43,             // bytes(3)
+		0x00, 0x08, 0x18, // Version bytes
+	)
+
+	// 2-byte CBOR length indicator
+	cborLen := len(cborContent)
+
+	// Constructor args that specifically contain 0xf5 (CREATE2) and 0xf0 (CREATE) bytes
+	constructorArgs := []byte{
+		// ABI-encoded address (12 zero bytes padding + 20-byte address)
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf5, 0xf0, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x12, 0x34,
+		0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, // contains 0xf5 and 0xf0!
+	}
+
+	// Combine: code + CBOR + 2-byte-length + constructorArgs
+	combined := append([]byte{}, code...)
+	combined = append(combined, cborContent...)
+	combined = append(combined, byte(cborLen>>8), byte(cborLen&0xff))
+	combined = append(combined, constructorArgs...)
+
+	// Strip CBOR metadata (should also strip constructor args that follow it)
+	stripped := StripCBORMetadata(combined)
+
+	// Parse the stripped result
+	bc, err := Parse(stripped)
+	if err != nil {
+		t.Fatalf("unexpected error parsing stripped bytecode: %v", err)
+	}
+
+	// Verify: the parsed opcodes must NOT contain CREATE2 (0xf5) or CREATE (0xf0)
+	if bc.HasOpcode(CREATE2) {
+		t.Error("stripped bytecode should NOT contain CREATE2 opcode (false positive from constructor args)")
+	}
+	if bc.HasOpcode(CREATE) {
+		t.Error("stripped bytecode should NOT contain CREATE opcode (false positive from constructor args)")
+	}
+
+	// Verify the actual code portion is preserved
+	if len(stripped) != len(code) {
+		t.Errorf("expected stripped length %d (code only), got %d", len(code), len(stripped))
+	}
+	for i, b := range code {
+		if i < len(stripped) && stripped[i] != b {
+			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// =============================================================================
+// Security tests: StripCBOR edge cases and parser robustness
+// =============================================================================
+
+// TestStripCBOR_LengthWordPointsPastEnd verifies that a CBOR length indicator
+// pointing far past the bytecode length does not cause a panic or incorrect strip.
+func TestStripCBOR_LengthWordPointsPastEnd(t *testing.T) {
+	// 10-byte bytecode where last 2 bytes = 0xff 0xff = length 65535
+	bc := []byte{0x60, 0x80, 0x60, 0x40, 0x52, 0x60, 0x20, 0x60, 0xff, 0xff}
+
+	stripped := StripCBORMetadata(bc)
+
+	// Should return original unchanged: length 65535 >> len(bc)
+	if len(stripped) != len(bc) {
+		t.Errorf("expected unchanged length %d, got %d", len(bc), len(stripped))
+	}
+	for i, b := range bc {
+		if stripped[i] != b {
+			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// TestStripCBOR_ValidLengthButBadMarker verifies that CBOR stripping requires
+// a valid CBOR map marker byte (0xa1, 0xa2, or 0xa3) at the metadata start.
+func TestStripCBOR_ValidLengthButBadMarker(t *testing.T) {
+	// Build: 40 bytes of 0x00, then 0x99 (not a CBOR map marker), then 0x00 0x27 (length=39)
+	bc := make([]byte, 43)
+	for i := 0; i < 40; i++ {
+		bc[i] = 0x00
+	}
+	bc[40] = 0x99 // Not a valid CBOR map marker (0xa1/0xa2/0xa3)
+	bc[41] = 0x00
+	bc[42] = 0x27 // length = 39 bytes, which would point back to bc[40]... but marker is invalid
+
+	stripped := StripCBORMetadata(bc)
+
+	// Should return original: marker check fails
+	if len(stripped) != len(bc) {
+		t.Errorf("expected unchanged length %d, got %d", len(bc), len(stripped))
+	}
+}
+
+// TestStripCBOR_Bzzr0Metadata verifies that Solidity 0.5.x-style metadata with
+// "bzzr0" key (Swarm hash) is correctly stripped.
+func TestStripCBOR_Bzzr0Metadata(t *testing.T) {
+	code := []byte{PUSH1, 0x80, STOP}
+
+	// Build CBOR content with "bzzr0" key (Solidity 0.5.x Swarm hash format)
+	cborContent := []byte{
+		0xa1,                               // Map with 1 element
+		0x65,                               // Text string of 5 chars
+		0x62, 0x7a, 0x7a, 0x72, 0x30,      // "bzzr0"
+		0x58, 0x20,                          // bytes(32)
+	}
+	// Add 32 bytes of dummy Swarm hash
+	for i := 0; i < 32; i++ {
+		cborContent = append(cborContent, byte(i))
+	}
+
+	// Combine: code + cbor + 2-byte length indicator
+	cborLen := len(cborContent)
+	combined := append([]byte{}, code...)
+	combined = append(combined, cborContent...)
+	combined = append(combined, byte(cborLen>>8), byte(cborLen&0xff))
+
+	stripped := StripCBORMetadata(combined)
+
+	// Should have stripped CBOR + length indicator, leaving just the code
+	if len(stripped) != len(code) {
+		t.Errorf("expected stripped length %d, got %d", len(code), len(stripped))
+	}
+
+	// Verify "bzzr" bytes not present in stripped result
+	if containsBytes(stripped, []byte{0x62, 0x7a, 0x7a, 0x72}) {
+		t.Error("'bzzr' bytes should not be present in stripped result")
+	}
+
+	// Verify code content preserved
+	for i, b := range code {
+		if stripped[i] != b {
+			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// TestParse_TruncatedPUSH20ZeroArgs verifies that a PUSH20 at the very end
+// of bytecode (with no following bytes) is handled without panic.
+func TestParse_TruncatedPUSH20ZeroArgs(t *testing.T) {
+	// PUSH20 with no argument bytes at all
+	bc_bytes := []byte{PUSH20}
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(bc.Opcodes) != 1 {
+		t.Fatalf("expected 1 opcode, got %d", len(bc.Opcodes))
+	}
+
+	op := bc.Opcodes[0]
+	if op.Name != "PUSH20" {
+		t.Errorf("expected name PUSH20, got %q", op.Name)
+	}
+	if len(op.Args) != 0 {
+		t.Errorf("expected 0 args (truncated), got %d", len(op.Args))
+	}
+}
+
+// TestStripCBOR_BytecodeExactly2Bytes_NoStrip verifies that a 2-byte bytecode
+// does not cause underflow when computing metadataStart.
+func TestStripCBOR_BytecodeExactly2Bytes_NoStrip(t *testing.T) {
+	// [0x00, 0x02]: last 2 bytes say metadataLen=2, but total is only 2 bytes
+	// metadataStart = 2 - 2 - 2 = -2 which is < 0
+	bc := []byte{0x00, 0x02}
+
+	stripped := StripCBORMetadata(bc)
+
+	if len(stripped) != len(bc) {
+		t.Errorf("expected unchanged length %d, got %d", len(bc), len(stripped))
+	}
+	for i, b := range bc {
+		if stripped[i] != b {
+			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// TestParse_AllZeroBytes verifies that a bytecode of all STOP opcodes (0x00) is
+// parsed correctly and does not trigger false positives in analysis.
+func TestParse_AllZeroBytes(t *testing.T) {
+	bc_bytes := make([]byte, 8) // 8 STOP opcodes
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(bc.Opcodes) != 8 {
+		t.Fatalf("expected 8 opcodes, got %d", len(bc.Opcodes))
+	}
+
+	for i, op := range bc.Opcodes {
+		if op.Name != "STOP" {
+			t.Errorf("opcode[%d]: expected STOP, got %q", i, op.Name)
+		}
+	}
+
+	// Verify no false positives in call target analysis
+	result := ExtractCallTargets(bc)
+	if result.HasCreate {
+		t.Error("HasCreate should be false for all-zero bytecode")
+	}
+	if result.HasCreate2 {
+		t.Error("HasCreate2 should be false for all-zero bytecode")
+	}
+	if result.HasDynamicCall {
+		t.Error("HasDynamicCall should be false for all-zero bytecode")
 	}
 }
 

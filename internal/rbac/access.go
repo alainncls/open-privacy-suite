@@ -293,6 +293,7 @@ func (c *AccessController) Store() Store {
 func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
 	c.deployValidator.SetRuntimeTracingEnabled(enabled)
 	c.upgradeValidator.SetRuntimeTracingEnabled(enabled)
+	c.factoryCallValidator.SetRuntimeTracingEnabled(enabled)
 }
 
 // NewAccessController creates a new access controller.
@@ -796,10 +797,16 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
 					}, nil
 				}
-				// If this is an allowed factory deploy, capture info for auto-registration
+				// If this is an allowed factory deploy, capture info for auto-registration.
+				// Use factoryResult.OrgID (the org that owns the factory) rather than org.ID,
+				// which may be the user's default org (unrelated to the factory's owner org).
 				if factoryResult != nil && factoryResult.IsFactoryCall && factoryResult.IsDeployCall && factoryResult.Allowed {
+					factoryOrgID := factoryResult.OrgID
+					if factoryOrgID == "" {
+						factoryOrgID = org.ID
+					}
 					factoryDeployInfo = &FactoryDeployInfo{
-						OrgID:         org.ID,
+						OrgID:         factoryOrgID,
 						TargetAddress: factoryResult.TargetAddress,
 						FactoryAddr:   addr,
 						Salt:          factoryResult.Salt,
@@ -1393,7 +1400,12 @@ func GetTargetAddress(method string, params []any) string {
 	case "eth_sendTransaction":
 		if txObj, ok := params[0].(map[string]any); ok {
 			if to, ok := txObj["to"].(string); ok {
-				return strings.ToLower(to)
+				addr := strings.ToLower(strings.TrimSpace(to))
+				// "0x" or "" means no target (contract deployment), not address zero
+				if addr == "0x" || addr == "" {
+					return ""
+				}
+				return addr
 			}
 		}
 	case "eth_getCode", "eth_getStorageAt":

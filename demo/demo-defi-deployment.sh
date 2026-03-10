@@ -139,7 +139,7 @@ echo ""
 print_step "Step 2: Checking Configuration"
 
 # Environment variables with defaults
-: "${ADMIN_API_URL:=http://localhost:8080/api}"
+: "${ADMIN_API_URL:=http://localhost:8080/api/v1/admin}"
 : "${PROXY_RPC_URL:=http://localhost:8080}"
 : "${ANVIL_URL:=http://localhost:8545}"
 : "${PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -215,21 +215,21 @@ fi
 print_success "Authenticated"
 
 # Get user ID and set up permissions
-USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
+USERS_RESP=$(curl -s "$ADMIN_API_URL/users")
 USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 
 # Set KYC
-curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
+curl -s -X PUT "$ADMIN_API_URL/users/${USER_ID}" \
     -H "Content-Type: application/json" \
     -d '{"kyc": true}' > /dev/null
 
 # Add to deployers group
-GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+GROUPS_RESP=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/groups")
 DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     # Create the deployers group if it doesn't exist
-    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups" \
+    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/groups" \
         -H "Content-Type: application/json" \
         -d '{
             "slug": "demo-deployers",
@@ -244,14 +244,14 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
 fi
 
 # Always configure group access
-curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "eth_getTransactionReceipt", "net_version"],
-        "claims": ["deploy"]
+        "allowed_methods": ["*"], "claims": ["deploy"]
     }' > /dev/null
 
-curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+curl -s -X POST "$ADMIN_API_URL/users/${USER_ID}/memberships" \
     -H "Content-Type: application/json" \
     -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}" > /dev/null
 
@@ -281,7 +281,7 @@ fi
 
 if [ "$NEED_FACTORY" = true ]; then
     print_substep "Deploying CREATE3 factory..."
-    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/dev/create3-factory")
     CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
     if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
@@ -333,25 +333,40 @@ PREREG_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregister
 # Check for errors
 if echo "$PREREG_RESP" | jq -e '.error' > /dev/null 2>&1; then
     ERROR=$(echo "$PREREG_RESP" | jq -r '.error')
-    print_error "Preregistration failed: $ERROR"
-    exit 1
-fi
+    if echo "$ERROR" | grep -q "runtime tracing"; then
+        print_info "Runtime tracing enabled — computing addresses locally (no preregistration needed)"
+        # Compute salts: keccak256(orgID_bytes || saltPrefix_bytes || counter_bytes)
+        # counter[0] = empty (big.Int(0).Bytes()), counter[1] = 0x01, counter[2] = 0x02
+        ORG_HEX=$(printf '%s' "$ORG_ID" | xxd -p | tr -d '\n')
+        PREFIX_HEX=$(printf '%s' "$SALT_PREFIX" | xxd -p | tr -d '\n')
+        TOKEN_SALT=$(cast keccak "0x${ORG_HEX}${PREFIX_HEX}" 2>/dev/null)
+        POOL_SALT=$(cast keccak "0x${ORG_HEX}${PREFIX_HEX}01" 2>/dev/null)
+        ROUTER_SALT=$(cast keccak "0x${ORG_HEX}${PREFIX_HEX}02" 2>/dev/null)
+        TOKEN_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$TOKEN_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        POOL_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$POOL_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        ROUTER_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$ROUTER_SALT" --rpc-url "$ANVIL_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        print_success "Addresses computed locally"
+    else
+        print_error "Preregistration failed: $ERROR"
+        exit 1
+    fi
+else
+    # Extract the 3 preregistered addresses
+    ADDRESSES=$(echo "$PREREG_RESP" | jq -r '.addresses')
+    if [ -z "$ADDRESSES" ] || [ "$ADDRESSES" = "null" ]; then
+        print_error "No addresses returned from preregistration"
+        echo "Response: $PREREG_RESP"
+        exit 1
+    fi
 
-# Extract the 3 preregistered addresses
-ADDRESSES=$(echo "$PREREG_RESP" | jq -r '.addresses')
-if [ -z "$ADDRESSES" ] || [ "$ADDRESSES" = "null" ]; then
-    print_error "No addresses returned from preregistration"
-    echo "Response: $PREREG_RESP"
-    exit 1
+    # Get addresses and salts (index 0=token, 1=pool, 2=router)
+    TOKEN_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[0].address')
+    TOKEN_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[0].salt')
+    POOL_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[1].address')
+    POOL_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[1].salt')
+    ROUTER_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[2].address')
+    ROUTER_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[2].salt')
 fi
-
-# Get addresses and salts (index 0=token, 1=pool, 2=router)
-TOKEN_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[0].address')
-TOKEN_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[0].salt')
-POOL_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[1].address')
-POOL_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[1].salt')
-ROUTER_ADDR=$(echo "$PREREG_RESP" | jq -r '.addresses[2].address')
-ROUTER_SALT=$(echo "$PREREG_RESP" | jq -r '.addresses[2].salt')
 
 # Verify addresses are valid
 if [ -z "$TOKEN_ADDR" ] || [ "$TOKEN_ADDR" = "null" ]; then
@@ -359,7 +374,7 @@ if [ -z "$TOKEN_ADDR" ] || [ "$TOKEN_ADDR" = "null" ]; then
     exit 1
 fi
 
-print_success "3 addresses preregistered successfully"
+print_success "3 addresses ready"
 
 echo ""
 echo -e "  ${WHITE}Pre-computed Addresses (known BEFORE deployment):${NC}"

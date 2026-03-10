@@ -452,3 +452,212 @@ func TestAnalysisResult_SummarizeAnalysis(t *testing.T) {
 		t.Errorf("expected 2 constant addresses, got %d", len(addrs))
 	}
 }
+
+// =============================================================================
+// Security tests: PUSH argument bytes must NOT be detected as opcodes
+// =============================================================================
+
+// TestExtractCallTargets_CREATE_InPUSH32Args_NotDetected verifies that 0xf0 (CREATE)
+// bytes inside PUSH32 arguments are not misdetected as CREATE opcodes.
+// P0: if this fails, attackers can bypass CREATE detection by hiding it in PUSH args.
+func TestExtractCallTargets_CREATE_InPUSH32Args_NotDetected(t *testing.T) {
+	// PUSH32 with 32 bytes all equal to 0xf0 (CREATE opcode value), then STOP
+	bc_bytes := make([]byte, 0, 34)
+	bc_bytes = append(bc_bytes, PUSH32) // 0x7f
+	for i := 0; i < 32; i++ {
+		bc_bytes = append(bc_bytes, 0xf0) // CREATE opcode value as data
+	}
+	bc_bytes = append(bc_bytes, STOP)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if result.HasCreate {
+		t.Error("HasCreate should be false: 0xf0 bytes are PUSH32 arguments, not CREATE opcodes")
+	}
+}
+
+// TestExtractCallTargets_CREATE2_InPUSH32Args_NotDetected verifies that 0xf5 (CREATE2)
+// bytes inside PUSH32 arguments are not misdetected as CREATE2 opcodes.
+func TestExtractCallTargets_CREATE2_InPUSH32Args_NotDetected(t *testing.T) {
+	bc_bytes := make([]byte, 0, 34)
+	bc_bytes = append(bc_bytes, PUSH32) // 0x7f
+	for i := 0; i < 32; i++ {
+		bc_bytes = append(bc_bytes, 0xf5) // CREATE2 opcode value as data
+	}
+	bc_bytes = append(bc_bytes, STOP)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if result.HasCreate2 {
+		t.Error("HasCreate2 should be false: 0xf5 bytes are PUSH32 arguments, not CREATE2 opcodes")
+	}
+}
+
+// TestExtractCallTargets_DELEGATECALL_InPUSH1Arg_NotDetected verifies that 0xf4 (DELEGATECALL)
+// as a PUSH1 argument is not misdetected as a DELEGATECALL opcode.
+func TestExtractCallTargets_DELEGATECALL_InPUSH1Arg_NotDetected(t *testing.T) {
+	// PUSH1 0xf4 (DELEGATECALL value as data), STOP
+	bc_bytes := []byte{PUSH1, 0xf4, STOP}
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if result.HasDynamicCall {
+		t.Error("HasDynamicCall should be false: 0xf4 is a PUSH1 argument, not a DELEGATECALL opcode")
+	}
+	if len(result.CallTargets) != 0 {
+		t.Errorf("expected 0 call targets, got %d", len(result.CallTargets))
+	}
+	if result.HasDelegateCall {
+		t.Error("HasDelegateCall should be false: 0xf4 is a PUSH1 argument, not a DELEGATECALL opcode")
+	}
+}
+
+// TestExtractCallTargets_AllDangerousOpcodesInPUSH32_NoneDetected verifies that
+// all dangerous opcode byte values (0xf0-0xf5) embedded as PUSH32 data are not
+// misdetected as actual opcodes.
+func TestExtractCallTargets_AllDangerousOpcodesInPUSH32_NoneDetected(t *testing.T) {
+	// PUSH32 with first 6 bytes being dangerous opcode values, rest zeros, then STOP
+	pushArgs := []byte{
+		0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, // CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00,
+	}
+
+	bc_bytes := make([]byte, 0, 34)
+	bc_bytes = append(bc_bytes, PUSH32)
+	bc_bytes = append(bc_bytes, pushArgs...)
+	bc_bytes = append(bc_bytes, STOP)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if result.HasCreate {
+		t.Error("HasCreate should be false: all dangerous bytes are PUSH32 arguments")
+	}
+	if result.HasCreate2 {
+		t.Error("HasCreate2 should be false: all dangerous bytes are PUSH32 arguments")
+	}
+	if result.HasDynamicCall {
+		t.Error("HasDynamicCall should be false: all dangerous bytes are PUSH32 arguments")
+	}
+	if len(result.CallTargets) != 0 {
+		t.Errorf("expected 0 call targets, got %d", len(result.CallTargets))
+	}
+}
+
+// TestExtractCallTargets_ZeroAddress_RequiresOrgOwnership verifies that the zero address
+// (0x0000...0000) is treated as a constant call target. The deploy validator will then
+// check org ownership, blocking it if not org-owned.
+func TestExtractCallTargets_ZeroAddress_RequiresOrgOwnership(t *testing.T) {
+	// PUSH20 <20 zero bytes> CALL STOP
+	bc_bytes := make([]byte, 0, 23)
+	bc_bytes = append(bc_bytes, PUSH20)
+	for i := 0; i < 20; i++ {
+		bc_bytes = append(bc_bytes, 0x00)
+	}
+	bc_bytes = append(bc_bytes, CALL, STOP)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if len(result.CallTargets) != 1 {
+		t.Fatalf("expected 1 call target, got %d", len(result.CallTargets))
+	}
+
+	target := result.CallTargets[0]
+	if target.TargetType != CallTargetConstant {
+		t.Errorf("expected constant target type, got %s", target.TargetType)
+	}
+	if target.Address != "0x0000000000000000000000000000000000000000" {
+		t.Errorf("expected zero address, got %s", target.Address)
+	}
+}
+
+// TestExtractCallTargets_AllFFFF_Address_TreatedAsNotConstant verifies that
+// 0xffffffffffffffffffffffffffffffffffffffff is skipped as an address mask,
+// not treated as a constant call target.
+func TestExtractCallTargets_AllFFFF_Address_TreatedAsNotConstant(t *testing.T) {
+	// PUSH20 <20 bytes of 0xff> CALL STOP
+	bc_bytes := make([]byte, 0, 23)
+	bc_bytes = append(bc_bytes, PUSH20)
+	for i := 0; i < 20; i++ {
+		bc_bytes = append(bc_bytes, 0xff)
+	}
+	bc_bytes = append(bc_bytes, CALL, STOP)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if len(result.CallTargets) != 1 {
+		t.Fatalf("expected 1 call target, got %d", len(result.CallTargets))
+	}
+
+	// The all-ones address is explicitly skipped as an address mask in findAddressSource.
+	// The call target should be treated as unknown (not constant), which means dynamic.
+	target := result.CallTargets[0]
+	if target.TargetType == CallTargetConstant && target.Address == "0xffffffffffffffffffffffffffffffffffffffff" {
+		t.Error("all-0xff address mask should NOT be extracted as a constant address target")
+	}
+	if !result.HasDynamicCall {
+		t.Error("expected HasDynamicCall to be true since the address mask is skipped")
+	}
+}
+
+// TestExtractCallTargets_PUSH20BeyondWindow_TreatedAsDynamic verifies that a PUSH20
+// opcode beyond the 50-opcode large window is not associated with a CALL, causing
+// the call target to be treated as dynamic/unknown.
+func TestExtractCallTargets_PUSH20BeyondWindow_TreatedAsDynamic(t *testing.T) {
+	// Build: PUSH20 <address> then 55 JUMPDEST opcodes, then CALL
+	// PUSH20 is at opcode index 0, CALL is at opcode index 56 (0 + 1 + 55)
+	// The large window is 50, so PUSH20 at index 0 is out of range (callIndex - 50 = 6)
+	address := make([]byte, 20)
+	for i := range address {
+		address[i] = byte(i + 1)
+	}
+
+	bc_bytes := make([]byte, 0, 77)
+	bc_bytes = append(bc_bytes, PUSH20)
+	bc_bytes = append(bc_bytes, address...)
+	for i := 0; i < 55; i++ {
+		bc_bytes = append(bc_bytes, JUMPDEST) // 0x5b
+	}
+	bc_bytes = append(bc_bytes, CALL)
+
+	bc, err := Parse(bc_bytes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result := ExtractCallTargets(bc)
+	if len(result.CallTargets) != 1 {
+		t.Fatalf("expected 1 call target, got %d", len(result.CallTargets))
+	}
+
+	// PUSH20 at index 0 is beyond the 50-opcode window from CALL at index 56
+	if !result.HasDynamicCall {
+		t.Error("expected HasDynamicCall to be true: PUSH20 is beyond the 50-opcode window")
+	}
+}

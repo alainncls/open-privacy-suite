@@ -294,8 +294,9 @@ type ContractGrantWithGroup struct {
 }
 
 // HasMethod checks if the effective permissions allow a specific method.
+// "*" in AllowedMethods means all methods are permitted (used by admin auto-grant).
 func (e *EffectivePermissions) HasMethod(method string) bool {
-	return slices.Contains(e.AllowedMethods, method)
+	return slices.Contains(e.AllowedMethods, "*") || slices.Contains(e.AllowedMethods, method)
 }
 
 // GetContractAccess returns the access for a specific contract address.

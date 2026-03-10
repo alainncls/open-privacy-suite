@@ -230,8 +230,14 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 		return nil, err
 	}
 
+	// If path is empty (groups created without a path), use slug as the path
+	groupPath := group.Path
+	if groupPath == "" {
+		groupPath = group.Slug
+	}
+
 	// Parse the path and get all groups in the hierarchy
-	pathParts := strings.Split(group.Path, ".")
+	pathParts := strings.Split(groupPath, ".")
 
 	// Build query with parameter placeholders
 	placeholders := make([]string, len(pathParts))

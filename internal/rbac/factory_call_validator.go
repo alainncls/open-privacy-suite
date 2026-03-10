@@ -19,10 +19,19 @@ const (
 // FactoryCallValidator validates calls to CREATE3 factory contracts.
 // It ensures that:
 // 1. The target address of deployment is preregistered for the org
+//    (skipped when runtime tracing is enabled — execution is validated at runtime instead)
 // 2. The creation bytecode passes deployment validation (no unsafe calls)
 type FactoryCallValidator struct {
-	store           Store
-	deployValidator *DeploymentValidator
+	store                 Store
+	deployValidator       *DeploymentValidator
+	runtimeTracingEnabled bool
+}
+
+// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
+// When enabled, the preregistration check is skipped because CREATE3 deploy targets
+// are validated at execution time via debug_traceCall instead.
+func (v *FactoryCallValidator) SetRuntimeTracingEnabled(enabled bool) {
+	v.runtimeTracingEnabled = enabled
 }
 
 // NewFactoryCallValidator creates a new factory call validator.
@@ -43,6 +52,7 @@ type FactoryCallValidationResult struct {
 	Salt              string // The salt from calldata
 	CreationBytecode  string // The creation bytecode from calldata
 	BytecodeValidated bool   // Whether bytecode was validated
+	OrgID             string // The org that owns the factory (set by ValidateFactoryCallOrgs)
 }
 
 // ValidateFactoryCall checks if a call to a factory contract is allowed.
@@ -135,16 +145,20 @@ func (v *FactoryCallValidator) ValidateFactoryCall(
 	}
 	result.TargetAddress = strings.ToLower(targetCreate3Addr.Hex())
 
-	// Check if the target address is preregistered for this org
-	isPreregistered, err := v.store.IsAddressPreregistered(ctx, orgID, result.TargetAddress)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check preregistered address: %w", err)
-	}
+	// Check if the target address is preregistered for this org.
+	// Skipped when runtime tracing is enabled: execution is validated at runtime instead,
+	// so the pre-deployment registration step is not required.
+	if !v.runtimeTracingEnabled {
+		isPreregistered, err := v.store.IsAddressPreregistered(ctx, orgID, result.TargetAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check preregistered address: %w", err)
+		}
 
-	if !isPreregistered {
-		result.Allowed = false
-		result.Reason = fmt.Sprintf("target address %s is not preregistered for this organization", result.TargetAddress)
-		return result, nil
+		if !isPreregistered {
+			result.Allowed = false
+			result.Reason = fmt.Sprintf("target address %s is not preregistered for this organization", result.TargetAddress)
+			return result, nil
+		}
 	}
 
 	// Validate the creation bytecode
