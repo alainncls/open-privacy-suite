@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/proxy"
@@ -99,12 +100,13 @@ type ResolveAddressResponse struct {
 }
 
 // registerExplorerRoutes registers the explorer API endpoints
-// These endpoints are designed to be called by the explorer backend (internal, no auth)
+// These endpoints are designed to be called by the explorer backend (internal).
+// Network boundary: localhost-only. JWT: optional — if present it is validated and the
+// viewer DID is extracted from it; if absent the request is treated as anonymous.
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer := router.Group("/api/v1/explorer")
-	// No auth middleware - these are internal APIs called by explorer backend
-	// Security is enforced by explorer backend which authenticates users
 	explorer.Use(s.localhostOnlyMiddleware())
+	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
 	{
 		explorer.GET("/viewable-addresses", s.getViewableAddresses)
 		explorer.GET("/check-address/:address", s.checkAddressVisibility)
@@ -662,14 +664,24 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	c.JSON(http.StatusOK, block)
 }
 
-// getViewerDIDFromRequest extracts the viewer's DID from query parameters or wallet lookup
+// getViewerDIDFromRequest extracts the viewer's DID.
+// Priority: (1) validated JWT claims set by OptionalJWTAuthMiddleware, (2) ?did= query param,
+// (3) wallet->DID lookup via ?wallet= query param.
+// JWT claims are preferred because they are cryptographically signed; query params are
+// unsigned and accepted only for backward-compatibility when no JWT is present.
 func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
-	did := c.Query("did")
-	if did != "" {
+	// 1. JWT claims (set by OptionalJWTAuthMiddleware)
+	if subject, exists := c.Get("subject"); exists {
+		if did, ok := subject.(string); ok && did != "" {
+			return did
+		}
+	}
+	// 2. Explicit DID query param
+	if did := c.Query("did"); did != "" {
 		return did
 	}
-	wallet := c.Query("wallet")
-	if wallet != "" {
+	// 3. Wallet address lookup
+	if wallet := c.Query("wallet"); wallet != "" {
 		viewerDID, _ := s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(wallet))
 		return viewerDID
 	}
@@ -832,7 +844,16 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	if txs == nil {
 		txs = []explorer.Transaction{}
 	}
-	c.JSON(http.StatusOK, txs)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.Transaction{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
@@ -853,7 +874,16 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	if itxs == nil {
 		itxs = []explorer.InternalTransaction{}
 	}
-	c.JSON(http.StatusOK, itxs)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
@@ -906,7 +936,16 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if txs == nil {
 		txs = []explorer.Transaction{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": txs, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.Transaction{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
@@ -923,7 +962,16 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	if itxs == nil {
 		itxs = []explorer.InternalTransaction{}
 	}
-	c.JSON(http.StatusOK, itxs)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
@@ -940,7 +988,16 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, transfers)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
@@ -957,7 +1014,16 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	if logs == nil {
 		logs = []explorer.Log{}
 	}
-	c.JSON(http.StatusOK, logs)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
@@ -1097,7 +1163,16 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, transfers)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerAddressInternal(c *gin.Context) {
@@ -1124,7 +1199,16 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if itxs == nil {
 		itxs = []explorer.InternalTransaction{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": itxs, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 func (s *Server) getExplorerAddressLogs(c *gin.Context) {
@@ -1151,7 +1235,16 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if logs == nil {
 		logs = []explorer.Log{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": logs, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 func (s *Server) getExplorerAddressContract(c *gin.Context) {
@@ -1175,6 +1268,14 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	if contract == nil {
 		respondNotFound(c, "contract not found")
 		return
+	}
+	// Redact the creator address - it may belong to a private user
+	if contract.Creator != "" {
+		viewerDID := s.getViewerDIDFromRequest(c)
+		redactedCreator, err := s.explorerRedactor.RedactAddress(c.Request.Context(), contract.Creator, viewerDID)
+		if err == nil {
+			contract.Creator = redactedCreator
+		}
 	}
 	c.JSON(http.StatusOK, contract)
 }
@@ -1264,7 +1365,16 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 	if logs == nil {
 		logs = []explorer.Log{}
 	}
-	c.JSON(http.StatusOK, logs)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, redacted)
 }
 
 // --- Tokens ---
@@ -1336,7 +1446,16 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if holders == nil {
 		holders = []explorer.TokenHolder{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": holders, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTokenHolders(c.Request.Context(), holders, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.TokenHolder{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
@@ -1362,7 +1481,16 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": transfers, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 // --- Transfers ---
@@ -1389,7 +1517,16 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": transfers, "total": total})
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if redacted == nil {
+		redacted = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 // --- Accounts ---
