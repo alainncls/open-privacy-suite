@@ -2,14 +2,14 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"privacy-proxy/internal/disclosure"
+	"privacy-proxy/internal/explorer"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,8 +25,8 @@ type OwnAddress struct {
 // DisclosedAddress represents an address disclosed to the viewer via a grant
 // SECURITY: For non-full disclosures, Address contains the pseudonym or placeholder, NOT the real address
 type DisclosedAddress struct {
-	Address         string     `json:"address"`          // Pseudonym for pseudonymous, "[REDACTED]" for redacted, real for full
-	AddressID       string     `json:"address_id"`       // Opaque identifier for routing (hash of real address)
+	Address         string     `json:"address"`    // Pseudonym for pseudonymous, "[REDACTED]" for redacted, real for full
+	AddressID       string     `json:"address_id"` // Opaque identifier for routing (hash of real address)
 	OwnerDID        string     `json:"owner_did"`
 	DisclosureLevel string     `json:"disclosure_level"`
 	GrantID         string     `json:"grant_id"`
@@ -46,10 +46,10 @@ type ViewableAddressesResponse struct {
 type VisibilityLevel string
 
 const (
-	VisibilityFull        VisibilityLevel = "full"
+	VisibilityFull         VisibilityLevel = "full"
 	VisibilityPseudonymous VisibilityLevel = "pseudonymous"
-	VisibilityRedacted    VisibilityLevel = "redacted"
-	VisibilityHidden      VisibilityLevel = "hidden"
+	VisibilityRedacted     VisibilityLevel = "redacted"
+	VisibilityHidden       VisibilityLevel = "hidden"
 )
 
 // VisibilityReason explains why an address has certain visibility
@@ -110,6 +110,19 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		explorer.POST("/check-addresses", s.batchCheckAddresses)
 		// Resolve address_id to real address (for explorer backend internal use)
 		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
+
+		// Data Retrieval Endpoints
+		explorer.GET("/chain-id", s.getExplorerChainID)
+		explorer.GET("/stats", s.getExplorerStats)
+		explorer.GET("/blocks", s.getExplorerBlocks)
+		explorer.GET("/blocks/:number", s.getExplorerBlock)
+		explorer.GET("/blocks/hash/:hash", s.getExplorerBlockByHash)
+		explorer.GET("/transactions", s.getExplorerTransactions)
+		explorer.GET("/transactions/:hash", s.getExplorerTransaction)
+		explorer.GET("/addresses/:address/stats", s.getExplorerAddressStats)
+		explorer.GET("/addresses/:address/transactions", s.getExplorerAddressTransactions)
+		explorer.GET("/sync/status", s.getExplorerSyncStatus)
+		explorer.POST("/index/block/:number", s.indexExplorerBlock)
 	}
 }
 
@@ -234,7 +247,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 
 		for _, addr := range targetAddresses {
 			// Generate opaque address ID for routing (hash-based)
-			addressID := generateAddressID(addr.EthAddress, grantID)
+			addressID := explorer.GenerateAddressID(addr.EthAddress, grantID)
 
 			disclosed := DisclosedAddress{
 				AddressID:       addressID,
@@ -250,7 +263,7 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 				disclosed.Address = addr.EthAddress
 				disclosed.ENSName = addr.ENSName
 			case "pseudonymous":
-				disclosed.Address = generatePseudonym(addr.EthAddress)
+				disclosed.Address = explorer.GeneratePseudonym(addr.EthAddress)
 				// Don't include ENS name - it could reveal identity
 			case "redacted":
 				disclosed.Address = "[REDACTED]"
@@ -385,7 +398,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	// Find the address matching the address_id
 	var realAddress string
 	for _, addr := range addresses {
-		computedID := generateAddressID(addr.EthAddress, grantID)
+		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
 		if computedID == addressID {
 			realAddress = addr.EthAddress
 			break
@@ -411,7 +424,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 
 	// Include pseudonym for pseudonymous disclosures
 	if disclosureLevel == "pseudonymous" {
-		response.Pseudonym = generatePseudonym(realAddress)
+		response.Pseudonym = explorer.GeneratePseudonym(realAddress)
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -495,7 +508,7 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 			case disclosure.DisclosurePseudonymous:
 				level = VisibilityPseudonymous
 				// Generate a consistent pseudonym based on the address
-				p := generatePseudonym(targetAddress)
+				p := explorer.GeneratePseudonym(targetAddress)
 				pseudonym = &p
 			case disclosure.DisclosureRedacted:
 				level = VisibilityRedacted
@@ -522,38 +535,230 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 	return result
 }
 
-// generateAddressID creates an opaque identifier for an address that can be used for routing.
-// The ID is derived from the address and grant ID to be unique per grant.
-// SECURITY: This allows routing without revealing the real address.
-func generateAddressID(address string, grantID string) string {
-	// Create a hash-based ID that's consistent but doesn't reveal the address
-	// Using first 16 chars of hex-encoded hash for reasonable uniqueness
-	data := strings.ToLower(address) + ":" + grantID
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:8]) // 16 hex chars
+func (s *Server) getExplorerChainID(c *gin.Context) {
+	// Approximation: return 1 or get from proxy if needed
+	c.JSON(http.StatusOK, gin.H{"chain_id": 1})
 }
 
-// generatePseudonym creates a consistent pseudonym for an address.
-// The pseudonym is derived from the address hash to ensure the same address
-// always produces the same pseudonym within a session.
-func generatePseudonym(address string) string {
-	// Use first 4 bytes of address (after 0x) to create a letter-based pseudonym
-	// This creates pseudonyms like "Address-ABCD" where ABCD is derived from address
-	if len(address) < 6 {
-		return "Address-Unknown"
+func (s *Server) getExplorerStats(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
 	}
+	stats, err := s.explorerStore.GetChainStats(c.Request.Context())
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, stats)
+}
 
-	// Extract hex characters and convert to letters (A-P for 0-F)
-	hex := strings.ToUpper(address[2:6])
-	letters := make([]byte, 4)
-	for i, c := range hex {
-		if c >= '0' && c <= '9' {
-			letters[i] = byte('A' + (c - '0'))
-		} else if c >= 'A' && c <= 'F' {
-			letters[i] = byte('K' + (c - 'A'))
-		} else {
-			letters[i] = 'X'
+func (s *Server) getExplorerBlocks(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	var beforeBlock *uint64
+	if b := c.Query("before"); b != "" {
+		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
+			beforeBlock = &val
 		}
 	}
-	return "Address-" + string(letters)
+	blocks, err := s.explorerStore.GetBlocks(c.Request.Context(), limit, beforeBlock)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, blocks)
+}
+
+func (s *Server) getExplorerBlock(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	num, err := strconv.ParseUint(c.Param("number"), 10, 64)
+	if err != nil {
+		respondBadRequest(c, "invalid block number")
+		return
+	}
+	block, err := s.explorerStore.GetBlock(c.Request.Context(), num)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if block == nil {
+		respondNotFound(c, "block not found")
+		return
+	}
+	c.JSON(http.StatusOK, block)
+}
+
+func (s *Server) getExplorerBlockByHash(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	hash := c.Param("hash")
+	block, err := s.explorerStore.GetBlockByHash(c.Request.Context(), hash)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if block == nil {
+		respondNotFound(c, "block not found")
+		return
+	}
+	c.JSON(http.StatusOK, block)
+}
+
+// getViewerDIDFromRequest extracts the viewer's DID from query parameters or wallet lookup
+func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
+	did := c.Query("did")
+	if did != "" {
+		return did
+	}
+	wallet := c.Query("wallet")
+	if wallet != "" {
+		viewerDID, _ := s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(wallet))
+		return viewerDID
+	}
+	return ""
+}
+
+func (s *Server) getExplorerTransactions(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	var beforeBlock *uint64
+	if b := c.Query("before"); b != "" {
+		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
+			beforeBlock = &val
+		}
+	}
+	txs, err := s.explorerStore.GetTransactions(c.Request.Context(), limit, beforeBlock)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, redactedTxs)
+}
+
+func (s *Server) getExplorerTransaction(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	hash := c.Param("hash")
+	tx, err := s.explorerStore.GetTransaction(c.Request.Context(), hash)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if tx == nil {
+		respondNotFound(c, "transaction not found")
+		return
+	}
+
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), []explorer.Transaction{*tx}, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+	if len(redactedTxs) == 0 {
+		// Transaction was completely hidden
+		respondNotFound(c, "transaction not found")
+		return
+	}
+
+	c.JSON(http.StatusOK, redactedTxs[0])
+}
+
+func (s *Server) getExplorerAddressStats(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := c.Param("address")
+
+	// Pre-authorization check: Can they even see this address?
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+		respondNotFound(c, "address not found") // Masking forbidden as not found to avoid info leaks
+		return
+	}
+
+	stats, err := s.explorerStore.GetAddressStats(c.Request.Context(), address)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, stats)
+}
+
+func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := c.Param("address")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	var beforeBlock *uint64
+	if b := c.Query("before"); b != "" {
+		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
+			beforeBlock = &val
+		}
+	}
+
+	// Pre-authorization check: Can they even see this address?
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+		respondNotFound(c, "address not found") // Masking forbidden as not found
+		return
+	}
+
+	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, limit, beforeBlock)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+
+	viewerDID := s.getViewerDIDFromRequest(c)
+	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, redactedTxs)
+}
+
+func (s *Server) getExplorerSyncStatus(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	status, err := s.explorerStore.GetSyncStatus(c.Request.Context())
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+func (s *Server) indexExplorerBlock(c *gin.Context) {
+	// Proxy to indexer or return not implemented for now
+	respondInternalError(c, "manual indexing through proxy not yet implemented")
 }

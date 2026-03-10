@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/evm/create3"
+	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
@@ -78,6 +79,8 @@ type Server struct {
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
+	explorerStore      *explorer.Store
+	explorerRedactor   *explorer.RedactionEngine
 }
 
 // DB returns the database instance (for testing)
@@ -145,6 +148,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+
+	var explorerStore *explorer.Store
+	if cfg.ExplorerDatabaseURL != "" {
+		explorerStore, err = explorer.NewStore(cfg.ExplorerDatabaseURL)
+		if err != nil {
+			database.Close()
+			return nil, fmt.Errorf("failed to create explorer store: %w", err)
+		}
 	}
 
 	// Initialize Privado ID verifier
@@ -286,6 +298,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
+		explorerStore:      explorerStore,
+		explorerRedactor:   explorer.NewRedactionEngine(explorerStore, database),
 	}
 
 	// Initialize JSON-RPC processor with dependencies

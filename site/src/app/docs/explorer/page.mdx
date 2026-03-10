@@ -1,0 +1,95 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Block Explorer Integration",
+  description:
+    "Documentation for the centralized Block Explorer architecture and Dual-Mode data retrieval.",
+};
+
+# Block Explorer Integration
+
+The Privacy Proxy provides a centralized, privacy-governed data gateway for the Block Explorer. This architecture ensures that all blockchain data indexed and displayed by the explorer is subject to the same RBAC and privacy policies as direct JSON-RPC traffic.
+
+## Architecture Overview
+
+The integration uses a **Dual-Mode** architecture, allowing the Block Explorer to operate either as a standalone tool or as a privacy-enhanced component of the Privacy Proxy ecosystem.
+
+```mermaid
+graph TD
+    User["User / Frontend"]
+    BE["Block Explorer Backend<br/><small>DataProvider Abstraction</small>"]
+    Proxy["Privacy Proxy<br/><small>Explorer API + RBAC</small>"]
+    DB["Explorer Database<br/><small>Blocks, Txs, Stats</small>"]
+    Eth["Ethereum Node<br/><small>Erigon / Anvil</small>"]
+
+    User --> BE
+    BE -->|"Proxy Mode (REST)"| Proxy
+    BE -->|"Standalone Mode (Direct)"| DB
+    Proxy --> DB
+    Proxy --> Eth
+
+    style Proxy stroke:#8950FA,stroke-width:2px
+    style BE stroke:#3b82f6,stroke-width:2px
+```
+
+## Dual-Mode Operation
+
+The Block Explorer backend implements a `DataProvider` interface that abstracts data retrieval.
+
+### 1. Standalone Mode (Direct)
+In this mode, the explorer connects directly to its own PostgreSQL database and the Ethereum node. This is suitable for development or deployments where centralized privacy enforcement is not required.
+
+### 2. Proxy-Mediated Mode (Centralized)
+In this mode, the explorer backend acts as a client to the Privacy Proxy. It fetches all processed blockchain data via the **Explorer Data API**.
+
+<Callout type="important">
+  **Proxy Mode benefits**: All data is filtered according to the user's RBAC
+  permissions. Sensitive addresses can be redacted or pseudonymized before they
+  even reach the explorer frontend.
+</Callout>
+
+## Explorer Data API
+
+The Privacy Proxy exposes a set of internal REST endpoints specifically for the explorer. These endpoints are typically protected and intended for use by the explorer backend.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/explorer/blocks` | List recent blocks with pagination |
+| `GET /api/explorer/blocks/:number` | Get detailed block information |
+| `GET /api/explorer/transactions` | List recent transactions |
+| `GET /api/explorer/addresses/:addr/stats` | Get address-specific activity stats |
+| `GET /api/explorer/sync/status` | Get indexer synchronization levels |
+
+## Identity Forwarding
+
+When operating in Proxy Mode, the Block Explorer forwards the user's **JWT Identity** to the Privacy Proxy. This allows the Proxy to:
+
+1. **Identify the User**: Determine which organization and group the user belongs to.
+2. **Apply Policies**: Filter transactions or blocks that the user is not authorized to see.
+3. **Audit Access**: Log every data retrieval request for compliance reporting.
+
+## Configuration
+
+To enable Proxy Mode in the Block Explorer, set the following environment variables:
+
+```bash
+# In Block Explorer environment
+DATA_PROVIDER_MODE=proxy
+PRIVACY_PROXY_URL=http://privacy-proxy:8080
+```
+
+To enable the Explorer API in the Privacy Proxy:
+
+```bash
+# In Privacy Proxy environment
+EXPLORER_DATABASE_URL=postgres://user:pass@explorer-db:5432/explorer
+```
+
+## Feature Separation
+
+For development and maintenance, the Explorer API feature is maintained on a dedicated branch:
+
+- **Primary Branch**: `fix/production-readiness-gaps` (Core security and proxy logic)
+- **Feature Branch**: `feat/explorer-api` (Explorer-specific API and DB integrations)
+
+This ensures that the core proxy remains lightweight for deployments that do not require block explorer integration.

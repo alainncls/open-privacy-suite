@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/config"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/disclosure"
+	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
@@ -1055,7 +1056,7 @@ func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
 }
 
 // ============================================================================
-// Test: generateAddressID() - Address ID Generation
+// Test: explorer.GenerateAddressID() - Address ID Generation
 // ============================================================================
 
 func TestGenerateAddressID_Consistency(t *testing.T) {
@@ -1063,8 +1064,8 @@ func TestGenerateAddressID_Consistency(t *testing.T) {
 	address := "0x1234567890abcdef1234567890abcdef12345678"
 	grantID := "grant-abc-123"
 
-	id1 := generateAddressID(address, grantID)
-	id2 := generateAddressID(address, grantID)
+	id1 := explorer.GenerateAddressID(address, grantID)
+	id2 := explorer.GenerateAddressID(address, grantID)
 
 	assert.Equal(t, id1, id2, "generateAddressID should produce consistent results")
 }
@@ -1102,8 +1103,8 @@ func TestGenerateAddressID_Uniqueness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id1 := generateAddressID(tt.address1, tt.grant1)
-			id2 := generateAddressID(tt.address2, tt.grant2)
+			id1 := explorer.GenerateAddressID(tt.address1, tt.grant1)
+			id2 := explorer.GenerateAddressID(tt.address2, tt.grant2)
 			assert.NotEqual(t, id1, id2, "Different inputs should produce different IDs")
 		})
 	}
@@ -1115,8 +1116,8 @@ func TestGenerateAddressID_CaseInsensitive(t *testing.T) {
 	upperAddr := "0xABCDEF1234567890ABCDEF1234567890ABCDEF12"
 	grantID := "grant-123"
 
-	idLower := generateAddressID(lowerAddr, grantID)
-	idUpper := generateAddressID(upperAddr, grantID)
+	idLower := explorer.GenerateAddressID(lowerAddr, grantID)
+	idUpper := explorer.GenerateAddressID(upperAddr, grantID)
 
 	assert.Equal(t, idLower, idUpper, "Address IDs should be case-insensitive")
 }
@@ -1126,7 +1127,7 @@ func TestGenerateAddressID_NoAddressLeakage(t *testing.T) {
 	address := "0xdeadbeef12345678deadbeef12345678deadbeef"
 	grantID := "grant-xyz"
 
-	id := generateAddressID(address, grantID)
+	id := explorer.GenerateAddressID(address, grantID)
 
 	// ID should not contain address parts
 	assert.NotContains(t, id, "deadbeef")
@@ -1138,7 +1139,7 @@ func TestGenerateAddressID_NoAddressLeakage(t *testing.T) {
 }
 
 func TestGenerateAddressID_Format(t *testing.T) {
-	id := generateAddressID("0x1234567890abcdef1234567890abcdef12345678", "grant-123")
+	id := explorer.GenerateAddressID("0x1234567890abcdef1234567890abcdef12345678", "grant-123")
 
 	// Should be valid hex
 	for _, c := range id {
@@ -1148,14 +1149,14 @@ func TestGenerateAddressID_Format(t *testing.T) {
 }
 
 // ============================================================================
-// Test: generatePseudonym() - Pseudonym Generation
+// Test: explorer.GeneratePseudonym() - Pseudonym Generation
 // ============================================================================
 
 func TestGeneratePseudonym_Consistency(t *testing.T) {
 	address := "0x1234567890abcdef1234567890abcdef12345678"
 
-	p1 := generatePseudonym(address)
-	p2 := generatePseudonym(address)
+	p1 := explorer.GeneratePseudonym(address)
+	p2 := explorer.GeneratePseudonym(address)
 
 	assert.Equal(t, p1, p2, "generatePseudonym should produce consistent results")
 }
@@ -1190,7 +1191,7 @@ func TestGeneratePseudonym_Format(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generatePseudonym(tt.address)
+			result := explorer.GeneratePseudonym(tt.address)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1198,7 +1199,7 @@ func TestGeneratePseudonym_Format(t *testing.T) {
 
 func TestGeneratePseudonym_NoAddressLeakage(t *testing.T) {
 	address := "0xdeadbeef12345678deadbeef12345678deadbeef"
-	pseudonym := generatePseudonym(address)
+	pseudonym := explorer.GeneratePseudonym(address)
 
 	// Pseudonym should not contain address parts
 	assert.NotContains(t, pseudonym, "dead")
@@ -1215,9 +1216,9 @@ func TestGeneratePseudonym_DifferentAddresses(t *testing.T) {
 	addr2 := "0x2222222222222222222222222222222222222222"
 	addr3 := "0xAAAA111111111111111111111111111111111111"
 
-	p1 := generatePseudonym(addr1)
-	p2 := generatePseudonym(addr2)
-	p3 := generatePseudonym(addr3)
+	p1 := explorer.GeneratePseudonym(addr1)
+	p2 := explorer.GeneratePseudonym(addr2)
+	p3 := explorer.GeneratePseudonym(addr3)
 
 	assert.NotEqual(t, p1, p2)
 	assert.NotEqual(t, p1, p3)
@@ -1227,12 +1228,12 @@ func TestGeneratePseudonym_DifferentAddresses(t *testing.T) {
 func TestGeneratePseudonym_ShortAddress(t *testing.T) {
 	// Edge case: address too short
 	shortAddr := "0x12"
-	result := generatePseudonym(shortAddr)
+	result := explorer.GeneratePseudonym(shortAddr)
 	assert.Equal(t, "Address-Unknown", result)
 
 	// Very short
 	veryShort := "0x"
-	result2 := generatePseudonym(veryShort)
+	result2 := explorer.GeneratePseudonym(veryShort)
 	assert.Equal(t, "Address-Unknown", result2)
 }
 
@@ -1240,8 +1241,8 @@ func TestGeneratePseudonym_CaseInsensitive(t *testing.T) {
 	lower := "0xabcd567890abcdef1234567890abcdef12345678"
 	upper := "0xABCD567890ABCDEF1234567890ABCDEF12345678"
 
-	pLower := generatePseudonym(lower)
-	pUpper := generatePseudonym(upper)
+	pLower := explorer.GeneratePseudonym(lower)
+	pUpper := explorer.GeneratePseudonym(upper)
 
 	assert.Equal(t, pLower, pUpper, "Pseudonyms should be case-insensitive")
 }
@@ -1493,7 +1494,7 @@ func TestResolveAddressID_Success(t *testing.T) {
 	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(24*time.Hour))
 
 	// Get address ID from viewable-addresses
-	addressID := generateAddressID(testTargetAddress, grantID)
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
 	w := httptest.NewRecorder()
@@ -1525,7 +1526,7 @@ func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
 	// Create pseudonymous grant
 	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
 
-	addressID := generateAddressID(testTargetAddress, grantID)
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
 	w := httptest.NewRecorder()
@@ -1594,7 +1595,7 @@ func TestResolveAddressID_ExpiredGrant(t *testing.T) {
 	// Create EXPIRED grant
 	grantID := createDisclosureGrantWithLevel(t, database, testViewerDID, targetUserID, disclosure.DisclosureFull, time.Now().Add(-1*time.Hour))
 
-	addressID := generateAddressID(testTargetAddress, grantID)
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
 	w := httptest.NewRecorder()
@@ -1626,7 +1627,7 @@ func TestResolveAddressID_RevokedGrant(t *testing.T) {
 		grantID)
 	require.NoError(t, err)
 
-	addressID := generateAddressID(testTargetAddress, grantID)
+	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
 
 	req := httptest.NewRequest("GET", "/api/v1/explorer/grant/"+grantID+"/resolve/"+addressID, nil)
 	w := httptest.NewRecorder()

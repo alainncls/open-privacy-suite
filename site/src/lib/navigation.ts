@@ -35,6 +35,7 @@ export const navigation: NavGroup[] = [
       },
       { title: "Compliance", href: "/docs/compliance" },
       { title: "Selective Disclosure", href: "/docs/disclosure" },
+      { title: "Block Explorer", href: "/docs/explorer" },
     ],
   },
   {

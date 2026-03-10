@@ -62,6 +62,10 @@ func respondBadGateway(c *gin.Context, message string) {
 	c.JSON(http.StatusBadGateway, gin.H{"error": message})
 }
 
+func respondServiceUnavailable(c *gin.Context, message string) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": message})
+}
+
 // Success response helpers
 
 func respondOK(c *gin.Context, data any) {
