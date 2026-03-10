@@ -10,6 +10,7 @@ import (
 
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/proxy"
 
 	"github.com/gin-gonic/gin"
 )
@@ -114,14 +115,62 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		// Data Retrieval Endpoints
 		explorer.GET("/chain-id", s.getExplorerChainID)
 		explorer.GET("/stats", s.getExplorerStats)
+		explorer.GET("/stats/tx-history", s.getExplorerTransactionHistory)
+
+		// Blocks — register specific routes before parameterized ones
 		explorer.GET("/blocks", s.getExplorerBlocks)
-		explorer.GET("/blocks/:number", s.getExplorerBlock)
+		explorer.GET("/blocks/latest/number", s.getExplorerLatestBlockNumber)
 		explorer.GET("/blocks/hash/:hash", s.getExplorerBlockByHash)
+		explorer.GET("/blocks/:number", s.getExplorerBlock)
+		explorer.GET("/blocks/:number/transactions", s.getExplorerBlockTransactions)
+		explorer.GET("/blocks/:number/internal", s.getExplorerBlockInternalTxs)
+
+		// Transactions — register specific routes before parameterized ones
+		explorer.GET("/transactions/paginated", s.getExplorerTransactionsPaginated)
 		explorer.GET("/transactions", s.getExplorerTransactions)
 		explorer.GET("/transactions/:hash", s.getExplorerTransaction)
+		explorer.GET("/transactions/:hash/internal", s.getExplorerTransactionInternal)
+		explorer.GET("/transactions/:hash/transfers", s.getExplorerTransactionTransfers)
+		explorer.GET("/transactions/:hash/logs", s.getExplorerTransactionLogs)
+		explorer.GET("/transactions/:hash/op-deposit", s.getExplorerTransactionOPDeposit)
+
+		// Addresses
 		explorer.GET("/addresses/:address/stats", s.getExplorerAddressStats)
 		explorer.GET("/addresses/:address/transactions", s.getExplorerAddressTransactions)
+		explorer.GET("/addresses/:address/balance", s.getExplorerAddressBalance)
+		explorer.GET("/addresses/:address/code", s.getExplorerAddressCode)
+		explorer.GET("/addresses/:address/balances", s.getExplorerAddressTokenBalances)
+		explorer.GET("/addresses/:address/transfers", s.getExplorerAddressTransfers)
+		explorer.GET("/addresses/:address/internal", s.getExplorerAddressInternal)
+		explorer.GET("/addresses/:address/logs", s.getExplorerAddressLogs)
+		explorer.GET("/addresses/:address/contract", s.getExplorerAddressContract)
+		explorer.GET("/addresses/:address/is-contract", s.getExplorerAddressIsContract)
+		explorer.POST("/addresses/:address/abi", s.updateExplorerAddressABI)
+
+		// Logs
+		explorer.GET("/logs", s.getExplorerLogs)
+
+		// Tokens
+		explorer.GET("/tokens", s.getExplorerTokens)
+		explorer.GET("/tokens/:address", s.getExplorerToken)
+		explorer.GET("/tokens/:address/holders", s.getExplorerTokenHolders)
+		explorer.GET("/tokens/:address/transfers", s.getExplorerTokenTransfers)
+
+		// Transfers
+		explorer.GET("/transfers", s.getExplorerAllTransfers)
+
+		// Accounts
+		explorer.GET("/accounts", s.getExplorerAccounts)
+
+		// Search
+		explorer.GET("/search/suggestions", s.getExplorerSearchSuggestions)
+
+		// Sync
 		explorer.GET("/sync/status", s.getExplorerSyncStatus)
+		explorer.GET("/sync/indexer-progress", s.getExplorerIndexerProgress)
+		explorer.GET("/sync/catchup", s.getExplorerCatchupProgress)
+
+		// Indexing
 		explorer.POST("/index/block/:number", s.indexExplorerBlock)
 	}
 }
@@ -761,4 +810,710 @@ func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 func (s *Server) indexExplorerBlock(c *gin.Context) {
 	// Proxy to indexer or return not implemented for now
 	respondInternalError(c, "manual indexing through proxy not yet implemented")
+}
+
+// --- Block sub-endpoints ---
+
+func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	num, err := strconv.ParseUint(c.Param("number"), 10, 64)
+	if err != nil {
+		respondBadRequest(c, "invalid block number")
+		return
+	}
+	txs, err := s.explorerStore.GetTransactionsByBlock(c.Request.Context(), num)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if txs == nil {
+		txs = []explorer.Transaction{}
+	}
+	c.JSON(http.StatusOK, txs)
+}
+
+func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	num, err := strconv.ParseUint(c.Param("number"), 10, 64)
+	if err != nil {
+		respondBadRequest(c, "invalid block number")
+		return
+	}
+	itxs, err := s.explorerStore.GetInternalTransactionsByBlock(c.Request.Context(), num)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if itxs == nil {
+		itxs = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, itxs)
+}
+
+func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	num, err := s.explorerStore.GetLatestBlockNumber(c.Request.Context())
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"number": num})
+}
+
+// --- Transaction sub-endpoints ---
+
+func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	pageSize := 25
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+
+	withCategories := c.Query("with_categories") == "true"
+
+	var txs []explorer.Transaction
+	var total int64
+	var err error
+	if withCategories {
+		txs, total, err = s.explorerStore.GetTransactionsPaginatedWithCategories(c.Request.Context(), page, pageSize)
+	} else {
+		txs, total, err = s.explorerStore.GetTransactionsPaginated(c.Request.Context(), page, pageSize)
+	}
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if txs == nil {
+		txs = []explorer.Transaction{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": txs, "total": total})
+}
+
+func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	hash := c.Param("hash")
+	itxs, err := s.explorerStore.GetInternalTransactionsByTx(c.Request.Context(), hash)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if itxs == nil {
+		itxs = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, itxs)
+}
+
+func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	hash := c.Param("hash")
+	transfers, err := s.explorerStore.GetTransfersByTransaction(c.Request.Context(), hash)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if transfers == nil {
+		transfers = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, transfers)
+}
+
+func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	hash := c.Param("hash")
+	logs, err := s.explorerStore.GetLogsByTransaction(c.Request.Context(), hash)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, logs)
+}
+
+func (s *Server) getExplorerTransactionOPDeposit(c *gin.Context) {
+	// This is not an OP Stack chain — always return 404
+	respondNotFound(c, "OP deposit not found (not an OP Stack chain)")
+}
+
+// --- Address sub-endpoints ---
+
+func (s *Server) getExplorerAddressBalance(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	// Forward eth_getBalance to the node via JSON-RPC
+	rpcReq := proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getBalance",
+		Params:  []interface{}{address, "latest"},
+		ID:      1,
+	}
+	reqBody, _ := json.Marshal(rpcReq)
+	respBody, _, err := s.proxy.Forward(reqBody)
+	if err != nil {
+		respondInternalError(c, "failed to get balance: "+err.Error())
+		return
+	}
+
+	var rpcResp struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		respondInternalError(c, "failed to parse balance response")
+		return
+	}
+
+	c.JSON(http.StatusOK, rpcResp.Result)
+}
+
+func (s *Server) getExplorerAddressCode(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	rpcReq := proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getCode",
+		Params:  []interface{}{address, "latest"},
+		ID:      1,
+	}
+	reqBody, _ := json.Marshal(rpcReq)
+	respBody, _, err := s.proxy.Forward(reqBody)
+	if err != nil {
+		respondInternalError(c, "failed to get code: "+err.Error())
+		return
+	}
+
+	var rpcResp struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		respondInternalError(c, "failed to parse code response")
+		return
+	}
+
+	// Return as raw bytes (hex-encoded string)
+	codeBytes := []byte(rpcResp.Result)
+	c.JSON(http.StatusOK, codeBytes)
+}
+
+func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	balances, err := s.explorerStore.GetTokenBalances(c.Request.Context(), address)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if balances == nil {
+		balances = []explorer.Balance{}
+	}
+	c.JSON(http.StatusOK, balances)
+}
+
+func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	var beforeBlock *uint64
+	if b := c.Query("before"); b != "" {
+		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
+			beforeBlock = &val
+		}
+	}
+
+	transfers, err := s.explorerStore.GetTransfersByAddress(c.Request.Context(), address, limit, beforeBlock)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if transfers == nil {
+		transfers = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, transfers)
+}
+
+func (s *Server) getExplorerAddressInternal(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	itxs, total, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if itxs == nil {
+		itxs = []explorer.InternalTransaction{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": itxs, "total": total})
+}
+
+func (s *Server) getExplorerAddressLogs(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	logs, total, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": logs, "total": total})
+}
+
+func (s *Server) getExplorerAddressContract(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	contract, err := s.explorerStore.GetContract(c.Request.Context(), address)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if contract == nil {
+		respondNotFound(c, "contract not found")
+		return
+	}
+	c.JSON(http.StatusOK, contract)
+}
+
+func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "address not found")
+		return
+	}
+
+	isContract, err := s.explorerStore.IsContract(c.Request.Context(), address)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"is_contract": isContract})
+}
+
+func (s *Server) updateExplorerAddressABI(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	var body json.RawMessage
+	if err := c.ShouldBindJSON(&body); err != nil {
+		respondBadRequest(c, "invalid request body: "+err.Error())
+		return
+	}
+
+	if err := s.explorerStore.SetContractABI(c.Request.Context(), address, body); err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "address": address})
+}
+
+// --- Logs ---
+
+func (s *Server) getExplorerLogs(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	var address, topic0 *string
+	var fromBlock, toBlock *uint64
+
+	if a := c.Query("address"); a != "" {
+		lower := strings.ToLower(a)
+		address = &lower
+	}
+	if t := c.Query("topic0"); t != "" {
+		topic0 = &t
+	}
+	if fb := c.Query("from"); fb != "" {
+		if v, err := strconv.ParseUint(fb, 10, 64); err == nil {
+			fromBlock = &v
+		}
+	}
+	if tb := c.Query("to"); tb != "" {
+		if v, err := strconv.ParseUint(tb, 10, 64); err == nil {
+			toBlock = &v
+		}
+	}
+
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 1000 {
+			limit = v
+		}
+	}
+
+	logs, err := s.explorerStore.GetLogs(c.Request.Context(), address, topic0, fromBlock, toBlock, limit)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []explorer.Log{}
+	}
+	c.JSON(http.StatusOK, logs)
+}
+
+// --- Tokens ---
+
+func (s *Server) getExplorerTokens(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	limit := 25
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	tokenType := c.Query("type")
+
+	tokens, total, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if tokens == nil {
+		tokens = []explorer.Token{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": tokens, "total": total})
+}
+
+func (s *Server) getExplorerToken(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+	token, err := s.explorerStore.GetToken(c.Request.Context(), address)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if token == nil {
+		respondNotFound(c, "token not found")
+		return
+	}
+	c.JSON(http.StatusOK, token)
+}
+
+func (s *Server) getExplorerTokenHolders(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	limit := 25
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	holders, total, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if holders == nil {
+		holders = []explorer.TokenHolder{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": holders, "total": total})
+}
+
+func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	address := strings.ToLower(c.Param("address"))
+
+	limit := 25
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	transfers, total, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if transfers == nil {
+		transfers = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": transfers, "total": total})
+}
+
+// --- Transfers ---
+
+func (s *Server) getExplorerAllTransfers(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	limit := 25
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	transfers, total, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if transfers == nil {
+		transfers = []explorer.TokenTransfer{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": transfers, "total": total})
+}
+
+// --- Accounts ---
+
+func (s *Server) getExplorerAccounts(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	pageSize := 25
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+
+	accounts, total, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if accounts == nil {
+		accounts = []explorer.AddressStats{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": total})
+}
+
+// --- Search ---
+
+func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		c.JSON(http.StatusOK, []explorer.SearchSuggestion{})
+		return
+	}
+
+	limit := 10
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 50 {
+			limit = v
+		}
+	}
+
+	suggestions, err := s.explorerStore.SearchSuggestions(c.Request.Context(), q, limit)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if suggestions == nil {
+		suggestions = []explorer.SearchSuggestion{}
+	}
+	c.JSON(http.StatusOK, suggestions)
+}
+
+// --- Stats ---
+
+func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+
+	interval := 60
+	if i := c.Query("interval"); i != "" {
+		if v, err := strconv.Atoi(i); err == nil && v > 0 {
+			interval = v
+		}
+	}
+	limit := 30
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+
+	history, err := s.explorerStore.GetTransactionHistory(c.Request.Context(), interval, limit)
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if history == nil {
+		history = []explorer.TxHistoryPoint{}
+	}
+	c.JSON(http.StatusOK, history)
+}
+
+// --- Sync sub-endpoints ---
+
+func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondServiceUnavailable(c, "explorer store not configured")
+		return
+	}
+	progress, err := s.explorerStore.GetIndexerProgress(c.Request.Context())
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
+	}
+	if progress == nil {
+		// Return zero-value progress
+		c.JSON(http.StatusOK, explorer.IndexerProgress{})
+		return
+	}
+	c.JSON(http.StatusOK, progress)
+}
+
+func (s *Server) getExplorerCatchupProgress(c *gin.Context) {
+	// The proxy has no indexer of its own — return static "not running" response
+	c.JSON(http.StatusOK, gin.H{
+		"processed":       0,
+		"total":           0,
+		"percentComplete": 0,
+		"isRunning":       false,
+	})
 }

@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -122,7 +123,90 @@ type SyncStatus struct {
 }
 
 type ChainStats struct {
-	BlockCount       uint64 `json:"blockCount"`
-	TransactionCount uint64 `json:"transactionCount"`
-	AddressCount     uint64 `json:"addressCount"`
+	TotalBlocks       int64   `json:"totalBlocks"`
+	TotalTransactions int64   `json:"totalTransactions"`
+	TotalAddresses    int64   `json:"totalAddresses"`
+	TotalTokens       int64   `json:"totalTokens"`
+	AvgBlockTime      float64 `json:"avgBlockTime"`
+	PrivacyEnabled    bool    `json:"privacyEnabled"`
+}
+
+type Token struct {
+	Address           string     `json:"address"`
+	Symbol            string     `json:"symbol"`
+	Name              *string    `json:"name,omitempty"`
+	Decimals          int        `json:"decimals"`
+	TokenType         string     `json:"tokenType"`
+	TotalSupply       *string    `json:"totalSupply,omitempty"`
+	HolderCount       int        `json:"holderCount"`
+	TransferCount     int        `json:"transferCount"`
+	USDPrice          *float64   `json:"usdPrice,omitempty"`
+	IconURL           *string    `json:"iconUrl,omitempty"`
+	L1Address         *string    `json:"l1Address,omitempty"`
+	BlockNumber       uint64     `json:"blockNumber"`
+	CreationTx        *string    `json:"creationTx,omitempty"`
+	OffChainUpdatedAt *time.Time `json:"offChainUpdatedAt,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+}
+
+type TokenHolder struct {
+	Address    string     `json:"address"`
+	Balance    JSONString `json:"balance"`
+	Percentage float64    `json:"percentage"`
+	IsContract bool       `json:"isContract"`
+}
+
+type Balance struct {
+	Address      string     `json:"address"`
+	TokenAddress string     `json:"tokenAddress"`
+	BlockNumber  uint64     `json:"blockNumber"`
+	Balance      JSONString `json:"balance"`
+}
+
+type Contract struct {
+	Address          string          `json:"address"`
+	Bytecode         string          `json:"bytecode"`
+	BytecodeHash     *string         `json:"bytecodeHash,omitempty"`
+	Creator          string          `json:"creator"`
+	CreationTx       string          `json:"creationTx"`
+	BlockNumber      uint64          `json:"blockNumber"`
+	IsVerified       bool            `json:"isVerified"`
+	ContractName     *string         `json:"contractName,omitempty"`
+	CompilerVersion  *string         `json:"compilerVersion,omitempty"`
+	OptimizationUsed *bool           `json:"optimizationUsed,omitempty"`
+	EVMVersion       *string         `json:"evmVersion,omitempty"`
+	SourceCode       *string         `json:"sourceCode,omitempty"`
+	ABI              json.RawMessage `json:"abi,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	LicenseType      *string         `json:"licenseType,omitempty"`
+	ConstructorArgs  *string         `json:"constructorArgs,omitempty"`
+	OptimizationRuns *int            `json:"optimizationRuns,omitempty"`
+}
+
+type SearchSuggestion struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type TxHistoryPoint struct {
+	Timestamp uint64 `json:"timestamp"`
+	Count     int64  `json:"count"`
+}
+
+type IndexerProgress struct {
+	ID               int       `json:"id"`
+	MinFetchedBlock  uint64    `json:"minFetchedBlock"`
+	MaxFetchedBlock  uint64    `json:"maxFetchedBlock"`
+	BackfillComplete bool      `json:"backfillComplete"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type OPDeposit struct {
+	L2TxHash        string    `json:"l2TxHash"`
+	L1BlockNumber   uint64    `json:"l1BlockNumber"`
+	L1BlockTimestamp *uint64   `json:"l1BlockTimestamp,omitempty"`
+	L1TxHash        string    `json:"l1TxHash"`
+	L1TxOrigin      string    `json:"l1TxOrigin"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
