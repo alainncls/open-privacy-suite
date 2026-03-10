@@ -105,7 +105,7 @@ print_step "Checking Configuration"
 
 # Environment variables with defaults
 # IMPORTANT: PROXY_RPC_URL is the privacy proxy, ANVIL_RPC_URL is direct to node
-: "${ADMIN_API_URL:=http://localhost:8080/api}"
+: "${ADMIN_API_URL:=http://localhost:8080/api/v1/admin}"
 : "${PROXY_RPC_URL:=http://localhost:8080}"
 : "${ANVIL_RPC_URL:=http://localhost:8545}"
 : "${DEPLOYER_PRIVATE_KEY:=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
@@ -113,26 +113,31 @@ print_step "Checking Configuration"
 # For checking contract code, we can use Anvil directly (read-only)
 RPC_URL="$ANVIL_RPC_URL"
 
-if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
-    echo -e "${RED}Error: Either ORG_SLUG or ORG_ID environment variable is required${NC}"
-    exit 1
-fi
-
 print_value "Admin API URL" "$ADMIN_API_URL"
 print_value "Proxy RPC URL" "$PROXY_RPC_URL"
 print_value "Anvil RPC URL" "$ANVIL_RPC_URL"
 
-# Lookup org by slug if needed
-if [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
-    print_substep "Looking up organization by slug: $ORG_SLUG"
-    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs")
+if [ -z "$ORG_ID" ] && [ -z "$ORG_SLUG" ]; then
+    echo ""
+    echo -e "  ${YELLOW}Note: No ORG_SLUG or ORG_ID provided${NC}"
+    echo -e "  ${WHITE}Looking for existing organizations...${NC}"
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
+    ORG_COUNT=$(echo "$ORGS_RESPONSE" | jq '.data | length' 2>/dev/null || echo "0")
+    if [ "$ORG_COUNT" -gt 0 ]; then
+        ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].id')
+        ORG_SLUG=$(echo "$ORGS_RESPONSE" | jq -r '.data[0].slug')
+        print_success "Using organization: $ORG_SLUG"
+    else
+        print_error "No organizations found. Create one first or run demo-privacy-proxy.sh"
+        exit 1
+    fi
+elif [ -n "$ORG_SLUG" ] && [ -z "$ORG_ID" ]; then
+    ORGS_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs")
     ORG_ID=$(echo "$ORGS_RESPONSE" | jq -r ".data[] | select(.slug == \"$ORG_SLUG\") | .id")
-
     if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
         print_error "Organization with slug '$ORG_SLUG' not found"
         exit 1
     fi
-    print_success "Found organization"
 fi
 
 print_value "Organization ID" "$ORG_ID"
@@ -184,12 +189,12 @@ print_value "Token (first 50 chars)" "${AUTH_TOKEN:0:50}..."
 print_substep "Getting user info..."
 # The user was created during auth via EnsureUserExists
 # We need to find the user by external ID to get the internal UUID
-USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users?search=${USER_EXTERNAL_ID}")
+USERS_RESP=$(curl -s "$ADMIN_API_URL/users?search=${USER_EXTERNAL_ID}")
 USER_ID=$(echo "$USERS_RESP" | jq -r '.data[0].id // empty')
 
 if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
     # Try without the search param - list all and filter
-    USERS_RESP=$(curl -s "$ADMIN_API_URL/v1/users")
+    USERS_RESP=$(curl -s "$ADMIN_API_URL/users")
     USER_ID=$(echo "$USERS_RESP" | jq -r ".data[] | select(.external_id == \"$USER_EXTERNAL_ID\") | .id" | head -1)
 fi
 
@@ -202,7 +207,7 @@ print_success "User ID: $USER_ID"
 
 # Step 0d: Set KYC status FIRST (required before any RPC calls)
 print_substep "Setting KYC status (required for RPC access)..."
-KYC_RESP=$(curl -s -X PUT "$ADMIN_API_URL/v1/users/${USER_ID}" \
+KYC_RESP=$(curl -s -X PUT "$ADMIN_API_URL/users/${USER_ID}" \
     -H "Content-Type: application/json" \
     -d '{"kyc": true}')
 KYC_ERROR=$(echo "$KYC_RESP" | jq -r '.error // empty')
@@ -226,12 +231,12 @@ print_success "Authentication verified (chainId: $CHAIN_ID)"
 
 # Step 0f: Set up deployers group with deploy claim (after KYC is set)
 print_substep "Setting up group with deploy permissions..."
-GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+GROUPS_RESP=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/groups")
 DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "deployers" or .group.slug == "demo-deployers") | .group.id' | head -1)
 
 if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
     # Create a deployers group
-    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups" \
+    GROUP_CREATE_RESP=$(curl -s -X POST "$ADMIN_API_URL/orgs/$ORG_ID/groups" \
         -H "Content-Type: application/json" \
         -d '{
             "slug": "demo-deployers",
@@ -241,7 +246,7 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
 
     if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
         # Group might already exist, try to find it
-        GROUPS_RESP=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups")
+        GROUPS_RESP=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/groups")
         DEPLOYER_GROUP_ID=$(echo "$GROUPS_RESP" | jq -r '.data[] | select(.group.slug == "demo-deployers") | .group.id')
     fi
 fi
@@ -252,18 +257,18 @@ if [ -z "$DEPLOYER_GROUP_ID" ] || [ "$DEPLOYER_GROUP_ID" = "null" ]; then
 fi
 
 # Always configure group access (in case group was created earlier without proper config)
-curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
+curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/groups/$DEPLOYER_GROUP_ID/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_sendTransaction", "eth_call", "eth_estimateGas", "eth_getBalance", "eth_chainId", "eth_blockNumber", "eth_getTransactionCount", "net_version"],
-        "claims": ["deploy"]
+        "allowed_methods": ["*"], "claims": ["deploy"]
     }' > /dev/null
 
 print_success "Deployers group ready: $DEPLOYER_GROUP_ID"
 
 # Step 0g: Add user to the deployers group
 print_substep "Adding user to deployers group..."
-MEMBERSHIP_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/users/${USER_ID}/memberships" \
+MEMBERSHIP_RESP=$(curl -s -X POST "$ADMIN_API_URL/users/${USER_ID}/memberships" \
     -H "Content-Type: application/json" \
     -d "{\"group_id\": \"$DEPLOYER_GROUP_ID\"}")
 
@@ -286,7 +291,7 @@ print_step "Step 1: Checking CREATE3 Factory"
 
 if [ -z "$CREATE3_FACTORY" ]; then
     print_substep "Fetching factory address from org config..."
-    FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/config/create3")
+    FACTORY_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/config/create3")
     CREATE3_FACTORY=$(echo "$FACTORY_RESPONSE" | jq -r '.factory // empty')
 fi
 
@@ -305,7 +310,7 @@ fi
 
 if [ "$NEED_FACTORY" = true ]; then
     print_substep "Deploying CREATE3 factory..."
-    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/v1/dev/create3-factory")
+    DEPLOY_RESP=$(curl -s -X POST "$ADMIN_API_URL/dev/create3-factory")
     CREATE3_FACTORY=$(echo "$DEPLOY_RESP" | jq -r '.address // empty')
 
     if [ -z "$CREATE3_FACTORY" ] || [ "$CREATE3_FACTORY" = "null" ]; then
@@ -316,7 +321,7 @@ if [ "$NEED_FACTORY" = true ]; then
     print_success "Deployed factory: $CREATE3_FACTORY"
 
     # Configure the org with the new factory
-    curl -s -X PUT "$ADMIN_API_URL/v1/orgs/$ORG_ID/config/create3" \
+    curl -s -X PUT "$ADMIN_API_URL/orgs/$ORG_ID/config/create3" \
         -H "Content-Type: application/json" \
         -d "{\"factory\": \"$CREATE3_FACTORY\"}" > /dev/null
     print_success "Factory configured for org"
@@ -333,19 +338,21 @@ print_success "Factory contract verified ($FACTORY_CODE_SIZE bytes)"
 print_step "Step 2: Getting Preregistered Address"
 
 print_substep "Fetching preregistered addresses..."
-PREREGISTERED_RESPONSE=$(curl -s "$ADMIN_API_URL/v1/orgs/$ORG_ID/addresses/preregistered")
+PREREGISTERED_RESPONSE=$(curl -s "$ADMIN_API_URL/orgs/$ORG_ID/addresses/preregistered")
 FACTORY_LOWER=$(echo "$CREATE3_FACTORY" | tr '[:upper:]' '[:lower:]')
 
 # Find an unused address for the current factory
 MALICIOUS_ADDR=""
 MALICIOUS_SALT=""
 
-PREREGISTERED_COUNT=$(echo "$PREREGISTERED_RESPONSE" | jq 'length' 2>/dev/null || echo "0")
+# Support both plain array and {data:[...]} response formats
+PREREGISTERED_LIST=$(echo "$PREREGISTERED_RESPONSE" | jq 'if type=="array" then . else (.data // []) end' 2>/dev/null || echo "[]")
+PREREGISTERED_COUNT=$(echo "$PREREGISTERED_LIST" | jq 'length' 2>/dev/null || echo "0")
 
 for i in $(seq 0 $((PREREGISTERED_COUNT - 1))); do
-    ADDR=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].address")
-    SALT=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].salt")
-    ADDR_FACTORY=$(echo "$PREREGISTERED_RESPONSE" | jq -r ".[$i].factory" | tr '[:upper:]' '[:lower:]')
+    ADDR=$(echo "$PREREGISTERED_LIST" | jq -r ".[$i].address")
+    SALT=$(echo "$PREREGISTERED_LIST" | jq -r ".[$i].salt")
+    ADDR_FACTORY=$(echo "$PREREGISTERED_LIST" | jq -r ".[$i].factory" | tr '[:upper:]' '[:lower:]')
 
     if [ "$ADDR_FACTORY" != "$FACTORY_LOWER" ]; then
         continue
@@ -361,12 +368,21 @@ for i in $(seq 0 $((PREREGISTERED_COUNT - 1))); do
 done
 
 if [ -z "$MALICIOUS_ADDR" ]; then
-    print_error "No unused preregistered addresses available"
-    print_info "Please preregister more addresses first"
-    exit 1
+    # No preregistered addresses — compute one locally (works when runtime tracing is enabled)
+    print_info "No preregistered addresses found — computing address locally (runtime tracing mode)"
+    TIMESTAMP=$(date +%s)
+    SALT_PREFIX="malicious-box-$TIMESTAMP"
+    ORG_HEX=$(printf '%s' "$ORG_ID" | xxd -p | tr -d '\n')
+    PREFIX_HEX=$(printf '%s' "$SALT_PREFIX" | xxd -p | tr -d '\n')
+    MALICIOUS_SALT=$(cast keccak "0x${ORG_HEX}${PREFIX_HEX}" 2>/dev/null)
+    MALICIOUS_ADDR=$(cast call "$CREATE3_FACTORY" "getDeployed(bytes32)(address)" "$MALICIOUS_SALT" --rpc-url "$ANVIL_RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    if [ -z "$MALICIOUS_ADDR" ]; then
+        print_error "Failed to compute target address for malicious contract"
+        exit 1
+    fi
 fi
 
-print_success "Found unused preregistered address"
+print_success "Found target address for malicious contract"
 print_value "Target Address" "$MALICIOUS_ADDR"
 print_value "Salt" "${MALICIOUS_SALT:0:20}..."
 

@@ -34,7 +34,7 @@ NC='\033[0m' # No Color
 # Configuration
 PROXY_URL="${PROXY_URL:-http://localhost:8080}"
 ANVIL_URL="${ANVIL_URL:-http://localhost:8545}"
-API_URL="${PROXY_URL}/api/v1"
+API_URL="${PROXY_URL}/api/v1/admin"
 
 # Anvil pre-funded accounts
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -121,7 +121,7 @@ curl -s -X PUT "${API_URL}/orgs/${ORG_A_ID}/groups/${GROUP_A_ID}/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance", "eth_getCode", "eth_blockNumber", "eth_chainId", "eth_getTransactionReceipt", "eth_getTransactionByHash", "net_version"],
-        "claims": ["deploy"]
+        "allowed_methods": ["*"], "claims": ["deploy"]
     }' > /dev/null
 
 echo -e "${GREEN}✓ Created Group A with deploy permissions${NC}"
@@ -138,7 +138,7 @@ curl -s -X PUT "${API_URL}/orgs/${ORG_B_ID}/groups/${GROUP_B_ID}/access" \
     -H "Content-Type: application/json" \
     -d '{
         "allowed_methods": ["eth_call", "eth_sendTransaction", "eth_estimateGas", "eth_getBalance", "eth_getCode", "eth_blockNumber", "eth_chainId", "eth_getTransactionReceipt", "eth_getTransactionByHash", "net_version"],
-        "claims": ["deploy"]
+        "allowed_methods": ["*"], "claims": ["deploy"]
     }' > /dev/null
 
 echo -e "${GREEN}✓ Created Group B with permissions${NC}"

@@ -208,7 +208,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		OrgID:          orgID,
 		AllowedMethods: finalMethods,
 		ContractAccess: finalContractAccess,
-		Claims:  finalClaims,
+		Claims:         ExpandClaims(finalClaims), // expand so admin→deploy etc. are included
 		RateLimitRPS:   finalRateLimitRPS,
 		RateLimitDaily: finalRateLimitDaily,
 		ComputedAt:     time.Now(),

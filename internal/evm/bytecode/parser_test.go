@@ -506,10 +506,11 @@ func TestStripCBORMetadata_WithConstructorArgs(t *testing.T) {
 	// Strip CBOR
 	stripped := StripCBORMetadata(bytecodeWithCBORAndArgs)
 
-	// Should have removed CBOR metadata (including "solc" which looks like PUSH20)
-	expectedLen := len(code) + len(constructorArgs)
+	// Should have removed CBOR metadata AND constructor args (which follow CBOR and are data, not code).
+	// Constructor args must not be analyzed as opcodes — they can contain false positive opcode bytes.
+	expectedLen := len(code)
 	if len(stripped) != expectedLen {
-		t.Errorf("expected length %d, got %d (removed %d bytes)",
+		t.Errorf("expected length %d (code only), got %d (removed %d bytes)",
 			expectedLen, len(stripped), len(bytecodeWithCBORAndArgs)-len(stripped))
 	}
 
@@ -519,17 +520,10 @@ func TestStripCBORMetadata_WithConstructorArgs(t *testing.T) {
 		t.Error("'solc' bytes should be removed after stripping CBOR")
 	}
 
-	// Verify the code content is preserved at the beginning
+	// Verify the code content is preserved
 	for i, b := range code {
 		if stripped[i] != b {
 			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
-		}
-	}
-
-	// Verify constructor args are preserved at the end
-	for i, b := range constructorArgs {
-		if stripped[len(code)+i] != b {
-			t.Errorf("constructor arg byte %d: expected %#x, got %#x", i, b, stripped[len(code)+i])
 		}
 	}
 }
@@ -547,6 +541,75 @@ func TestStripCBORMetadata_NoCBOR(t *testing.T) {
 	for i, b := range code {
 		if stripped[i] != b {
 			t.Errorf("byte %d: expected %#x, got %#x", i, b, stripped[i])
+		}
+	}
+}
+
+// Regression test: proxy creation bytecode can have 0xf5/0xf0 bytes in
+// constructor args (e.g. from address values in ABI-encoded init data).
+// These must not be flagged as CREATE2/CREATE opcodes.
+func TestStripCBORMetadata_ConstructorArgs_NoFalsePositiveCreate2(t *testing.T) {
+	// Minimal "code" portion
+	code := []byte{PUSH1, 0x80, PUSH1, 0x40, STOP}
+
+	// Build CBOR metadata with "ipfs" and "solc" keys (same structure as WithConstructorArgs test)
+	cborContent := []byte{
+		0xa2, // Map with 2 elements
+		0x65, // Text string of length 5
+		0x69, 0x70, 0x66, 0x73, 0x58, // "ipfs" + bytes type marker
+		0x22, // 34 bytes follow
+	}
+	for i := 0; i < 34; i++ {
+		cborContent = append(cborContent, byte(i))
+	}
+	cborContent = append(cborContent,
+		0x64,                   // Text string of length 4
+		0x73, 0x6f, 0x6c, 0x63, // "solc"
+		0x43,             // bytes(3)
+		0x00, 0x08, 0x18, // Version bytes
+	)
+
+	// 2-byte CBOR length indicator
+	cborLen := len(cborContent)
+
+	// Constructor args that specifically contain 0xf5 (CREATE2) and 0xf0 (CREATE) bytes
+	constructorArgs := []byte{
+		// ABI-encoded address (12 zero bytes padding + 20-byte address)
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xf5, 0xf0, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x12, 0x34,
+		0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, // contains 0xf5 and 0xf0!
+	}
+
+	// Combine: code + CBOR + 2-byte-length + constructorArgs
+	combined := append([]byte{}, code...)
+	combined = append(combined, cborContent...)
+	combined = append(combined, byte(cborLen>>8), byte(cborLen&0xff))
+	combined = append(combined, constructorArgs...)
+
+	// Strip CBOR metadata (should also strip constructor args that follow it)
+	stripped := StripCBORMetadata(combined)
+
+	// Parse the stripped result
+	bc, err := Parse(stripped)
+	if err != nil {
+		t.Fatalf("unexpected error parsing stripped bytecode: %v", err)
+	}
+
+	// Verify: the parsed opcodes must NOT contain CREATE2 (0xf5) or CREATE (0xf0)
+	if bc.HasOpcode(CREATE2) {
+		t.Error("stripped bytecode should NOT contain CREATE2 opcode (false positive from constructor args)")
+	}
+	if bc.HasOpcode(CREATE) {
+		t.Error("stripped bytecode should NOT contain CREATE opcode (false positive from constructor args)")
+	}
+
+	// Verify the actual code portion is preserved
+	if len(stripped) != len(code) {
+		t.Errorf("expected stripped length %d (code only), got %d", len(code), len(stripped))
+	}
+	for i, b := range code {
+		if i < len(stripped) && stripped[i] != b {
+			t.Errorf("code byte %d: expected %#x, got %#x", i, b, stripped[i])
 		}
 	}
 }

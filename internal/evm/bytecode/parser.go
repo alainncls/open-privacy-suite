@@ -195,12 +195,10 @@ func stripEmbeddedCBOR(bytecode []byte) []byte {
 				if expectedStart == i {
 					// Validate this is actually CBOR metadata
 					if isValidCBORMetadata(bytecode, i, j) {
-						// Found valid CBOR metadata - remove it
-						// Keep bytes before CBOR and bytes after CBOR+length
-						result := make([]byte, 0, len(bytecode)-(j+2-i))
-						result = append(result, bytecode[:i]...)
-						result = append(result, bytecode[j+2:]...)
-						return result
+						// Found embedded CBOR metadata: everything after it is
+						// constructor arguments (data, not code). Strip both so
+						// they are not mistakenly analyzed as opcodes.
+						return bytecode[:i]
 					}
 				}
 			}

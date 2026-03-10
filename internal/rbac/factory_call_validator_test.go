@@ -670,6 +670,124 @@ func TestFactoryCallValidator_RuntimeTracingAllowsDynamicCalls(t *testing.T) {
 	})
 }
 
+func TestFactoryCallValidator_RuntimeTracingSkipsPreregistration(t *testing.T) {
+	// This tests the bug where FactoryCallValidator.runtimeTracingEnabled was missing,
+	// so preregistration was always enforced even when runtime tracing was on.
+	store := newFactoryCallTestStore()
+	factoryAddress := "0x1234567890123456789012345678901234567890"
+	orgID := "org1"
+
+	// NO preregistered addresses in the store
+
+	var salt [32]byte
+	copy(salt[:], []byte("runtime-prereg-skip-000000000000"))
+
+	creationCode, _ := hex.DecodeString("600000") // PUSH1 0x00, STOP
+	calldata := buildDeployCalldata(salt, creationCode)
+
+	t.Run("without runtime tracing", func(t *testing.T) {
+		deployValidator := NewDeploymentValidator(store)
+		validator := NewFactoryCallValidator(store, deployValidator)
+
+		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsDeployCall {
+			t.Error("expected IsDeployCall to be true")
+		}
+		if result.Allowed {
+			t.Error("expected deploy to be DENIED without runtime tracing and no preregistered address")
+		}
+		if !strings.Contains(result.Reason, "not preregistered") {
+			t.Errorf("expected reason to mention 'not preregistered', got: %s", result.Reason)
+		}
+	})
+
+	t.Run("with runtime tracing", func(t *testing.T) {
+		deployValidator := NewDeploymentValidator(store)
+		validator := NewFactoryCallValidator(store, deployValidator)
+		validator.SetRuntimeTracingEnabled(true)
+
+		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsDeployCall {
+			t.Error("expected IsDeployCall to be true")
+		}
+		if !result.Allowed {
+			t.Errorf("expected deploy to be ALLOWED with runtime tracing (preregistration skipped), got: %s", result.Reason)
+		}
+	})
+}
+
+func TestValidateFactoryCallOrgs_ReturnsCorrectOrgID(t *testing.T) {
+	// This tests the bug where ValidateFactoryCallOrgs didn't set result.OrgID,
+	// causing factory-deployed contracts to be auto-registered to the wrong org
+	// when the user is in multiple orgs.
+	store := newFactoryCallTestStore()
+
+	factoryAddrA := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	factoryAddrB := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	orgA := &Organization{
+		ID:   "org-a",
+		Slug: "org-a",
+		Name: "Org A",
+		Settings: map[string]any{
+			"factory_address": factoryAddrA,
+		},
+	}
+	orgB := &Organization{
+		ID:   "org-b",
+		Slug: "org-b",
+		Name: "Org B",
+		Settings: map[string]any{
+			"factory_address": factoryAddrB,
+		},
+	}
+	store.MockStore.organizations["org-a"] = orgA
+	store.MockStore.organizations["org-b"] = orgB
+
+	// Build deploy calldata targeting orgB's factory
+	var salt [32]byte
+	copy(salt[:], []byte("org-b-factory-deploy-00000000000"))
+	creationCode, _ := hex.DecodeString("600000")
+	calldata := buildDeployCalldata(salt, creationCode)
+
+	// Create FactoryCallValidator with runtime tracing enabled so preregistration is skipped
+	deployValidator := NewDeploymentValidator(store)
+	validator := NewFactoryCallValidator(store, deployValidator)
+	validator.SetRuntimeTracingEnabled(true)
+
+	// Construct OrgContext directly (same package) with user in both orgs
+	oc := &OrgContext{
+		store:      store,
+		userOrgIDs: map[string]bool{"org-a": true, "org-b": true},
+	}
+
+	result, err := oc.ValidateFactoryCallOrgs(ctx(), factoryAddrB, calldata, validator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result for factory call")
+	}
+	if !result.IsFactoryCall {
+		t.Error("expected IsFactoryCall to be true")
+	}
+	if !result.IsDeployCall {
+		t.Error("expected IsDeployCall to be true")
+	}
+	if !result.Allowed {
+		t.Errorf("expected factory call to be allowed, got: %s", result.Reason)
+	}
+	if result.OrgID != "org-b" {
+		t.Errorf("expected OrgID to be %q (the org whose factory was called), got %q", "org-b", result.OrgID)
+	}
+}
+
 // Helper function for context
 func ctx() context.Context {
 	return context.Background()
