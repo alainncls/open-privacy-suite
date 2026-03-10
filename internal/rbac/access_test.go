@@ -1226,17 +1226,27 @@ func TestGetContractAccessUnregisteredRestriction(t *testing.T) {
 	}
 }
 
-// TestCrossOrgIsolationReadOps verifies the ReadOpsMap contains the right methods.
+// TestCrossOrgIsolationReadOps verifies the ReadOpsMap and WriteOpsMap contain the right methods.
+// All map keys are lowercase; ClassifyOperation normalises before lookup.
 func TestCrossOrgIsolationReadOps(t *testing.T) {
-	// These are the read operations that need cross-org isolation check
+	// Core read operations that need cross-org isolation check (lowercase keys)
 	expectedReadOps := []string{
 		"eth_call",
-		"eth_estimateGas",
-		"eth_getCode",
-		"eth_getBalance",
-		"eth_getStorageAt",
-		"eth_getTransactionCount",
-		"eth_getLogs",
+		"eth_estimategas",
+		"eth_getcode",
+		"eth_getbalance",
+		"eth_getstorageat",
+		"eth_gettransactioncount",
+		"eth_getlogs",
+		// Filter equivalents of eth_getLogs — must also require auth
+		"eth_newfilter",
+		"eth_newblockfilter",
+		"eth_newpendingtransactionfilter",
+		"eth_getfilterchanges",
+		"eth_getfilterlogs",
+		"eth_uninstallfilter",
+		// State proofs
+		"eth_getproof",
 	}
 
 	for _, method := range expectedReadOps {
@@ -1245,21 +1255,15 @@ func TestCrossOrgIsolationReadOps(t *testing.T) {
 		}
 	}
 
-	// Verify write ops are NOT in ReadOpsMap
-	// Note: eth_sendRawTransaction is globally blocked, not in WriteOpsMap
-	writeOps := []string{"eth_sendTransaction"}
+	// Verify write ops are in WriteOpsMap and NOT in ReadOpsMap
+	writeOps := []string{"eth_sendtransaction", "eth_sendrawtransaction"}
 	for _, method := range writeOps {
 		if ReadOpsMap[method] {
 			t.Errorf("Expected %s to NOT be in ReadOpsMap", method)
 		}
-	}
-
-	// Verify eth_sendRawTransaction is globally blocked (not in any ops map)
-	if ReadOpsMap["eth_sendRawTransaction"] {
-		t.Error("eth_sendRawTransaction should NOT be in ReadOpsMap (it's globally blocked)")
-	}
-	if WriteOpsMap["eth_sendRawTransaction"] {
-		t.Error("eth_sendRawTransaction should NOT be in WriteOpsMap (it's globally blocked)")
+		if !WriteOpsMap[method] {
+			t.Errorf("Expected %s to be in WriteOpsMap", method)
+		}
 	}
 }
 
@@ -3136,6 +3140,117 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 			if !tt.expectAllowed && tt.expectReason != "" {
 				if !strings.Contains(result.Reason, tt.expectReason) {
 					t.Errorf("expected reason to contain %q, got: %s", tt.expectReason, result.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestAnonymousAccess verifies that unauthenticated requests (UserExternalID == "")
+// are allowed only for claim-free chain-metadata methods and denied for everything
+// that could reveal user data (balances, transactions, receipts, contract state, logs).
+func TestAnonymousAccess(t *testing.T) {
+	tests := []struct {
+		name          string
+		method        string
+		expectAllowed bool
+	}{
+		// Claim-free metadata — allowed anonymously
+		{name: "eth_blockNumber", method: "eth_blockNumber", expectAllowed: true},
+		{name: "eth_chainId", method: "eth_chainId", expectAllowed: true},
+		{name: "eth_gasPrice", method: "eth_gasPrice", expectAllowed: true},
+		{name: "net_version", method: "net_version", expectAllowed: true},
+		{name: "net_listening", method: "net_listening", expectAllowed: true},
+		{name: "web3_clientVersion", method: "web3_clientVersion", expectAllowed: true},
+
+		// Read operations — require authentication even for anonymous callers
+		{name: "eth_getBalance", method: "eth_getBalance", expectAllowed: false},
+		{name: "eth_call", method: "eth_call", expectAllowed: false},
+		{name: "eth_estimateGas", method: "eth_estimateGas", expectAllowed: false},
+		{name: "eth_getCode", method: "eth_getCode", expectAllowed: false},
+		{name: "eth_getStorageAt", method: "eth_getStorageAt", expectAllowed: false},
+		{name: "eth_getTransactionCount", method: "eth_getTransactionCount", expectAllowed: false},
+		{name: "eth_getLogs", method: "eth_getLogs", expectAllowed: false},
+
+		// Block contents — contain tx data, deny anonymously
+		{name: "eth_getBlockByNumber", method: "eth_getBlockByNumber", expectAllowed: false},
+		{name: "eth_getBlockByHash", method: "eth_getBlockByHash", expectAllowed: false},
+		{name: "eth_getBlockTransactionCountByNumber", method: "eth_getBlockTransactionCountByNumber", expectAllowed: false},
+		{name: "eth_getBlockTransactionCountByHash", method: "eth_getBlockTransactionCountByHash", expectAllowed: false},
+		{name: "eth_getUncleByBlockHashAndIndex", method: "eth_getUncleByBlockHashAndIndex", expectAllowed: false},
+		{name: "eth_getUncleByBlockNumberAndIndex", method: "eth_getUncleByBlockNumberAndIndex", expectAllowed: false},
+		{name: "eth_getUncleCountByBlockHash", method: "eth_getUncleCountByBlockHash", expectAllowed: false},
+		{name: "eth_getUncleCountByBlockNumber", method: "eth_getUncleCountByBlockNumber", expectAllowed: false},
+
+		// Transaction details — sender/receiver/value/input, deny anonymously
+		{name: "eth_getTransactionByHash", method: "eth_getTransactionByHash", expectAllowed: false},
+		{name: "eth_getTransactionByBlockHashAndIndex", method: "eth_getTransactionByBlockHashAndIndex", expectAllowed: false},
+		{name: "eth_getTransactionByBlockNumberAndIndex", method: "eth_getTransactionByBlockNumberAndIndex", expectAllowed: false},
+
+		// Receipts — contain logs/status, deny anonymously
+		{name: "eth_getTransactionReceipt", method: "eth_getTransactionReceipt", expectAllowed: false},
+
+		// State proofs — expose balance/nonce/storage, deny anonymously
+		{name: "eth_getProof", method: "eth_getProof", expectAllowed: false},
+
+		// Access list simulation — reveals contract internals, deny anonymously
+		{name: "eth_createAccessList", method: "eth_createAccessList", expectAllowed: false},
+
+		// Node accounts — may expose signer addresses, deny anonymously
+		{name: "eth_accounts", method: "eth_accounts", expectAllowed: false},
+
+		// Log filters — equivalent to eth_getLogs, deny anonymously
+		{name: "eth_newFilter", method: "eth_newFilter", expectAllowed: false},
+		{name: "eth_newBlockFilter", method: "eth_newBlockFilter", expectAllowed: false},
+		{name: "eth_newPendingTransactionFilter", method: "eth_newPendingTransactionFilter", expectAllowed: false},
+		{name: "eth_getFilterChanges", method: "eth_getFilterChanges", expectAllowed: false},
+		{name: "eth_getFilterLogs", method: "eth_getFilterLogs", expectAllowed: false},
+		{name: "eth_uninstallFilter", method: "eth_uninstallFilter", expectAllowed: false},
+
+		// Case-insensitive bypass attempt — must be denied
+		{name: "ETH_GETBALANCE uppercase", method: "ETH_GETBALANCE", expectAllowed: false},
+		{name: "Eth_GetBlockByNumber mixed", method: "Eth_GetBlockByNumber", expectAllowed: false},
+		{name: "ETH_NEWFILTER uppercase", method: "ETH_NEWFILTER", expectAllowed: false},
+
+		// Write operations — deny anonymously
+		{name: "eth_sendTransaction", method: "eth_sendTransaction", expectAllowed: false},
+		{name: "eth_sendRawTransaction", method: "eth_sendRawTransaction", expectAllowed: false},
+	}
+
+	store := NewMockCrossOrgStore()
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &AccessCheckRequest{
+				UserExternalID: "", // anonymous
+				Method:         tt.method,
+			}
+
+			result, err := controller.CheckAccess(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				if tt.expectAllowed {
+					t.Errorf("expected anonymous access to be allowed, got denied: %s", result.Reason)
+				} else {
+					t.Errorf("expected anonymous access to be denied, got allowed")
+				}
+			}
+
+			if tt.expectAllowed {
+				if result.RateLimitRPS == nil || *result.RateLimitRPS != 10 {
+					t.Errorf("expected RateLimitRPS=10 for anonymous, got %v", result.RateLimitRPS)
+				}
+				if result.RateLimitDaily == nil || *result.RateLimitDaily != 1000 {
+					t.Errorf("expected RateLimitDaily=1000 for anonymous, got %v", result.RateLimitDaily)
+				}
+			} else {
+				if !strings.Contains(result.Reason, "authentication required") {
+					t.Errorf("expected reason to contain 'authentication required', got: %s", result.Reason)
 				}
 			}
 		})

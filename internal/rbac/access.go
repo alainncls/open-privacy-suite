@@ -335,6 +335,31 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
+	// Handle anonymous access (no JWT provided)
+	if req.UserExternalID == "" {
+		requiredClaim := ClassifyOperation(req.Method, req.Params)
+
+		// Only pure network/chain metadata methods (eth_blockNumber, eth_chainId,
+		// eth_gasPrice, net_version, etc.) are allowed without authentication.
+		// These return no user data — just network state.
+		//
+		// Everything that could reveal transaction data, balances, logs, or
+		// contract state requires authentication, even for unregistered addresses.
+		if requiredClaim == "" {
+			rps, daily := 10, 1000
+			return &AccessCheckResult{
+				Allowed:        true,
+				RateLimitRPS:   &rps,
+				RateLimitDaily: &daily,
+			}, nil
+		}
+
+		return &AccessCheckResult{
+			Allowed: false,
+			Reason:  "authentication required for this operation",
+		}, nil
+	}
+
 	// Get user by external ID
 	user, err := c.store.GetUserByExternalID(ctx, req.UserExternalID)
 	if err != nil {
@@ -543,7 +568,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Strip default_claims access for truly unregistered addresses (not owned by any org).
 		// Cache the owner lookup so the preregistered-address check below can reuse it.
 		var (
-			ownerOrgID       string
+			ownerOrgID        string
 			ownerOrgIDFetched bool
 		)
 		if access != nil && !hasExplicitAccess {
@@ -902,20 +927,62 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 }
 
 // WriteOpsMap contains write operations that require 'write' claim.
-// Note: eth_sendRawTransaction is globally blocked (cannot validate without RLP decoding).
+// All keys must be lowercase — ClassifyOperation lowercases before lookup.
 var WriteOpsMap = map[string]bool{
-	"eth_sendTransaction": true,
+	"eth_sendtransaction":    true,
+	"eth_sendrawtransaction": true, // Requires auth; processor enforces runtime-tracing gate
 }
 
 // ReadOpsMap contains read operations that require 'read' claim.
+// On a private network ALL blockchain data is considered sensitive:
+//   - Contract state (balance, code, storage, logs) reveals private holdings
+//   - Block contents reveal which transactions occurred (sender, receiver, value)
+//   - Transaction details reveal identities and amounts
+//   - Receipts reveal execution outcomes and logs
+//   - Filters are equivalent to eth_getLogs and must require the same auth
+//   - State proofs (eth_getProof) expose balance, nonce, and storage
+//
+// Only pure network/chain metadata that contains no user data is claim-free
+// (eth_blockNumber, eth_chainId, eth_gasPrice, net_version, etc.).
+//
+// All keys must be lowercase — ClassifyOperation lowercases before lookup.
 var ReadOpsMap = map[string]bool{
+	// Contract state reads
 	"eth_call":                true,
-	"eth_estimateGas":         true,
-	"eth_getCode":             true,
-	"eth_getBalance":          true,
-	"eth_getStorageAt":        true,
-	"eth_getTransactionCount": true,
-	"eth_getLogs":             true,
+	"eth_estimategas":         true,
+	"eth_getcode":             true,
+	"eth_getbalance":          true,
+	"eth_getstorageat":        true,
+	"eth_gettransactioncount": true,
+	"eth_getlogs":             true,
+	// State proofs — expose balance, nonce, storage hash (equivalent to eth_getBalance+eth_getStorageAt)
+	"eth_getproof": true,
+	// Access list simulation — reveals storage and address access patterns
+	"eth_createaccesslist": true,
+	// Node keystore accounts — may expose signer addresses on private PoA networks
+	"eth_accounts": true,
+	// Log filters — functionally equivalent to eth_getLogs, same auth requirement
+	"eth_newfilter":                    true,
+	"eth_newblockfilter":               true,
+	"eth_newpendingtransactionfilter":  true,
+	"eth_getfilterchanges":             true,
+	"eth_getfilterlogs":                true,
+	"eth_uninstallfilter":              true,
+	// Block contents (include transaction lists with from/to/value)
+	"eth_getblockbyhash":                   true,
+	"eth_getblockbynumber":                 true,
+	"eth_getblocktransactioncountbyhash":   true,
+	"eth_getblocktransactioncountbynumber": true,
+	"eth_getunclebyblockhashandindex":      true,
+	"eth_getunclebyblocknumberandindex":    true,
+	"eth_getunclecountbyblockhash":         true,
+	"eth_getunclecountbyblocknumber":       true,
+	// Transaction details (sender, receiver, value, input data)
+	"eth_gettransactionbyhash":                 true,
+	"eth_gettransactionbyblockhashandindex":    true,
+	"eth_gettransactionbyblocknumberandindex":  true,
+	// Receipts (logs, status, contract address)
+	"eth_gettransactionreceipt": true,
 }
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
@@ -923,6 +990,10 @@ var ReadOpsMap = map[string]bool{
 // For eth_sendTransaction and eth_estimateGas, checks params to distinguish
 // deployment vs regular transaction/call.
 func ClassifyOperation(method string, params []any) Claim {
+	// Normalize to lowercase for case-insensitive matching.
+	// IsMethodBlocked already does this; ClassifyOperation must match.
+	method = strings.ToLower(strings.TrimSpace(method))
+
 	// Check for contract deployment FIRST (before general write/read check)
 	// This includes both eth_sendTransaction deployments AND eth_estimateGas
 	// for deployment gas estimation - both require deploy claim
@@ -951,8 +1022,10 @@ func ClassifyOperation(method string, params []any) Claim {
 // NOTE: eth_sendRawTransaction is globally blocked because it cannot be validated
 // without RLP decoding, which would bypass all RBAC security controls.
 func IsContractDeployment(method string, params []any) bool {
-	// Only eth_sendTransaction and eth_estimateGas can be validated for deployment
-	if method != "eth_sendTransaction" && method != "eth_estimateGas" {
+	// Normalize to lowercase so both direct callers and ClassifyOperation work correctly.
+	method = strings.ToLower(strings.TrimSpace(method))
+	// Only eth_sendtransaction and eth_estimategas can be validated for deployment.
+	if method != "eth_sendtransaction" && method != "eth_estimategas" {
 		return false
 	}
 

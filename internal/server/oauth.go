@@ -239,8 +239,7 @@ func (s *OAuthSessionStore) Stop() {
 func generateSecureCode() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// Fall back to timestamp-based ID (less secure but still unique)
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		panic("crypto/rand unavailable: " + err.Error())
 	}
 	return hex.EncodeToString(b)
 }
