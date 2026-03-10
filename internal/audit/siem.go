@@ -11,6 +11,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // SIEMConfig configures the SIEM webhook forwarder.
@@ -44,6 +46,16 @@ type SIEMForwarder struct {
 	batch []SIEMEvent
 	stop  chan struct{}
 	done  chan struct{}
+
+	// Prometheus metrics (optional, set via SetMetrics)
+	batchesTotal       *prometheus.CounterVec
+	eventsDroppedTotal prometheus.Counter
+}
+
+// SetMetrics configures Prometheus metrics for the SIEM forwarder.
+func (s *SIEMForwarder) SetMetrics(batches *prometheus.CounterVec, dropped prometheus.Counter) {
+	s.batchesTotal = batches
+	s.eventsDroppedTotal = dropped
 }
 
 // blockedCIDRs are the IP ranges that must never be used as a SIEM webhook
@@ -194,6 +206,8 @@ func (s *SIEMForwarder) flush() {
 
 	if err := s.send(events); err != nil {
 		s.handleFailedBatch(events, err)
+	} else if s.batchesTotal != nil {
+		s.batchesTotal.WithLabelValues("success").Inc()
 	}
 }
 
@@ -241,6 +255,13 @@ func (s *SIEMForwarder) send(events []SIEMEvent) error {
 // operators can recover them manually. The batch is always dropped from memory
 // (no infinite retry) regardless of fallback success.
 func (s *SIEMForwarder) handleFailedBatch(events []SIEMEvent, sendErr error) {
+	if s.batchesTotal != nil {
+		s.batchesTotal.WithLabelValues("error").Inc()
+	}
+	if s.eventsDroppedTotal != nil {
+		s.eventsDroppedTotal.Add(float64(len(events)))
+	}
+
 	if s.cfg.FallbackLogPath != "" {
 		if err := s.writeFallback(events); err != nil {
 			slog.Error("SIEM flush failed and fallback write also failed, dropping events", "send_error", sendErr, "fallback_error", err, "count", len(events))

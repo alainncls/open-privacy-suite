@@ -17,6 +17,7 @@ import (
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/evm/create3"
+	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // TTL constants for various components
@@ -75,6 +77,7 @@ type Server struct {
 	siemForwarder     *audit.SIEMForwarder
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
+	metrics            *metrics.Metrics
 }
 
 // DB returns the database instance (for testing)
@@ -260,6 +263,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("runtime tracing enabled", "cache_ttl", cfg.TraceCacheTTL, "timeout", cfg.TraceTimeout, "tiered", cfg.TraceTieredValidation)
 	}
 
+	// Initialize Prometheus metrics
+	m := metrics.New(cfg.Version)
+	metrics.RegisterDBStatsCollector(m.Registry, database.Conn())
+
 	s := &Server{
 		db:                 database,
 		rbacAccessCtrl:     rbacAccessCtrl,
@@ -278,6 +285,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		runtimeTracer:      runtimeTracer,
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
+		metrics:            m,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
@@ -286,6 +294,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	} else {
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
 	}
+	s.jsonrpcProcessor.SetMetrics(m)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {
@@ -297,6 +306,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		// Start background CoinGecko price fetcher (unless disabled)
 		if !cfg.DisableCoinGecko {
 			priceSvc := pricing.NewService(database, database, cfg.PriceFetchInterval)
+			priceSvc.SetMetrics(m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures)
 			priceSvc.Start()
 			s.priceService = priceSvc
 		} else {
@@ -323,6 +333,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			FlushInterval:   cfg.SIEMFlushInterval,
 			FallbackLogPath: cfg.SIEMFallbackLogPath,
 		})
+		siemForwarder.SetMetrics(m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal)
 		s.siemForwarder = siemForwarder
 		slog.Info("SIEM forwarding enabled", "webhook", cfg.SIEMWebhookURL, "batch_size", cfg.SIEMBatchSize, "flush_interval", cfg.SIEMFlushInterval)
 	}
@@ -384,6 +395,9 @@ func (s *Server) setupRouter() *gin.Engine {
 	}
 	router.SetTrustedProxies(trustedProxies)
 
+	// Prometheus HTTP metrics middleware
+	router.Use(s.metrics.HTTPMiddleware())
+
 	// Correlation ID middleware (generates/propagates request IDs for audit trail)
 	router.Use(correlationIDMiddleware())
 
@@ -401,6 +415,10 @@ func (s *Server) setupRouter() *gin.Engine {
 	}
 	router.GET("/health", healthHandler)
 	router.HEAD("/health", healthHandler)
+
+	// Prometheus metrics endpoint — restricted to private network
+	metricsHandler := promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{})
+	router.GET("/metrics", s.localhostOnlyMiddleware(), gin.WrapH(metricsHandler))
 
 	// Authentication endpoints (no auth required)
 	// Rate limited to prevent brute force attacks
@@ -1179,4 +1197,18 @@ func (s *Server) getMyOrganizations(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"organizations": orgs})
+}
+
+// recordAuthAttempt records an authentication attempt metric.
+func (s *Server) recordAuthAttempt(provider, outcome string) {
+	if s.metrics != nil {
+		s.metrics.AuthAttemptsTotal.WithLabelValues(provider, outcome).Inc()
+	}
+}
+
+// recordTokenRefresh records a token refresh attempt metric.
+func (s *Server) recordTokenRefresh(outcome string) {
+	if s.metrics != nil {
+		s.metrics.AuthTokenRefreshesTotal.WithLabelValues(outcome).Inc()
+	}
 }

@@ -18,6 +18,7 @@ import (
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 	"privacy-proxy/internal/tracer"
@@ -40,6 +41,9 @@ type JSONRPCProcessor struct {
 	hashChain      *audit.HashChain
 	siemForwarder  *audit.SIEMForwarder
 	logParams      bool
+
+	// Prometheus metrics
+	metrics *metrics.Metrics
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -107,6 +111,11 @@ func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashCha
 	p.hashChain = hashChain
 	p.siemForwarder = siemForwarder
 	p.logParams = logParams
+}
+
+// SetMetrics configures Prometheus metrics for the processor.
+func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
+	p.metrics = m
 }
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
@@ -223,6 +232,8 @@ func ParseAndValidateBody(body []byte) (string, []any, *ProcessError) {
 // 3. Rate limiting
 // 4. Forwarding to the target node
 func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *ProcessResult {
+	start := time.Now()
+
 	// Handle eth_sendRawTransaction specially - requires runtime tracing
 	if req.Method == "eth_sendRawTransaction" {
 		return p.processRawTransaction(ctx, req)
@@ -249,6 +260,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
+		p.recordRPCOutcome(req.Method, "error", start)
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -259,6 +271,8 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	if !result.Allowed {
+		p.recordRPCOutcome(req.Method, "rbac_denied", start)
+		p.recordRBACDecision("denied")
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -267,6 +281,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			},
 		}
 	}
+	p.recordRBACDecision("allowed")
 
 	// Runtime tracing: validate all call targets for eth_sendTransaction
 	if traceErr := p.validateWithTracing(ctx, req, targetAddr); traceErr != nil {
@@ -287,6 +302,10 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
+		p.recordRPCOutcome(req.Method, "rate_limited", start)
+		if p.metrics != nil {
+			p.metrics.RateLimitHitsTotal.WithLabelValues("rpc").Inc()
+		}
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -315,8 +334,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Forward to node
+	forwardStart := time.Now()
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	if p.metrics != nil {
+		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
+	}
 	if err != nil {
+		p.recordRPCOutcome(req.Method, "forward_error", start)
 		p.logAccess(ctx, req, http.StatusBadGateway)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -357,6 +381,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Log successful access
+	p.recordRPCOutcome(req.Method, "success", start)
 	p.logAccess(ctx, req, statusCode)
 
 	return &ProcessResult{
@@ -553,6 +578,7 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 		return nil
 	}
 
+	compStart := time.Now()
 	compResult, compErr := p.complianceChecker.Check(ctx, &compliance.CheckRequest{
 		OrgID:         orgID,
 		UserID:        userID,
@@ -562,7 +588,13 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 		Value:         value,
 		CorrelationID: req.CorrelationID,
 	})
+	if p.metrics != nil {
+		p.metrics.ComplianceCheckDuration.WithLabelValues().Observe(time.Since(compStart).Seconds())
+	}
 	if compErr != nil {
+		if p.metrics != nil {
+			p.metrics.ComplianceDecisionsTotal.WithLabelValues("error").Inc()
+		}
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -572,6 +604,9 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 		}
 	}
 	if !compResult.Allowed {
+		if p.metrics != nil {
+			p.metrics.ComplianceDecisionsTotal.WithLabelValues("denied").Inc()
+		}
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -579,6 +614,9 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 				Message:    "compliance denied: " + compResult.Reason,
 			},
 		}
+	}
+	if p.metrics != nil {
+		p.metrics.ComplianceDecisionsTotal.WithLabelValues("allowed").Inc()
 	}
 
 	return nil
@@ -598,8 +636,11 @@ func isSimpleValueTransfer(data string) bool {
 // This method is ONLY allowed when runtime tracing is enabled, because we need
 // to trace all call targets to validate cross-org isolation.
 func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *ProcessRequest) *ProcessResult {
+	start := time.Now()
+
 	// eth_sendRawTransaction requires runtime tracing for security
 	if p.runtimeTracer == nil || !p.runtimeTracer.IsEnabled() {
+		p.recordRPCOutcome(req.Method, "tracing_required", start)
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -656,6 +697,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
+		p.recordRPCOutcome(req.Method, "error", start)
 		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -666,6 +708,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	if !result.Allowed {
+		p.recordRPCOutcome(req.Method, "rbac_denied", start)
+		p.recordRBACDecision("denied")
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -674,6 +718,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			},
 		}
 	}
+	p.recordRBACDecision("allowed")
 
 	// Runtime tracing validation (always runs for raw transactions)
 	if to != "" {
@@ -706,6 +751,10 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
+		p.recordRPCOutcome(req.Method, "rate_limited", start)
+		if p.metrics != nil {
+			p.metrics.RateLimitHitsTotal.WithLabelValues("rpc").Inc()
+		}
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
 			Error: &ProcessError{
@@ -730,8 +779,13 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Forward the original raw transaction to node
+	forwardStart := time.Now()
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	if p.metrics != nil {
+		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
+	}
 	if err != nil {
+		p.recordRPCOutcome(req.Method, "forward_error", start)
 		// Clean up pre-registration on forward failure.
 		if rawTxPlainCreateAddr != "" {
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
@@ -774,6 +828,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Log successful access
+	p.recordRPCOutcome(req.Method, "success", start)
 	p.logAccess(ctx, req, statusCode)
 
 	return &ProcessResult{
@@ -1134,4 +1189,23 @@ func (p *JSONRPCProcessor) getTransactionReceipt(txHash string) (string, error) 
 		return "", nil
 	}
 	return strings.ToLower(resp.Result.ContractAddress), nil
+}
+
+// recordRPCOutcome records RPC request count and duration metrics.
+// The method is normalized to a known allowlist to prevent label cardinality bombs.
+func (p *JSONRPCProcessor) recordRPCOutcome(method, outcome string, start time.Time) {
+	if p.metrics == nil {
+		return
+	}
+	safeMethod := metrics.NormalizeRPCMethod(method)
+	p.metrics.RPCRequestsTotal.WithLabelValues(safeMethod, outcome).Inc()
+	p.metrics.RPCRequestDuration.WithLabelValues(safeMethod).Observe(time.Since(start).Seconds())
+}
+
+// recordRBACDecision records an RBAC decision metric.
+func (p *JSONRPCProcessor) recordRBACDecision(decision string) {
+	if p.metrics == nil {
+		return
+	}
+	p.metrics.RBACDecisionsTotal.WithLabelValues(decision).Inc()
 }

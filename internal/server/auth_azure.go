@@ -186,6 +186,7 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 	// Exchange authorization code for verified Azure identity
 	identity, err := s.azureAuthenticator.ExchangeCode(c.Request.Context(), req.Code, req.RedirectURI, nonce)
 	if err != nil {
+		s.recordAuthAttempt("azure_ad", "error")
 		slog.Error("Azure AD code exchange failed", "error", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Azure AD authentication failed"})
 		return
@@ -321,6 +322,8 @@ func (s *Server) handleAzureCallback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token: " + err.Error()})
 		return
 	}
+
+	s.recordAuthAttempt("azure_ad", "success")
 
 	c.JSON(http.StatusOK, AuthResponse{
 		AccessToken:  accessToken,

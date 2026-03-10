@@ -26,6 +26,7 @@ func main() {
 	slog.SetDefault(slog.New(logHandler))
 
 	cfg := config.Load()
+	cfg.Version = Version
 
 	// Validate configuration (fails fast in production if required values missing)
 	if err := cfg.Validate(); err != nil {
