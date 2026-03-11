@@ -297,9 +297,11 @@ func (r *RedactionEngine) applyRedaction(address string, level VisibilityLevel) 
 		return address
 	case VisibilityPseudonymous:
 		return GeneratePseudonym(address)
-	case VisibilityRedacted, VisibilityHidden:
-		return "[REDACTED]"
+	case VisibilityRedacted:
+		return "[PRIVATE]"
+	case VisibilityHidden:
+		return "[PRIVATE]"
 	default:
-		return "[REDACTED]" // Fail safe
+		return "[PRIVATE]" // Fail safe
 	}
 }

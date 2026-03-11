@@ -115,9 +115,11 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		}
 
 		if len(contractGroupIDs) > 0 {
-			// Default org-owned contracts to VisibilityHidden (must have explicit access)
+			// Default org-owned contracts to VisibilityRedacted (address masked, tx visible but stripped)
+			// We use Redacted (not Hidden) so transactions aren't silently dropped from global lists —
+			// the contract's existence is on-chain; only the identity should be protected.
 			for addr := range contractGroupIDs {
-				result[addr] = explorer.VisibilityHidden
+				result[addr] = explorer.VisibilityRedacted
 			}
 
 			if viewerDID != "" {
