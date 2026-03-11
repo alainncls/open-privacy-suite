@@ -1150,6 +1150,35 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	if balances == nil {
 		balances = []explorer.Balance{}
 	}
+
+	// Filter out balances whose token contract is restricted for this viewer.
+	// A private org token contract must not appear in balance lists for non-members.
+	if len(balances) > 0 {
+		viewerDID := s.getViewerDIDFromRequest(c)
+		tokenAddrs := make([]string, len(balances))
+		for i, b := range balances {
+			tokenAddrs[i] = strings.ToLower(b.TokenAddress)
+		}
+		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, tokenAddrs)
+		if err != nil {
+			respondInternalError(c, err.Error())
+			return
+		}
+		filtered := balances[:0]
+		for _, b := range balances {
+			level := visMap[strings.ToLower(b.TokenAddress)]
+			switch level {
+			case explorer.VisibilityFull:
+				filtered = append(filtered, b)
+			case explorer.VisibilityPseudonymous:
+				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
+				filtered = append(filtered, b)
+			// VisibilityHidden, VisibilityRedacted: drop this balance entry
+			}
+		}
+		balances = filtered
+	}
+
 	c.JSON(http.StatusOK, balances)
 }
 
@@ -1326,6 +1355,15 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 		return
 	}
 	address := strings.ToLower(c.Param("address"))
+
+	// Require full visibility: only org members (or public contracts) may update ABI.
+	// This prevents unauthorized writes to private org contracts.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), viewerDID, address)
+	if visibility.Level != VisibilityFull {
+		respondNotFound(c, "address not found")
+		return
+	}
 
 	var body json.RawMessage
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -1577,6 +1615,38 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 	if accounts == nil {
 		accounts = []explorer.AddressStats{}
 	}
+
+	// Filter/mask accounts based on visibility so private org addresses don't leak.
+	if len(accounts) > 0 {
+		viewerDID := s.getViewerDIDFromRequest(c)
+		addrs := make([]string, len(accounts))
+		for i, a := range accounts {
+			addrs[i] = strings.ToLower(a.Address)
+		}
+		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, addrs)
+		if err != nil {
+			respondInternalError(c, err.Error())
+			return
+		}
+		filtered := accounts[:0]
+		for _, a := range accounts {
+			level := visMap[strings.ToLower(a.Address)]
+			switch level {
+			case explorer.VisibilityFull:
+				filtered = append(filtered, a)
+			case explorer.VisibilityPseudonymous:
+				a.Address = explorer.GeneratePseudonym(a.Address)
+				filtered = append(filtered, a)
+			// VisibilityHidden, VisibilityRedacted: drop this account
+			}
+		}
+		total -= int64(len(accounts) - len(filtered))
+		if total < 0 {
+			total = 0
+		}
+		accounts = filtered
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": total})
 }
 
@@ -1609,6 +1679,44 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 	if suggestions == nil {
 		suggestions = []explorer.SearchSuggestion{}
 	}
+
+	// Filter address-type suggestions based on visibility so private org contracts
+	// cannot be discovered via search autocomplete.
+	if len(suggestions) > 0 {
+		var addrValues []string
+		for _, sug := range suggestions {
+			v := strings.ToLower(sug.Value)
+			if len(v) == 42 && strings.HasPrefix(v, "0x") {
+				addrValues = append(addrValues, v)
+			}
+		}
+		if len(addrValues) > 0 {
+			viewerDID := s.getViewerDIDFromRequest(c)
+			visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, addrValues)
+			if err != nil {
+				respondInternalError(c, err.Error())
+				return
+			}
+			filtered := suggestions[:0]
+			for _, sug := range suggestions {
+				v := strings.ToLower(sug.Value)
+				if len(v) == 42 && strings.HasPrefix(v, "0x") {
+					level := visMap[v]
+					if level == explorer.VisibilityHidden || level == explorer.VisibilityRedacted {
+						continue // drop hidden/restricted address suggestions
+					}
+					if level == explorer.VisibilityPseudonymous {
+						pseudo := explorer.GeneratePseudonym(sug.Value)
+						sug.Value = pseudo
+						sug.Label = pseudo
+					}
+				}
+				filtered = append(filtered, sug)
+			}
+			suggestions = filtered
+		}
+	}
+
 	c.JSON(http.StatusOK, suggestions)
 }
 

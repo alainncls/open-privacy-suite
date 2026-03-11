@@ -1845,3 +1845,182 @@ func TestEdgeCase_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+// ============================================================================
+// Helpers: Org contract fixture for server-level tests
+// ============================================================================
+
+// registerOrgContract inserts an org, group, contract, and contract_grant into the
+// privacy-proxy DB. Returns the group ID so callers can add members.
+func registerOrgContract(t *testing.T, database *db.DB, contractAddr string) (groupID string) {
+	t.Helper()
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "srv-org-"+orgID[:8], "Server Test Org")
+	require.NoError(t, err)
+
+	groupID = uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupID, orgID)
+	require.NoError(t, err)
+
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+		contractID, orgID, contractAddr, "Server Test Private Contract")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, groupID)
+	require.NoError(t, err)
+
+	return groupID
+}
+
+// addUserToGroup adds an existing user (by internal ID) to a group.
+func addUserToGroup(t *testing.T, database *db.DB, userID, groupID string) {
+	t.Helper()
+	_, err := database.Conn().ExecContext(context.Background(),
+		"INSERT INTO user_memberships (id, user_id, group_id, source) VALUES ($1, $2, $3, 'admin')",
+		uuid.New().String(), userID, groupID)
+	require.NoError(t, err)
+}
+
+// ============================================================================
+// Test: org contract visibility via check-address endpoint
+// ============================================================================
+
+func TestExplorerAPI_CheckAddressVisibility_OrgContract_NonMember(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	const orgAddr = "0xaaaa000000000000000000000000000000000011"
+	registerOrgContract(t, database, orgAddr)
+
+	// Non-member viewer exists in DB but has no group membership
+	createTestUserForExplorer(t, database, testViewerDID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr+"?did="+testViewerDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp CheckAddressResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.False(t, resp.Visible, "non-member must not see org contract")
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+}
+
+func TestExplorerAPI_CheckAddressVisibility_OrgContract_Member(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	const orgAddr = "0xaaaa000000000000000000000000000000000012"
+	const memberDID = "did:privado:org_member_check"
+	groupID := registerOrgContract(t, database, orgAddr)
+
+	memberID := createTestUserForExplorer(t, database, memberDID)
+	addUserToGroup(t, database, memberID, groupID)
+
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr+"?did="+memberDID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp CheckAddressResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.True(t, resp.Visible, "group member must see their org contract")
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.Equal(t, ReasonRBACGroupMember, resp.Reason)
+}
+
+func TestExplorerAPI_CheckAddressVisibility_OrgContract_Anonymous(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+	router := setupExplorerRouter(srv)
+
+	const orgAddr = "0xaaaa000000000000000000000000000000000013"
+	registerOrgContract(t, database, orgAddr)
+
+	// No DID provided — anonymous viewer
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr+"?wallet="+testUnknownWallet, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp CheckAddressResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	assert.False(t, resp.Visible, "anonymous viewer must not see org contract")
+	assert.Equal(t, VisibilityHidden, resp.Level)
+}
+
+// TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck verifies that a batch-check
+// correctly hides an org contract from non-members and reveals it to members.
+func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
+	srv, database := setupTestServerForExplorer(t)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	explorer := router.Group("/api/v1/explorer")
+	explorer.GET("/check-address/:address", srv.checkAddressVisibility)
+	explorer.POST("/check-addresses", srv.batchCheckAddresses)
+
+	const orgAddr = "0xaaaa000000000000000000000000000000000014"
+	const publicAddr = "0x9999000000000000000000000000000000000099"
+	const outsiderDID = "did:privado:batch_outsider"
+	const memberDID2 = "did:privado:batch_member2"
+
+	groupID := registerOrgContract(t, database, orgAddr)
+	createTestUserForExplorer(t, database, outsiderDID)
+	memberID := createTestUserForExplorer(t, database, memberDID2)
+	addUserToGroup(t, database, memberID, groupID)
+
+	body := `{"addresses":["` + orgAddr + `","` + publicAddr + `"]}`
+
+	t.Run("outsider batch check hides org contract", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+outsiderDID,
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp BatchCheckAddressesResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		orgVis, ok := resp.Results[orgAddr]
+		require.True(t, ok)
+		assert.False(t, orgVis.Visible, "outsider must not see org contract")
+		assert.Equal(t, VisibilityHidden, orgVis.Level)
+
+		pubVis, ok := resp.Results[publicAddr]
+		require.True(t, ok)
+		assert.True(t, pubVis.Visible, "public address must be visible to outsider")
+	})
+
+	t.Run("member batch check reveals org contract", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+memberDID2,
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp BatchCheckAddressesResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		orgVis, ok := resp.Results[orgAddr]
+		require.True(t, ok)
+		assert.True(t, orgVis.Visible, "member must see their org contract")
+		assert.Equal(t, VisibilityFull, orgVis.Level)
+	})
+}

@@ -262,7 +262,7 @@ func (d *DB) ViewerHasContractAccess(ctx context.Context, viewerDID, contractID 
 		SELECT EXISTS (
 			SELECT 1
 			FROM contract_grants cg
-			JOIN user_group_memberships m ON m.group_id = cg.group_id
+			JOIN user_memberships m ON m.group_id = cg.group_id
 			JOIN users u ON u.id = m.user_id
 			WHERE cg.contract_id = $1
 			  AND u.external_id = $2

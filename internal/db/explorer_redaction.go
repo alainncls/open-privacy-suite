@@ -33,10 +33,10 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 
 	// 2. Look up owners for all unique addresses
 	queryOwners := `
-		SELECT LOWER(eth_address), did 
-		FROM address_links 
-		WHERE LOWER(eth_address) = ANY($1) 
-		  AND deleted_at IS NULL`
+		SELECT LOWER(eth_address), did
+		FROM eth_address_links
+		WHERE LOWER(eth_address) = ANY($1)
+		  AND revoked = false`
 
 	rows, err := d.conn.QueryContext(ctx, queryOwners, pq.Array(uniqueAddrs))
 	if err != nil {
@@ -78,7 +78,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 	}
 
 	// 4. Org contract visibility check
-	// Collect addresses that were marked VisibilityFull due to no address_links owner.
+	// Collect addresses that were marked VisibilityFull due to no eth_address_links owner.
 	// These might be org-owned contracts, which should be hidden to non-members.
 	var publicAddrs []string
 	for _, addr := range uniqueAddrs {
@@ -138,7 +138,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 				// Check if viewerDID is a member of any of those groups
 				memberQuery := `
 					SELECT DISTINCT m.group_id
-					FROM user_group_memberships m
+					FROM user_memberships m
 					JOIN users u ON u.id = m.user_id
 					WHERE u.external_id = $1
 					  AND m.group_id = ANY($2)
