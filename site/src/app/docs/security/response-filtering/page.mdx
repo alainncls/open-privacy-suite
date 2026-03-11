@@ -1,0 +1,218 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Response-Level Privacy Filtering",
+  description:
+    "Per-method response filtering for transactions, receipts, event logs, and raw storage access in the Privacy Proxy.",
+};
+
+# Response-Level Privacy Filtering
+
+The Privacy Proxy enforces privacy at two distinct layers. **Request filtering** (covered in the [Security](/docs/security) page) determines which methods and contracts a user can access. **Response filtering**, described here, controls what data a user sees within allowed responses.
+
+Request filtering alone is insufficient for financial privacy. Consider a contract with ten participants who all have `read` access: without response filtering, every participant can read every other participant's transaction calldata, nonces, and event log parameters. Response filtering closes this gap by restricting response data to information that involves the requesting user's own addresses.
+
+---
+
+## How It Works
+
+Response filters run **after** the proxy forwards a request to the Ethereum node and **before** the response is returned to the client. Each filtered method has its own logic, but they all share a common concept: the **user's linked ETH addresses**.
+
+### Linked ETH Addresses
+
+A user's linked ETH addresses are the Ethereum addresses they have verified ownership of through the `POST /eth/link/challenge` + `POST /eth/link/verify` flow. This flow requires an EIP-191 signature, proving the user controls the private key for each address.
+
+Response filtering uses these linked addresses to determine what the user is allowed to see. A user is considered a **participant** in a transaction if their linked address matches the transaction's `from` or `to` field.
+
+<Callout variant="danger" title="No linked addresses = no data">
+  If a user has not linked any ETH addresses, all response-filtered methods return null or empty results. Linking at least one address is a prerequisite for accessing transaction data, receipts, and event logs through filtered methods.
+</Callout>
+
+---
+
+## eth\_getStorageAt -- Permanently Blocked
+
+`eth_getStorageAt` is added to the global method blocklist and is rejected before reaching the node.
+
+**Why:** This method reads arbitrary storage slots by index. Smart contract access control (ABI restrictions, parameter rules, method allowlists) operates at the function-call level. Raw storage slot access bypasses all of these controls entirely, allowing any reader to extract private state variables, mapping entries, and internal balances directly from the contract's storage trie.
+
+Blocking this method is the only safe option. Unlike transaction or log data, there is no concept of "participant" for a storage slot -- the data is either fully exposed or fully hidden.
+
+---
+
+## Transaction Data
+
+Transaction data can be fetched by hash or by block position. All three methods apply the same participant check and return the same filtered result.
+
+| Method | Participant check | Non-participant response |
+|--------|-------------------|-------------------------|
+| `eth_getTransactionByHash` | `from` or `to` matches linked address | `null` |
+| `eth_getTransactionByBlockHashAndIndex` | same | `null` |
+| `eth_getTransactionByBlockNumberAndIndex` | same | `null` |
+
+**What this protects:**
+
+- **Calldata** (`input` field) -- contains the function selector and encoded arguments. Without filtering, any reader could decode another user's function call parameters.
+- **Nonce** -- reveals the sender's transaction count, which can be used to infer activity patterns.
+- **Value** -- the ETH amount transferred.
+- **Gas parameters** -- can reveal information about transaction complexity.
+
+Non-participants receive `null`, which is indistinguishable from querying a transaction hash that does not exist. This prevents information leakage even through the presence/absence of a response.
+
+---
+
+## Transaction Receipts (eth\_getTransactionReceipt)
+
+Transaction receipts contain execution results including status, gas used, and -- critically -- event logs. The filtering logic preserves non-sensitive execution metadata while redacting event data for non-participants.
+
+**Participant check:** The receipt's `from` and `to` fields are compared against linked addresses.
+
+| User is a participant? | Response |
+|------------------------|----------|
+| Yes | Full receipt with all logs |
+| No | Receipt with `logs: []` and `logsBloom` zeroed out |
+
+### What non-participants see
+
+The following fields are **preserved** for non-participants:
+
+- `status` (success/failure)
+- `gasUsed`, `cumulativeGasUsed`, `effectiveGasPrice`
+- `blockHash`, `blockNumber`, `transactionIndex`
+- `transactionHash`
+- `contractAddress` (if a contract was created)
+- `type`
+
+The following fields are **redacted**:
+
+- `logs` -- replaced with an empty array `[]`
+- `logsBloom` -- replaced with `"0x"` followed by 512 zeros (`0x000...000`), which is the bloom filter encoding for "no logs"
+
+### Why preserve the receipt at all?
+
+Unlike `eth_getTransactionByHash` (which returns `null` for non-participants), receipts return a partial response. This is intentional: execution metadata like `status` and `gasUsed` is needed for block-level consistency checks and does not reveal private business logic. The sensitive data is in the logs, which contain event parameters including addresses, amounts, and application-specific values.
+
+---
+
+## Event Logs (eth\_getLogs)
+
+`eth_getLogs` returns an array of log entries matching a filter. The response filter iterates through each log individually and applies per-entry address matching on indexed topics.
+
+### Topic structure
+
+Each log entry has up to four topics:
+
+| Topic | Content | Used for filtering? |
+|-------|---------|---------------------|
+| `topics[0]` | Event signature hash (`keccak256` of the event name and parameter types) | **No** -- always skipped |
+| `topics[1]` | First indexed parameter (zero-padded to 32 bytes) | Yes, if it contains an address |
+| `topics[2]` | Second indexed parameter | Yes, if it contains an address |
+| `topics[3]` | Third indexed parameter | Yes, if it contains an address |
+
+### Filtering logic
+
+For each log entry in the response:
+
+1. **Skip `topics[0]`** -- this is always the event signature hash (e.g., `keccak256("Transfer(address,address,uint256)")`). It is never an address parameter.
+2. **Check `topics[1]` through `topics[3]`** -- for each topic, extract the lower 20 bytes as an Ethereum address (topics are 32 bytes; addresses are the last 20 bytes, zero-padded on the left).
+3. **Compare each extracted address** against the user's linked ETH addresses (case-insensitive).
+4. **Keep the log entry** if at least one topic address matches a linked address. **Remove it** otherwise.
+
+### Example: ERC-20 Transfer event
+
+```solidity
+event Transfer(address indexed from, address indexed to, uint256 value);
+```
+
+For this event:
+
+- `topics[0]` = `keccak256("Transfer(address,address,uint256)")` -- skipped
+- `topics[1]` = sender address (zero-padded to 32 bytes)
+- `topics[2]` = recipient address (zero-padded to 32 bytes)
+
+A user with linked address `0xAlice` would see Transfer logs where `0xAlice` is either the sender or recipient. Transfers between two other parties are filtered out.
+
+### Known Limitations
+
+<Callout variant="warning" title="Events without indexed address parameters">
+  Events that do not include any indexed address parameter in `topics[1]`--`topics[3]` are filtered out for **all** users, because no topic can match any linked address. For example, `event Initialized(uint8 version)` has only `topics[0]` (the signature hash) and no indexed address. No user will ever see this event through `eth_getLogs`.
+</Callout>
+
+<Callout variant="warning" title="Multi-party events with non-address identifiers">
+  Events that use a business identifier instead of an address for their indexed parameters (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) cannot be matched to any user's linked ETH address. A separate stakeholder whitelist mechanism would be needed to handle these cases. This is not yet implemented.
+</Callout>
+
+---
+
+## Block Methods (eth\_getBlockByHash, eth\_getBlockByNumber)
+
+These methods return an entire block, optionally including full transaction objects. The filtering behavior depends on the `fullTxObjects` parameter.
+
+| Method | `fullTxObjects` | Filtering |
+|--------|-----------------|-----------|
+| `eth_getBlockByHash` | `true` | Per-tx `from`/`to` check; non-participant txs removed from array |
+| `eth_getBlockByHash` | `false` | Passes through (tx hashes only, not sensitive) |
+| `eth_getBlockByNumber` | `true` | Per-tx `from`/`to` check; non-participant txs removed from array |
+| `eth_getBlockByNumber` | `false` | Passes through (tx hashes only, not sensitive) |
+
+When `fullTxObjects=false`, the `transactions` array contains only hex-encoded hashes. These are not sensitive -- a hash alone does not reveal calldata, value, or counterparty -- so the response is returned unmodified.
+
+When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `gasUsed`, `timestamp`, etc.) are preserved.
+
+---
+
+## Block Receipts (eth\_getBlockReceipts)
+
+`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt logic as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts have their `logs` replaced with `[]` and `logsBloom` zeroed out. The receipt itself is preserved (same rationale as single-receipt filtering -- execution metadata is non-sensitive).
+
+---
+
+## Stateful Filter API -- Blocked
+
+`eth_newFilter`, `eth_newBlockFilter`, `eth_newPendingTransactionFilter`, `eth_getFilterLogs`, `eth_getFilterChanges`, and `eth_uninstallFilter` are globally blocked. These create server-side filter state that cannot be safely scoped per-user, posing the same bypass risk as `eth_subscribe`.
+
+Use `eth_getLogs` with explicit block ranges instead -- it is properly response-filtered.
+
+---
+
+## Compliance Requirements
+
+These response-filtering features implement core privacy requirements for regulated financial networks:
+
+| Requirement | Implementation |
+|-------------|----------------|
+| **Intra-org transaction confidentiality** | `eth_getTransactionByHash` returns `null` for non-participants, preventing co-members from reading each other's calldata and transfer details |
+| **Event log visibility restrictions** | `eth_getLogs` filters entries by indexed address topics, ensuring users see only events involving their own addresses |
+| **Raw state access prevention** | `eth_getStorageAt` is permanently blocked, closing the storage-slot bypass that would defeat all contract-level privacy controls |
+| **Receipt log redaction** | `eth_getTransactionReceipt` strips logs and bloom filters for non-participants while preserving non-sensitive execution metadata |
+
+These controls ensure that even within a shared private network where all participants have read access to the same contracts, individual transaction privacy is maintained at the response level.
+
+---
+
+## Summary Table
+
+| Method | Participant behavior | Non-participant behavior |
+|--------|---------------------|--------------------------|
+| `eth_getStorageAt` | Blocked (globally) | Blocked (globally) |
+| `eth_getTransactionByHash` | Full transaction | `null` |
+| `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` |
+| `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` |
+| `eth_getTransactionReceipt` | Full receipt with logs | Receipt with `logs: []`, zeroed `logsBloom` |
+| `eth_getBlockByHash` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
+| `eth_getBlockByHash` (`fullTxObjects=false`) | Passes through | Passes through |
+| `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
+| `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through |
+| `eth_getBlockReceipts` | Full receipts with logs | Non-participant receipts have logs stripped |
+| `eth_getLogs` | Logs where a topic address matches | Those logs removed from response |
+| `eth_newFilter` / `eth_newBlockFilter` / etc. | Blocked (globally) | Blocked (globally) |
+
+---
+
+<Callout variant="warning" title="Remaining gaps -- not yet implemented">
+  1. **Multi-party event stakeholder whitelists** -- Events that use a business identifier (e.g., `event PaymentInitiated(string indexed paymentIdentifier)`) require a per-event-ID whitelist of stakeholders (debtor bank, settlement bank, creditor bank). Without it, events with non-address indexed parameters are filtered out for all users. Requires a new data model, admin API, and on-chain lookup to resolve stakeholders dynamically.
+
+  2. **`eth_call` response field-level redaction** -- `eth_call` responses are raw ABI-encoded bytes. For full privacy (e.g., hiding the `amount` field in `getPaymentInfo` unless the caller is a payment party), the proxy would need to decode the ABI response and selectively redact fields. Requires registered contract ABIs and per-function redaction rules.
+
+  3. **Block metadata traffic analysis** -- `eth_getBlockTransactionCountByHash` and `eth_getBlockTransactionCountByNumber` reveal the number of transactions in a block. While this doesn't expose calldata, it enables coarse traffic analysis on a private network. Currently passes through with no filtering.
+</Callout>

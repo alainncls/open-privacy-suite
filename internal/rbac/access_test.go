@@ -1603,11 +1603,11 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 
 	t.Run("all read ops require read claim", func(t *testing.T) {
 		// Read methods that work without params
+		// Note: eth_getStorageAt is now globally blocked, not a read op
 		simpleReadMethods := []string{
 			"eth_call",
 			"eth_getCode",
 			"eth_getBalance",
-			"eth_getStorageAt",
 			"eth_getTransactionCount",
 			"eth_getLogs",
 		}

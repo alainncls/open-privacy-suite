@@ -29,6 +29,10 @@ export const navigation: NavGroup[] = [
     items: [
       { title: "RBAC", href: "/docs/rbac" },
       { title: "Security", href: "/docs/security" },
+      {
+        title: "Response Filtering",
+        href: "/docs/security/response-filtering",
+      },
       { title: "Compliance", href: "/docs/compliance" },
       { title: "Selective Disclosure", href: "/docs/disclosure" },
     ],
