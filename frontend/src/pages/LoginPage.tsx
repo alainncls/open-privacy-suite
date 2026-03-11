@@ -24,6 +24,11 @@ const allowMockLogin = import.meta.env.VITE_ALLOW_MOCK_LOGIN === 'true';
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_MAX_POLLS = 150;
 
+// Detect OAuth mode: block-explorer redirected us here via /oauth/authorize -> /login?oauth_session=XXX
+const searchParams = new URLSearchParams(window.location.search);
+const oauthSessionId = searchParams.get('oauth_session') || null;
+const isOAuthMode = !!oauthSessionId;
+
 type AuthStep = 'init' | 'loading' | 'ready' | 'success' | 'error' | 'humanity_required' | 'timed_out';
 type AuthProvider = 'privado' | 'azuread';
 
@@ -33,6 +38,7 @@ interface AuthState {
   authRequest: AuthRequestResponse['auth_request'] | null;
   error: string | null;
   humanityVerifyUrl: string | null;
+  oauthRedirectUrl: string | null;
 }
 
 export function LoginPage() {
@@ -49,11 +55,12 @@ export function LoginPage() {
     authRequest: null,
     error: null,
     humanityVerifyUrl: null,
+    oauthRedirectUrl: null,
   });
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated (skip in OAuth mode — user is authenticating for a third-party app)
   useEffect(() => {
-    if (isAuthenticated) {
+    if (!isOAuthMode && isAuthenticated) {
       navigate(from, { replace: true });
     }
   }, [isAuthenticated, navigate, isLoading, from]);
@@ -90,10 +97,32 @@ export function LoginPage() {
         authRequest: response.auth_request,
         error: null,
         humanityVerifyUrl: null,
+        oauthRedirectUrl: null,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to start authentication';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
+    }
+  }, []);
+
+  // Start OAuth auth: fetch session info from backend instead of creating a new session
+  const startOAuthAuth = useCallback(async () => {
+    if (!oauthSessionId) return;
+    setState(prev => ({ ...prev, step: 'loading', error: null }));
+    try {
+      const res = await fetch(`/oauth/session/${oauthSessionId}/info`);
+      if (!res.ok) throw new Error('Failed to load session');
+      const data = await res.json();
+      setState({
+        step: 'ready',
+        sessionId: oauthSessionId,
+        authRequest: data.auth_request,
+        error: null,
+        humanityVerifyUrl: null,
+        oauthRedirectUrl: null,
+      });
+    } catch {
+      setState(prev => ({ ...prev, step: 'error', error: 'Failed to load authentication session' }));
     }
   }, []);
 
@@ -104,23 +133,37 @@ export function LoginPage() {
     setState(prev => ({ ...prev, step: 'loading', error: null }));
 
     try {
-      // Step 1: Get a session
-      const authResponse = await authApiMethods.requestAuth();
+      if (isOAuthMode && oauthSessionId) {
+        // OAuth mode: complete the session, fetch redirect URL, then navigate
+        const res = await fetch(`/oauth/session/${oauthSessionId}/mock-complete`, { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'Mock login failed');
+        }
+        const statusRes = await fetch(`/oauth/session/${oauthSessionId}/status`);
+        const statusData = await statusRes.json();
+        if (!statusData.completed || !statusData.redirect_url) {
+          throw new Error('Session did not complete');
+        }
+        setState(prev => ({ ...prev, step: 'success' }));
+        setTimeout(() => { window.location.href = statusData.redirect_url; }, 1000);
+      } else {
+        // Normal mode: request auth, verify with mock token, login
+        const authResponse = await authApiMethods.requestAuth();
 
-      // Step 2: Verify with mock token (only works in dev mode on backend)
-      // Reuse the same dev DID across sessions so ETH address links persist
-      const MOCK_DID_KEY = 'privacy-proxy-mock-did';
-      let mockDID = localStorage.getItem(MOCK_DID_KEY);
-      if (!mockDID) {
-        mockDID = `did:privado:dev_${Date.now()}`;
-        localStorage.setItem(MOCK_DID_KEY, mockDID);
+        // Reuse the same dev DID across sessions so ETH address links persist
+        const MOCK_DID_KEY = 'privacy-proxy-mock-did';
+        let mockDID = localStorage.getItem(MOCK_DID_KEY);
+        if (!mockDID) {
+          mockDID = `did:privado:dev_${Date.now()}`;
+          localStorage.setItem(MOCK_DID_KEY, mockDID);
+        }
+        const tokens = await authApiMethods.verifyAuth(authResponse.session_id, `mock.${mockDID}`);
+
+        login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+        setState(prev => ({ ...prev, step: 'success' }));
+        setTimeout(() => navigate(from, { replace: true }), 1000);
       }
-      const tokens = await authApiMethods.verifyAuth(authResponse.session_id, `mock.${mockDID}`);
-
-      // Step 3: Login
-      login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
-      setState(prev => ({ ...prev, step: 'success' }));
-      setTimeout(() => navigate(from, { replace: true }), 1000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
       setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
@@ -130,9 +173,13 @@ export function LoginPage() {
   // Auto-start on mount
   useEffect(() => {
     if (state.step === 'init') {
-      startAuth();
+      if (isOAuthMode) {
+        startOAuthAuth();
+      } else {
+        startAuth();
+      }
     }
-  }, [state.step, startAuth]);
+  }, [state.step, startAuth, startOAuthAuth]);
 
   // Poll for session completion
   useEffect(() => {
@@ -153,12 +200,29 @@ export function LoginPage() {
       }
 
       try {
-        const result = await authApiMethods.pollSession(state.sessionId!);
-        if (result && mounted) {
-          login(result.access_token, result.refresh_token, result.expires_in);
-          setState(prev => ({ ...prev, step: 'success' }));
-          setTimeout(() => navigate(from, { replace: true }), 1000);
-          return;
+        if (isOAuthMode && oauthSessionId) {
+          // OAuth mode: poll the OAuth session status endpoint
+          const res = await fetch(`/oauth/session/${oauthSessionId}/status`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.completed && data.redirect_url && mounted) {
+              setState(prev => ({ ...prev, step: 'success', oauthRedirectUrl: data.redirect_url }));
+              // Redirect back to the calling application after a brief delay
+              setTimeout(() => {
+                window.location.href = data.redirect_url;
+              }, 1000);
+              return;
+            }
+          }
+        } else {
+          // Normal mode: poll auth session for JWT tokens
+          const result = await authApiMethods.pollSession(state.sessionId!);
+          if (result && mounted) {
+            login(result.access_token, result.refresh_token, result.expires_in);
+            setState(prev => ({ ...prev, step: 'success' }));
+            setTimeout(() => navigate(from, { replace: true }), 1000);
+            return;
+          }
         }
       } catch (err) {
         // Check for humanity verification error
@@ -364,7 +428,9 @@ export function LoginPage() {
                   <CheckCircle2 className="h-8 w-8 text-success-dark" />
                 </div>
                 <p className="font-medium text-neutral-900">Authentication successful!</p>
-                <p className="text-sm text-neutral-500">Redirecting to wallet linking...</p>
+                <p className="text-sm text-neutral-500">
+                  {isOAuthMode ? 'Redirecting to application...' : 'Redirecting to wallet linking...'}
+                </p>
               </div>
             )}
 

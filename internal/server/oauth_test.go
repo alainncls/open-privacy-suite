@@ -1092,3 +1092,283 @@ func minInt(a, b int) int {
 	}
 	return b
 }
+
+// TestOAuth_SessionInfo tests GET /oauth/session/:id/info
+func TestOAuth_SessionInfo(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/oauth/session/:id/info", srv.handleOAuthSessionInfo)
+
+	// Helper: create a pending OAuth session with a real auth request stored in the auth session
+	createSessionWithAuthReq := func(t *testing.T) string {
+		t.Helper()
+		authReq, err := srv.privadoVerifier.CreateAuthorizationRequest("did:privado:verifier:test", "http://localhost/cb", "test")
+		require.NoError(t, err)
+		authSessionID := srv.sessionStore.CreateSession(authReq)
+		require.NotEmpty(t, authSessionID)
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", authSessionID)
+		require.NotEmpty(t, oauthSessionID)
+		return oauthSessionID
+	}
+
+	t.Run("returns auth request for valid session", func(t *testing.T) {
+		oauthSessionID := createSessionWithAuthReq(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/oauth/session/"+oauthSessionID+"/info", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp, "auth_request")
+		assert.Contains(t, resp, "allow_mock")
+		// In default test config AllowMockLogin=false, so allow_mock should be false
+		assert.Equal(t, false, resp["allow_mock"])
+	})
+
+	t.Run("returns allow_mock true when enabled in dev", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		defer func() { srv.config.AllowMockLogin = false }()
+
+		oauthSessionID := createSessionWithAuthReq(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/oauth/session/"+oauthSessionID+"/info", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, true, resp["allow_mock"])
+	})
+
+	t.Run("returns 404 for nonexistent session", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/oauth/session/nonexistent-id/info", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("allow_mock is false in production even if AllowMockLogin is true", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		srv.config.Environment = "production"
+		defer func() {
+			srv.config.AllowMockLogin = false
+			srv.config.Environment = "development"
+		}()
+
+		oauthSessionID := createSessionWithAuthReq(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/oauth/session/"+oauthSessionID+"/info", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, false, resp["allow_mock"])
+	})
+
+	t.Run("returns 404 when auth session is missing", func(t *testing.T) {
+		// Create an OAuth session pointing to a non-existent auth session ID
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/cb", "state", "nonexistent-auth-session")
+		require.NotEmpty(t, oauthSessionID)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/oauth/session/"+oauthSessionID+"/info", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// TestOAuth_MockComplete tests POST /oauth/session/:id/mock-complete
+func TestOAuth_MockComplete(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/oauth/session/:id/mock-complete", srv.handleOAuthMockComplete)
+
+	// Helper to create a pending OAuth session
+	createPendingSession := func(t *testing.T) string {
+		t.Helper()
+		authReq, err := srv.privadoVerifier.CreateAuthorizationRequest("did:privado:verifier:test", "http://localhost/cb", "test")
+		require.NoError(t, err)
+		authSessionID := srv.sessionStore.CreateSession(authReq)
+		require.NotEmpty(t, authSessionID)
+		oauthSessionID := srv.oauthSessionStore.CreateSession("client", "http://localhost/callback", "state", authSessionID)
+		require.NotEmpty(t, oauthSessionID)
+		return oauthSessionID
+	}
+
+	t.Run("forbidden when AllowMockLogin is false", func(t *testing.T) {
+		srv.config.AllowMockLogin = false
+		oauthSessionID := createPendingSession(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("forbidden in production even if AllowMockLogin is true", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		srv.config.Environment = "production"
+		defer func() {
+			srv.config.AllowMockLogin = false
+			srv.config.Environment = "development"
+		}()
+		oauthSessionID := createPendingSession(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("completes session successfully in dev mode", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		defer func() { srv.config.AllowMockLogin = false }()
+		oauthSessionID := createPendingSession(t)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, true, resp["ok"])
+		assert.Contains(t, resp["did"].(string), "did:privado:mock_")
+
+		// Session should now have a code set
+		session := srv.oauthSessionStore.GetSession(oauthSessionID)
+		require.NotNil(t, session)
+		assert.NotEmpty(t, session.Code)
+	})
+
+	t.Run("returns 409 when session already completed", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		defer func() { srv.config.AllowMockLogin = false }()
+		oauthSessionID := createPendingSession(t)
+
+		// Complete first time
+		w1 := httptest.NewRecorder()
+		req1 := httptest.NewRequest(http.MethodPost, "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+		router.ServeHTTP(w1, req1)
+		require.Equal(t, http.StatusOK, w1.Code)
+
+		// Try to complete again
+		w2 := httptest.NewRecorder()
+		req2 := httptest.NewRequest(http.MethodPost, "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+		router.ServeHTTP(w2, req2)
+		assert.Equal(t, http.StatusConflict, w2.Code)
+	})
+
+	t.Run("returns 404 for nonexistent session", func(t *testing.T) {
+		srv.config.AllowMockLogin = true
+		defer func() { srv.config.AllowMockLogin = false }()
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth/session/nonexistent/mock-complete", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// TestOAuth_BrowserRedirect tests the browser-vs-JSON behavior of handleOAuthAuthorize
+func TestOAuth_BrowserRedirect(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+
+	makeAuthorizeReq := func(accept, frontendURL string) *httptest.ResponseRecorder {
+		srv.config.FrontendURL = frontendURL
+		router := gin.New()
+		router.GET("/oauth/authorize", srv.handleOAuthAuthorize)
+
+		w := httptest.NewRecorder()
+		q := url.Values{}
+		q.Set("client_id", "explorer")
+		q.Set("redirect_uri", "http://localhost:3000/callback")
+		q.Set("response_type", "code")
+		q.Set("state", "test-state")
+		req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("non-browser request returns JSON", func(t *testing.T) {
+		w := makeAuthorizeReq("application/json", "")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp, "oauth_session_id")
+		assert.Contains(t, resp, "auth_request")
+	})
+
+	t.Run("browser request without FrontendURL serves inline HTML", func(t *testing.T) {
+		w := makeAuthorizeReq("text/html,application/xhtml+xml", "")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+		assert.Contains(t, w.Body.String(), "<!DOCTYPE html>")
+	})
+
+	t.Run("browser request with FrontendURL redirects to login page", func(t *testing.T) {
+		w := makeAuthorizeReq("text/html,application/xhtml+xml", "http://localhost:5173")
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		location := w.Header().Get("Location")
+		assert.Contains(t, location, "http://localhost:5173/login?oauth_session=")
+	})
+
+	t.Run("FrontendURL redirect includes correct oauth_session param", func(t *testing.T) {
+		w := makeAuthorizeReq("text/html", "http://localhost:5173")
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		location := w.Header().Get("Location")
+		parsed, err := url.Parse(location)
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:5173", parsed.Scheme+"://"+parsed.Host)
+		assert.Equal(t, "/login", parsed.Path)
+		oauthSession := parsed.Query().Get("oauth_session")
+		assert.NotEmpty(t, oauthSession)
+
+		// Verify the oauth session actually exists
+		session := srv.oauthSessionStore.GetSession(oauthSession)
+		assert.NotNil(t, session)
+		assert.Equal(t, "explorer", session.ClientID)
+	})
+
+	t.Run("trailing slash in FrontendURL is stripped", func(t *testing.T) {
+		w := makeAuthorizeReq("text/html", "http://localhost:5173/")
+
+		assert.Equal(t, http.StatusFound, w.Code)
+		location := w.Header().Get("Location")
+		// Should not have double slash
+		assert.NotContains(t, location, "//login")
+		assert.Contains(t, location, "/login?oauth_session=")
+	})
+}

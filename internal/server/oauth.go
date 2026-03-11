@@ -244,6 +244,226 @@ func generateSecureCode() string {
 	return hex.EncodeToString(b)
 }
 
+// serveOAuthLoginPage renders an HTML login page with QR code for browser-based OAuth flows.
+func (s *Server) serveOAuthLoginPage(c *gin.Context, oauthSessionID string, authReq interface{}) {
+	// Marshal the auth request to JSON for embedding in the page
+	authReqJSON, err := json.Marshal(authReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			Error:            "server_error",
+			ErrorDescription: "failed to serialize auth request",
+		})
+		return
+	}
+
+	// Build the page with inline HTML/CSS/JS
+	// The page:
+	// 1. Renders a QR code from the auth_request JSON (using qrcodejs CDN)
+	// 2. Polls /oauth/session/:id/status every 2s
+	// 3. When completed, redirects to the redirect_url from the status response
+	// 4. Shows a clean, minimal login UI
+	html := buildOAuthLoginHTML(oauthSessionID, string(authReqJSON), s.config.AllowMockLogin && !s.config.IsProduction())
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, html)
+}
+
+// handleOAuthMockComplete handles POST /oauth/session/:id/mock-complete
+// Dev-only: instantly completes an OAuth session with a mock DID, bypassing Privado verification.
+func (s *Server) handleOAuthMockComplete(c *gin.Context) {
+	if s.config.IsProduction() || !s.config.AllowMockLogin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "mock login not available"})
+		return
+	}
+
+	oauthSessionID := c.Param("id")
+	oauthSession := s.oauthSessionStore.GetSession(oauthSessionID)
+	if oauthSession == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
+		return
+	}
+	if oauthSession.Code != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "session already completed"})
+		return
+	}
+
+	mockDID := fmt.Sprintf("did:privado:mock_%d", time.Now().UnixNano())
+	kyc := false
+	if s.rbacAccessCtrl != nil {
+		if user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), mockDID, kyc, false); err == nil && user != nil {
+			kyc = user.KYC
+		}
+	}
+
+	code := generateSecureCode()
+	if err := s.oauthSessionStore.SetCode(oauthSessionID, code, mockDID, kyc); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete session"})
+		return
+	}
+
+	if oauthSession.AuthSessionID != "" {
+		_ = s.sessionStore.CompleteSession(oauthSession.AuthSessionID, "", "")
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "did": mockDID})
+}
+
+// buildOAuthLoginHTML builds a self-contained HTML page for the OAuth QR code login flow.
+// When allowMockLogin is true (dev mode only), a "Dev Mock Login" button is shown.
+//
+// Security: oauthSessionID is always a hex string from generateSecureCode() (crypto/rand, [0-9a-f]+),
+// so it cannot contain JS injection characters. authReqJSON is always the output of json.Marshal,
+// which escapes <, >, and & by default, making it safe for embedding in a <script> block.
+func buildOAuthLoginHTML(oauthSessionID, authReqJSON string, allowMockLogin bool) string {
+	mockSection := ""
+	if allowMockLogin {
+		mockSection = `
+  <div class="divider"><span>or</span></div>
+  <button id="mock-btn" onclick="mockLogin()">Dev Mock Login</button>`
+	}
+	mockScript := ""
+	if allowMockLogin {
+		mockScript = `
+  function mockLogin() {
+    var btn = document.getElementById("mock-btn");
+    btn.disabled = true;
+    btn.textContent = "Logging in…";
+    fetch("/oauth/session/" + SESSION_ID + "/mock-complete", {method:"POST"})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          document.getElementById("status-text").textContent = "Mock login complete! Redirecting…";
+        } else {
+          btn.disabled = false;
+          btn.textContent = "Dev Mock Login";
+          document.getElementById("error-msg").textContent = data.error || "mock login failed";
+          document.getElementById("error-msg").style.display = "block";
+        }
+      })
+      .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = "Dev Mock Login";
+        document.getElementById("error-msg").textContent = "Request failed: " + err;
+        document.getElementById("error-msg").style.display = "block";
+      });
+  }`
+	}
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in with Privado ID</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: white; border-radius: 16px; padding: 40px; max-width: 420px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.08); text-align: center; }
+  h1 { font-size: 22px; font-weight: 600; color: #111; margin-bottom: 8px; }
+  p.sub { font-size: 14px; color: #666; margin-bottom: 28px; line-height: 1.5; }
+  #qrcode { display: flex; justify-content: center; margin-bottom: 28px; }
+  #qrcode canvas, #qrcode img { border-radius: 8px; border: 1px solid #eee; }
+  .status { font-size: 14px; color: #666; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
+  .error { color: #ef4444; font-size: 14px; margin-top: 16px; }
+  .logo { margin-bottom: 24px; }
+  .logo svg { width: 48px; height: 48px; }
+  .divider { display: flex; align-items: center; margin: 24px 0 16px; color: #999; font-size: 13px; }
+  .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid #eee; }
+  .divider span { padding: 0 12px; }
+  button { width: 100%; padding: 12px; border: 2px dashed #6366f1; background: transparent; border-radius: 8px; color: #6366f1; font-size: 14px; font-weight: 500; cursor: pointer; }
+  button:hover { background: #f5f3ff; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="12" fill="#6366f1"/>
+      <path d="M14 24L22 32L34 16" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <h1>Sign in with Privado ID</h1>
+  <p class="sub">Scan the QR code with your Privado ID wallet app to authenticate.</p>
+  <div id="qrcode"></div>
+  <div class="status"><span class="dot"></span><span id="status-text">Waiting for scan…</span></div>
+  <div class="error" id="error-msg" style="display:none"></div>` + mockSection + `
+</div>
+<script>
+(function() {
+  var SESSION_ID = "` + oauthSessionID + `";
+  var AUTH_REQ = ` + authReqJSON + `;
+
+  // Render QR code from the full auth request JSON
+  var qrData = JSON.stringify(AUTH_REQ);
+  new QRCode(document.getElementById("qrcode"), {
+    text: qrData,
+    width: 280,
+    height: 280,
+    correctLevel: QRCode.CorrectLevel.M
+  });
+
+  // Poll for session completion
+  var attempts = 0;
+  var maxAttempts = 300; // 10 minutes at 2s intervals
+  var timer = setInterval(function() {
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(timer);
+      document.getElementById("status-text").textContent = "Session expired. Please refresh the page.";
+      document.querySelector(".dot").style.background = "#ef4444";
+      return;
+    }
+
+    fetch("/oauth/session/" + SESSION_ID + "/status")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.completed && data.redirect_url) {
+          clearInterval(timer);
+          document.getElementById("status-text").textContent = "Authenticated! Redirecting…";
+          document.querySelector(".dot").style.background = "#22c55e";
+          document.querySelector(".dot").style.animation = "none";
+          window.location.href = data.redirect_url;
+        }
+      })
+      .catch(function(err) {
+        // Network error - keep trying
+        console.warn("Poll error:", err);
+      });
+  }, 2000);
+` + mockScript + `
+})();
+</script>
+</body>
+</html>`
+}
+
+// handleOAuthSessionInfo handles GET /oauth/session/:id/info
+// Returns the auth request data for a pending OAuth session, allowing the frontend
+// login page to render the QR code for an OAuth flow initiated by a third-party app.
+func (s *Server) handleOAuthSessionInfo(c *gin.Context) {
+	oauthSessionID := c.Param("id")
+	oauthSession := s.oauthSessionStore.GetSession(oauthSessionID)
+	if oauthSession == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found or expired"})
+		return
+	}
+
+	authSession := s.sessionStore.GetSession(oauthSession.AuthSessionID)
+	if authSession == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "auth session not found"})
+		return
+	}
+
+	allowMock := s.config.AllowMockLogin && !s.config.IsProduction()
+	c.JSON(http.StatusOK, gin.H{
+		"auth_request": authSession.AuthRequest,
+		"allow_mock":   allowMock,
+	})
+}
+
 // OAuthAuthorizeRequest represents query parameters for /oauth/authorize
 type OAuthAuthorizeRequest struct {
 	ClientID     string `form:"client_id" binding:"required"`
@@ -397,13 +617,28 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 		return
 	}
 
-	// Return JSON response with auth request for the client to display QR code
-	// The client should poll /oauth/session/:id/status and display the QR code
-	c.JSON(http.StatusOK, gin.H{
-		"oauth_session_id": oauthSessionID,
-		"auth_session_id":  authSessionID,
-		"auth_request":     authReq,
-	})
+	// Detect browser requests via Accept header
+	accept := c.GetHeader("Accept")
+	isBrowser := strings.Contains(accept, "text/html")
+
+	if isBrowser {
+		if s.config.FrontendURL != "" {
+			// Redirect browser to the existing React login page with the OAuth session ID
+			frontendURL := strings.TrimRight(s.config.FrontendURL, "/")
+			c.Redirect(http.StatusFound, frontendURL+"/login?oauth_session="+oauthSessionID)
+		} else {
+			// Fallback: serve inline HTML (no frontend configured)
+			s.serveOAuthLoginPage(c, oauthSessionID, authReq)
+		}
+	} else {
+		// Return JSON response with auth request for the client to display QR code
+		// The client should poll /oauth/session/:id/status and display the QR code
+		c.JSON(http.StatusOK, gin.H{
+			"oauth_session_id": oauthSessionID,
+			"auth_session_id":  authSessionID,
+			"auth_request":     authReq,
+		})
+	}
 
 	// Schedule auto-auth for demo mode (if enabled)
 	s.scheduleOAuthDemoAutoAuth(oauthSessionID, authSessionID)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -70,6 +71,10 @@ type Config struct {
 
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
+
+	// Frontend URL for OAuth redirect (e.g., http://localhost:5173)
+	// When set, /oauth/authorize redirects browsers to the React login page instead of serving inline HTML.
+	FrontendURL string
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -247,6 +252,7 @@ func Load() *Config {
 		ExplorerDatabaseURL:      getEnv("EXPLORER_DATABASE_URL", ""),
 		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
+		FrontendURL:              getEnv("FRONTEND_URL", ""),
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:          getEnv("AZURE_AD_TENANT_ID", "common"),
@@ -307,6 +313,17 @@ func (c *Config) Validate() error {
 	if c.SIEMWebhookURL != "" {
 		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
 			return err
+		}
+	}
+
+	// Validate FrontendURL if set: must be a valid HTTPS URL in production.
+	if c.FrontendURL != "" {
+		parsed, err := url.Parse(c.FrontendURL)
+		if err != nil || parsed.Host == "" {
+			return errors.New("FRONTEND_URL must be a valid URL (e.g. https://proxy.example.com)")
+		}
+		if parsed.Scheme != "https" {
+			return errors.New("FRONTEND_URL must use HTTPS in production")
 		}
 	}
 

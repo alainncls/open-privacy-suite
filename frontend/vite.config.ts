@@ -58,6 +58,11 @@ export default defineConfig({
           });
         },
       },
+      // Proxy OAuth endpoints to backend (for OAuth login flow)
+      '/oauth': {
+        target: process.env.VITE_API_TARGET || 'http://localhost:8080',
+        changeOrigin: true,
+      },
       // Proxy JSON-RPC requests to backend
       '/rpc': {
         target: process.env.VITE_API_TARGET || 'http://localhost:8080',
