@@ -127,57 +127,6 @@ type RevocationChecker interface {
 	IsAccessTokenRevoked(ctx context.Context, tokenID string) (bool, error)
 }
 
-// OptionalJWTAuthMiddleware validates JWT if present, but allows anonymous requests.
-func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.Next()
-			return
-		}
-
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid Authorization header format"})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
-		claims, err := jwtService.ValidateAccessToken(tokenString)
-		if err != nil {
-			if err == ErrExpiredToken {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
-			} else {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			}
-			c.Abort()
-			return
-		}
-
-		if db != nil {
-			tokenID := getTokenID(tokenString)
-			revoked, err := db.IsAccessTokenRevoked(c.Request.Context(), tokenID)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check token revocation"})
-				c.Abort()
-				return
-			}
-			if revoked {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
-				c.Abort()
-				return
-			}
-		}
-
-		c.Set("subject", claims.Subject)
-		c.Set("kyc", claims.KYC)
-		c.Set("claims", claims)
-
-		c.Next()
-	}
-}
-
 // getTokenID generates a hash ID from token string for revocation tracking
 func getTokenID(tokenString string) string {
 	hash := sha256.Sum256([]byte(tokenString))
