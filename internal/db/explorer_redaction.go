@@ -77,12 +77,106 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		didToAddresses[ownerDID] = append(didToAddresses[ownerDID], addr)
 	}
 
+	// 4. Org contract visibility check
+	// Collect addresses that were marked VisibilityFull due to no address_links owner.
+	// These might be org-owned contracts, which should be hidden to non-members.
+	var publicAddrs []string
+	for _, addr := range uniqueAddrs {
+		if _, hasOwner := addressOwners[addr]; !hasOwner {
+			publicAddrs = append(publicAddrs, addr)
+		}
+	}
+
+	if len(publicAddrs) > 0 {
+		// Find which of these addresses are org-owned contracts and what groups can access them
+		orgContractQuery := `
+			SELECT LOWER(c.address) AS addr, cg.group_id
+			FROM contracts c
+			JOIN contract_grants cg ON cg.contract_id = c.id
+			WHERE LOWER(c.address) = ANY($1)`
+
+		orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(publicAddrs))
+		if err != nil {
+			return nil, err
+		}
+		defer orgRows.Close()
+
+		// Map: address -> set of group_ids that have access
+		contractGroupIDs := make(map[string]map[string]bool)
+		for orgRows.Next() {
+			var addr, groupID string
+			if err := orgRows.Scan(&addr, &groupID); err != nil {
+				return nil, err
+			}
+			if contractGroupIDs[addr] == nil {
+				contractGroupIDs[addr] = make(map[string]bool)
+			}
+			contractGroupIDs[addr][groupID] = true
+		}
+
+		if len(contractGroupIDs) > 0 {
+			// Default org-owned contracts to VisibilityHidden (must have explicit access)
+			for addr := range contractGroupIDs {
+				result[addr] = explorer.VisibilityHidden
+			}
+
+			if viewerDID != "" {
+				// Collect all group IDs that have access to any of these contracts
+				allGroupIDs := make(map[string]bool)
+				for _, groups := range contractGroupIDs {
+					for gid := range groups {
+						allGroupIDs[gid] = true
+					}
+				}
+				groupIDSlice := make([]string, 0, len(allGroupIDs))
+				for gid := range allGroupIDs {
+					groupIDSlice = append(groupIDSlice, gid)
+				}
+
+				// Check if viewerDID is a member of any of those groups
+				memberQuery := `
+					SELECT DISTINCT m.group_id
+					FROM user_group_memberships m
+					JOIN users u ON u.id = m.user_id
+					WHERE u.external_id = $1
+					  AND m.group_id = ANY($2)
+					  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
+
+				memberRows, err := d.conn.QueryContext(ctx, memberQuery, viewerDID, pq.Array(groupIDSlice))
+				if err != nil {
+					return nil, err
+				}
+				defer memberRows.Close()
+
+				// Collect group IDs where viewer is a member
+				viewerGroups := make(map[string]bool)
+				for memberRows.Next() {
+					var gid string
+					if err := memberRows.Scan(&gid); err != nil {
+						return nil, err
+					}
+					viewerGroups[gid] = true
+				}
+
+				// Grant VisibilityFull to contracts where viewer has group membership
+				for addr, groups := range contractGroupIDs {
+					for gid := range groups {
+						if viewerGroups[gid] {
+							result[addr] = explorer.VisibilityFull
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
 	if len(targetDIDs) == 0 || viewerDID == "" {
 		// Nothing more to check (or viewer is anonymous and can only see public addresses)
 		return result, nil
 	}
 
-	// 4. Check active grants in bulk
+	// 5. Check active disclosure grants in bulk
 	queryGrants := `
 		SELECT u.external_id, g.scope
 		FROM disclosure_grants g

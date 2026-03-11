@@ -62,6 +62,7 @@ const (
 	ReasonDisclosureGrant VisibilityReason = "disclosure_grant"
 	ReasonPublicAddress   VisibilityReason = "public_address"
 	ReasonNoAccess        VisibilityReason = "no_access"
+	ReasonRBACGroupMember VisibilityReason = "rbac_group_member"
 )
 
 // AddressVisibility represents the visibility status of a single address
@@ -537,7 +538,25 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 	}
 
 	if ownerDID == "" {
-		// No owner - public address (contract, burn address, etc.)
+		// No user wallet owner — check if this is an org-owned contract
+		contract, err := s.db.GetContractByAddressGlobal(ctx, targetAddress)
+		if err == nil && contract != nil {
+			// It's an org-owned contract. Check if viewer has group membership.
+			if viewerDID != "" {
+				hasAccess, err := s.db.ViewerHasContractAccess(ctx, viewerDID, contract.ID)
+				if err == nil && hasAccess {
+					return AddressVisibility{
+						Address: targetAddress,
+						Visible: true,
+						Level:   VisibilityFull,
+						Reason:  ReasonRBACGroupMember,
+					}
+				}
+			}
+			// No access to this org contract
+			return result // result defaults to VisibilityHidden, ReasonNoAccess
+		}
+		// Not an org contract — truly public address
 		return AddressVisibility{
 			Address: targetAddress,
 			Visible: true,
