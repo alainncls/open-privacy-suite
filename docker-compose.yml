@@ -23,10 +23,12 @@ services:
     image: ghcr.io/foundry-rs/foundry:latest
     ports:
       - "127.0.0.1:8545:8545"
-    networks:
-      - proxy-network
     # --steps-tracing enables debug_traceCall support for runtime validation
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing"]
+    networks:
+      proxy-network:
+        aliases:
+          - privacy-proxy-anvil
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
       interval: 5s
@@ -69,7 +71,9 @@ services:
       anvil:
         condition: service_healthy
     networks:
-      - proxy-network
+      proxy-network:
+        aliases:
+          - privacy-proxy-backend
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -106,4 +110,5 @@ volumes:
 
 networks:
   proxy-network:
+    name: privacy-proxy_proxy-network
     driver: bridge
