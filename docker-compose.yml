@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
-      - proxy-network
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -26,7 +26,8 @@ services:
     # --steps-tracing enables debug_traceCall support for runtime validation
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing"]
     networks:
-      proxy-network:
+      internal:
+      shared:
         aliases:
           - privacy-proxy-anvil
     healthcheck:
@@ -71,7 +72,8 @@ services:
       anvil:
         condition: service_healthy
     networks:
-      proxy-network:
+      internal:
+      shared:
         aliases:
           - privacy-proxy-backend
     healthcheck:
@@ -103,12 +105,16 @@ services:
       proxy-backend:
         condition: service_started
     networks:
-      - proxy-network
+      - internal
 
 volumes:
   postgres-data:
 
 networks:
-  proxy-network:
+  # Internal network — privacy-proxy services only (postgres, backend, anvil, frontend)
+  internal:
+    driver: bridge
+  # Shared network — block-explorer connects here to reach backend and anvil
+  shared:
     name: privacy-proxy_proxy-network
     driver: bridge
