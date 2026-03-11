@@ -236,6 +236,7 @@ type AccessCheckRequest struct {
 // AccessCheckResult represents the result of an access check.
 type AccessCheckResult struct {
 	Allowed           bool               `json:"allowed"`
+	AuthRequired      bool               `json:"auth_required,omitempty"`       // True when denial is due to missing authentication (401 vs 403)
 	Reason            string             `json:"reason,omitempty"`
 	OrgID             string             `json:"org_id,omitempty"`              // Resolved organization ID
 	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)

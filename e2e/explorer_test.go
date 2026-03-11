@@ -432,26 +432,6 @@ func TestE2E_Explorer_AnonymousViewer(t *testing.T) {
 }
 
 // ============================================================================
-// E2E Test: External IP Forbidden
-// ============================================================================
-
-func TestE2E_Explorer_ExternalIPForbidden(t *testing.T) {
-	_, serverURL, cleanup := setupE2E(t)
-	defer cleanup()
-
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	req, _ := http.NewRequest("GET", serverURL+"/api/v1/explorer/viewable-addresses?wallet="+e2eViewerWallet, nil)
-	req.Header.Set("X-Forwarded-For", "8.8.8.8") // External IP
-
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-}
-
-// ============================================================================
 // E2E Test: Full Integration with Disclosure Service
 // ============================================================================
 

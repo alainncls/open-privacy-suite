@@ -242,6 +242,30 @@ graph TD
 - Limits configurable per group
 - Returns HTTP 429 when exceeded
 
+### Anonymous (Unauthenticated) Access
+
+A small set of **claim-free methods** can be called without any JWT token. These return only global chain metadata that carries no per-address information:
+
+| Method | Purpose |
+|--------|---------|
+| `eth_blockNumber` | Latest block height |
+| `eth_chainId` | Chain identifier |
+| `eth_gasPrice` | Current gas price |
+| `eth_feeHistory` | Historical fee data |
+| `net_version` | Network version |
+| `net_peerCount` | Connected peer count |
+| `eth_syncing` | Sync status |
+
+**Everything else requires authentication**, including read-only methods on unowned addresses such as `eth_getBalance`. This is not a theoretical concern -- balance polling is a practical side-channel attack:
+
+1. An attacker polls `eth_getBalance(address)` at regular intervals
+2. When the balance changes, the attacker knows the exact amount and block number
+3. Cross-referencing with public block timestamps builds a financial timeline -- deposit amounts, withdrawal patterns, salary schedules -- without ever seeing a single transaction
+
+The **pre-registration surveillance problem** makes this worse: if Alice's address is pollable today because she has not joined any organization, her entire balance history is already mapped by the time she joins one. Retroactively revoking access cannot undo the data already collected.
+
+Anonymous requests are subject to strict rate limits: **10 requests per second** and **1,000 requests per day**. Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission.
+
 ---
 
 ## Admin API Protection

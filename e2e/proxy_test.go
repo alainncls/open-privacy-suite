@@ -410,11 +410,19 @@ func TestE2E_BannedUser(t *testing.T) {
 	srv, serverURL, cleanup := setupE2EWithVerifier(t, mockVerifier)
 	defer cleanup()
 
-	// Create RBAC user with KYC=true but Banned=true
-	createRBACUser(t, srv.DB(), userDID, true, true)
+	// Create RBAC user with KYC=true, NOT banned yet (so /auth/verify succeeds)
+	createRBACUser(t, srv.DB(), userDID, true, false)
 
-	// Get JWT token (even banned users can get tokens, but requests will be blocked)
+	// Get JWT token while user is still active
 	accessToken := getJWTToken(t, serverURL, userDID)
+
+	// Now ban the user via direct DB update
+	_, err := srv.DB().Conn().ExecContext(context.Background(),
+		"UPDATE users SET banned = true, updated_at = CURRENT_TIMESTAMP WHERE external_id = $1",
+		userDID)
+	if err != nil {
+		t.Fatalf("failed to ban user: %v", err)
+	}
 
 	reqBody := map[string]any{
 		"jsonrpc": "2.0",

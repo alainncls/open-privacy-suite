@@ -369,8 +369,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 
 		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  "authentication required for this operation",
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "authentication required for this operation",
 		}, nil
 	}
 

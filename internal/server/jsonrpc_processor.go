@@ -271,12 +271,16 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	if !result.Allowed {
+		statusCode := http.StatusForbidden
+		if result.AuthRequired {
+			statusCode = http.StatusUnauthorized
+		}
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusForbidden)
+		p.logAccess(ctx, req, statusCode)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusForbidden,
+				StatusCode: statusCode,
 				Message:    "access denied: " + result.Reason,
 			},
 		}
@@ -780,12 +784,16 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	if !result.Allowed {
+		statusCode := http.StatusForbidden
+		if result.AuthRequired {
+			statusCode = http.StatusUnauthorized
+		}
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusForbidden)
+		p.logAccess(ctx, req, statusCode)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusForbidden,
+				StatusCode: statusCode,
 				Message:    "access denied: " + result.Reason,
 			},
 		}
