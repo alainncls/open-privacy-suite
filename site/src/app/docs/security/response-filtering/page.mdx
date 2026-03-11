@@ -63,34 +63,16 @@ Non-participants receive `null`, which is indistinguishable from querying a tran
 
 ## Transaction Receipts (eth\_getTransactionReceipt)
 
-Transaction receipts contain execution results including status, gas used, and -- critically -- event logs. The filtering logic preserves non-sensitive execution metadata while redacting event data for non-participants.
+Transaction receipts contain execution results including status, gas used, and -- critically -- event logs.
 
 **Participant check:** The receipt's `from` and `to` fields are compared against linked addresses.
 
 | User is a participant? | Response |
 |------------------------|----------|
 | Yes | Full receipt with all logs |
-| No | Receipt with `logs: []` and `logsBloom` zeroed out |
+| No | `null` |
 
-### What non-participants see
-
-The following fields are **preserved** for non-participants:
-
-- `status` (success/failure)
-- `gasUsed`, `cumulativeGasUsed`, `effectiveGasPrice`
-- `blockHash`, `blockNumber`, `transactionIndex`
-- `transactionHash`
-- `contractAddress` (if a contract was created)
-- `type`
-
-The following fields are **redacted**:
-
-- `logs` -- replaced with an empty array `[]`
-- `logsBloom` -- replaced with `"0x"` followed by 512 zeros (`0x000...000`), which is the bloom filter encoding for "no logs"
-
-### Why preserve the receipt at all?
-
-Unlike `eth_getTransactionByHash` (which returns `null` for non-participants), receipts return a partial response. This is intentional: execution metadata like `status` and `gasUsed` is needed for block-level consistency checks and does not reveal private business logic. The sensitive data is in the logs, which contain event parameters including addresses, amounts, and application-specific values.
+Non-participants receive `null`, consistent with `eth_getTransactionByHash`. This prevents any information leakage -- a non-participant cannot determine whether a transaction succeeded, how much gas it used, which contract it created, or what events it emitted.
 
 ---
 
@@ -163,7 +145,7 @@ When `fullTxObjects=true`, the `transactions` array contains full transaction ob
 
 ## Block Receipts (eth\_getBlockReceipts)
 
-`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt logic as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts have their `logs` replaced with `[]` and `logsBloom` zeroed out. The receipt itself is preserved (same rationale as single-receipt filtering -- execution metadata is non-sensitive).
+`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt participant check as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts are **removed from the array entirely**, consistent with how `eth_getBlockByNumber` removes non-participant transactions. The returned array contains only receipts for transactions the user was a party to.
 
 ---
 
@@ -198,12 +180,12 @@ These controls ensure that even within a shared private network where all partic
 | `eth_getTransactionByHash` | Full transaction | `null` |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` |
-| `eth_getTransactionReceipt` | Full receipt with logs | Receipt with `logs: []`, zeroed `logsBloom` |
+| `eth_getTransactionReceipt` | Full receipt with logs | `null` |
 | `eth_getBlockByHash` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
 | `eth_getBlockByHash` (`fullTxObjects=false`) | Passes through | Passes through |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
 | `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through |
-| `eth_getBlockReceipts` | Full receipts with logs | Non-participant receipts have logs stripped |
+| `eth_getBlockReceipts` | Full receipts with logs | Non-participant receipts removed from array |
 | `eth_getLogs` | Logs where a topic address matches | Those logs removed from response |
 | `eth_newFilter` / `eth_newBlockFilter` / etc. | Blocked (globally) | Blocked (globally) |
 
