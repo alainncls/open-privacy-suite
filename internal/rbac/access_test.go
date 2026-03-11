@@ -1603,11 +1603,11 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 
 	t.Run("all read ops require read claim", func(t *testing.T) {
 		// Read methods that work without params
+		// Note: eth_getStorageAt is now globally blocked, not a read op
 		simpleReadMethods := []string{
 			"eth_call",
 			"eth_getCode",
 			"eth_getBalance",
-			"eth_getStorageAt",
 			"eth_getTransactionCount",
 			"eth_getLogs",
 		}
@@ -3249,8 +3249,12 @@ func TestAnonymousAccess(t *testing.T) {
 					t.Errorf("expected RateLimitDaily=1000 for anonymous, got %v", result.RateLimitDaily)
 				}
 			} else {
-				if !strings.Contains(result.Reason, "authentication required") {
-					t.Errorf("expected reason to contain 'authentication required', got: %s", result.Reason)
+				// Methods that are globally blocked get rejected before the anonymous
+				// access check, so their reason says "globally blocked" instead of
+				// "authentication required". Both are correct denials.
+				if !strings.Contains(result.Reason, "authentication required") &&
+					!strings.Contains(result.Reason, "globally blocked") {
+					t.Errorf("expected reason to contain 'authentication required' or 'globally blocked', got: %s", result.Reason)
 				}
 			}
 		})

@@ -2,12 +2,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Security Features",
   description:
-    "Request filtering, cross-organization isolation, authentication, authorization, and admin API protection in the Privacy Proxy.",
+    "Request filtering, response-level privacy filtering, cross-organization isolation, authentication, authorization, and admin API protection in the Privacy Proxy.",
 };
 
 # Security Features
 
-The Privacy Proxy implements defense-in-depth security across every layer of the request pipeline. This page covers request filtering, cross-org isolation, authentication and authorization security, admin API protection, and production hardening.
+The Privacy Proxy implements defense-in-depth security across every layer of the request pipeline. This page covers request filtering, cross-org isolation, authentication and authorization security, admin API protection, and production hardening. For response-level privacy filtering (what data users see within allowed responses), see the dedicated [Response-Level Privacy Filtering](/docs/security/response-filtering) page.
 
 ---
 
@@ -28,6 +28,7 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | `les_*` | Light client protocol |
 | `eth_sign` | Arbitrary message signing |
 | `eth_signTransaction` | Transaction signing |
+| `eth_getStorageAt` | Raw storage slot access bypasses all contract privacy controls |
 | `eth_subscribe` | WebSocket subscriptions (bypasses filtering) |
 | `eth_unsubscribe` | WebSocket subscriptions |
 
@@ -111,6 +112,27 @@ graph TD
 - Defense-in-depth alongside bytecode validation
 
 **Performance:** approximately 50--200 ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
+
+---
+
+## Response-Level Privacy Filtering
+
+Request filtering controls which methods and contracts a user can access. Response filtering is the second layer: it controls what data a user sees within those responses. This is essential for financial privacy -- without it, all participants with read access to a contract would see every other participant's transaction calldata, event log parameters, and nonces.
+
+The proxy applies per-method response filters **after** receiving the node's response and **before** returning it to the client:
+
+| Method | Filtering behavior |
+|--------|-------------------|
+| `eth_getStorageAt` | Permanently blocked (global blocklist) |
+| `eth_getTransactionByHash` | Returns `null` if user is not a participant (`from`/`to` match) |
+| `eth_getTransactionReceipt` | Strips `logs` and `logsBloom` for non-participants; preserves execution metadata |
+| `eth_getLogs` | Per-log-entry filtering based on indexed topic address matching |
+
+Participant status is determined by comparing the user's **linked ETH addresses** (verified via EIP-191 signature through the `/eth/link/challenge` + `/eth/link/verify` flow) against transaction `from`/`to` fields or indexed event topics.
+
+<Callout variant="info" title="Full documentation">
+  For complete details on each method's filtering logic, topic matching rules, known limitations, and compliance mapping, see [Response-Level Privacy Filtering](/docs/security/response-filtering).
+</Callout>
 
 ---
 
@@ -209,6 +231,8 @@ graph TD
     F --> G["7. Check contract allowlist"]
     G --> H["8. Check rate limits"]
     H --> I["9. Forward request"]
+    I --> J["10. Apply response filters"]
+    J --> K["11. Return response"]
 ```
 
 ### Rate Limiting
@@ -217,6 +241,30 @@ graph TD
 - Per-user daily counter (resets at UTC midnight)
 - Limits configurable per group
 - Returns HTTP 429 when exceeded
+
+### Anonymous (Unauthenticated) Access
+
+A small set of **claim-free methods** can be called without any JWT token. These return only global chain metadata that carries no per-address information:
+
+| Method | Purpose |
+|--------|---------|
+| `eth_blockNumber` | Latest block height |
+| `eth_chainId` | Chain identifier |
+| `eth_gasPrice` | Current gas price |
+| `eth_feeHistory` | Historical fee data |
+| `net_version` | Network version |
+| `net_peerCount` | Connected peer count |
+| `eth_syncing` | Sync status |
+
+**Everything else requires authentication**, including read-only methods on unowned addresses such as `eth_getBalance`. This is not a theoretical concern -- balance polling is a practical side-channel attack:
+
+1. An attacker polls `eth_getBalance(address)` at regular intervals
+2. When the balance changes, the attacker knows the exact amount and block number
+3. Cross-referencing with public block timestamps builds a financial timeline -- deposit amounts, withdrawal patterns, salary schedules -- without ever seeing a single transaction
+
+The **pre-registration surveillance problem** makes this worse: if Alice's address is pollable today because she has not joined any organization, her entire balance history is already mapped by the time she joins one. Retroactively revoking access cannot undo the data already collected.
+
+Anonymous requests are subject to strict rate limits: **10 requests per second** and **1,000 requests per day**. Unauthenticated requests that target methods outside the claim-free list receive HTTP 401 (not 403), signaling that the client should authenticate rather than that the user lacks permission.
 
 ---
 
@@ -285,6 +333,7 @@ When a user first authenticates via Azure AD, their `auth_tenant_id` is set in t
 - [ ] Configure rate limits appropriate for your use case
 - [ ] If using `SIEM_WEBHOOK_URL`: ensure the endpoint is covered by a data processing agreement (audit events contain user DIDs and IP addresses, which are PII under GDPR)
 - [ ] If using `AUDIT_LOG_PARAMS=true`: review which RPC methods your users call (params for methods not explicitly handled by `RedactParams` are logged verbatim)
+- [ ] Ensure users link their ETH addresses via `POST /eth/link/challenge` + `POST /eth/link/verify` (required for response-filtered methods to return data)
 
 ---
 
@@ -297,4 +346,5 @@ When a user first authenticates via Azure AD, their `auth_tenant_id` is set in t
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
 | Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
 | Localhost IP ranges | `172.x` prefix check is overly broad | See SECURITY\_FINDINGS.md for fix |
-| Historical state | Only `eth_call`/`eth_getStorageAt` blocked | Other methods (`eth_getBalance`) accept historical blocks |
+| Historical state | Only `eth_call` blocked for historical state | Other methods (`eth_getBalance`) accept historical blocks |
+| Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |

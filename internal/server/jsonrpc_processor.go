@@ -271,12 +271,16 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	if !result.Allowed {
+		statusCode := http.StatusForbidden
+		if result.AuthRequired {
+			statusCode = http.StatusUnauthorized
+		}
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusForbidden)
+		p.logAccess(ctx, req, statusCode)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusForbidden,
+				StatusCode: statusCode,
 				Message:    "access denied: " + result.Reason,
 			},
 		}
@@ -380,6 +384,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Apply response-level privacy filtering based on method.
+	// This filters responses to prevent cross-participant data leakage
+	// within the same organization.
+	responseBody = p.applyResponseFilter(ctx, req, result, responseBody)
+
 	// Log successful access
 	p.recordRPCOutcome(req.Method, "success", start)
 	p.logAccess(ctx, req, statusCode)
@@ -388,6 +397,73 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		StatusCode:   statusCode,
 		ResponseBody: responseBody,
 	}
+}
+
+// applyResponseFilter applies response-level privacy filters based on the JSON-RPC method.
+// This prevents co-participants of the same contract from seeing each other's
+// transaction data, event logs, and receipts.
+//
+// Filters applied:
+//   - eth_getTransactionByHash: null for non-participants
+//   - eth_getTransactionReceipt: null for non-participants
+//   - eth_getLogs: remove log entries where user's address is not in indexed topics
+//   - eth_getTransactionByBlockHashAndIndex / eth_getTransactionByBlockNumberAndIndex: null for non-participants
+//   - eth_getBlockByHash / eth_getBlockByNumber: remove non-participant txs from block
+//   - eth_getBlockReceipts: remove non-participant receipts from array
+func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *ProcessRequest, result *rbac.AccessCheckResult, responseBody []byte) []byte {
+	m := req.Method
+	switch {
+	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil || len(addrs) == 0 {
+			// No linked addresses -- return null (cannot verify participation)
+			id := rpcResponseID(responseBody)
+			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+		}
+		return FilterTransactionByHash(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil || len(addrs) == 0 {
+			// No linked addresses -- return null (cannot verify participation)
+			return FilterTransactionReceipt(responseBody, nil)
+		}
+		return FilterTransactionReceipt(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodGetLogs):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil || len(addrs) == 0 {
+			// No linked addresses -- return empty logs
+			id := rpcResponseID(responseBody)
+			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
+		}
+		return FilterLogs(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
+		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil || len(addrs) == 0 {
+			id := rpcResponseID(responseBody)
+			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+		}
+		return FilterTransactionByHash(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodGetBlockByHash),
+		strings.EqualFold(m, rbac.MethodGetBlockByNumber):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil {
+			return responseBody // pass through on error
+		}
+		return FilterBlockTransactions(responseBody, addrs)
+
+	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil {
+			return responseBody
+		}
+		return FilterBlockReceipts(responseBody, addrs)
+	}
+	return responseBody
 }
 
 // autoRegisterFactoryDeploy registers a contract after a successful CREATE3 factory deploy.
@@ -708,12 +784,16 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	if !result.Allowed {
+		statusCode := http.StatusForbidden
+		if result.AuthRequired {
+			statusCode = http.StatusUnauthorized
+		}
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusForbidden)
+		p.logAccess(ctx, req, statusCode)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusForbidden,
+				StatusCode: statusCode,
 				Message:    "access denied: " + result.Reason,
 			},
 		}

@@ -123,6 +123,9 @@ var GlobalBlockedMethods = map[string]bool{
 	"txpool_inspect":     true,
 	"txpool_status":      true,
 
+	// eth_getStorageAt - raw storage access bypasses all contract-level privacy controls
+	strings.ToLower(MethodGetStorageAt): true,
+
 	// Signing methods - key exposure risk
 	"eth_sign":            true,
 	"eth_signtransaction": true,
@@ -156,6 +159,16 @@ var GlobalBlockedMethods = map[string]bool{
 	// eth_subscribe could bypass eth_getLogs filtering for real-time events
 	"eth_subscribe":   true,
 	"eth_unsubscribe": true,
+
+	// Stateful filter API - same bypass risk as eth_subscribe.
+	// These create server-side filter state that can't be per-user scoped.
+	// Use eth_getLogs (which is properly filtered) instead.
+	strings.ToLower(MethodNewFilter):                   true,
+	strings.ToLower(MethodNewBlockFilter):              true,
+	strings.ToLower(MethodNewPendingTransactionFilter): true,
+	strings.ToLower(MethodGetFilterLogs):               true,
+	strings.ToLower(MethodGetFilterChanges):            true,
+	strings.ToLower(MethodUninstallFilter):             true,
 }
 
 // blockedMethodPrefixes is used for future-proofing (checked after exact match fails)
@@ -356,8 +369,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 
 		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  "authentication required for this operation",
+			Allowed:      false,
+			AuthRequired: true,
+			Reason:       "authentication required for this operation",
 		}, nil
 	}
 
@@ -990,6 +1004,7 @@ var ReadOpsMap = map[string]bool{
 	"eth_gettransactionbyblocknumberandindex":  true,
 	// Receipts (logs, status, contract address)
 	"eth_gettransactionreceipt": true,
+	"eth_getblockreceipts":      true, // Block receipts (same privacy requirements as eth_getLogs)
 }
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
