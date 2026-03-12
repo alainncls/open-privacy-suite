@@ -289,8 +289,9 @@ export default function ContractList() {
                     <span className="text-sm text-neutral-500">
                       {formatDate(contract.created_at)}
                     </span>
-                    {contract.metadata?.deploy_block && (() => {
-                      const raw = contract.metadata.deploy_block as string;
+                    {(() => {
+                      const raw = contract.metadata?.deploy_block;
+                      if (typeof raw !== 'string' || !raw) return null;
                       const blockNum = raw.startsWith('0x') ? parseInt(raw, 16) : Number(raw);
                       return (
                         <span className="text-xs text-neutral-400 font-mono">
