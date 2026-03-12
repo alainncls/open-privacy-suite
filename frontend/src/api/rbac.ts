@@ -117,6 +117,11 @@ export const rbacApi = {
       api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),
     syncDelete: (orgId: string, contractIds: string[]) =>
       api.post<ContractSyncDeleteResponse>(`/orgs/${orgId}/contracts/sync-delete`, { contract_ids: contractIds }),
+    // Grant summary (counts + group names per contract)
+    grantSummary: (orgId: string) =>
+      api.get<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>(
+        `/orgs/${orgId}/contracts/grant-summary`
+      ),
     // Lookup by address (cross-org, for test request panel)
     lookupByAddress: (address: string) =>
       api.get<{

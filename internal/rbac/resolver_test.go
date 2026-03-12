@@ -275,6 +275,7 @@ func (m *MockStore) ListContractGrantsByContract(ctx context.Context, contractID
 	return nil, nil
 }
 func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
 func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
 }

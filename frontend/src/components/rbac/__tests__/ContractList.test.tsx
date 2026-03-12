@@ -78,7 +78,7 @@ describe('ContractList', () => {
       ).toBeInTheDocument();
     });
 
-    it('displays table with headers (Address, Name, Created)', async () => {
+    it('displays table with headers (Address, Name, Groups, Created)', async () => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
           return HttpResponse.json({ data: mockContracts, total: mockContracts.length, limit: 25, offset: 0 });
@@ -92,6 +92,7 @@ describe('ContractList', () => {
       });
 
       expect(screen.getByText('Name')).toBeInTheDocument();
+      expect(screen.getByText('Groups')).toBeInTheDocument();
       expect(screen.getByText('Created')).toBeInTheDocument();
       expect(screen.getByText('Actions')).toBeInTheDocument();
     });
@@ -145,7 +146,7 @@ describe('ContractList', () => {
       });
     });
 
-    it('formats created date correctly', async () => {
+    it('formats created date with time', async () => {
       const contract = createMockContract({
         id: 'contract-date-test',
         address: '0xABCDEF1234567890ABCDEF1234567890ABCDEF12',
@@ -162,8 +163,103 @@ describe('ContractList', () => {
       renderWithRBACContext(<ContractList />);
 
       await waitFor(() => {
-        // The date is formatted as "Mar 15, 2024"
-        expect(screen.getByText('Mar 15, 2024')).toBeInTheDocument();
+        // The date is formatted with date + time, e.g. "Mar 15, 2024, 10:30 AM"
+        // Match just the date portion since the time depends on the test locale/timezone
+        expect(screen.getByText(/Mar 15, 2024/)).toBeInTheDocument();
+      });
+    });
+
+    it('shows groups badge with count from grant summary', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
+          return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
+        }),
+        http.get('/api/v1/admin/orgs/:orgId/contracts/grant-summary', () => {
+          return HttpResponse.json({
+            [mockContract.id]: {
+              count: 3,
+              groups: [
+                { id: 'g1', name: 'Alpha' },
+                { id: 'g2', name: 'Beta' },
+                { id: 'g3', name: 'Gamma' },
+              ],
+            },
+          });
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('3')).toBeInTheDocument();
+      });
+
+      // Badge should have the group names as a tooltip
+      const badge = screen.getByTitle('Alpha, Beta, Gamma');
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent('3');
+    });
+
+    it('shows groups badge as 0 with "No groups assigned" tooltip when no grants', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
+          return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
+        }),
+        http.get('/api/v1/admin/orgs/:orgId/contracts/grant-summary', () => {
+          return HttpResponse.json({});
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Contract')).toBeInTheDocument();
+      });
+
+      const badge = screen.getByTitle('No groups assigned');
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent('0');
+    });
+
+    it('shows block number when deploy_block is present in metadata', async () => {
+      const contractWithBlock = createMockContract({
+        id: 'contract-block-test',
+        address: '0x1111111111111111111111111111111111111111',
+        name: 'Block Test',
+        metadata: { deploy_block: '0x1A4' }, // 420 in decimal
+      });
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
+          return HttpResponse.json({ data: [contractWithBlock], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/block 420/)).toBeInTheDocument();
+      });
+    });
+
+    it('shows raw deploy_block value when it is not valid hex', async () => {
+      const contractWithBadBlock = createMockContract({
+        id: 'contract-badblock-test',
+        address: '0x2222222222222222222222222222222222222222',
+        name: 'Bad Block Test',
+        metadata: { deploy_block: 'not-a-number' },
+      });
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
+          return HttpResponse.json({ data: [contractWithBadBlock], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<ContractList />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/block not-a-number/)).toBeInTheDocument();
       });
     });
 

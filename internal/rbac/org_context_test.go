@@ -92,6 +92,7 @@ func (m *MockOrgContextStore) UpdateContractGrant(ctx context.Context, grant *Co
 func (m *MockOrgContextStore) ListContractGrants(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockOrgContextStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
 func (m *MockOrgContextStore) CreateUser(ctx context.Context, user *User) error { return nil }
 func (m *MockOrgContextStore) GetUser(ctx context.Context, id string) (*User, error) { return nil, nil }
 func (m *MockOrgContextStore) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) { return nil, nil }

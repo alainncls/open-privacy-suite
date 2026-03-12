@@ -43,6 +43,7 @@ export default function ContractList() {
   const [showDeleteError, setShowDeleteError] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [managingGrants, setManagingGrants] = useState<Contract | null>(null);
+  const [grantSummary, setGrantSummary] = useState<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>({});
 
   // Sync with chain state
   const [syncing, setSyncing] = useState(false);
@@ -66,6 +67,12 @@ export default function ContractList() {
       setContracts(page.data || []);
       setTotal(page.total);
       setOffset(newOffset);
+      try {
+        const summaryRes = await rbacApi.contracts.grantSummary(orgId);
+        setGrantSummary(summaryRes.data || {});
+      } catch {
+        setGrantSummary({});
+      }
     } catch (error) {
       console.error('Failed to load contracts:', error);
       setContracts([]);
@@ -150,10 +157,12 @@ export default function ContractList() {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr).toLocaleString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   };
 
@@ -210,6 +219,7 @@ export default function ContractList() {
               <TableHead>Address</TableHead>
               <TableHead>Name</TableHead>
               <TableHead className="text-center w-16">ABI</TableHead>
+              <TableHead className="text-center w-20">Groups</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -255,10 +265,40 @@ export default function ContractList() {
                     <span className="text-neutral-400" title="No ABI">-</span>
                   )}
                 </TableCell>
+                <TableCell className="text-center">
+                  {(() => {
+                    const summary = grantSummary[contract.id];
+                    const groupCount = summary?.count ?? 0;
+                    const groupNames = summary?.groups?.map(g => g.name).join(', ') ?? '';
+                    return (
+                      <span
+                        className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium cursor-default ${
+                          groupCount > 0
+                            ? 'bg-primary-50 text-primary-700'
+                            : 'bg-neutral-100 text-neutral-400'
+                        }`}
+                        title={groupCount > 0 ? groupNames : 'No groups assigned'}
+                      >
+                        {groupCount}
+                      </span>
+                    );
+                  })()}
+                </TableCell>
                 <TableCell>
-                  <span className="text-sm text-neutral-500">
-                    {formatDate(contract.created_at)}
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm text-neutral-500">
+                      {formatDate(contract.created_at)}
+                    </span>
+                    {contract.metadata?.deploy_block && (() => {
+                      const raw = contract.metadata.deploy_block as string;
+                      const blockNum = raw.startsWith('0x') ? parseInt(raw, 16) : Number(raw);
+                      return (
+                        <span className="text-xs text-neutral-400 font-mono">
+                          block {isNaN(blockNum) ? raw : blockNum.toLocaleString()}
+                        </span>
+                      );
+                    })()}
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">

@@ -538,3 +538,34 @@ func (d *DB) ListContractGrants(ctx context.Context, contractID string) ([]*rbac
 func (d *DB) ListContractGrantsForGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
 	return d.ListContractGrantsByGroup(ctx, groupID)
 }
+
+// GetContractGrantSummary returns grant counts and group names for all contracts in an org.
+// Returns map of contractID -> {Count, Groups}.
+func (d *DB) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*rbac.ContractGrantSummary, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT cg.contract_id, g.id, g.name
+		FROM contract_grants cg
+		JOIN contracts c ON c.id = cg.contract_id
+		JOIN groups g ON g.id = cg.group_id
+		WHERE c.org_id = $1
+		ORDER BY cg.contract_id, g.name
+	`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*rbac.ContractGrantSummary)
+	for rows.Next() {
+		var contractID, groupID, groupName string
+		if err := rows.Scan(&contractID, &groupID, &groupName); err != nil {
+			return nil, err
+		}
+		if _, ok := result[contractID]; !ok {
+			result[contractID] = &rbac.ContractGrantSummary{Groups: []rbac.GroupSummary{}}
+		}
+		result[contractID].Count++
+		result[contractID].Groups = append(result[contractID].Groups, rbac.GroupSummary{ID: groupID, Name: groupName})
+	}
+	return result, rows.Err()
+}

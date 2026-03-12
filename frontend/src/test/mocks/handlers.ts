@@ -632,6 +632,11 @@ export const handlers = [
     return HttpResponse.json({ addresses: mockLinkedAddresses });
   }),
 
+  // Contract grant summary
+  http.get('/api/v1/admin/orgs/:orgId/contracts/grant-summary', () => {
+    return HttpResponse.json({});
+  }),
+
   // Contract endpoints
   http.get('/api/v1/admin/orgs/:orgId/contracts', () => {
     return HttpResponse.json({ data: [mockContract], total: 1, limit: 25, offset: 0 });
