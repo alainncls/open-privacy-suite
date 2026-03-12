@@ -33,7 +33,7 @@ import (
 // TTL constants for various components
 const (
 	// JWT token TTLs
-	AccessTokenTTL  = 5 * time.Minute
+	AccessTokenTTL  = 30 * time.Minute
 	RefreshTokenTTL = 7 * 24 * time.Hour
 
 	// Cache and store TTLs

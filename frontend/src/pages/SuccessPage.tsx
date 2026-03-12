@@ -10,7 +10,10 @@ import { getRpcEndpoint, getAddNetworkParams } from '@/config/wagmi';
 
 export function SuccessPage() {
   const navigate = useNavigate();
-  const { isAuthenticated, accessToken, userDID, logout, isLoading } = useAuth();
+  const { isAuthenticated, accessToken, expiresAt, userDID, logout, isLoading } = useAuth();
+  const tokenExpiryLabel = expiresAt
+    ? `${Math.max(0, Math.round((expiresAt - Date.now()) / 60000))} minutes`
+    : '30 minutes';
   const [copied, setCopied] = useState<string | null>(null);
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
@@ -213,7 +216,7 @@ export function SuccessPage() {
                   </Button>
                 </div>
                 <p className="text-xs text-neutral-400">
-                  Token expires in 30 minutes. Use with <code className="bg-neutral-100 px-1 rounded">forge script --rpc-url {rpcEndpoint}</code>
+                  Token expires in {tokenExpiryLabel}. Use with <code className="bg-neutral-100 px-1 rounded">forge script --rpc-url {rpcEndpoint}</code>
                 </p>
               </div>
             )}
