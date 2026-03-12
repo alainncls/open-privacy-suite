@@ -44,6 +44,10 @@ type JSONRPCProcessor struct {
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
+
+	// txOwnership tracks txHash → userID so submitters can view their own
+	// transaction data even without a linked ETH address.
+	txOwnership *TxOwnershipStore
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -97,6 +101,7 @@ func NewJSONRPCProcessor(
 		rateLimiter:    rateLimiter,
 		proxy:          proxyClient,
 		accessLogger:   logger,
+		txOwnership:    NewTxOwnershipStore(0),
 	}
 }
 
@@ -196,6 +201,7 @@ func NewJSONRPCProcessorWithTracing(
 		accessLogger:   logger,
 		runtimeTracer:  runtimeTracer,
 		traceValidator: traceValidator,
+		txOwnership:    NewTxOwnershipStore(0),
 	}
 }
 
@@ -384,6 +390,19 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Record txHash ownership so the submitter can retrieve their own receipt
+	// even without a linked ETH address.
+	if statusCode == http.StatusOK && p.txOwnership != nil {
+		var sendResult struct {
+			Result string      `json:"result"`
+			Error  interface{} `json:"error"`
+		}
+		if json.Unmarshal(responseBody, &sendResult) == nil &&
+			sendResult.Error == nil && sendResult.Result != "" {
+			p.txOwnership.Record(sendResult.Result, req.UserID)
+		}
+	}
+
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
@@ -416,6 +435,12 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
+			// Check if the user submitted this tx (ownership bypass).
+			if p.txOwnership != nil && len(req.Params) > 0 {
+				if hash, ok := req.Params[0].(string); ok && p.txOwnership.IsOwner(hash, req.UserID) {
+					return responseBody
+				}
+			}
 			// No linked addresses -- return null (cannot verify participation)
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
@@ -425,6 +450,12 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
+			// Check if the user submitted this tx (ownership bypass).
+			if p.txOwnership != nil && len(req.Params) > 0 {
+				if hash, ok := req.Params[0].(string); ok && p.txOwnership.IsOwner(hash, req.UserID) {
+					return responseBody
+				}
+			}
 			// No linked addresses -- return null (cannot verify participation)
 			return FilterTransactionReceipt(responseBody, nil)
 		}
@@ -904,6 +935,19 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				context.Background(), rawTxPlainCreateAddr); delErr != nil {
 				slog.Warn("failed to clean up plain CREATE pre-registration", "address", rawTxPlainCreateAddr, "error", delErr)
 			}
+		}
+	}
+
+	// Record txHash ownership so the submitter can retrieve their own receipt
+	// even without a linked ETH address.
+	if statusCode == http.StatusOK && p.txOwnership != nil {
+		var sendResult struct {
+			Result string      `json:"result"`
+			Error  interface{} `json:"error"`
+		}
+		if json.Unmarshal(responseBody, &sendResult) == nil &&
+			sendResult.Error == nil && sendResult.Result != "" {
+			p.txOwnership.Record(sendResult.Result, req.UserID)
 		}
 	}
 
