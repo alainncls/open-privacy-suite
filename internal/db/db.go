@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,9 +15,6 @@ import (
 
 	"privacy-proxy/internal/db/migrations"
 )
-
-// ErrAddressAlreadyLinked is returned when an ETH address is already linked to a different DID.
-var ErrAddressAlreadyLinked = errors.New("ETH address is already linked to a different identity")
 
 // ErrAddressLinkRevoked is returned when an ETH address link was revoked by an administrator
 // and the user attempts to re-link it. Requires explicit admin action to un-revoke.
@@ -464,26 +462,24 @@ type EthAddressLink struct {
 	RevokedAt     *string `json:"revoked_at,omitempty"`
 	ENSName       *string `json:"ens_name,omitempty"`
 	ENSResolvedAt *string `json:"ens_resolved_at,omitempty"`
+	LinkType      string  `json:"link_type"`
 }
 
-// LinkEthAddress creates a new link between an ETH address and a DID.
-// If the address is already linked to the same DID (and not revoked), it refreshes the signature.
-// If the address is already linked to a different DID, it returns ErrAddressAlreadyLinked.
-// If the address link was revoked by an admin, it returns ErrAddressLinkRevoked.
+// LinkEthAddress creates a new user-initiated link between an ETH address and a DID.
+// If the (did, eth_address) pair already exists and is not revoked, it refreshes the signature
+// and upgrades a system link to a user link.
+// If the (did, eth_address) pair exists but is revoked, it returns ErrAddressLinkRevoked.
 func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, messageHash string) error {
-	// If the address is already linked to the SAME DID and NOT revoked, we refresh the signature.
-	// If it's already linked to a DIFFERENT DID, or if it's already REVOKED, the update fails
-	// and we return the appropriate error below.
-	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash)
-	          VALUES ($1, $2, $3, $4)
-	          ON CONFLICT (eth_address) DO UPDATE SET
+	query := `INSERT INTO eth_address_links (did, eth_address, signature, message_hash, link_type)
+	          VALUES ($1, $2, $3, $4, 'user')
+	          ON CONFLICT (did, eth_address) DO UPDATE SET
 	          signature = excluded.signature,
 	          message_hash = excluded.message_hash,
+	          link_type = 'user',
 	          verified_at = CURRENT_TIMESTAMP,
 	          ens_name = NULL,
 	          ens_resolved_at = NULL
-	          WHERE eth_address_links.did = excluded.did
-	          AND eth_address_links.revoked = false`
+	          WHERE eth_address_links.revoked = false`
 
 	result, err := d.conn.ExecContext(ctx, query, did, ethAddress, signature, messageHash)
 	if err != nil {
@@ -495,31 +491,50 @@ func (d *DB) LinkEthAddress(ctx context.Context, did, ethAddress, signature, mes
 		return fmt.Errorf("failed to check link result: %w", err)
 	}
 	if rowsAffected == 0 {
-		// Distinguish: different DID vs same DID but revoked
-		var existingDID string
-		var revoked bool
-		err := d.conn.QueryRowContext(ctx,
-			`SELECT did, revoked FROM eth_address_links WHERE eth_address = $1`,
-			ethAddress,
-		).Scan(&existingDID, &revoked)
-		if err != nil {
-			return fmt.Errorf("failed to check existing link: %w", err)
-		}
-		if existingDID != did {
-			return ErrAddressAlreadyLinked
-		}
-		if revoked {
-			return ErrAddressLinkRevoked
-		}
-		// Same DID, not revoked — shouldn't happen, but treat as success
-		return nil
+		// The (did, eth_address) pair exists but is revoked.
+		return ErrAddressLinkRevoked
 	}
 	return nil
 }
 
+// isValidEthAddress returns true for 0x-prefixed 40-hex-character addresses.
+func isValidEthAddress(address string) bool {
+	if len(address) != 42 {
+		return false
+	}
+	if address[0] != '0' || (address[1] != 'x' && address[1] != 'X') {
+		return false
+	}
+	for _, c := range address[2:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// SystemLinkEthAddress records a system-level address→DID link when a user submits
+// a transaction through the proxy. Unlike user-initiated links there is no signature.
+// If the (did, eth_address) pair already exists (any link_type), this is a no-op.
+func (d *DB) SystemLinkEthAddress(ctx context.Context, did, ethAddress string) error {
+	if did == "" || ethAddress == "" {
+		return nil
+	}
+	if !isValidEthAddress(ethAddress) {
+		return fmt.Errorf("invalid ethereum address: %q", ethAddress)
+	}
+	_, err := d.conn.ExecContext(ctx, `
+		INSERT INTO eth_address_links (did, eth_address, link_type)
+		VALUES ($1, $2, 'system')
+		ON CONFLICT (did, eth_address) DO NOTHING`,
+		did, strings.ToLower(ethAddress),
+	)
+	return err
+}
+
 // GetEthAddressesByDID retrieves all ETH addresses linked to a DID
 func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddressLink, error) {
-	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at, link_type
 	          FROM eth_address_links
 	          WHERE did = $1 AND revoked = false
 	          ORDER BY verified_at DESC`
@@ -533,23 +548,30 @@ func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddres
 	links := make([]*EthAddressLink, 0)
 	for rows.Next() {
 		var link EthAddressLink
-		var revokedAt, ensName, ensResolvedAt sql.NullString
+		var signature, messageHash, revokedAt, ensName, ensResolvedAt sql.NullString
 
 		if err := rows.Scan(
 			&link.ID,
 			&link.DID,
 			&link.EthAddress,
-			&link.Signature,
-			&link.MessageHash,
+			&signature,
+			&messageHash,
 			&link.VerifiedAt,
 			&link.Revoked,
 			&revokedAt,
 			&ensName,
 			&ensResolvedAt,
+			&link.LinkType,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan ETH address link: %w", err)
 		}
 
+		if signature.Valid {
+			link.Signature = signature.String
+		}
+		if messageHash.Valid {
+			link.MessageHash = messageHash.String
+		}
 		if revokedAt.Valid {
 			link.RevokedAt = &revokedAt.String
 		}
@@ -568,10 +590,14 @@ func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddres
 	return links, nil
 }
 
-// GetDIDByEthAddress retrieves the DID linked to an ETH address
+// GetDIDByEthAddress retrieves the DID linked to an ETH address.
+// With multiple DIDs per address now possible, prefers user-linked over system-linked,
+// most recent first.
 func (d *DB) GetDIDByEthAddress(ctx context.Context, ethAddress string) (string, error) {
 	query := `SELECT did FROM eth_address_links
-	          WHERE eth_address = $1 AND revoked = false`
+	          WHERE eth_address = $1 AND revoked = false
+	          ORDER BY CASE WHEN link_type = 'user' THEN 0 ELSE 1 END, verified_at DESC
+	          LIMIT 1`
 
 	var did string
 	err := d.conn.QueryRowContext(ctx, query, ethAddress).Scan(&did)
@@ -582,6 +608,81 @@ func (d *DB) GetDIDByEthAddress(ctx context.Context, ethAddress string) (string,
 		return "", fmt.Errorf("failed to get DID by ETH address: %w", err)
 	}
 	return did, nil
+}
+
+// GetDIDsByEthAddress returns all non-revoked DIDs linked to an ETH address.
+// Used for collision detection (same address claimed by multiple identities).
+func (d *DB) GetDIDsByEthAddress(ctx context.Context, ethAddress string) ([]string, error) {
+	rows, err := d.conn.QueryContext(ctx,
+		`SELECT did FROM eth_address_links
+		 WHERE eth_address = $1 AND revoked = false
+		 ORDER BY CASE WHEN link_type = 'user' THEN 0 ELSE 1 END, verified_at DESC`,
+		strings.ToLower(ethAddress),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DIDs by ETH address: %w", err)
+	}
+	defer rows.Close()
+	var dids []string
+	for rows.Next() {
+		var did string
+		if err := rows.Scan(&did); err != nil {
+			return nil, fmt.Errorf("failed to scan DID: %w", err)
+		}
+		dids = append(dids, did)
+	}
+	return dids, rows.Err()
+}
+
+// AddressLinkCollision represents an ETH address claimed by more than one DID.
+type AddressLinkCollision struct {
+	EthAddress string   `json:"eth_address"`
+	DIDs       []string `json:"dids"`
+	LinkTypes  []string `json:"link_types"`
+}
+
+// GetAddressLinkCollisions returns all ETH addresses that are linked to more
+// than one non-revoked DID. Used by the admin dashboard to surface potential
+// key-sharing or key-compromise events.
+func (d *DB) GetAddressLinkCollisions(ctx context.Context) ([]*AddressLinkCollision, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT eth_address, did, link_type
+		FROM eth_address_links
+		WHERE revoked = false
+		  AND eth_address IN (
+		      SELECT eth_address FROM eth_address_links
+		      WHERE revoked = false
+		      GROUP BY eth_address HAVING COUNT(DISTINCT did) > 1
+		  )
+		ORDER BY eth_address, CASE WHEN link_type = 'user' THEN 0 ELSE 1 END, verified_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query address collisions: %w", err)
+	}
+	defer rows.Close()
+
+	byAddr := make(map[string]*AddressLinkCollision)
+	var order []string
+	for rows.Next() {
+		var addr, did, linkType string
+		if err := rows.Scan(&addr, &did, &linkType); err != nil {
+			return nil, fmt.Errorf("failed to scan collision row: %w", err)
+		}
+		if _, ok := byAddr[addr]; !ok {
+			byAddr[addr] = &AddressLinkCollision{EthAddress: addr}
+			order = append(order, addr)
+		}
+		byAddr[addr].DIDs = append(byAddr[addr].DIDs, did)
+		byAddr[addr].LinkTypes = append(byAddr[addr].LinkTypes, linkType)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]*AddressLinkCollision, 0, len(order))
+	for _, addr := range order {
+		result = append(result, byAddr[addr])
+	}
+	return result, nil
 }
 
 // RevokeEthAddressLink revokes a link between an ETH address and a DID
@@ -621,26 +722,31 @@ func (d *DB) UpdateENSName(ctx context.Context, ethAddress string, ensName *stri
 	return nil
 }
 
-// GetEthAddressLink retrieves a specific ETH address link
+// GetEthAddressLink retrieves a specific ETH address link.
+// With multiple DIDs per address now possible, returns the best match
+// (user-linked preferred over system-linked, most recent first).
 func (d *DB) GetEthAddressLink(ctx context.Context, ethAddress string) (*EthAddressLink, error) {
-	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at, link_type
 	          FROM eth_address_links
-	          WHERE eth_address = $1 AND revoked = false`
+	          WHERE eth_address = $1 AND revoked = false
+	          ORDER BY CASE WHEN link_type = 'user' THEN 0 ELSE 1 END, verified_at DESC
+	          LIMIT 1`
 
 	var link EthAddressLink
-	var revokedAt, ensName, ensResolvedAt sql.NullString
+	var signature, messageHash, revokedAt, ensName, ensResolvedAt sql.NullString
 
 	err := d.conn.QueryRowContext(ctx, query, ethAddress).Scan(
 		&link.ID,
 		&link.DID,
 		&link.EthAddress,
-		&link.Signature,
-		&link.MessageHash,
+		&signature,
+		&messageHash,
 		&link.VerifiedAt,
 		&link.Revoked,
 		&revokedAt,
 		&ensName,
 		&ensResolvedAt,
+		&link.LinkType,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -649,6 +755,63 @@ func (d *DB) GetEthAddressLink(ctx context.Context, ethAddress string) (*EthAddr
 		return nil, fmt.Errorf("failed to get ETH address link: %w", err)
 	}
 
+	if signature.Valid {
+		link.Signature = signature.String
+	}
+	if messageHash.Valid {
+		link.MessageHash = messageHash.String
+	}
+	if revokedAt.Valid {
+		link.RevokedAt = &revokedAt.String
+	}
+	if ensName.Valid {
+		link.ENSName = &ensName.String
+	}
+	if ensResolvedAt.Valid {
+		link.ENSResolvedAt = &ensResolvedAt.String
+	}
+
+	return &link, nil
+}
+
+// GetEthAddressLinkForDID retrieves the ETH address link for a specific (did, eth_address) pair.
+// Unlike GetEthAddressLink, this is scoped to a single DID and is not affected by
+// multiple DIDs sharing the same address.
+func (d *DB) GetEthAddressLinkForDID(ctx context.Context, did, ethAddress string) (*EthAddressLink, error) {
+	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at, link_type
+	          FROM eth_address_links
+	          WHERE did = $1 AND eth_address = $2 AND revoked = false
+	          LIMIT 1`
+
+	var link EthAddressLink
+	var signature, messageHash, revokedAt, ensName, ensResolvedAt sql.NullString
+
+	err := d.conn.QueryRowContext(ctx, query, did, ethAddress).Scan(
+		&link.ID,
+		&link.DID,
+		&link.EthAddress,
+		&signature,
+		&messageHash,
+		&link.VerifiedAt,
+		&link.Revoked,
+		&revokedAt,
+		&ensName,
+		&ensResolvedAt,
+		&link.LinkType,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ETH address link for DID: %w", err)
+	}
+
+	if signature.Valid {
+		link.Signature = signature.String
+	}
+	if messageHash.Valid {
+		link.MessageHash = messageHash.String
+	}
 	if revokedAt.Valid {
 		link.RevokedAt = &revokedAt.String
 	}

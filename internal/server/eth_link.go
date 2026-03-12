@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
 	"strings"
@@ -234,12 +236,20 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 	// Get the message hash for storage
 	messageHash := auth.MessageHashHex(challenge.Message)
 
+	// Check for existing links to other DIDs before linking (for SIEM severity).
+	existingDIDs, lookupErr := s.db.GetDIDsByEthAddress(c.Request.Context(), normalizedAddr)
+	if lookupErr != nil {
+		slog.Warn("failed to check for address collisions before linking", "address", normalizedAddr, "error", lookupErr)
+	}
+	otherDIDs := make([]string, 0)
+	for _, d := range existingDIDs {
+		if d != userDID {
+			otherDIDs = append(otherDIDs, d)
+		}
+	}
+
 	// Store the link in the database
 	if err := s.db.LinkEthAddress(c.Request.Context(), userDID, normalizedAddr, req.Signature, messageHash); err != nil {
-		if errors.Is(err, db.ErrAddressAlreadyLinked) {
-			respondConflict(c, "ETH address is already linked to a different identity")
-			return
-		}
 		if errors.Is(err, db.ErrAddressLinkRevoked) {
 			respondForbidden(c, "ETH address link has been revoked — contact an administrator")
 			return
@@ -247,6 +257,31 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		slog.Error("failed to link address", "address", normalizedAddr, "user", userDID, "error", err)
 		respondInternalError(c, "failed to link address")
 		return
+	}
+
+	// Emit SIEM audit event. Escalate severity when the address was already
+	// claimed by another DID — this may indicate key sharing or key compromise.
+	if s.siemForwarder != nil {
+		eventType := "eth_address_linked"
+		details := fmt.Sprintf("address=%s link_type=user", normalizedAddr)
+		if len(otherDIDs) > 0 {
+			eventType = "eth_address_linked_collision"
+			// Log count only in the SIEM event — full DID list is PII and must not
+			// leave the system in forwarded events. Full list is in the internal log below.
+			details = fmt.Sprintf("address=%s link_type=user existing_dids_count=%d",
+				normalizedAddr, len(otherDIDs))
+			slog.Warn("ETH address linked to multiple DIDs — possible key sharing or compromise",
+				"address", normalizedAddr, "new_did", userDID, "existing_dids", otherDIDs)
+		}
+		s.siemForwarder.Send(audit.SIEMEvent{
+			Timestamp: time.Now(),
+			EventType: eventType,
+			ActorID:   userDID,
+			Action:    "eth_address_link",
+			Outcome:   "success",
+			Details:   details,
+			SourceIP:  c.ClientIP(),
+		})
 	}
 
 	// Resolve ENS name in background (non-blocking)
@@ -362,13 +397,14 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 		return
 	}
 
-	// Verify the address is linked to this user
-	link, err := s.db.GetEthAddressLink(c.Request.Context(), normalizedAddr)
+	// Verify the address is linked to this user (scope by DID to handle shared-address cases
+	// where multiple DIDs are linked to the same address).
+	link, err := s.db.GetEthAddressLinkForDID(c.Request.Context(), userDID, normalizedAddr)
 	if err != nil {
 		respondInternalError(c, "failed to get address")
 		return
 	}
-	if link == nil || link.DID != userDID {
+	if link == nil {
 		respondNotFound(c, "address not found or not linked to your account")
 		return
 	}

@@ -44,10 +44,6 @@ type JSONRPCProcessor struct {
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
-
-	// txOwnership tracks txHash → userID so submitters can view their own
-	// transaction data even without a linked ETH address.
-	txOwnership *TxOwnershipStore
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -101,7 +97,6 @@ func NewJSONRPCProcessor(
 		rateLimiter:    rateLimiter,
 		proxy:          proxyClient,
 		accessLogger:   logger,
-		txOwnership:    NewTxOwnershipStore(0),
 	}
 }
 
@@ -201,7 +196,6 @@ func NewJSONRPCProcessorWithTracing(
 		accessLogger:   logger,
 		runtimeTracer:  runtimeTracer,
 		traceValidator: traceValidator,
-		txOwnership:    NewTxOwnershipStore(0),
 	}
 }
 
@@ -390,18 +384,12 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
-	// Record txHash ownership so the submitter can retrieve their own receipt
-	// even without a linked ETH address.
-	if statusCode == http.StatusOK && p.txOwnership != nil {
-		var sendResult struct {
-			Result string      `json:"result"`
-			Error  interface{} `json:"error"`
-		}
-		if json.Unmarshal(responseBody, &sendResult) == nil &&
-			sendResult.Error == nil && sendResult.Result != "" {
-			p.txOwnership.Record(sendResult.Result, req.UserID)
-		}
-	}
+	// NOTE: eth_sendTransaction is NOT system-linked here. Unlike eth_sendRawTransaction,
+	// the `from` field comes from user-supplied params and is not cryptographically verified
+	// by the proxy — only the Ethereum node verifies that the account is unlocked.
+	// In a shared-node environment (e.g., Anvil with multiple unlocked accounts), a user
+	// could forge any unlocked address as `from`. System-linking is only safe for
+	// eth_sendRawTransaction where the sender is recovered from the signature.
 
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
@@ -435,12 +423,6 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
-			// Check if the user submitted this tx (ownership bypass).
-			if p.txOwnership != nil && len(req.Params) > 0 {
-				if hash, ok := req.Params[0].(string); ok && p.txOwnership.IsOwner(hash, req.UserID) {
-					return responseBody
-				}
-			}
 			// No linked addresses -- return null (cannot verify participation)
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
@@ -450,12 +432,6 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
-			// Check if the user submitted this tx (ownership bypass).
-			if p.txOwnership != nil && len(req.Params) > 0 {
-				if hash, ok := req.Params[0].(string); ok && p.txOwnership.IsOwner(hash, req.UserID) {
-					return responseBody
-				}
-			}
 			// No linked addresses -- return null (cannot verify participation)
 			return FilterTransactionReceipt(responseBody, nil)
 		}
@@ -938,16 +914,10 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
-	// Record txHash ownership so the submitter can retrieve their own receipt
-	// even without a linked ETH address.
-	if statusCode == http.StatusOK && p.txOwnership != nil {
-		var sendResult struct {
-			Result string      `json:"result"`
-			Error  interface{} `json:"error"`
-		}
-		if json.Unmarshal(responseBody, &sendResult) == nil &&
-			sendResult.Error == nil && sendResult.Result != "" {
-			p.txOwnership.Record(sendResult.Result, req.UserID)
+	// System-link the sender's ETH address to their DID.
+	if statusCode == http.StatusOK && from != "" && req.UserID != "" {
+		if err := p.rbacAccessCtrl.Store().SystemLinkEthAddress(ctx, req.UserID, from); err != nil {
+			slog.Warn("failed to system-link eth address", "user", req.UserID, "address", from, "error", err)
 		}
 	}
 

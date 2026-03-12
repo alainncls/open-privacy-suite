@@ -2649,6 +2649,7 @@ func newParamConstraintStore() *paramConstraintStore {
 func (s *paramConstraintStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return s.linkedAddresses[did], nil
 }
+func (s *paramConstraintStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
 
 func (s *paramConstraintStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
 	key := orgID + ":" + strings.ToLower(address)

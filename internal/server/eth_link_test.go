@@ -542,9 +542,9 @@ func TestLinkAddress_DatabaseStorage(t *testing.T) {
 	assert.Equal(t, subject, links[0].DID)
 }
 
-// TestLinkAddress_RejectHijack verifies that a different DID cannot steal an address
-// already linked to another DID (security fix for address hijacking via ON CONFLICT).
-func TestLinkAddress_RejectHijack(t *testing.T) {
+// TestLinkAddress_MultipleDIDs verifies that multiple DIDs can link the same address
+// (e.g. shared deployer key used by two users). The unique constraint is on (did, eth_address).
+func TestLinkAddress_MultipleDIDs(t *testing.T) {
 	srv := setupTestServerForEthLink(t)
 
 	user1 := "did:privado:user1"
@@ -555,20 +555,20 @@ func TestLinkAddress_RejectHijack(t *testing.T) {
 	err := srv.db.LinkEthAddress(context.Background(), user1, address, "sig1", "hash1")
 	require.NoError(t, err)
 
-	// User 2 tries to steal the same address — must fail
+	// User 2 also links the same address — must succeed
 	err = srv.db.LinkEthAddress(context.Background(), user2, address, "sig2", "hash2")
-	require.ErrorIs(t, err, db.ErrAddressAlreadyLinked)
-
-	// Address must still belong to user1
-	links, err := srv.db.GetEthAddressesByDID(context.Background(), user1)
 	require.NoError(t, err)
-	require.Len(t, links, 1)
-	assert.Equal(t, address, links[0].EthAddress)
 
-	// User2 must have no linked addresses
+	// Both users should see the address in their linked list
+	links1, err := srv.db.GetEthAddressesByDID(context.Background(), user1)
+	require.NoError(t, err)
+	require.Len(t, links1, 1)
+	assert.Equal(t, address, links1[0].EthAddress)
+
 	links2, err := srv.db.GetEthAddressesByDID(context.Background(), user2)
 	require.NoError(t, err)
-	assert.Empty(t, links2)
+	require.Len(t, links2, 1)
+	assert.Equal(t, address, links2[0].EthAddress)
 }
 
 // TestLinkAddress_SameDIDRefresh verifies that the same DID can refresh its own link.
@@ -619,9 +619,9 @@ func TestLinkAddress_RevokedCannotRelink(t *testing.T) {
 	assert.Empty(t, links, "revoked address should not appear in active links")
 }
 
-// TestHandleEthLinkVerify_RejectHijack_HTTP tests the 409 response when another user
-// tries to link an address already owned by a different DID via the HTTP endpoint.
-func TestHandleEthLinkVerify_RejectHijack_HTTP(t *testing.T) {
+// TestHandleEthLinkVerify_MultipleDIDs_HTTP tests that multiple users can link the
+// same address via the HTTP endpoint (e.g. shared deployer key).
+func TestHandleEthLinkVerify_MultipleDIDs_HTTP(t *testing.T) {
 	srv := setupTestServerForEthLink(t)
 
 	gin.SetMode(gin.TestMode)
@@ -659,7 +659,7 @@ func TestHandleEthLinkVerify_RejectHijack_HTTP(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	require.Equal(t, http.StatusOK, w2.Code)
 
-	// User 2 tries to link the same address — should get 409 Conflict
+	// User 2 links the same address — should succeed (shared key scenario)
 	req3 := httptest.NewRequest("POST", "/eth/link/challenge", nil)
 	req3.Header.Set("Authorization", "Bearer "+token2)
 	w3 := httptest.NewRecorder()
@@ -682,6 +682,6 @@ func TestHandleEthLinkVerify_RejectHijack_HTTP(t *testing.T) {
 	w4 := httptest.NewRecorder()
 	router.ServeHTTP(w4, req4)
 
-	assert.Equal(t, http.StatusConflict, w4.Code)
-	assert.Contains(t, w4.Body.String(), "already linked to a different identity")
+	assert.Equal(t, http.StatusOK, w4.Code)
+	assert.Contains(t, w4.Body.String(), "address linked successfully")
 }

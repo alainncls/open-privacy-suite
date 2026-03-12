@@ -20,12 +20,17 @@ Response filters run **after** the proxy forwards a request to the Ethereum node
 
 ### Linked ETH Addresses
 
-A user's linked ETH addresses are the Ethereum addresses they have verified ownership of through the `POST /eth/link/challenge` + `POST /eth/link/verify` flow. This flow requires an EIP-191 signature, proving the user controls the private key for each address.
+A user's linked ETH addresses include two types:
+
+- **User-initiated links** — addresses explicitly verified through `POST /eth/link/challenge` + `POST /eth/link/verify`, which require an EIP-191 signature proving key ownership.
+- **System-inferred links** — addresses automatically linked when a user sends a signed transaction via `eth_sendRawTransaction`. The proxy cryptographically recovers the sender address from the transaction signature; no separate linking step is needed.
+
+Both link types are included in participant checks. User-initiated links take precedence when the same address exists under both types.
 
 Response filtering uses these linked addresses to determine what the user is allowed to see. A user is considered a **participant** in a transaction if their linked address matches the transaction's `from` or `to` field.
 
 <Callout variant="danger" title="No linked addresses = no data">
-  If a user has not linked any ETH addresses, all response-filtered methods return null or empty results. Linking at least one address is a prerequisite for accessing transaction data, receipts, and event logs through filtered methods.
+  If a user has not linked any ETH addresses and has not yet sent any transactions through the proxy, all response-filtered methods return null or empty results. Addresses are linked automatically as users interact with the network via `eth_sendRawTransaction`.
 </Callout>
 
 ---

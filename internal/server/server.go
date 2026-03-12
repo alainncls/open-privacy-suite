@@ -543,6 +543,7 @@ func (s *Server) setupRouter() *gin.Engine {
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
 			admin.POST("/test-request", s.handleTestRequest)
+			admin.GET("/eth-addresses/collisions", s.getEthAddressCollisions)
 
 			// RBAC endpoints
 			s.registerRBACRoutes(admin)
