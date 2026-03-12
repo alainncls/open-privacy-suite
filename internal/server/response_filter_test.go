@@ -195,8 +195,17 @@ func TestFilterLogs(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			name:      "topic[0] event sig is not matched as address",
+			// topics[0] holds a zero-padded address — anonymous event (no sig hash).
+			// The user IS a participant and must see this log.
+			name:      "anonymous event: user address in topic[0] is kept",
 			response:  `{"jsonrpc":"2.0","id":4,"result":[{"topics":["` + paddedAddr + `"]}]}`,
+			wantCount: 1,
+		},
+		{
+			// topics[0] holds a real keccak256 hash — normal event sig, not an address.
+			// keccak256 values don't have 12 leading zero bytes, so it must not match.
+			name:      "normal event: keccak256 sig in topic[0] not matched as address",
+			response:  `{"jsonrpc":"2.0","id":8,"result":[{"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]}]}`,
 			wantCount: 0,
 		},
 		{

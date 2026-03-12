@@ -288,8 +288,9 @@ func TestFilterLogs_EmptyTopicsArray(t *testing.T) {
 }
 
 func TestFilterLogs_OnlyEventSigTopic(t *testing.T) {
-	// Log has only topics[0] (event signature), no indexed address parameters.
-	// Must be filtered — no address topic to match against.
+	// Log has only topics[0] (event signature hash), no indexed address parameters.
+	// topics[0] is a keccak256 hash and practically never has 12 leading zero bytes,
+	// so topicMatchesAddress rejects it. Must be filtered.
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + transferEventSig + `"],"data":"0x1234"}]}`
 
@@ -302,6 +303,48 @@ func TestFilterLogs_OnlyEventSigTopic(t *testing.T) {
 	}
 	if len(resp.Result) != 0 {
 		t.Errorf("log with only event sig topic (no address params) must be filtered, got %d", len(resp.Result))
+	}
+}
+
+func TestFilterLogs_AnonymousEvent_TopicZeroIsAddress(t *testing.T) {
+	// Anonymous events (Solidity `anonymous` keyword) have no event signature in
+	// topics[0] — the first indexed parameter occupies it instead. If that
+	// parameter is an address, we must recognise the user as a participant.
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	paddedUser := "0x000000000000000000000000abc1234567890123456789012345678901234567"
+	otherAddr := "0x000000000000000000000000def4567890123456789012345678901234567890"
+
+	// Anonymous event: [paddedUser, otherAddr] — no sig hash, user is in topics[0].
+	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + paddedUser + `","` + otherAddr + `"],"data":"0x"}]}`
+
+	got := FilterLogs([]byte(response), []string{userAddr})
+	var resp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if len(resp.Result) != 1 {
+		t.Errorf("anonymous event with user address in topics[0] must be visible, got %d logs", len(resp.Result))
+	}
+}
+
+func TestFilterLogs_AnonymousEvent_TopicZeroNotUserAddress(t *testing.T) {
+	// Anonymous event where topics[0] is an address but not the user's — must be filtered.
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	otherPadded := "0x000000000000000000000000def4567890123456789012345678901234567890"
+
+	response := `{"jsonrpc":"2.0","id":1,"result":[{"topics":["` + otherPadded + `"],"data":"0x"}]}`
+
+	got := FilterLogs([]byte(response), []string{userAddr})
+	var resp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if len(resp.Result) != 0 {
+		t.Errorf("anonymous event with different address in topics[0] must be filtered, got %d logs", len(resp.Result))
 	}
 }
 

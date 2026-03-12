@@ -185,9 +185,14 @@ func FilterLogs(responseBody []byte, userAddresses []string) []byte {
 		}
 
 		visible := false
-		// topics[0] is the event signature hash -- skip it.
-		// topics[1+] are indexed parameters; address types are zero-padded to 32 bytes.
-		for i := 1; i < len(entry.Topics); i++ {
+		// Check all topics including topics[0].
+		// For normal events, topics[0] is the keccak256 event signature hash —
+		// a value that practically never has 12 leading zero bytes, so
+		// topicMatchesAddress will reject it without false positives.
+		// For anonymous events (Solidity `anonymous` keyword), there is no
+		// signature hash and topics[0] is the first indexed parameter, which
+		// may be an address — so we must include it.
+		for i := 0; i < len(entry.Topics); i++ {
 			if topicMatchesAddress(entry.Topics[i], addrSet) {
 				visible = true
 				break
