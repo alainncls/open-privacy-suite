@@ -163,6 +163,12 @@ The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the 
 
 The `nonce` field reveals how many transactions a sender has submitted over their lifetime. When the sender is hidden or redacted, the backend sets `nonce` to `null` (omitted from JSON) to prevent leaking this activity count. When only the **receiver** is hidden, nonce is preserved because it belongs to the public sender.
 
+### Event Log Data Field Scanning
+
+When an event log's emitting contract has a registered and verified ABI, the redaction engine scans the non-indexed `data` field for `address`-typed parameters. Any address slot whose visibility is not Full (i.e., the address is redacted or hidden) is zeroed out before the log is returned. Indexed address parameters in `topics[1]`–`topics[3]` are always scanned regardless of ABI registration.
+
+**Limitation:** For contracts without a registered ABI, the `data` field is returned unmodified. Private addresses embedded in non-indexed parameters of unverified contracts will not be redacted from the `data` field.
+
 ### Limitation: Value Inference from Balance History
 
 Stripping the `value` field on mixed-party transactions **does not guarantee financial privacy**. A determined observer can infer the transferred amount by comparing the public address's balance at adjacent blocks:

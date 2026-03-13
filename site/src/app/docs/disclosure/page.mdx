@@ -26,7 +26,7 @@ The disclosure system provides:
 |-------|-----------------|----------|
 | **Full** | Real addresses (`0xa32c...94cd`) | Regulatory subpoenas, law enforcement investigations |
 | **Pseudonymous** | Consistent pseudonyms (`Address-KDCM`) | Financial audits -- allows pattern analysis without revealing identity |
-| **Redacted** | `[REDACTED]` | Minimal disclosure -- proves activity exists without revealing addresses |
+| **Redacted** | `[PRIVATE]` | Minimal disclosure -- proves activity exists without revealing addresses |
 
 ## Workflow
 
@@ -200,7 +200,7 @@ Response includes own addresses and disclosed addresses with their disclosure le
 
 For **pseudonymous** and **redacted** disclosures:
 
-1. **Real addresses are never sent to the frontend.** The backend resolves `address_id` to the real address internally. Only pseudonyms or `[REDACTED]` are returned to clients.
+1. **Real addresses are never sent to the frontend.** The backend resolves `address_id` to the real address internally. Only pseudonyms or `[PRIVATE]` are returned to clients.
 2. **Transaction hashes are hidden.** This prevents lookup on other block explorers to find real addresses. Only block numbers, timestamps, and values are shown.
 3. **Consistent pseudonyms within a grant.** The same address always gets the same pseudonym (e.g., `Address-KDCM`). External addresses get pseudonyms like `External-7E56`. This allows pattern analysis without revealing identity.
 
