@@ -25,6 +25,7 @@ const (
 	ReasonDisclosureGrant VisibilityReason = "disclosure_grant"
 	ReasonPublicAddress   VisibilityReason = "public_address"
 	ReasonNoAccess        VisibilityReason = "no_access"
+	ReasonRBACGroupMember VisibilityReason = "rbac_group_member"
 )
 
 // AddressVisibility represents the visibility status of a single address

@@ -44,37 +44,25 @@ type ViewableAddressesResponse struct {
 	DisclosedAddresses []DisclosedAddress `json:"disclosed_addresses"`
 }
 
-// VisibilityLevel represents how much of an address's data is visible
-type VisibilityLevel string
+// Type aliases for explorer visibility types — the canonical definitions live in
+// the explorer package. API handlers and the RedactionEngine share the same types.
+type VisibilityLevel = explorer.VisibilityLevel
+type VisibilityReason = explorer.VisibilityReason
+type AddressVisibility = explorer.AddressVisibility
 
+// Re-export visibility constants so existing handler/test code compiles unchanged.
 const (
-	VisibilityFull         VisibilityLevel = "full"
-	VisibilityPseudonymous VisibilityLevel = "pseudonymous"
-	VisibilityRedacted     VisibilityLevel = "redacted"
-	VisibilityHidden       VisibilityLevel = "hidden"
+	VisibilityFull         = explorer.VisibilityFull
+	VisibilityPseudonymous = explorer.VisibilityPseudonymous
+	VisibilityRedacted     = explorer.VisibilityRedacted
+	VisibilityHidden       = explorer.VisibilityHidden
+
+	ReasonOwnAddress      = explorer.ReasonOwnAddress
+	ReasonDisclosureGrant = explorer.ReasonDisclosureGrant
+	ReasonPublicAddress   = explorer.ReasonPublicAddress
+	ReasonNoAccess        = explorer.ReasonNoAccess
+	ReasonRBACGroupMember = explorer.ReasonRBACGroupMember
 )
-
-// VisibilityReason explains why an address has certain visibility
-type VisibilityReason string
-
-const (
-	ReasonOwnAddress      VisibilityReason = "own_address"
-	ReasonDisclosureGrant VisibilityReason = "disclosure_grant"
-	ReasonPublicAddress   VisibilityReason = "public_address"
-	ReasonNoAccess        VisibilityReason = "no_access"
-	ReasonRBACGroupMember VisibilityReason = "rbac_group_member"
-)
-
-// AddressVisibility represents the visibility status of a single address
-type AddressVisibility struct {
-	Address   string           `json:"address"`
-	Visible   bool             `json:"visible"`
-	Level     VisibilityLevel  `json:"level"`
-	Reason    VisibilityReason `json:"reason"`
-	Pseudonym *string          `json:"pseudonym,omitempty"`
-	GrantID   *string          `json:"grant_id,omitempty"`
-	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
-}
 
 // CheckAddressResponse is the response for GET /api/v1/explorer/check-address/:address
 type CheckAddressResponse struct {
@@ -389,10 +377,12 @@ func (s *Server) batchCheckAddresses(c *gin.Context) {
 		wallet = strings.ToLower(wallet)
 	}
 
-	results := make(map[string]AddressVisibility)
-	for _, addr := range req.Addresses {
-		normalizedAddr := strings.ToLower(addr)
-		results[normalizedAddr] = s.calculateAddressVisibilityWithDID(c.Request.Context(), wallet, did, normalizedAddr)
+	// Resolve viewer DID once, then batch-query all addresses in a single round trip.
+	viewerDID := s.resolveViewerDID(c.Request.Context(), wallet, did)
+	results, err := s.db.GetBatchVisibilityDetailed(c.Request.Context(), viewerDID, req.Addresses)
+	if err != nil {
+		respondInternalError(c, "failed to check address visibility")
+		return
 	}
 
 	c.JSON(http.StatusOK, BatchCheckAddressesResponse{Results: results})
@@ -500,127 +490,52 @@ func getViewerIdentity(c *gin.Context) (wallet, did string) {
 	return
 }
 
-// calculateAddressVisibility determines the visibility of a target address for a viewer (wallet-based)
-// Deprecated: Use calculateAddressVisibilityWithDID instead for new code.
+// resolveViewerDID resolves the viewer's DID from an explicit DID or wallet address.
+// Returns empty string if neither is provided or the wallet has no linked DID.
+func (s *Server) resolveViewerDID(ctx context.Context, wallet, did string) string {
+	if did != "" {
+		return did
+	}
+	if wallet != "" {
+		viewerDID, err := s.db.GetDIDByEthAddress(ctx, wallet)
+		if err != nil {
+			return ""
+		}
+		return viewerDID
+	}
+	return ""
+}
+
+// calculateAddressVisibility determines the visibility of a target address for a wallet-based viewer.
+// Delegates to GetBatchVisibilityDetailed so the visibility decision is made by the same
+// code path that the RedactionEngine uses (via GetBatchVisibility).
 func (s *Server) calculateAddressVisibility(ctx context.Context, viewerWallet, targetAddress string) AddressVisibility {
 	return s.calculateAddressVisibilityWithDID(ctx, viewerWallet, "", targetAddress)
 }
 
-// calculateAddressVisibilityWithDID determines the visibility of a target address for a viewer.
-// If did is provided, it is used directly (skips wallet->DID lookup).
-// If only wallet is provided, the DID is looked up from the wallet address.
+// calculateAddressVisibilityWithDID determines the visibility of a single address.
+// It delegates to GetBatchVisibilityDetailed (single-element batch) so that the
+// visibility level decision matches the RedactionEngine's GetBatchVisibility.
 func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWallet, did, targetAddress string) AddressVisibility {
-	result := AddressVisibility{
-		Address: targetAddress,
+	viewerDID := s.resolveViewerDID(ctx, viewerWallet, did)
+	results, err := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, []string{targetAddress})
+	if err != nil {
+		return AddressVisibility{
+			Address: strings.ToLower(targetAddress),
+			Visible: false,
+			Level:   VisibilityHidden,
+			Reason:  ReasonNoAccess,
+		}
+	}
+	if vis, ok := results[strings.ToLower(targetAddress)]; ok {
+		return vis
+	}
+	return AddressVisibility{
+		Address: strings.ToLower(targetAddress),
 		Visible: false,
 		Level:   VisibilityHidden,
 		Reason:  ReasonNoAccess,
 	}
-
-	var viewerDID string
-	var err error
-
-	// 1. Determine viewer DID - use provided DID or look up from wallet
-	if did != "" {
-		viewerDID = did
-	} else if viewerWallet != "" {
-		viewerDID, err = s.db.GetDIDByEthAddress(ctx, viewerWallet)
-		if err != nil {
-			// Error looking up DID - treat as anonymous
-			return result
-		}
-	}
-
-	// 2. Is targetAddress owned by viewer?
-	if viewerDID != "" {
-		ownAddresses, err := s.db.GetEthAddressesByDID(ctx, viewerDID)
-		if err == nil {
-			for _, link := range ownAddresses {
-				if strings.EqualFold(link.EthAddress, targetAddress) {
-					return AddressVisibility{
-						Address: targetAddress,
-						Visible: true,
-						Level:   VisibilityFull,
-						Reason:  ReasonOwnAddress,
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Find owner of targetAddress
-	ownerDID, err := s.db.GetDIDByEthAddress(ctx, targetAddress)
-	if err != nil {
-		// Error looking up owner
-		return result
-	}
-
-	if ownerDID == "" {
-		// No user wallet owner — check if this is an org-owned contract
-		contract, err := s.db.GetContractByAddressGlobal(ctx, targetAddress)
-		if err == nil && contract != nil {
-			// It's an org-owned contract. Check if viewer has group membership.
-			if viewerDID != "" {
-				hasAccess, err := s.db.ViewerHasContractAccess(ctx, viewerDID, contract.ID)
-				if err == nil && hasAccess {
-					return AddressVisibility{
-						Address: targetAddress,
-						Visible: true,
-						Level:   VisibilityFull,
-						Reason:  ReasonRBACGroupMember,
-					}
-				}
-			}
-			// No access to this org contract
-			return result // result defaults to VisibilityHidden, ReasonNoAccess
-		}
-		// Not an org contract — truly public address
-		return AddressVisibility{
-			Address: targetAddress,
-			Visible: true,
-			Level:   VisibilityFull,
-			Reason:  ReasonPublicAddress,
-		}
-	}
-
-	// 4. Check disclosure grant (if viewer has a DID)
-	if viewerDID != "" {
-		grantWithRequest, err := s.db.GetActiveGrantByRequesterDID(ctx, viewerDID, ownerDID)
-		if err == nil && grantWithRequest != nil {
-			grant := grantWithRequest.Grant
-
-			// Map disclosure level from grant scope to visibility level
-			level := VisibilityFull
-			var pseudonym *string
-			switch grant.Scope.DisclosureLevel {
-			case disclosure.DisclosurePseudonymous:
-				level = VisibilityPseudonymous
-				// Generate a consistent pseudonym based on the address
-				p := explorer.GeneratePseudonym(targetAddress)
-				pseudonym = &p
-			case disclosure.DisclosureRedacted:
-				level = VisibilityRedacted
-			case disclosure.DisclosureFull, "":
-				level = VisibilityFull
-			default:
-				// SECURITY: Fail-safe - treat unknown disclosure levels as redacted
-				level = VisibilityRedacted
-			}
-
-			return AddressVisibility{
-				Address:   targetAddress,
-				Visible:   true,
-				Level:     level,
-				Reason:    ReasonDisclosureGrant,
-				Pseudonym: pseudonym,
-				GrantID:   &grant.ID,
-				ExpiresAt: &grant.ExpiresAt,
-			}
-		}
-	}
-
-	// 5. No access
-	return result
 }
 
 func (s *Server) getExplorerChainID(c *gin.Context) {
