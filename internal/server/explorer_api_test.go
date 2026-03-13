@@ -1915,7 +1915,10 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_NonMember(t *testing.T) 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.False(t, resp.Visible, "non-member must not see org contract")
-	assert.Equal(t, VisibilityHidden, resp.Level)
+	// Org contracts use VisibilityRedacted (not Hidden) so transactions aren't silently
+	// dropped from global lists — the contract's on-chain existence is visible, only the
+	// identity is protected. This matches the RedactionEngine's GetBatchVisibility behavior.
+	assert.Equal(t, VisibilityRedacted, resp.Level)
 	assert.Equal(t, ReasonNoAccess, resp.Reason)
 }
 
@@ -1960,7 +1963,7 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_Anonymous(t *testing.T) 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.False(t, resp.Visible, "anonymous viewer must not see org contract")
-	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, VisibilityRedacted, resp.Level)
 }
 
 // TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck verifies that a batch-check
@@ -2000,7 +2003,7 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 		orgVis, ok := resp.Results[orgAddr]
 		require.True(t, ok)
 		assert.False(t, orgVis.Visible, "outsider must not see org contract")
-		assert.Equal(t, VisibilityHidden, orgVis.Level)
+		assert.Equal(t, VisibilityRedacted, orgVis.Level)
 
 		pubVis, ok := resp.Results[publicAddr]
 		require.True(t, ok)
