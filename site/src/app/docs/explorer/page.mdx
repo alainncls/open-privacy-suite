@@ -154,9 +154,14 @@ When the block explorer displays transaction lists, the redaction engine applies
 |----------|--------|
 | Both `from` and `to` are visible to the viewer | Full transaction shown |
 | Both `from` and `to` are hidden | Transaction dropped entirely |
-| One side is hidden, the other is visible | Hidden side replaced with `[PRIVATE]`; `value`, `inputData`, `error`, and `revertReason` stripped |
+| One side is hidden, the other is visible | Hidden side replaced with `[PRIVATE]`; `value`, `inputData`, `error`, `revertReason`, and (if sender is hidden) `nonce` stripped |
+| Sender is redacted (pseudonymous/truncated) | Address masked; `value`, `inputData`, `error`, `revertReason`, and `nonce` stripped |
 
 The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the label "Private". Address labels ("Mine", "Disclosed", "My Org") appear next to addresses the viewer has explicit access to, helping users understand what they are permitted to see.
+
+### Nonce Redaction
+
+The `nonce` field reveals how many transactions a sender has submitted over their lifetime. When the sender is hidden or redacted, the backend sets `nonce` to `null` (omitted from JSON) to prevent leaking this activity count. When only the **receiver** is hidden, nonce is preserved because it belongs to the public sender.
 
 ### Limitation: Value Inference from Balance History
 

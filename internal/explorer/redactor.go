@@ -85,6 +85,9 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
 			if fromLevel == VisibilityHidden {
 				redactedTx.From = "[PRIVATE]"
+				// Zero out nonce: it reveals the transaction count of a private account,
+				// and sequential nonces across [PRIVATE] transactions could link them to the same account.
+				redactedTx.Nonce = nil
 			} else {
 				redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 			}
@@ -118,6 +121,9 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			redactedTx.InputData = ""
 			redactedTx.Error = nil
 			redactedTx.RevertReason = nil
+			if fromLevel == VisibilityRedacted {
+				redactedTx.Nonce = nil // nonce reveals tx count for private sender
+			}
 		}
 
 		redactedTxs = append(redactedTxs, redactedTx)
