@@ -33,6 +33,10 @@ export const navigation: NavGroup[] = [
         title: "Response Filtering",
         href: "/docs/security/response-filtering",
       },
+      {
+        title: "Privacy Requirements",
+        href: "/docs/security/privacy-requirements",
+      },
       { title: "Compliance", href: "/docs/compliance" },
       { title: "Selective Disclosure", href: "/docs/disclosure" },
       { title: "Block Explorer", href: "/docs/explorer" },
