@@ -1242,3 +1242,83 @@ func TestApplyRedaction_DefaultFallback(t *testing.T) {
 		t.Errorf("unknown visibility should default to [PRIVATE], got %s", result)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Nonce redaction
+// ---------------------------------------------------------------------------
+
+func u64ptr(n uint64) *uint64 { return &n }
+
+func TestRedactTransactions_HiddenFrom_NilsNonce(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityHidden,
+		to:   VisibilityFull,
+	})
+
+	nonce := u64ptr(42)
+	txs := []Transaction{
+		{Hash: "0x01", From: from, To: strPtr(to), Value: "100", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].Nonce != nil {
+		t.Errorf("nonce must be nil when sender is hidden, got %v", *result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_HiddenTo_PreservesNonce(t *testing.T) {
+	// When the RECEIVER is hidden but the sender is public, nonce is not stripped
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityFull,
+		to:   VisibilityHidden,
+	})
+
+	nonce := u64ptr(7)
+	txs := []Transaction{
+		{Hash: "0x01", From: from, To: strPtr(to), Value: "100", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].Nonce == nil || *result[0].Nonce != 7 {
+		t.Errorf("nonce should be preserved when only receiver is hidden, got %v", result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_RedactedFrom_NilsNonce(t *testing.T) {
+	// VisibilityRedacted (address truncated, data stripped) also hides nonce
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		from: VisibilityRedacted,
+		to:   VisibilityFull,
+	})
+
+	nonce := u64ptr(99)
+	txs := []Transaction{
+		{Hash: "0x01", From: from, To: strPtr(to), Value: "200", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].Nonce != nil {
+		t.Errorf("nonce must be nil when sender is redacted, got %v", *result[0].Nonce)
+	}
+}
