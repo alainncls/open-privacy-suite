@@ -273,15 +273,71 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	return result, nil
 }
 
+// extractTopicAddress checks if a 32-byte topic hex string encodes an address
+// using the standard zero-padding convention (12 zero bytes = 24 zero hex chars prefix after "0x").
+// Returns the lowercase "0x"-prefixed address and true if the pattern matches, otherwise "", false.
+func extractTopicAddress(topic string) (string, bool) {
+	t := strings.ToLower(topic)
+	// Topics are 66 chars: "0x" + 64 hex. Address occupies the last 40 chars.
+	if len(t) != 66 || !strings.HasPrefix(t, "0x") {
+		return "", false
+	}
+	prefix := t[2:26] // 24 hex chars = 12 zero bytes of padding
+	if strings.Trim(prefix, "0") != "" {
+		return "", false
+	}
+	return "0x" + t[26:], true
+}
+
+// redactTopicAddress converts a visibility-redacted embedded address back into a
+// zero-padded 32-byte topic value.
+func redactTopicAddress(addr string, level VisibilityLevel) string {
+	switch level {
+	case VisibilityFull:
+		a := strings.ToLower(strings.TrimPrefix(addr, "0x"))
+		return "0x" + strings.Repeat("0", 24) + a
+	case VisibilityPseudonymous:
+		// GeneratePseudonym returns a human-readable string, not a hex address.
+		// We cannot zero-pad it into a valid 32-byte hex topic, so zero the slot instead.
+		return "0x" + strings.Repeat("0", 64)
+	default: // VisibilityRedacted, VisibilityHidden
+		return "0x" + strings.Repeat("0", 64)
+	}
+}
+
+// redactTopicField redacts a single topic field if it embeds a private address.
+// If the topic does not embed a recognised address pattern it is returned unchanged.
+func redactTopicField(topic *string, visMap VisibilityMap) *string {
+	if topic == nil {
+		return nil
+	}
+	addr, ok := extractTopicAddress(*topic)
+	if !ok {
+		return topic
+	}
+	level := visMap[addr]
+	if level == VisibilityFull {
+		return topic
+	}
+	redacted := redactTopicAddress(addr, level)
+	return &redacted
+}
+
 // RedactLogs applies privacy rules to event logs.
 // The log Address field is the contract that emitted the event.
 // Hidden contracts are dropped; pseudonymous/redacted contracts have their address masked
 // and topic/data stripped to prevent correlation.
+// For logs from visible contracts, each topic is additionally scanned for embedded EOA/contract
+// addresses (zero-padded 32-byte form). Any embedded address that is private is zeroed out.
+//
+// TODO: The Data field may also contain ABI-encoded private addresses. Full redaction would
+// require ABI decoding and per-field visibility checks — skipped for now due to complexity.
 func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string) ([]Log, error) {
 	if len(logs) == 0 {
 		return logs, nil
 	}
 
+	// Phase 1: collect emitting contract addresses and do an initial batch lookup.
 	addrMap := make(map[string]bool)
 	for _, l := range logs {
 		if l.Address != "" {
@@ -298,6 +354,44 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		return nil, err
 	}
 
+	// Phase 2: for logs that will be kept with full/pseudonymous disclosure,
+	// scan topics for embedded addresses not yet in visMap.
+	extraAddrMap := make(map[string]bool)
+	for _, l := range logs {
+		level := visMap[strings.ToLower(l.Address)]
+		// Redacted contracts already have all topics stripped; hidden contracts are dropped.
+		if level == VisibilityHidden || level == VisibilityRedacted {
+			continue
+		}
+		for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
+			if t == nil {
+				continue
+			}
+			addr, ok := extractTopicAddress(*t)
+			if !ok {
+				continue
+			}
+			if _, alreadyKnown := visMap[addr]; !alreadyKnown {
+				extraAddrMap[addr] = true
+			}
+		}
+	}
+
+	if len(extraAddrMap) > 0 {
+		extraAddrs := make([]string, 0, len(extraAddrMap))
+		for a := range extraAddrMap {
+			extraAddrs = append(extraAddrs, a)
+		}
+		extraVisMap, err := r.db.GetBatchVisibility(ctx, viewerDID, extraAddrs)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range extraVisMap {
+			visMap[k] = v
+		}
+	}
+
+	// Phase 3: apply redactions.
 	var result []Log
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
@@ -314,6 +408,12 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 			redacted.Topic2 = nil
 			redacted.Topic3 = nil
 			redacted.Data = ""
+		} else {
+			// Contract is visible — scan topics for embedded private addresses.
+			redacted.Topic0 = redactTopicField(l.Topic0, visMap)
+			redacted.Topic1 = redactTopicField(l.Topic1, visMap)
+			redacted.Topic2 = redactTopicField(l.Topic2, visMap)
+			redacted.Topic3 = redactTopicField(l.Topic3, visMap)
 		}
 
 		result = append(result, redacted)
