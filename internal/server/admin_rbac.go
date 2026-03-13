@@ -33,6 +33,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.PUT("/orgs/:org_id/contracts/:address/abi", s.updateContractABI)
 	api.POST("/orgs/:org_id/contracts/sync-check", s.checkContractsOnChain)
 	api.POST("/orgs/:org_id/contracts/sync-delete", s.deleteStaleContracts)
+	api.GET("/orgs/:org_id/contracts/grant-summary", s.getContractGrantSummary)
 
 	// Preregistered Addresses (CREATE3)
 	api.POST("/orgs/:org_id/addresses/preregister", s.preregisterAddresses)

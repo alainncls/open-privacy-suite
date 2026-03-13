@@ -590,6 +590,18 @@ func (s *Server) lookupContractByAddress(c *gin.Context) {
 	})
 }
 
+// getContractGrantSummary returns grant counts and group names for all contracts in an org.
+// GET /orgs/:org_id/contracts/grant-summary
+func (s *Server) getContractGrantSummary(c *gin.Context) {
+	orgID := c.Param("org_id")
+	summary, err := s.db.GetContractGrantSummary(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
 func (s *Server) deleteContractGrant(c *gin.Context) {
 	orgID := c.Param("org_id")
 	address := c.Param("address")

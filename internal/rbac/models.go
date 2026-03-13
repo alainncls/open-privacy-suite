@@ -294,6 +294,18 @@ type ContractGrantWithGroup struct {
 	Group *Group         `json:"group"`
 }
 
+// GroupSummary is a lightweight representation of a group for summary responses.
+type GroupSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ContractGrantSummary contains the count of grants and the groups assigned to a contract.
+type ContractGrantSummary struct {
+	Count  int            `json:"count"`
+	Groups []GroupSummary `json:"groups"`
+}
+
 // HasMethod checks if the effective permissions allow a specific method.
 // "*" in AllowedMethods means all methods are permitted (used by admin auto-grant).
 func (e *EffectivePermissions) HasMethod(method string) bool {

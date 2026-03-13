@@ -234,6 +234,7 @@ func (m *MockCrossOrgStore) ListContractGrantsByGroupWithContract(ctx context.Co
 	return nil, nil
 }
 func (m *MockCrossOrgStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
+func (m *MockCrossOrgStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
 
 // Cache operations
 func (m *MockCrossOrgStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {

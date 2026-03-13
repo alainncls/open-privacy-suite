@@ -1153,3 +1153,120 @@ func createTestGroup(t *testing.T, server *testServerRBAC, orgID, slug string) *
 		Name:  response["name"].(string),
 	}
 }
+
+func createTestContract(t *testing.T, server *testServerRBAC, orgID, address, name string) string {
+	body := map[string]any{
+		"address": address,
+		"name":    name,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts", orgID), bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var response map[string]any
+	json.Unmarshal(w.Body.Bytes(), &response)
+	return response["id"].(string)
+}
+
+func createTestContractGrant(t *testing.T, server *testServerRBAC, orgID, address, groupID string) {
+	body := map[string]any{
+		"group_id": groupID,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts/%s/grants", orgID, address), bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+}
+
+func TestContractGrantSummaryAPI(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "grant-summary-org")
+	otherOrg := createTestOrganization(t, server, "other-org-for-isolation")
+
+	addr1 := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	addr2 := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	contractID1 := createTestContract(t, server, org.ID, addr1, "Contract Alpha")
+	contractID2 := createTestContract(t, server, org.ID, addr2, "Contract Beta")
+	_ = createTestContract(t, server, otherOrg.ID, otherAddr, "Other Org Contract")
+
+	group1 := createTestGroup(t, server, org.ID, "alpha-group")
+	group2 := createTestGroup(t, server, org.ID, "beta-group")
+
+	t.Run("EmptyBeforeGrants", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts/grant-summary", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Empty(t, result, "expected empty map before any grants are created")
+	})
+
+	// Grant group1 → contract1, group2 → contract1, group1 → contract2
+	createTestContractGrant(t, server, org.ID, addr1, group1.ID)
+	createTestContractGrant(t, server, org.ID, addr1, group2.ID)
+	createTestContractGrant(t, server, org.ID, addr2, group1.ID)
+
+	t.Run("CorrectCountsAndGroupNames", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts/grant-summary", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+		// contract1 should have 2 groups
+		c1, ok := result[contractID1].(map[string]any)
+		require.True(t, ok, "contract1 should appear in summary")
+		assert.Equal(t, float64(2), c1["count"])
+		groups1 := c1["groups"].([]any)
+		assert.Len(t, groups1, 2)
+
+		// contract2 should have 1 group
+		c2, ok := result[contractID2].(map[string]any)
+		require.True(t, ok, "contract2 should appear in summary")
+		assert.Equal(t, float64(1), c2["count"])
+		groups2 := c2["groups"].([]any)
+		assert.Len(t, groups2, 1)
+		g2 := groups2[0].(map[string]any)
+		assert.Equal(t, group1.ID, g2["id"])
+		assert.Equal(t, group1.Name, g2["name"])
+	})
+
+	t.Run("OrgIsolation", func(t *testing.T) {
+		// Grant from a group in otherOrg — shouldn't affect org's summary and shouldn't be visible from org's summary
+		otherGroup := createTestGroup(t, server, otherOrg.ID, "other-group")
+		createTestContractGrant(t, server, otherOrg.ID, otherAddr, otherGroup.ID)
+
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts/grant-summary", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+		// otherOrg's contract must not appear
+		for contractID := range result {
+			assert.NotEqual(t, otherAddr, contractID, "other org contract must not appear in this org's grant summary")
+		}
+		// org's contracts still correct
+		assert.Contains(t, result, contractID1)
+		assert.Contains(t, result, contractID2)
+		assert.Len(t, result, 2, "only org's 2 contracts should appear")
+	})
+}
