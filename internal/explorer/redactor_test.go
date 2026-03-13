@@ -2,8 +2,12 @@ package explorer
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // mockDB implements Database for testing
@@ -19,12 +23,48 @@ func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (Vi
 	return m.visMap, nil
 }
 
+// mockContractStore implements ContractStore for testing
+type mockContractStore struct {
+	contracts map[string]*Contract // keyed by lowercase address
+}
+
+func (m *mockContractStore) GetContract(_ context.Context, address string) (*Contract, error) {
+	if m.contracts == nil {
+		return nil, nil
+	}
+	c := m.contracts[strings.ToLower(address)]
+	return c, nil
+}
+
 func newEngine(visMap VisibilityMap) *RedactionEngine {
-	return NewRedactionEngine(nil, &mockDB{visMap: visMap})
+	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap}}
+}
+
+func newEngineWithStore(visMap VisibilityMap, store ContractStore) *RedactionEngine {
+	return &RedactionEngine{store: store, db: &mockDB{visMap: visMap}}
 }
 
 func newEngineErr(err error) *RedactionEngine {
-	return NewRedactionEngine(nil, &mockDB{err: err})
+	return &RedactionEngine{store: nil, db: &mockDB{err: err}}
+}
+
+// eventTopic0 computes keccak256 of an event signature, returning "0x"-prefixed hex.
+func eventTopic0(sig string) string {
+	return "0x" + hex.EncodeToString(crypto.Keccak256([]byte(sig)))
+}
+
+// encodeAddress encodes an Ethereum address as a zero-padded 32-byte hex string (no 0x prefix).
+func encodeAddressSlot(addr string) string {
+	addr = strings.TrimPrefix(strings.ToLower(addr), "0x")
+	return strings.Repeat("0", 24) + strings.ToLower(addr)
+}
+
+// encodeUint256Slot encodes a uint256 value as a 32-byte zero-padded hex string (no 0x prefix).
+func encodeUint256Slot(val uint64) string {
+	return strings.Repeat("0", 56) + hex.EncodeToString([]byte{
+		byte(val >> 56), byte(val >> 48), byte(val >> 40), byte(val >> 32),
+		byte(val >> 24), byte(val >> 16), byte(val >> 8), byte(val),
+	})
 }
 
 func strPtr(s string) *string { return &s }
@@ -877,6 +917,124 @@ func TestRedactLogs_DBError(t *testing.T) {
 	_, err := engine.RedactLogs(context.Background(), logs, "did:test")
 	if err == nil {
 		t.Error("expected error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactLogs — ABI-based Data Field scanning
+// ---------------------------------------------------------------------------
+
+// testABI is a minimal ABI JSON for event: PrivateTransfer(address indexed from, address to, uint256 value)
+// topic0 = keccak256("PrivateTransfer(address,address,uint256)")
+// data   = abi.encode(to address, value) — 32 bytes for address + 32 bytes for uint256
+const testEventABI = `[{"type":"event","name":"PrivateTransfer","inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":false},{"name":"value","type":"uint256","indexed":false}]}]`
+
+func TestRedactLogs_ABIDataPrivateAddress_Zeroed(t *testing.T) {
+	emitter := "0xcccccccccccccccccccccccccccccccccccccccc"
+	privateAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	topic0 := eventTopic0("PrivateTransfer(address,address,uint256)")
+
+	// data = abi.encode(privateAddr, 1000)
+	dataHex := "0x" + encodeAddressSlot(privateAddr) + encodeUint256Slot(1000)
+	zeroedSlot := strings.Repeat("0", 64)
+
+	store := &mockContractStore{contracts: map[string]*Contract{
+		emitter: {Address: emitter, ABI: []byte(testEventABI)},
+	}}
+	engine := newEngineWithStore(VisibilityMap{
+		emitter:     VisibilityFull,
+		privateAddr: VisibilityRedacted,
+	}, store)
+
+	logs := []Log{{ID: 1, Address: emitter, Topic0: &topic0, Data: dataHex}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(result))
+	}
+	// The address slot (first 32 bytes) should be zeroed; value slot unchanged.
+	expectedData := "0x" + zeroedSlot + encodeUint256Slot(1000)
+	if result[0].Data != expectedData {
+		t.Errorf("expected data %q, got %q", expectedData, result[0].Data)
+	}
+}
+
+func TestRedactLogs_ABIDataPublicAddress_Unchanged(t *testing.T) {
+	emitter := "0xcccccccccccccccccccccccccccccccccccccccc"
+	publicAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	topic0 := eventTopic0("PrivateTransfer(address,address,uint256)")
+
+	dataHex := "0x" + encodeAddressSlot(publicAddr) + encodeUint256Slot(500)
+
+	store := &mockContractStore{contracts: map[string]*Contract{
+		emitter: {Address: emitter, ABI: []byte(testEventABI)},
+	}}
+	engine := newEngineWithStore(VisibilityMap{
+		emitter:    VisibilityFull,
+		publicAddr: VisibilityFull,
+	}, store)
+
+	logs := []Log{{ID: 1, Address: emitter, Topic0: &topic0, Data: dataHex}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(result))
+	}
+	if result[0].Data != dataHex {
+		t.Errorf("data should be unchanged for public address, got %q", result[0].Data)
+	}
+}
+
+func TestRedactLogs_NoABI_DataUnchanged(t *testing.T) {
+	emitter := "0xcccccccccccccccccccccccccccccccccccccccc"
+	topic0 := eventTopic0("PrivateTransfer(address,address,uint256)")
+	dataHex := "0x" + encodeAddressSlot("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") + encodeUint256Slot(999)
+
+	// Store returns nil contract (no ABI registered)
+	store := &mockContractStore{contracts: map[string]*Contract{}}
+	engine := newEngineWithStore(VisibilityMap{
+		emitter: VisibilityFull,
+	}, store)
+
+	logs := []Log{{ID: 1, Address: emitter, Topic0: &topic0, Data: dataHex}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(result))
+	}
+	if result[0].Data != dataHex {
+		t.Errorf("data should be unchanged when no ABI is registered, got %q", result[0].Data)
+	}
+}
+
+func TestRedactLogs_UnknownTopic0_DataUnchanged(t *testing.T) {
+	emitter := "0xcccccccccccccccccccccccccccccccccccccccc"
+	unknownTopic0 := "0x" + strings.Repeat("ab", 32) // not a matching event
+	dataHex := "0x" + encodeAddressSlot("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") + encodeUint256Slot(1)
+
+	store := &mockContractStore{contracts: map[string]*Contract{
+		emitter: {Address: emitter, ABI: []byte(testEventABI)},
+	}}
+	engine := newEngineWithStore(VisibilityMap{
+		emitter: VisibilityFull,
+	}, store)
+
+	logs := []Log{{ID: 1, Address: emitter, Topic0: &unknownTopic0, Data: dataHex}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(result))
+	}
+	if result[0].Data != dataHex {
+		t.Errorf("data should be unchanged when topic0 does not match any event, got %q", result[0].Data)
 	}
 }
 
