@@ -33,7 +33,12 @@ import (
 
 // TTL constants for various components
 const (
-	// JWT token TTLs
+	// AccessTokenTTL is intentionally short. We do not implement immediate token
+	// revocation for access tokens (no per-request DB lookup). This means a banned
+	// user stays active until their current access token expires and they attempt a
+	// refresh — at which point handleRefresh checks the ban flag and rejects them.
+	// The 5-minute window is the maximum time a banned user can continue acting.
+	// Do not increase this value without adding an access-token revocation mechanism.
 	AccessTokenTTL  = 5 * time.Minute
 	RefreshTokenTTL = 7 * 24 * time.Hour
 

@@ -196,10 +196,22 @@ Users can be members of multiple organizations. The system:
 | Feature | Implementation |
 |---------|----------------|
 | Signing | HS256 with strong secrets |
-| Access TTL | 30 minutes |
+| Access TTL | 5 minutes |
 | Refresh TTL | 7 days |
 | Token rotation | Refresh tokens rotated on use |
 | Revocation | Blacklist stored in database |
+
+**Why 5-minute access tokens?**
+Access tokens are not validated against the database on every request (no per-request DB
+lookup). This means there is a window between when a user is banned and when they are
+actually locked out — at most the remaining lifetime of their current access token.
+Five minutes is the chosen trade-off: short enough to be operationally acceptable, long
+enough to avoid excessive refresh traffic. When a user's refresh token is revoked (ban,
+logout, tenant deletion), their next refresh attempt is rejected and both cookies are
+cleared.
+
+Do not increase `AccessTokenTTL` without adding a per-request revocation check
+(e.g. a Redis blacklist) to close the enforcement gap.
 
 ### ETH Address Linking Security
 
