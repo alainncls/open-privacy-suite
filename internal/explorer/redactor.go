@@ -63,24 +63,53 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	// 3. Apply redactions
 	var redactedTxs []Transaction
 	for _, tx := range txs {
-		redactedTx := tx
-
 		fromLevel := VisibilityFull
 		if tx.From != "" {
 			fromLevel = visibilityMap[strings.ToLower(tx.From)]
-			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 		}
 
 		toLevel := VisibilityFull
 		if tx.To != nil && *tx.To != "" {
 			toLevel = visibilityMap[strings.ToLower(*tx.To)]
-			redacted := r.applyRedaction(*tx.To, toLevel)
-			redactedTx.To = &redacted
 		}
 
-		// If either participant is fully hidden, drop the transaction
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+		// If BOTH participants are hidden, drop the transaction entirely
+		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
 			continue
+		}
+
+		redactedTx := tx
+
+		// If one side is hidden but the other is visible, replace the hidden
+		// side with [PRIVATE] and strip financial data (value, input, error).
+		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+			if fromLevel == VisibilityHidden {
+				redactedTx.From = "[PRIVATE]"
+			} else {
+				redactedTx.From = r.applyRedaction(tx.From, fromLevel)
+			}
+			if toLevel == VisibilityHidden {
+				p := "[PRIVATE]"
+				redactedTx.To = &p
+			} else if tx.To != nil && *tx.To != "" {
+				redacted := r.applyRedaction(*tx.To, toLevel)
+				redactedTx.To = &redacted
+			}
+			redactedTx.Value = JSONString("")
+			redactedTx.InputData = ""
+			redactedTx.Error = nil
+			redactedTx.RevertReason = nil
+			redactedTxs = append(redactedTxs, redactedTx)
+			continue
+		}
+
+		// Neither side is hidden — apply normal redaction
+		if tx.From != "" {
+			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
+		}
+		if tx.To != nil && *tx.To != "" {
+			redacted := r.applyRedaction(*tx.To, toLevel)
+			redactedTx.To = &redacted
 		}
 
 		// If either participant is redacted, strip the transaction data
@@ -127,11 +156,31 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		fromLevel := visMap[strings.ToLower(t.From)]
 		toLevel := visMap[strings.ToLower(t.To)]
 
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+		// Drop only if both sides are hidden
+		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
 			continue
 		}
 
 		redacted := t
+
+		// If one side is hidden, replace with [PRIVATE] and strip amount
+		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+			if fromLevel == VisibilityHidden {
+				redacted.From = "[PRIVATE]"
+			} else {
+				redacted.From = r.applyRedaction(t.From, fromLevel)
+			}
+			if toLevel == VisibilityHidden {
+				redacted.To = "[PRIVATE]"
+			} else {
+				redacted.To = r.applyRedaction(t.To, toLevel)
+			}
+			redacted.Value = JSONString("")
+			result = append(result, redacted)
+			continue
+		}
+
+		// Neither side hidden — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
 		redacted.To = r.applyRedaction(t.To, toLevel)
 		if fromLevel == VisibilityRedacted || toLevel == VisibilityRedacted {
@@ -176,11 +225,35 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			toLevel = visMap[strings.ToLower(*t.To)]
 		}
 
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+		// Drop only if both sides are hidden
+		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
 			continue
 		}
 
 		redacted := t
+
+		// If one side is hidden, replace with [PRIVATE] and strip financial data
+		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
+			if fromLevel == VisibilityHidden {
+				redacted.From = "[PRIVATE]"
+			} else {
+				redacted.From = r.applyRedaction(t.From, fromLevel)
+			}
+			if toLevel == VisibilityHidden {
+				p := "[PRIVATE]"
+				redacted.To = &p
+			} else if t.To != nil && *t.To != "" {
+				r2 := r.applyRedaction(*t.To, toLevel)
+				redacted.To = &r2
+			}
+			redacted.Value = JSONString("")
+			redacted.Input = nil
+			redacted.Output = nil
+			result = append(result, redacted)
+			continue
+		}
+
+		// Neither side hidden — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
 		if t.To != nil && *t.To != "" {
 			r2 := r.applyRedaction(*t.To, toLevel)
