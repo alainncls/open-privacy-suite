@@ -464,6 +464,11 @@ func (r *RedactionEngine) RedactTokenHolders(ctx context.Context, holders []Toke
 			continue
 		}
 		h.Address = r.applyRedaction(h.Address, level)
+		if level == VisibilityRedacted {
+			// Strip balance and percentage: they reveal financial position even when the address is masked.
+			h.Balance = JSONString("")
+			h.Percentage = 0
+		}
 		result = append(result, h)
 	}
 	return result, nil

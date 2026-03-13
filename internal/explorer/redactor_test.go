@@ -987,7 +987,7 @@ func TestRedactTokenHolders_HiddenDrops(t *testing.T) {
 	}
 }
 
-func TestRedactTokenHolders_RedactedMasksAddress(t *testing.T) {
+func TestRedactTokenHolders_RedactedMasksAddressAndStripsBalance(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	engine := newEngine(VisibilityMap{
 		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
@@ -1004,9 +1004,39 @@ func TestRedactTokenHolders_RedactedMasksAddress(t *testing.T) {
 	if result[0].Address != "[PRIVATE]" {
 		t.Errorf("Address should be [PRIVATE], got %s", result[0].Address)
 	}
-	// Balance not stripped for token holders — only address masked
-	if result[0].Balance != "200" {
-		t.Errorf("Balance should be unchanged, got %s", result[0].Balance)
+	// Balance and percentage stripped for redacted holders — reveals financial position
+	if result[0].Balance != "" {
+		t.Errorf("Balance should be stripped for redacted holder, got %s", result[0].Balance)
+	}
+	if result[0].Percentage != 0 {
+		t.Errorf("Percentage should be 0 for redacted holder, got %f", result[0].Percentage)
+	}
+}
+
+func TestRedactTokenHolders_PseudonymousPreservesBalance(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityPseudonymous,
+	})
+
+	holders := []TokenHolder{{Address: addr, Balance: "500", Percentage: 12.3}}
+	result, err := engine.RedactTokenHolders(context.Background(), holders, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	expectedPseudonym := GeneratePseudonym(addr)
+	if result[0].Address != expectedPseudonym {
+		t.Errorf("Address should be pseudonym %q, got %q", expectedPseudonym, result[0].Address)
+	}
+	// Balance preserved for pseudonymous — pattern analysis is the use case
+	if result[0].Balance != "500" {
+		t.Errorf("Balance should be preserved for pseudonymous holder, got %s", result[0].Balance)
+	}
+	if result[0].Percentage != 12.3 {
+		t.Errorf("Percentage should be preserved for pseudonymous holder, got %f", result[0].Percentage)
 	}
 }
 
