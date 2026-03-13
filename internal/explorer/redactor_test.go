@@ -1,0 +1,723 @@
+package explorer
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+// mockDB implements Database for testing
+type mockDB struct {
+	visMap VisibilityMap
+	err    error
+}
+
+func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (VisibilityMap, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.visMap, nil
+}
+
+func newEngine(visMap VisibilityMap) *RedactionEngine {
+	return NewRedactionEngine(nil, &mockDB{visMap: visMap})
+}
+
+func newEngineErr(err error) *RedactionEngine {
+	return NewRedactionEngine(nil, &mockDB{err: err})
+}
+
+func strPtr(s string) *string { return &s }
+
+// ---------------------------------------------------------------------------
+// RedactTransactions
+// ---------------------------------------------------------------------------
+
+func TestRedactTransactions_Empty(t *testing.T) {
+	engine := newEngine(nil)
+	result, err := engine.RedactTransactions(context.Background(), nil, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil, got %v", result)
+	}
+}
+
+func TestRedactTransactions_FullVisibility(t *testing.T) {
+	addr1 := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	addr2 := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{
+		{Hash: "0x01", From: addr1, To: strPtr(addr2), Value: "1000", InputData: "0xdeadbeef"},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != addr1 {
+		t.Errorf("From mismatch: %s", result[0].From)
+	}
+	if *result[0].To != addr2 {
+		t.Errorf("To mismatch: %s", *result[0].To)
+	}
+	if result[0].Value != "1000" {
+		t.Errorf("Value should be unchanged, got %s", result[0].Value)
+	}
+	if result[0].InputData != "0xdeadbeef" {
+		t.Errorf("InputData should be unchanged, got %s", result[0].InputData)
+	}
+}
+
+func TestRedactTransactions_HiddenFrom_DropsTransaction(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 txs (hidden from), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_HiddenTo_DropsTransaction(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 txs (hidden to), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_RedactedFrom_StripsData(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	errStr := "execution reverted"
+	revertStr := "out of gas"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{{
+		Hash:         "0x01",
+		From:         from,
+		To:           strPtr(to),
+		Value:        "1000",
+		InputData:    "0xdeadbeef",
+		Error:        &errStr,
+		RevertReason: &revertStr,
+	}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	tx := result[0]
+	if tx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", tx.From)
+	}
+	if tx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", tx.Value)
+	}
+	if tx.InputData != "" {
+		t.Errorf("InputData should be stripped, got %s", tx.InputData)
+	}
+	if tx.Error != nil {
+		t.Errorf("Error should be nil")
+	}
+	if tx.RevertReason != nil {
+		t.Errorf("RevertReason should be nil")
+	}
+	// To address unchanged (full visibility)
+	if *tx.To != to {
+		t.Errorf("To should be unchanged, got %s", *tx.To)
+	}
+}
+
+func TestRedactTransactions_RedactedTo_StripsData(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000", InputData: "0xaa"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	tx := result[0]
+	if *tx.To != "[PRIVATE]" {
+		t.Errorf("To should be [PRIVATE], got %s", *tx.To)
+	}
+	if tx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", tx.Value)
+	}
+	if tx.From != from {
+		t.Errorf("From should be unchanged, got %s", tx.From)
+	}
+}
+
+func TestRedactTransactions_PseudonymousAddress(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityPseudonymous,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "500"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	expectedPseudonym := GeneratePseudonym(from)
+	if result[0].From != expectedPseudonym {
+		t.Errorf("From should be pseudonym %q, got %q", expectedPseudonym, result[0].From)
+	}
+	// Value not stripped for pseudonymous
+	if result[0].Value != "500" {
+		t.Errorf("Value should be unchanged for pseudonymous, got %s", result[0].Value)
+	}
+}
+
+func TestRedactTransactions_NilTo(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: nil, Value: "0"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (nil to is fine), got %d", len(result))
+	}
+	if result[0].To != nil {
+		t.Errorf("To should remain nil")
+	}
+}
+
+func TestRedactTransactions_DBError(t *testing.T) {
+	engine := newEngineErr(errors.New("db unavailable"))
+	txs := []Transaction{{Hash: "0x01", From: "0xaa", To: strPtr("0xbb")}}
+	_, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err == nil {
+		t.Error("expected error from DB")
+	}
+}
+
+func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
+	addrFull := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	addrHidden := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	addrRedacted := "0xcccccccccccccccccccccccccccccccccccccccc"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+		"0xcccccccccccccccccccccccccccccccccccccccc": VisibilityRedacted,
+	})
+
+	txs := []Transaction{
+		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},    // keep, full
+		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},  // drop (hidden to)
+		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)}, // keep, redacted to
+		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},  // drop (hidden from)
+	}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 txs (0x01 and 0x03), got %d", len(result))
+	}
+	if result[0].Hash != "0x01" {
+		t.Errorf("first result should be 0x01, got %s", result[0].Hash)
+	}
+	if result[1].Hash != "0x03" {
+		t.Errorf("second result should be 0x03, got %s", result[1].Hash)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactTransfers
+// ---------------------------------------------------------------------------
+
+func TestRedactTransfers_Empty(t *testing.T) {
+	engine := newEngine(nil)
+	result, err := engine.RedactTransfers(context.Background(), nil, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil")
+	}
+}
+
+func TestRedactTransfers_HiddenDrops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 transfers, got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_RedactedStripsValue(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "500"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	if result[0].To != "[PRIVATE]" {
+		t.Errorf("To should be [PRIVATE], got %s", result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	}
+	if result[0].From != from {
+		t.Errorf("From should be unchanged, got %s", result[0].From)
+	}
+}
+
+func TestRedactTransfers_FullVisibilityUnchanged(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "999"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	if result[0].From != from || result[0].To != to || result[0].Value != "999" {
+		t.Errorf("transfer should be unchanged: %+v", result[0])
+	}
+}
+
+func TestRedactTransfers_DBError(t *testing.T) {
+	engine := newEngineErr(errors.New("db error"))
+	transfers := []TokenTransfer{{ID: 1, From: "0xaa", To: "0xbb"}}
+	_, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactInternalTransactions
+// ---------------------------------------------------------------------------
+
+func TestRedactInternalTransactions_Empty(t *testing.T) {
+	engine := newEngine(nil)
+	result, err := engine.RedactInternalTransactions(context.Background(), nil, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil")
+	}
+}
+
+func TestRedactInternalTransactions_HiddenDrops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to)}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0, got %d", len(result))
+	}
+}
+
+func TestRedactInternalTransactions_RedactedStripsData(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xdeadbeef"
+	output := "0x01"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "100", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	itx := result[0]
+	if *itx.To != "[PRIVATE]" {
+		t.Errorf("To should be [PRIVATE], got %s", *itx.To)
+	}
+	if itx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", itx.Value)
+	}
+	if itx.Input != nil {
+		t.Errorf("Input should be nil")
+	}
+	if itx.Output != nil {
+		t.Errorf("Output should be nil")
+	}
+}
+
+func TestRedactInternalTransactions_NilTo(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: nil, Value: "0"}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].To != nil {
+		t.Errorf("To should remain nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactLogs
+// ---------------------------------------------------------------------------
+
+func TestRedactLogs_Empty(t *testing.T) {
+	engine := newEngine(nil)
+	result, err := engine.RedactLogs(context.Background(), nil, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil")
+	}
+}
+
+func TestRedactLogs_HiddenDrops(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+	})
+
+	topic := "0xdeadbeef"
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "somedata"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(result))
+	}
+}
+
+func TestRedactLogs_RedactedStripsTopicsAndData(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+	})
+
+	topic0 := "0xabcd"
+	topic1 := "0x1234"
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic0, Topic1: &topic1, Data: "encoded_data"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	l := result[0]
+	if l.Address != "[PRIVATE]" {
+		t.Errorf("Address should be [PRIVATE], got %s", l.Address)
+	}
+	if l.Topic0 != nil {
+		t.Errorf("Topic0 should be nil")
+	}
+	if l.Topic1 != nil {
+		t.Errorf("Topic1 should be nil")
+	}
+	if l.Data != "" {
+		t.Errorf("Data should be stripped, got %s", l.Data)
+	}
+}
+
+func TestRedactLogs_FullUnchanged(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+	})
+
+	topic := "0xabcd"
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0xff"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Address != addr {
+		t.Errorf("Address should be unchanged, got %s", result[0].Address)
+	}
+	if *result[0].Topic0 != topic {
+		t.Errorf("Topic0 should be unchanged, got %s", *result[0].Topic0)
+	}
+	if result[0].Data != "0xff" {
+		t.Errorf("Data should be unchanged, got %s", result[0].Data)
+	}
+}
+
+func TestRedactLogs_DBError(t *testing.T) {
+	engine := newEngineErr(errors.New("db error"))
+	logs := []Log{{ID: 1, Address: "0xaa", Data: "data"}}
+	_, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactAddress
+// ---------------------------------------------------------------------------
+
+func TestRedactAddress_Full(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+	})
+
+	result, err := engine.RedactAddress(context.Background(), addr, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != addr {
+		t.Errorf("expected %s, got %s", addr, result)
+	}
+}
+
+func TestRedactAddress_Redacted(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+	})
+
+	result, err := engine.RedactAddress(context.Background(), addr, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "[PRIVATE]" {
+		t.Errorf("expected [PRIVATE], got %s", result)
+	}
+}
+
+func TestRedactAddress_Pseudonymous(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityPseudonymous,
+	})
+
+	result, err := engine.RedactAddress(context.Background(), addr, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := GeneratePseudonym(addr)
+	if result != expected {
+		t.Errorf("expected %s, got %s", expected, result)
+	}
+}
+
+func TestRedactAddress_Hidden(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+	})
+
+	result, err := engine.RedactAddress(context.Background(), addr, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "[PRIVATE]" {
+		t.Errorf("expected [PRIVATE] for hidden, got %s", result)
+	}
+}
+
+func TestRedactAddress_DBError(t *testing.T) {
+	engine := newEngineErr(errors.New("db error"))
+	result, err := engine.RedactAddress(context.Background(), "0xaa", "did:test")
+	if err == nil {
+		t.Error("expected error")
+	}
+	if result != "[REDACTED]" {
+		t.Errorf("expected [REDACTED] fallback on error, got %s", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactTokenHolders
+// ---------------------------------------------------------------------------
+
+func TestRedactTokenHolders_Empty(t *testing.T) {
+	engine := newEngine(nil)
+	result, err := engine.RedactTokenHolders(context.Background(), nil, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil")
+	}
+}
+
+func TestRedactTokenHolders_HiddenDrops(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+	})
+
+	holders := []TokenHolder{{Address: addr, Balance: "100"}}
+	result, err := engine.RedactTokenHolders(context.Background(), holders, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 holders, got %d", len(result))
+	}
+}
+
+func TestRedactTokenHolders_RedactedMasksAddress(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+	})
+
+	holders := []TokenHolder{{Address: addr, Balance: "200", Percentage: 5.5}}
+	result, err := engine.RedactTokenHolders(context.Background(), holders, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Address != "[PRIVATE]" {
+		t.Errorf("Address should be [PRIVATE], got %s", result[0].Address)
+	}
+	// Balance not stripped for token holders — only address masked
+	if result[0].Balance != "200" {
+		t.Errorf("Balance should be unchanged, got %s", result[0].Balance)
+	}
+}
+
+func TestRedactTokenHolders_FullUnchanged(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+	})
+
+	holders := []TokenHolder{{Address: addr, Balance: "300", Percentage: 10.0}}
+	result, err := engine.RedactTokenHolders(context.Background(), holders, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Address != addr {
+		t.Errorf("Address should be unchanged, got %s", result[0].Address)
+	}
+}
+
+func TestRedactTokenHolders_DBError(t *testing.T) {
+	engine := newEngineErr(errors.New("db error"))
+	holders := []TokenHolder{{Address: "0xaa", Balance: "1"}}
+	_, err := engine.RedactTokenHolders(context.Background(), holders, "did:test")
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// applyRedaction (via RedactAddress — indirect testing)
+// ---------------------------------------------------------------------------
+
+func TestApplyRedaction_DefaultFallback(t *testing.T) {
+	// An address not in the map returns zero value VisibilityLevel (""),
+	// which hits the default case in applyRedaction and returns "[PRIVATE]"
+	engine := newEngine(VisibilityMap{}) // empty map
+	result, err := engine.RedactAddress(context.Background(), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "[PRIVATE]" {
+		t.Errorf("unknown visibility should default to [PRIVATE], got %s", result)
+	}
+}

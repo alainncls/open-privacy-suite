@@ -114,7 +114,14 @@ If the user lacks a valid ProofOfHumanity credential the server responds with **
 
 ## ETH Address Linking
 
-Users can link Ethereum addresses to their DID after authentication using EIP-191 signatures.
+Users can link Ethereum addresses to their DID. There are two link types:
+
+- **User-initiated link** (`link_type: user`) — the user proves ownership by signing an EIP-191 challenge. This is the explicit, user-controlled flow.
+- **System-inferred link** (`link_type: system`) — when a user submits a signed transaction (`eth_sendRawTransaction`) and the proxy forwards it successfully, the sender address (cryptographically recovered from the transaction signature) is automatically linked to the user's DID. This enables response filters to recognise transactions without requiring a separate linking step.
+
+User-initiated links take precedence over system-inferred links when both exist for the same address.
+
+### User-Initiated Linking
 
 <Step number={1} title="Request challenge">
 
@@ -157,6 +164,16 @@ The user signs the message with their Ethereum wallet (MetaMask, etc.) using `pe
 <ApiEndpoint method="DELETE" path="/eth/addresses/:address" description="Unlink an address (JWT required)" />
 
 </Step>
+
+### Address Collision Detection
+
+A single ETH address can be linked by more than one DID — for example, a shared deployer wallet used by a team, or a key-compromise event. When this occurs, the system:
+
+1. **Allows the link** — shared keys are a legitimate pattern (multi-sig, shared deployer, team wallet).
+2. **Emits a SIEM event** with elevated severity (`eth_address_linked_collision`) so administrators can review.
+3. **Surfaces collisions in the admin dashboard** — administrators can view all addresses linked to multiple DIDs at `GET /api/v1/admin/eth-addresses/collisions`.
+
+If a collision is judged to be a key-compromise event rather than intentional sharing, the administrator can revoke the unwanted link.
 
 ---
 

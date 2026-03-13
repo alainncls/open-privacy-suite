@@ -255,6 +255,27 @@ func (d *DB) GetContractDeployerByAddress(ctx context.Context, address string) (
 	return &deployerID.String, nil
 }
 
+// ViewerHasContractAccess checks if a user (identified by DID) is a member of any group
+// that has a contract grant for the given contract ID.
+func (d *DB) ViewerHasContractAccess(ctx context.Context, viewerDID, contractID string) (bool, error) {
+	query := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM contract_grants cg
+			JOIN user_memberships m ON m.group_id = cg.group_id
+			JOIN users u ON u.id = m.user_id
+			WHERE cg.contract_id = $1
+			  AND u.external_id = $2
+			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		)`
+	var exists bool
+	err := d.conn.QueryRowContext(ctx, query, contractID, viewerDID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func scanContract(row *sql.Row) (*rbac.Contract, error) {
 	contract := &rbac.Contract{}
 	var name, abi sql.NullString

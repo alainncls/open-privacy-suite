@@ -299,3 +299,15 @@ func (s *Server) getCacheStats(c *gin.Context) {
 	stats := s.rbacAccessCtrl.CacheStats()
 	c.JSON(http.StatusOK, stats)
 }
+
+// getEthAddressCollisions lists ETH addresses linked to more than one DID.
+// These may indicate intentional key sharing (e.g. shared deployer wallets)
+// or a key-compromise event and should be reviewed by an administrator.
+func (s *Server) getEthAddressCollisions(c *gin.Context) {
+	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"collisions": collisions, "count": len(collisions)})
+}

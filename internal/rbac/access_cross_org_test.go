@@ -68,6 +68,7 @@ func (m *MockCrossOrgStore) DeleteUser(ctx context.Context, id string) error { r
 func (m *MockCrossOrgStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
 }
+func (m *MockCrossOrgStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
 
 // Organization operations
 func (m *MockCrossOrgStore) GetOrganization(ctx context.Context, id string) (*Organization, error) {

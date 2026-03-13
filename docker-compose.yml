@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
-      - proxy-network
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -23,10 +23,13 @@ services:
     image: ghcr.io/foundry-rs/foundry:latest
     ports:
       - "127.0.0.1:8545:8545"
-    networks:
-      - proxy-network
     # --steps-tracing enables debug_traceCall support for runtime validation
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing"]
+    networks:
+      internal:
+      shared:
+        aliases:
+          - privacy-proxy-anvil
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
       interval: 5s
@@ -58,6 +61,8 @@ services:
       - ENABLE_RUNTIME_TRACING=true  # Enable runtime tracing for cross-org isolation validation (validates dynamic calls at execution time)
       - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
       - DISABLE_COINGECKO=${DISABLE_COINGECKO:-false}  # Set true to disable CoinGecko price fetching
+      - EXPLORER_DATABASE_URL=${EXPLORER_DATABASE_URL:-postgres://postgres:postgres@explorer-postgres:5432/explorer?sslmode=disable}
+      - FRONTEND_URL=http://localhost:5173
       - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
       - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
       - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
@@ -67,7 +72,10 @@ services:
       anvil:
         condition: service_healthy
     networks:
-      - proxy-network
+      internal:
+      shared:
+        aliases:
+          - privacy-proxy-backend
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -97,11 +105,16 @@ services:
       proxy-backend:
         condition: service_started
     networks:
-      - proxy-network
+      - internal
 
 volumes:
   postgres-data:
 
 networks:
-  proxy-network:
+  # Internal network — privacy-proxy services only (postgres, backend, anvil, frontend)
+  internal:
+    driver: bridge
+  # Shared network — block-explorer connects here to reach backend and anvil
+  shared:
+    name: privacy-proxy_proxy-network
     driver: bridge

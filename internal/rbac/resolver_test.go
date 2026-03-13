@@ -278,6 +278,7 @@ func (m *MockStore) DeleteContractGrant(ctx context.Context, id string) error { 
 func (m *MockStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return nil, nil
 }
+func (m *MockStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
 func (m *MockStore) CleanupExpiredCache(ctx context.Context) (int64, error)         { return 0, nil }
 func (m *MockStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) {

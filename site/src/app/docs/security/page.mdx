@@ -203,10 +203,21 @@ Users can be members of multiple organizations. The system:
 
 ### ETH Address Linking Security
 
+**User-initiated links (explicit flow):**
 - One-time nonce challenges with a 5-minute TTL
 - EIP-191 signature verification
 - Challenge bound to the user's DID
-- Nonce consumed on verification
+- Nonce consumed on verification (replay-proof)
+
+**System-inferred links (`eth_sendRawTransaction` only):**
+- Sender address is **cryptographically recovered** from the raw transaction signature — it cannot be forged
+- Only `eth_sendRawTransaction` is eligible; `eth_sendTransaction` is excluded because the `from` field would come from user-supplied parameters rather than signature recovery
+- If a system-inferred link already exists and the user later completes an explicit link for the same address, the link is upgraded to `link_type: user`
+
+**Multiple DIDs per address:**
+- A single ETH address can be linked to more than one DID (shared deployer wallets, team keys)
+- When a new link would create a collision, a SIEM event `eth_address_linked_collision` is emitted with elevated severity
+- Administrators can review collisions at `GET /api/v1/admin/eth-addresses/collisions` and revoke unexpected links
 
 ---
 
@@ -333,7 +344,8 @@ When a user first authenticates via Azure AD, their `auth_tenant_id` is set in t
 - [ ] Configure rate limits appropriate for your use case
 - [ ] If using `SIEM_WEBHOOK_URL`: ensure the endpoint is covered by a data processing agreement (audit events contain user DIDs and IP addresses, which are PII under GDPR)
 - [ ] If using `AUDIT_LOG_PARAMS=true`: review which RPC methods your users call (params for methods not explicitly handled by `RedactParams` are logged verbatim)
-- [ ] Ensure users link their ETH addresses via `POST /eth/link/challenge` + `POST /eth/link/verify` (required for response-filtered methods to return data)
+- [ ] Ensure users link their ETH addresses via `POST /eth/link/challenge` + `POST /eth/link/verify` (required for response-filtered methods to return data; sender addresses from `eth_sendRawTransaction` are linked automatically)
+- [ ] Review `GET /api/v1/admin/eth-addresses/collisions` periodically to detect unexpected shared-address situations
 
 ---
 

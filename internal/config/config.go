@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ type Config struct {
 	Version                    string // Set by cmd/server/main.go from build-time constant
 	NodeURL                    string
 	DatabaseURL                string
+	ExplorerDatabaseURL        string
 	PrivadoRPCURL              string
 	IPFSGateway                string
 	JWTSecret                  string
@@ -45,7 +47,7 @@ type Config struct {
 	// Token price fetching configuration
 	PriceFetchInterval      time.Duration // How often to fetch prices from CoinGecko (default: 5m)
 	PriceStalenessThreshold time.Duration // After this duration, prices are considered stale (default: 15m)
-	DisableCoinGecko bool // If true, disable CoinGecko price fetching (default: false)
+	DisableCoinGecko        bool          // If true, disable CoinGecko price fetching (default: false)
 
 	// Audit configuration
 	AuditLogParams bool // If true, log redacted request parameters in access_logs (default: false)
@@ -58,9 +60,9 @@ type Config struct {
 	RetentionCleanupInterval time.Duration // How often retention cleanup runs (default: 1 hour)
 
 	// SIEM webhook configuration
-	SIEMWebhookURL    string        // SIEM webhook endpoint (empty = disabled)
-	SIEMAuthHeader    string        // Authorization header for SIEM webhook
-	SIEMBatchSize     int           // Events per SIEM batch (default: 100)
+	SIEMWebhookURL      string        // SIEM webhook endpoint (empty = disabled)
+	SIEMAuthHeader      string        // Authorization header for SIEM webhook
+	SIEMBatchSize       int           // Events per SIEM batch (default: 100)
 	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
 	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
 
@@ -69,6 +71,10 @@ type Config struct {
 
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
+
+	// Frontend URL for OAuth redirect (e.g., http://localhost:5173)
+	// When set, /oauth/authorize redirects browsers to the React login page instead of serving inline HTML.
+	FrontendURL string
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -186,7 +192,7 @@ func Load() *Config {
 	auditLogParams := getEnv("AUDIT_LOG_PARAMS", "false") == "true"
 
 	// Retention policy configuration
-	retentionAccessLogs := parseDurationEnv("RETENTION_ACCESS_LOGS", 90*24*time.Hour)       // 90 days
+	retentionAccessLogs := parseDurationEnv("RETENTION_ACCESS_LOGS", 90*24*time.Hour)            // 90 days
 	retentionComplianceLogs := parseDurationEnv("RETENTION_COMPLIANCE_LOGS", 7*365*24*time.Hour) // ~7 years
 	retentionRBACAuditLogs := parseDurationEnv("RETENTION_RBAC_AUDIT_LOGS", 365*24*time.Hour)    // 1 year
 	retentionTravelRecords := parseDurationEnv("RETENTION_TRAVEL_RECORDS", 7*365*24*time.Hour)   // ~7 years
@@ -204,50 +210,52 @@ func Load() *Config {
 	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
 
 	return &Config{
-		NodeURL:                    getEnv("NODE_URL", "http://localhost:8545"),
-		DatabaseURL:                getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
-		PrivadoRPCURL:              getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
-		IPFSGateway:                getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
-		JWTSecret:                  getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
-		JWTRefreshSecret:           getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
-		VerifierID:                 getEnv("VERIFIER_ID", ""),                                     // Required in production
-		BaseURL:                    getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
-		Port:                       getEnv("PORT", "8080"),                                        // Server port
-		Environment:                env,
-		BillionsIssuerDID:          getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
-		RequireProofOfHumanity:     requirePoHBool,
-		AdminAPIToken:              getEnv("ADMIN_API_TOKEN", ""),
-		ENSResolverURL:             getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
-		CORSAllowedOrigins:         corsOrigins,
-		MockSignatures:             mockSigs,
-		AllowMockLogin:             allowMockLogin,
-		DemoAutoAuthDelay:          demoDelay,
-		TrustedFactoryHashes:       trustedFactoryHashes,
-		EnableRuntimeTracing:       enableTracing,
-		TraceCacheTTL:              traceCacheTTL,
-		TraceTimeout:               traceTimeout,
-		TraceTieredValidation:      traceTiered,
-		EnableTravelRule:           enableTravelRule,
-		TravelRecordExpiry:         travelRecordExpiry,
-		PriceFetchInterval:         priceFetchInterval,
-		PriceStalenessThreshold:    priceStalenessThreshold,
-		DisableCoinGecko:           disableCoinGecko,
-		AuditLogParams:             auditLogParams,
-		RetentionAccessLogs:        retentionAccessLogs,
-		RetentionComplianceLogs:    retentionComplianceLogs,
-		RetentionRBACAuditLogs:     retentionRBACAuditLogs,
-		RetentionTravelRecords:     retentionTravelRecords,
-		RetentionCleanupInterval:   retentionCleanupInterval,
-		SIEMWebhookURL:             siemWebhookURL,
-		SIEMAuthHeader:             siemAuthHeader,
-		SIEMBatchSize:              siemBatchSize,
-		SIEMFlushInterval:          siemFlushInterval,
-		SIEMFallbackLogPath:        getEnv("SIEM_FALLBACK_LOG_PATH", ""),
-		TunnelURLFile:              getEnv("TUNNEL_URL_FILE", ""),
-		TrustedProxies:             getSliceEnv("TRUSTED_PROXIES", ","),
-		AzureADClientID:            getEnv("AZURE_AD_CLIENT_ID", ""),
-		AzureADClientSecret:        getEnv("AZURE_AD_CLIENT_SECRET", ""),
-		AzureADTenantID:            getEnv("AZURE_AD_TENANT_ID", "common"),
+		NodeURL:                  getEnv("NODE_URL", "http://localhost:8545"),
+		DatabaseURL:              getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
+		PrivadoRPCURL:            getEnv("PRIVADO_RPC_URL", "https://rpc-mainnet.privado.id"),
+		IPFSGateway:              getEnv("IPFS_GATEWAY", "https://ipfs-proxy-cache.privado.id"), // IPFS gateway for schema resolution
+		JWTSecret:                getEnv("JWT_SECRET", ""),                                      // If empty, will be auto-generated (dev only)
+		JWTRefreshSecret:         getEnv("JWT_REFRESH_SECRET", ""),                              // If empty, will be auto-generated (dev only)
+		VerifierID:               getEnv("VERIFIER_ID", ""),                                     // Required in production
+		BaseURL:                  getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
+		Port:                     getEnv("PORT", "8080"),                                        // Server port
+		Environment:              env,
+		BillionsIssuerDID:        getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
+		RequireProofOfHumanity:   requirePoHBool,
+		AdminAPIToken:            getEnv("ADMIN_API_TOKEN", ""),
+		ENSResolverURL:           getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
+		CORSAllowedOrigins:       corsOrigins,
+		MockSignatures:           mockSigs,
+		AllowMockLogin:           allowMockLogin,
+		DemoAutoAuthDelay:        demoDelay,
+		TrustedFactoryHashes:     trustedFactoryHashes,
+		EnableRuntimeTracing:     enableTracing,
+		TraceCacheTTL:            traceCacheTTL,
+		TraceTimeout:             traceTimeout,
+		TraceTieredValidation:    traceTiered,
+		EnableTravelRule:         enableTravelRule,
+		TravelRecordExpiry:       travelRecordExpiry,
+		PriceFetchInterval:       priceFetchInterval,
+		PriceStalenessThreshold:  priceStalenessThreshold,
+		DisableCoinGecko:         disableCoinGecko,
+		AuditLogParams:           auditLogParams,
+		RetentionAccessLogs:      retentionAccessLogs,
+		RetentionComplianceLogs:  retentionComplianceLogs,
+		RetentionRBACAuditLogs:   retentionRBACAuditLogs,
+		RetentionTravelRecords:   retentionTravelRecords,
+		RetentionCleanupInterval: retentionCleanupInterval,
+		SIEMWebhookURL:           siemWebhookURL,
+		SIEMAuthHeader:           siemAuthHeader,
+		SIEMBatchSize:            siemBatchSize,
+		SIEMFlushInterval:        siemFlushInterval,
+		SIEMFallbackLogPath:      getEnv("SIEM_FALLBACK_LOG_PATH", ""),
+		ExplorerDatabaseURL:      getEnv("EXPLORER_DATABASE_URL", ""),
+		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
+		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
+		FrontendURL:              getEnv("FRONTEND_URL", ""),
+		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
+		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
+		AzureADTenantID:          getEnv("AZURE_AD_TENANT_ID", "common"),
 	}
 }
 
@@ -305,6 +313,17 @@ func (c *Config) Validate() error {
 	if c.SIEMWebhookURL != "" {
 		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
 			return err
+		}
+	}
+
+	// Validate FrontendURL if set: must be a valid HTTPS URL in production.
+	if c.FrontendURL != "" {
+		parsed, err := url.Parse(c.FrontendURL)
+		if err != nil || parsed.Host == "" {
+			return errors.New("FRONTEND_URL must be a valid URL (e.g. https://proxy.example.com)")
+		}
+		if parsed.Scheme != "https" {
+			return errors.New("FRONTEND_URL must use HTTPS in production")
 		}
 	}
 

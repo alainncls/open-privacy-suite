@@ -1,0 +1,156 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Block Explorer Integration",
+  description:
+    "Documentation for the centralized Block Explorer architecture and Dual-Mode data retrieval.",
+};
+
+# Block Explorer Integration
+
+The Privacy Proxy provides a centralized, privacy-governed data gateway for the Block Explorer. This architecture ensures that all blockchain data indexed and displayed by the explorer is subject to the same RBAC and privacy policies as direct JSON-RPC traffic.
+
+## Architecture Overview
+
+The integration uses a **Dual-Mode** architecture, allowing the Block Explorer to operate either as a standalone tool or as a privacy-enhanced component of the Privacy Proxy ecosystem.
+
+```mermaid
+graph TD
+    User["User / Frontend"]
+    BE["Block Explorer Backend<br/><small>DataProvider Abstraction</small>"]
+    Proxy["Privacy Proxy<br/><small>Explorer API + RBAC</small>"]
+    DB["Explorer Database<br/><small>Blocks, Txs, Stats</small>"]
+    Eth["Ethereum Node<br/><small>Erigon / Anvil</small>"]
+
+    User --> BE
+    BE -->|"Proxy Mode (REST)"| Proxy
+    BE -->|"Standalone Mode (Direct)"| DB
+    Proxy --> DB
+    Proxy --> Eth
+
+    style Proxy stroke:#8950FA,stroke-width:2px
+    style BE stroke:#3b82f6,stroke-width:2px
+```
+
+## Dual-Mode Operation
+
+The Block Explorer backend implements a `DataProvider` interface that abstracts data retrieval.
+
+### 1. Standalone Mode (Direct)
+In this mode, the explorer connects directly to its own PostgreSQL database and the Ethereum node. This is suitable for development or deployments where centralized privacy enforcement is not required.
+
+### 2. Proxy-Mediated Mode (Centralized)
+In this mode, the explorer backend acts as a client to the Privacy Proxy. It fetches all processed blockchain data via the **Explorer Data API**.
+
+<Callout type="important">
+  **Proxy Mode benefits**: All data is filtered according to the user's RBAC
+  permissions. Sensitive addresses can be redacted or pseudonymized before they
+  even reach the explorer frontend.
+</Callout>
+
+## Explorer Data API
+
+The Privacy Proxy exposes a set of internal REST endpoints specifically for the explorer. These endpoints are typically protected and intended for use by the explorer backend.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/explorer/blocks` | List recent blocks with pagination |
+| `GET /api/explorer/blocks/:number` | Get detailed block information |
+| `GET /api/explorer/transactions` | List recent transactions |
+| `GET /api/explorer/addresses/:addr/stats` | Get address-specific activity stats |
+| `GET /api/explorer/sync/status` | Get indexer synchronization levels |
+
+## Identity Forwarding
+
+When operating in Proxy Mode, the Block Explorer forwards the user's **JWT Identity** to the Privacy Proxy. This allows the Proxy to:
+
+1. **Identify the User**: Determine which organization and group the user belongs to.
+2. **Apply Policies**: Filter transactions or blocks that the user is not authorized to see.
+3. **Audit Access**: Log every data retrieval request for compliance reporting.
+
+## Configuration
+
+To enable Proxy Mode in the Block Explorer, set the following environment variables:
+
+```bash
+# In Block Explorer environment
+DATA_PROVIDER_MODE=proxy
+PRIVACY_PROXY_URL=http://privacy-proxy:8080
+```
+
+To enable the Explorer API in the Privacy Proxy:
+
+```bash
+# In Privacy Proxy environment
+EXPLORER_DATABASE_URL=postgres://user:pass@explorer-db:5432/explorer
+```
+
+## Authentication / Login Flow
+
+When Privacy Mode is enabled, the Block Explorer uses Privacy Proxy as its **Identity Provider** via an OAuth 2.0 authorization code flow. There is only one login page — hosted by Privacy Proxy — and the Block Explorer simply redirects users to it.
+
+```mermaid
+sequenceDiagram
+    participant U as User Browser
+    participant BE as Block Explorer
+    participant PP as Privacy Proxy
+
+    U->>BE: Click "Sign In"
+    BE->>U: 302 → GET /oauth/authorize (Privacy Proxy)
+    U->>PP: GET /oauth/authorize?client_id=...&redirect_uri=...
+    PP->>U: 302 → /login?oauth_session=XXX (Privacy Proxy frontend)
+    U->>PP: Loads login page (QR code or Mock Login in dev)
+    Note over U,PP: User scans QR with Privado wallet,<br/>or clicks Mock Login in dev mode
+    PP->>U: 302 → {redirect_uri}?code=YYY&state=ZZZ (Block Explorer callback)
+    U->>BE: GET /api/auth/callback?code=YYY&state=ZZZ
+    BE->>PP: POST /oauth/token (exchange code for JWT)
+    BE->>U: Set JWT cookie, redirect to explorer
+```
+
+The Block Explorer never handles authentication directly — all credential verification happens inside Privacy Proxy.
+
+### Configuration
+
+| Variable (Privacy Proxy) | Description |
+|--------------------------|-------------|
+| `FRONTEND_URL` | URL of the Privacy Proxy frontend (e.g. `http://localhost:5173`). When set, browser OAuth requests redirect to the React login page instead of serving inline HTML. Must be HTTPS in production. |
+| `ALLOW_MOCK_LOGIN` | Set `true` in development to show a "Mock Login (Skip Wallet)" button on the login page. **Never enable in production.** |
+
+| Variable (Block Explorer) | Description |
+|---------------------------|-------------|
+| `PRIVACY_ENABLED` | Set `true` to show the Sign In button and enable SSO. |
+| `PRIVACY_PROXY_URL` | Internal URL used by the Block Explorer backend for API calls (e.g. `http://privacy-proxy-proxy-backend-1:8080`). |
+| `PRIVACY_PROXY_PUBLIC_URL` | Browser-accessible URL used to construct the OAuth redirect (e.g. `http://localhost:8080`). Defaults to `PRIVACY_PROXY_URL`. |
+| `SSO_CLIENT_ID` | OAuth client identifier sent in the authorize request. Defaults to `explorer`. |
+| `SSO_REDIRECT_URI` | Callback URL for the Block Explorer after OAuth completes (e.g. `http://localhost:3001/api/auth/callback`). |
+
+### Development Setup
+
+Start Privacy Proxy first, then Block Explorer:
+
+```bash
+# Privacy Proxy (with mock login enabled)
+docker compose -p privacy-proxy up -d
+
+# Block Explorer (joins privacy-proxy network)
+PRIVACY_ENABLED=true \
+PRIVACY_PROXY_URL=http://privacy-proxy-proxy-backend-1:8080 \
+PRIVACY_PROXY_PUBLIC_URL=http://localhost:8080 \
+docker compose up -d
+```
+
+<Callout type="note">
+  The `PRIVACY_PROXY_URL` and `PRIVACY_PROXY_PUBLIC_URL` serve different purposes.
+  `PRIVACY_PROXY_URL` is the Docker-internal hostname used for backend-to-backend API calls.
+  `PRIVACY_PROXY_PUBLIC_URL` is the address the **browser** uses for the OAuth redirect —
+  it must be reachable by the user's browser, typically `http://localhost:8080`.
+</Callout>
+
+## Feature Separation
+
+For development and maintenance, the Explorer API feature is maintained on a dedicated branch:
+
+- **Primary Branch**: `fix/production-readiness-gaps` (Core security and proxy logic)
+- **Feature Branch**: `feat/explorer-api` (Explorer-specific API and DB integrations)
+
+This ensures that the core proxy remains lightweight for deployments that do not require block explorer integration.

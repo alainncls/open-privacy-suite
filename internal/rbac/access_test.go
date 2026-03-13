@@ -2649,6 +2649,7 @@ func newParamConstraintStore() *paramConstraintStore {
 func (s *paramConstraintStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) {
 	return s.linkedAddresses[did], nil
 }
+func (s *paramConstraintStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
 
 func (s *paramConstraintStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
 	key := orgID + ":" + strings.ToLower(address)
@@ -3255,6 +3256,207 @@ func TestAnonymousAccess(t *testing.T) {
 				if !strings.Contains(result.Reason, "authentication required") &&
 					!strings.Contains(result.Reason, "globally blocked") {
 					t.Errorf("expected reason to contain 'authentication required' or 'globally blocked', got: %s", result.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestFunctionSelectorGateOnlyForCallMethods covers the bug where the
+// "function selector required" check was incorrectly applied to methods
+// that never produce a function selector (eth_getCode). This caused
+// eth_getCode access to depend on ABI registration rather than AllowedMethods.
+//
+// Security vectors covered:
+//  1. eth_getCode with ABI registered must be allowed (not accidentally blocked)
+//  2. eth_getCode without ABI must be allowed (consistent with #1)
+//  3. eth_getCode NOT in AllowedMethods must be denied regardless of ABI
+//  4. eth_call without selector + ABI registered must still be denied (no regression)
+//  5. eth_call without selector + no ABI must be allowed (no regression)
+//  6. eth_estimateGas and eth_sendTransaction have the same selector gate (no regression)
+func TestFunctionSelectorGateOnlyForCallMethods(t *testing.T) {
+	const (
+		contractAddr = "0xcontract000000000000000000000000000000001"
+		userDID      = "did:test:user1"
+	)
+
+	someABIFunctions := []FunctionRule{
+		{Selector: "0xa9059cbb"}, // transfer(address,uint256)
+	}
+
+	tests := []struct {
+		name           string
+		allowedMethods []string
+		functions      []FunctionRule // nil = no ABI, non-nil = ABI with restrictions
+		method         string
+		params         []any
+		expectAllowed  bool
+		expectReason   string
+	}{
+		// --- eth_getCode: access must depend ONLY on AllowedMethods, not ABI ---
+		{
+			name:           "eth_getCode allowed when in AllowedMethods, no ABI",
+			allowedMethods: []string{"eth_getCode"},
+			functions:      nil,
+			method:         "eth_getCode",
+			params:         []any{contractAddr, "latest"},
+			expectAllowed:  true,
+		},
+		{
+			name:           "eth_getCode allowed when in AllowedMethods, ABI registered",
+			allowedMethods: []string{"eth_getCode"},
+			functions:      someABIFunctions, // ABI registered — must NOT block eth_getCode
+			method:         "eth_getCode",
+			params:         []any{contractAddr, "latest"},
+			expectAllowed:  true,
+		},
+		{
+			name:           "eth_getCode denied when NOT in AllowedMethods, no ABI",
+			allowedMethods: []string{"eth_call"}, // eth_getCode absent
+			functions:      nil,
+			method:         "eth_getCode",
+			params:         []any{contractAddr, "latest"},
+			expectAllowed:  false,
+			expectReason:   "not allowed",
+		},
+		{
+			name:           "eth_getCode denied when NOT in AllowedMethods, ABI registered",
+			allowedMethods: []string{"eth_call"}, // eth_getCode absent
+			functions:      someABIFunctions,
+			method:         "eth_getCode",
+			params:         []any{contractAddr, "latest"},
+			expectAllowed:  false,
+			expectReason:   "not allowed",
+		},
+		{
+			name:           "eth_getCode denied with empty AllowedMethods regardless of ABI",
+			allowedMethods: []string{},
+			functions:      nil,
+			method:         "eth_getCode",
+			params:         []any{contractAddr, "latest"},
+			expectAllowed:  false,
+		},
+
+		// --- eth_call: selector gate must still apply (regression guard) ---
+		{
+			name:           "eth_call without selector, ABI registered — denied (selector required)",
+			allowedMethods: []string{"eth_call"},
+			functions:      someABIFunctions,
+			method:         "eth_call",
+			params:         []any{map[string]any{"to": contractAddr}, "latest"},
+			expectAllowed:  false,
+			expectReason:   "function selector required",
+		},
+		{
+			name:           "eth_call without selector, no ABI — allowed",
+			allowedMethods: []string{"eth_call"},
+			functions:      nil,
+			method:         "eth_call",
+			params:         []any{map[string]any{"to": contractAddr}, "latest"},
+			expectAllowed:  true,
+		},
+		{
+			name:           "eth_call with selector matching ABI — allowed",
+			allowedMethods: []string{"eth_call"},
+			functions:      someABIFunctions,
+			method:         "eth_call",
+			params:         []any{map[string]any{"to": contractAddr, "data": "0xa9059cbb00000000"}, "latest"},
+			expectAllowed:  true,
+		},
+		{
+			name:           "eth_call with selector not in ABI — denied",
+			allowedMethods: []string{"eth_call"},
+			functions:      someABIFunctions,
+			method:         "eth_call",
+			params:         []any{map[string]any{"to": contractAddr, "data": "0xdeadbeef00000000"}, "latest"},
+			expectAllowed:  false,
+			expectReason:   "not allowed",
+		},
+
+		// --- eth_estimateGas: selector gate must apply (regression guard) ---
+		{
+			name:           "eth_estimateGas without selector, ABI registered — denied",
+			allowedMethods: []string{"eth_estimateGas"},
+			functions:      someABIFunctions,
+			method:         "eth_estimateGas",
+			params:         []any{map[string]any{"to": contractAddr}, "latest"},
+			expectAllowed:  false,
+			expectReason:   "function selector required",
+		},
+
+		// --- eth_sendTransaction: selector gate must apply (regression guard) ---
+		{
+			name:           "eth_sendTransaction without selector, ABI registered — denied",
+			allowedMethods: []string{"eth_sendTransaction"},
+			functions:      someABIFunctions,
+			method:         "eth_sendTransaction",
+			params:         []any{map[string]any{"to": contractAddr}},
+			expectAllowed:  false,
+			expectReason:   "function selector required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newParamConstraintStore()
+
+			org := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+			store.organizations["org-a"] = org
+
+			user := &User{ID: "user-1", ExternalID: userDID, KYC: true, Banned: false}
+			store.users[userDID] = user
+
+			group := &Group{ID: "group-a", OrgID: "org-a", Slug: "group-a", Name: "Group A"}
+			store.memberships["user-1"] = []*MembershipWithDetails{
+				{Membership: &UserMembership{ID: "mem-1", UserID: "user-1", GroupID: "group-a"}, Group: group},
+			}
+
+			addr := strings.ToLower(contractAddr)
+			store.contractOwners[addr] = "org-a"
+			store.registeredToAnyOrg[addr] = true
+			store.addressOwnedByOrg[addr] = map[string]bool{"org-a": true}
+
+			store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
+				ID:             "perms-1",
+				UserID:         "user-1",
+				OrgID:          "org-a",
+				AllowedMethods: tt.allowedMethods,
+				ContractAccess: map[string]ContractAccess{
+					addr: {
+						Claims:    []Claim{ClaimRead, ClaimWrite},
+						Functions: tt.functions,
+					},
+				},
+				Claims:     []Claim{ClaimRead, ClaimWrite},
+				ComputedAt: time.Now(),
+				ExpiresAt:  time.Now().Add(time.Hour),
+			}
+
+			controller := NewAccessController(store, 5*time.Minute)
+
+			// Mirror what jsonrpc_processor does: extract selector from params before CheckAccess.
+			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID:   userDID,
+				Method:           tt.method,
+				Params:           tt.params,
+				TargetAddress:    contractAddr,
+				FunctionSelector: GetFunctionSelector(tt.method, tt.params),
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Allowed != tt.expectAllowed {
+				if tt.expectAllowed {
+					t.Errorf("expected allowed, got denied: %s", result.Reason)
+				} else {
+					t.Errorf("expected denied, got allowed")
+				}
+			}
+			if !tt.expectAllowed && tt.expectReason != "" {
+				if !strings.Contains(result.Reason, tt.expectReason) {
+					t.Errorf("reason = %q, want it to contain %q", result.Reason, tt.expectReason)
 				}
 			}
 		})

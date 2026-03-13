@@ -384,6 +384,13 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// NOTE: eth_sendTransaction is NOT system-linked here. Unlike eth_sendRawTransaction,
+	// the `from` field comes from user-supplied params and is not cryptographically verified
+	// by the proxy — only the Ethereum node verifies that the account is unlocked.
+	// In a shared-node environment (e.g., Anvil with multiple unlocked accounts), a user
+	// could forge any unlocked address as `from`. System-linking is only safe for
+	// eth_sendRawTransaction where the sender is recovered from the signature.
+
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
@@ -904,6 +911,13 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 				context.Background(), rawTxPlainCreateAddr); delErr != nil {
 				slog.Warn("failed to clean up plain CREATE pre-registration", "address", rawTxPlainCreateAddr, "error", delErr)
 			}
+		}
+	}
+
+	// System-link the sender's ETH address to their DID.
+	if statusCode == http.StatusOK && from != "" && req.UserID != "" {
+		if err := p.rbacAccessCtrl.Store().SystemLinkEthAddress(ctx, req.UserID, from); err != nil {
+			slog.Warn("failed to system-link eth address", "user", req.UserID, "address", from, "error", err)
 		}
 	}
 

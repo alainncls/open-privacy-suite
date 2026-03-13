@@ -754,13 +754,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 			}
 		} else {
-			// No function selector available — check if the contract has function restrictions.
-			// If it does, we must deny because we can't verify the call is allowed.
-			// access.Functions == nil means "all functions allowed" (no restrictions).
-			// access.Functions != nil (including empty) means function restrictions exist:
-			//   - non-empty: specific selectors allowed
-			//   - empty []: explicitly no functions allowed (deny all)
-			if access.Functions != nil {
+			// No function selector available.
+			// Only eth_call, eth_estimateGas, and eth_sendTransaction use function selectors.
+			// For those methods: deny if the contract has function-level restrictions because
+			// we cannot verify which function is being called.
+			// Other methods (eth_getCode, etc.) never produce a selector — applying this
+			// check to them would make access depend on ABI registration rather than the
+			// intended AllowedMethods + claim gates.
+			methodUsesSelector := req.Method == "eth_call" || req.Method == "eth_estimateGas" || req.Method == "eth_sendTransaction"
+			if methodUsesSelector && access.Functions != nil {
 				return &AccessCheckResult{
 					Allowed: false,
 					Reason:  fmt.Sprintf("function selector required: contract %s has function-level restrictions", req.TargetAddress),

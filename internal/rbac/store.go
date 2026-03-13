@@ -70,6 +70,7 @@ type Store interface {
 
 	// ETH Address operations (for parameter constraint enforcement)
 	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)
+	SystemLinkEthAddress(ctx context.Context, did, ethAddress string) error
 
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
