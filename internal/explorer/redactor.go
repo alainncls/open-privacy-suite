@@ -2,15 +2,26 @@ package explorer
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // VisibilityMap maps an address (lowercase) to its resolved visibility level
 type VisibilityMap map[string]VisibilityLevel
 
+// ContractStore is the minimal interface RedactionEngine needs from the explorer store.
+type ContractStore interface {
+	GetContract(ctx context.Context, address string) (*Contract, error)
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
-	store *Store
+	store ContractStore
 	db    Database // The main privacy proxy DB for RBAC checks
 }
 
@@ -85,6 +96,9 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
 			if fromLevel == VisibilityHidden {
 				redactedTx.From = "[PRIVATE]"
+				// Zero out nonce: it reveals the transaction count of a private account,
+				// and sequential nonces across [PRIVATE] transactions could link them to the same account.
+				redactedTx.Nonce = nil
 			} else {
 				redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 			}
@@ -118,6 +132,9 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			redactedTx.InputData = ""
 			redactedTx.Error = nil
 			redactedTx.RevertReason = nil
+			if fromLevel == VisibilityRedacted {
+				redactedTx.Nonce = nil // nonce reveals tx count for private sender
+			}
 		}
 
 		redactedTxs = append(redactedTxs, redactedTx)
@@ -270,15 +287,223 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	return result, nil
 }
 
+// extractTopicAddress checks if a 32-byte topic hex string encodes an address
+// using the standard zero-padding convention (12 zero bytes = 24 zero hex chars prefix after "0x").
+// Returns the lowercase "0x"-prefixed address and true if the pattern matches, otherwise "", false.
+func extractTopicAddress(topic string) (string, bool) {
+	t := strings.ToLower(topic)
+	// Topics are 66 chars: "0x" + 64 hex. Address occupies the last 40 chars.
+	if len(t) != 66 || !strings.HasPrefix(t, "0x") {
+		return "", false
+	}
+	prefix := t[2:26] // 24 hex chars = 12 zero bytes of padding
+	if strings.Trim(prefix, "0") != "" {
+		return "", false
+	}
+	return "0x" + t[26:], true
+}
+
+// redactTopicAddress converts a visibility-redacted embedded address back into a
+// zero-padded 32-byte topic value.
+func redactTopicAddress(addr string, level VisibilityLevel) string {
+	switch level {
+	case VisibilityFull:
+		a := strings.ToLower(strings.TrimPrefix(addr, "0x"))
+		return "0x" + strings.Repeat("0", 24) + a
+	case VisibilityPseudonymous:
+		// GeneratePseudonym returns a human-readable string, not a hex address.
+		// We cannot zero-pad it into a valid 32-byte hex topic, so zero the slot instead.
+		return "0x" + strings.Repeat("0", 64)
+	default: // VisibilityRedacted, VisibilityHidden
+		return "0x" + strings.Repeat("0", 64)
+	}
+}
+
+// redactTopicField redacts a single topic field if it embeds a private address.
+// If the topic does not embed a recognised address pattern it is returned unchanged.
+func redactTopicField(topic *string, visMap VisibilityMap) *string {
+	if topic == nil {
+		return nil
+	}
+	addr, ok := extractTopicAddress(*topic)
+	if !ok {
+		return topic
+	}
+	level := visMap[addr]
+	if level == VisibilityFull {
+		return topic
+	}
+	redacted := redactTopicAddress(addr, level)
+	return &redacted
+}
+
+// extractDataAddresses parses the ABI-encoded Data field of a log and returns the lowercase
+// "0x"-prefixed addresses found in any non-indexed address-typed parameter slots.
+// Returns nil if the ABI cannot be parsed, the event is not found, or no address params exist.
+func extractDataAddresses(data string, contractABI json.RawMessage, topic0 *string) []string {
+	if data == "" || len(contractABI) == 0 || topic0 == nil {
+		return nil
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(string(contractABI)))
+	if err != nil {
+		return nil
+	}
+	// Find the event matching topic0 (keccak256 of its signature).
+	topic0Lower := strings.ToLower(*topic0)
+	var matchedEvent *abi.Event
+	for _, ev := range parsedABI.Events {
+		sig := "0x" + hex.EncodeToString(crypto.Keccak256([]byte(ev.Sig)))
+		if strings.ToLower(sig) == topic0Lower {
+			ev := ev // capture
+			matchedEvent = &ev
+			break
+		}
+	}
+	if matchedEvent == nil {
+		return nil
+	}
+	// Collect non-indexed inputs in declaration order.
+	var nonIndexed []abi.Argument
+	for _, inp := range matchedEvent.Inputs {
+		if !inp.Indexed {
+			nonIndexed = append(nonIndexed, inp)
+		}
+	}
+	if len(nonIndexed) == 0 {
+		return nil
+	}
+
+	// Decode the hex data.
+	dataHex := strings.TrimPrefix(data, "0x")
+	dataBytes, err := hex.DecodeString(dataHex)
+	if err != nil {
+		return nil
+	}
+	// Each non-indexed param occupies a 32-byte slot (for value types).
+	if len(dataBytes) < len(nonIndexed)*32 {
+		return nil
+	}
+
+	var addrs []string
+	for i, inp := range nonIndexed {
+		if inp.Type.T != abi.AddressTy {
+			continue
+		}
+		slot := dataBytes[i*32 : (i+1)*32]
+		// Addresses are right-aligned in a 32-byte slot (12 zero bytes of padding on the left).
+		prefix := slot[:12]
+		allZero := true
+		for _, b := range prefix {
+			if b != 0 {
+				allZero = false
+				break
+			}
+		}
+		if !allZero {
+			continue
+		}
+		addr := common.BytesToAddress(slot[12:]).Hex()
+		addrs = append(addrs, strings.ToLower(addr))
+	}
+	return addrs
+}
+
+// redactLogData scans the ABI-encoded Data field of a log for non-indexed address parameters
+// and zeros any slot whose address is private (non-Full visibility).
+// Returns the original data unchanged if no ABI is registered, the event is not found,
+// no address fields exist, or the data cannot be decoded.
+func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage, topic0 *string, visMap VisibilityMap) string {
+	if data == "" || len(contractABI) == 0 || topic0 == nil {
+		return data
+	}
+	parsedABI, err := abi.JSON(strings.NewReader(string(contractABI)))
+	if err != nil {
+		return data
+	}
+	topic0Lower := strings.ToLower(*topic0)
+	var matchedEvent *abi.Event
+	for _, ev := range parsedABI.Events {
+		sig := "0x" + hex.EncodeToString(crypto.Keccak256([]byte(ev.Sig)))
+		if strings.ToLower(sig) == topic0Lower {
+			ev := ev
+			matchedEvent = &ev
+			break
+		}
+	}
+	if matchedEvent == nil {
+		return data
+	}
+	var nonIndexed []abi.Argument
+	for _, inp := range matchedEvent.Inputs {
+		if !inp.Indexed {
+			nonIndexed = append(nonIndexed, inp)
+		}
+	}
+	if len(nonIndexed) == 0 {
+		return data
+	}
+
+	dataHex := strings.TrimPrefix(data, "0x")
+	dataBytes, err := hex.DecodeString(dataHex)
+	if err != nil {
+		return data
+	}
+	if len(dataBytes) < len(nonIndexed)*32 {
+		return data
+	}
+
+	modified := false
+	for i, inp := range nonIndexed {
+		if inp.Type.T != abi.AddressTy {
+			continue
+		}
+		slot := dataBytes[i*32 : (i+1)*32]
+		prefix := slot[:12]
+		allZero := true
+		for _, b := range prefix {
+			if b != 0 {
+				allZero = false
+				break
+			}
+		}
+		if !allZero {
+			continue
+		}
+		addr := strings.ToLower(common.BytesToAddress(slot[12:]).Hex())
+		level := visMap[addr]
+		if level == VisibilityFull {
+			continue
+		}
+		// Zero out the entire 32-byte slot.
+		for j := i*32; j < (i+1)*32; j++ {
+			dataBytes[j] = 0
+		}
+		modified = true
+	}
+	if !modified {
+		return data
+	}
+	prefix := ""
+	if strings.HasPrefix(data, "0x") || strings.HasPrefix(data, "0X") {
+		prefix = "0x"
+	}
+	return prefix + hex.EncodeToString(dataBytes)
+}
+
 // RedactLogs applies privacy rules to event logs.
 // The log Address field is the contract that emitted the event.
 // Hidden contracts are dropped; pseudonymous/redacted contracts have their address masked
 // and topic/data stripped to prevent correlation.
+// For logs from visible contracts, each topic is additionally scanned for embedded EOA/contract
+// addresses (zero-padded 32-byte form). Any embedded address that is private is zeroed out.
+// When the emitting contract has a registered ABI, the non-indexed Data field is also scanned
+// for address-typed parameters and any private addresses are zeroed.
 func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string) ([]Log, error) {
 	if len(logs) == 0 {
 		return logs, nil
 	}
 
+	// Phase 1: collect emitting contract addresses and do an initial batch lookup.
 	addrMap := make(map[string]bool)
 	for _, l := range logs {
 		if l.Address != "" {
@@ -295,6 +520,88 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		return nil, err
 	}
 
+	// Phase 2: for logs that will be kept with full/pseudonymous disclosure,
+	// scan topics for embedded addresses not yet in visMap.
+	extraAddrMap := make(map[string]bool)
+	for _, l := range logs {
+		level := visMap[strings.ToLower(l.Address)]
+		// Redacted contracts already have all topics stripped; hidden contracts are dropped.
+		if level == VisibilityHidden || level == VisibilityRedacted {
+			continue
+		}
+		for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
+			if t == nil {
+				continue
+			}
+			addr, ok := extractTopicAddress(*t)
+			if !ok {
+				continue
+			}
+			if _, alreadyKnown := visMap[addr]; !alreadyKnown {
+				extraAddrMap[addr] = true
+			}
+		}
+	}
+
+	if len(extraAddrMap) > 0 {
+		extraAddrs := make([]string, 0, len(extraAddrMap))
+		for a := range extraAddrMap {
+			extraAddrs = append(extraAddrs, a)
+		}
+		extraVisMap, err := r.db.GetBatchVisibility(ctx, viewerDID, extraAddrs)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range extraVisMap {
+			visMap[k] = v
+		}
+	}
+
+	// Phase 3: ABI-based data scanning for logs from visible/pseudonymous contracts.
+	// Fetch ABIs for each unique emitter, extract address-typed non-indexed params from
+	// the Data field, and resolve their visibility so they can be zeroed if private.
+	contractABIs := make(map[string]json.RawMessage) // address → ABI (nil if not found)
+	if r.store != nil {
+		abiDataAddrMap := make(map[string]bool)
+		for _, l := range logs {
+			level := visMap[strings.ToLower(l.Address)]
+			if level == VisibilityHidden || level == VisibilityRedacted || l.Data == "" || l.Topic0 == nil {
+				continue
+			}
+			addrKey := strings.ToLower(l.Address)
+			if _, cached := contractABIs[addrKey]; !cached {
+				contract, err2 := r.store.GetContract(ctx, addrKey)
+				if err2 != nil || contract == nil {
+					contractABIs[addrKey] = nil
+				} else {
+					contractABIs[addrKey] = contract.ABI
+				}
+			}
+			if len(contractABIs[addrKey]) == 0 {
+				continue
+			}
+			for _, a := range extractDataAddresses(l.Data, contractABIs[addrKey], l.Topic0) {
+				if _, alreadyKnown := visMap[a]; !alreadyKnown {
+					abiDataAddrMap[a] = true
+				}
+			}
+		}
+		if len(abiDataAddrMap) > 0 {
+			abiDataAddrs := make([]string, 0, len(abiDataAddrMap))
+			for a := range abiDataAddrMap {
+				abiDataAddrs = append(abiDataAddrs, a)
+			}
+			abiVisMap, err2 := r.db.GetBatchVisibility(ctx, viewerDID, abiDataAddrs)
+			if err2 != nil {
+				return nil, err2
+			}
+			for k, v := range abiVisMap {
+				visMap[k] = v
+			}
+		}
+	}
+
+	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
@@ -311,6 +618,19 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 			redacted.Topic2 = nil
 			redacted.Topic3 = nil
 			redacted.Data = ""
+		} else {
+			// Contract is visible — scan topics for embedded private addresses.
+			redacted.Topic0 = redactTopicField(l.Topic0, visMap)
+			redacted.Topic1 = redactTopicField(l.Topic1, visMap)
+			redacted.Topic2 = redactTopicField(l.Topic2, visMap)
+			redacted.Topic3 = redactTopicField(l.Topic3, visMap)
+			// Scan non-indexed Data field for private addresses when ABI is registered.
+			if l.Data != "" && l.Topic0 != nil {
+				addrKey := strings.ToLower(l.Address)
+				if contractABI, ok := contractABIs[addrKey]; ok && len(contractABI) > 0 {
+					redacted.Data = r.redactLogData(l.Data, contractABI, l.Topic0, visMap)
+				}
+			}
 		}
 
 		result = append(result, redacted)
@@ -358,6 +678,11 @@ func (r *RedactionEngine) RedactTokenHolders(ctx context.Context, holders []Toke
 			continue
 		}
 		h.Address = r.applyRedaction(h.Address, level)
+		if level == VisibilityRedacted {
+			// Strip balance and percentage: they reveal financial position even when the address is masked.
+			h.Balance = JSONString("")
+			h.Percentage = 0
+		}
 		result = append(result, h)
 	}
 	return result, nil

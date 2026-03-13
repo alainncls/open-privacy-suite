@@ -91,7 +91,7 @@ Each log entry has up to four topics:
 
 | Topic | Content | Used for filtering? |
 |-------|---------|---------------------|
-| `topics[0]` | Event signature hash (`keccak256` of the event name and parameter types) | **No** -- always skipped |
+| `topics[0]` | Event signature hash (`keccak256` of the event name and parameter types) for non-anonymous events; may be an address for anonymous events | **Yes** -- checked for the zero-padded address pattern |
 | `topics[1]` | First indexed parameter (zero-padded to 32 bytes) | Yes, if it contains an address |
 | `topics[2]` | Second indexed parameter | Yes, if it contains an address |
 | `topics[3]` | Third indexed parameter | Yes, if it contains an address |
@@ -100,7 +100,7 @@ Each log entry has up to four topics:
 
 For each log entry in the response:
 
-1. **Skip `topics[0]`** -- this is always the event signature hash (e.g., `keccak256("Transfer(address,address,uint256)")`). It is never an address parameter.
+1. **Check all four topics including `topics[0]`** -- for standard (non-anonymous) events, `topics[0]` is the event signature hash (e.g., `keccak256("Transfer(address,address,uint256)")`). Because this is not a zero-padded address, the address-pattern check naturally skips it. For anonymous events (declared with the `anonymous` keyword), `topics[0]` may contain an indexed address parameter and is therefore scanned.
 2. **Check `topics[1]` through `topics[3]`** -- for each topic, extract the lower 20 bytes as an Ethereum address (topics are 32 bytes; addresses are the last 20 bytes, zero-padded on the left).
 3. **Compare each extracted address** against the user's linked ETH addresses (case-insensitive).
 4. **Keep the log entry** if at least one topic address matches a linked address. **Remove it** otherwise.
@@ -204,4 +204,6 @@ These controls ensure that even within a shared private network where all partic
   3. **Block metadata traffic analysis** -- `eth_getBlockTransactionCountByHash` and `eth_getBlockTransactionCountByNumber` reveal the number of transactions in a block. While this doesn't expose calldata, it enables coarse traffic analysis on a private network. Currently passes through with no filtering.
 
   4. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks: `transferred ≈ balance(N−1) − balance(N) − (gas_used × gas_price)`. All inputs to this calculation are visible. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee.
+
+  5. **Log `data` field for contracts without a registered ABI** -- The explorer redaction engine scans the `data` field of event logs for non-indexed `address`-typed parameters and zeros private addresses when the emitting contract has a registered and verified ABI. For contracts without a registered ABI, the `data` field is returned unmodified and may contain private addresses embedded in ABI-encoded parameters.
 </Callout>
