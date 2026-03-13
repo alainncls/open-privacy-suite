@@ -202,4 +202,6 @@ These controls ensure that even within a shared private network where all partic
   2. **`eth_call` response field-level redaction** -- `eth_call` responses are raw ABI-encoded bytes. For full privacy (e.g., hiding the `amount` field in `getPaymentInfo` unless the caller is a payment party), the proxy would need to decode the ABI response and selectively redact fields. Requires registered contract ABIs and per-function redaction rules.
 
   3. **Block metadata traffic analysis** -- `eth_getBlockTransactionCountByHash` and `eth_getBlockTransactionCountByNumber` reveal the number of transactions in a block. While this doesn't expose calldata, it enables coarse traffic analysis on a private network. Currently passes through with no filtering.
+
+  4. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks: `transferred ≈ balance(N−1) − balance(N) − (gas_used × gas_price)`. All inputs to this calculation are visible. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee.
 </Callout>

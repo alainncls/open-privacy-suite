@@ -482,6 +482,24 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// getViewerIdentity extracts the viewer's DID and wallet from a gin context.
+// Priority for DID: gin context "subject" key (set by OptionalJWTAuthMiddleware from Bearer token)
+// then the "did" query parameter (used by direct API callers).
+// Wallet comes from the "wallet" query parameter.
+func getViewerIdentity(c *gin.Context) (wallet, did string) {
+	wallet = c.Query("wallet")
+	// JWT-authenticated requests: DID is stored in gin context by OptionalJWTAuthMiddleware
+	if subject, ok := c.Get("subject"); ok {
+		if s, ok := subject.(string); ok && s != "" {
+			did = s
+			return
+		}
+	}
+	// Fallback: explicit query parameter (used by direct API callers passing did= in URL)
+	did = c.Query("did")
+	return
+}
+
 // calculateAddressVisibility determines the visibility of a target address for a viewer (wallet-based)
 // Deprecated: Use calculateAddressVisibilityWithDID instead for new code.
 func (s *Server) calculateAddressVisibility(ctx context.Context, viewerWallet, targetAddress string) AddressVisibility {
@@ -774,7 +792,8 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	address := c.Param("address")
 
 	// Pre-authorization check: Can they even see this address?
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "address not found") // Masking forbidden as not found to avoid info leaks
 		return
@@ -803,7 +822,8 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 	}
 
 	// Pre-authorization check: Can they even see this address?
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "address not found") // Masking forbidden as not found
 		return
@@ -815,7 +835,6 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 		return
 	}
 
-	viewerDID := s.getViewerDIDFromRequest(c)
 	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -1059,7 +1078,8 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1097,7 +1117,8 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1136,7 +1157,8 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1189,7 +1211,8 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1211,7 +1234,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
+	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -1230,7 +1253,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1247,7 +1271,7 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if itxs == nil {
 		itxs = []explorer.InternalTransaction{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
+	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -1266,7 +1290,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1283,7 +1308,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if logs == nil {
 		logs = []explorer.Log{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
+	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -1302,7 +1327,8 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return
@@ -1335,7 +1361,8 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), c.Query("wallet"), c.Query("did"), address)
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
 	if visibility.Level == VisibilityHidden {
 		respondNotFound(c, "address not found")
 		return

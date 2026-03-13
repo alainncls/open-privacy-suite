@@ -318,73 +318,131 @@ func (s *Store) GetTransactionsPaginated(ctx context.Context, page, pageSize int
 	return txs, total, err
 }
 
-// GetTransactionsWithCategories returns transactions with categories populated.
+const txCategorySelectCols = `,
+		t.value > 0 AS is_coin_transfer,
+		(t.to_address IS NOT NULL AND LENGTH(t.input_data) > 2 AND EXISTS(SELECT 1 FROM contracts c WHERE LOWER(c.address) = LOWER(t.to_address))) AS is_contract_call,
+		(t.to_address IS NULL) AS is_contract_creation,
+		(SELECT COUNT(*) FROM token_transfers tt WHERE tt.tx_hash = t.hash) AS token_transfer_count`
+
+// scanTransactionsWithCategories scans rows that include the 4 extra category columns appended by txCategorySelectCols.
+func (s *Store) scanTransactionsWithCategories(rows *sql.Rows) ([]Transaction, error) {
+	var txs []Transaction
+	for rows.Next() {
+		var tx Transaction
+		var valueStr string
+		var isCoinTransfer, isContractCall, isContractCreation bool
+		var tokenTransferCount int
+		if err := rows.Scan(&tx.Hash, &tx.BlockNumber, &tx.BlockTimestamp, &tx.TxIndex, &tx.From, &tx.To, &valueStr,
+			&tx.GasUsed, &tx.GasPrice, &tx.GasLimit, &tx.MaxFeePerGas, &tx.MaxPriorityFeePerGas, &tx.Nonce,
+			&tx.TxType, &tx.InputData, &tx.Status, &tx.Error, &tx.RevertReason, &tx.CreatedAt,
+			&isCoinTransfer, &isContractCall, &isContractCreation, &tokenTransferCount); err != nil {
+			return nil, err
+		}
+		tx.Value = JSONString(valueStr)
+		tx.TxCategories = buildTxCategories(isCoinTransfer, isContractCall, isContractCreation, tokenTransferCount)
+		tx.TokenTransferCount = tokenTransferCount
+		txs = append(txs, tx)
+	}
+	return txs, rows.Err()
+}
+
+func buildTxCategories(isCoinTransfer, isContractCall, isContractCreation bool, tokenTransferCount int) []string {
+	var cats []string
+	if isContractCreation {
+		cats = append(cats, "contract_creation")
+	}
+	if isContractCall {
+		cats = append(cats, "contract_call")
+	}
+	if tokenTransferCount > 0 {
+		cats = append(cats, "token_transfer")
+	} else if isCoinTransfer {
+		cats = append(cats, "coin_transfer")
+	}
+	return cats
+}
+
+// GetTransactionsWithCategories returns transactions with categories computed inline.
 func (s *Store) GetTransactionsWithCategories(ctx context.Context, limit int, beforeBlock *uint64) ([]Transaction, error) {
-	txs, err := s.GetTransactions(ctx, limit, beforeBlock)
+	var rows *sql.Rows
+	var err error
+
+	if beforeBlock != nil {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE t.block_number < $1 ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $2`, *beforeBlock, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $1`, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
-	s.populateCategories(ctx, txs)
-	return txs, nil
+	defer rows.Close()
+	return s.scanTransactionsWithCategories(rows)
 }
 
-// GetTransactionsPaginatedWithCategories returns paginated transactions with categories.
+// GetTransactionsPaginatedWithCategories returns paginated transactions with categories computed inline.
 func (s *Store) GetTransactionsPaginatedWithCategories(ctx context.Context, page, pageSize int) ([]Transaction, int64, error) {
-	txs, total, err := s.GetTransactionsPaginated(ctx, page, pageSize)
+	var total int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM transactions").Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+		FROM transactions t
+		JOIN blocks b ON t.block_number = b.number
+		ORDER BY t.block_number DESC, t.tx_index DESC
+		LIMIT $1 OFFSET $2`, pageSize, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	s.populateCategories(ctx, txs)
+	defer rows.Close()
+
+	txs, err := s.scanTransactionsWithCategories(rows)
 	return txs, total, err
 }
 
-// GetTransactionWithCategories returns a single transaction with categories.
+// GetTransactionWithCategories returns a single transaction with categories computed inline.
 func (s *Store) GetTransactionWithCategories(ctx context.Context, hash string) (*Transaction, error) {
-	tx, err := s.GetTransaction(ctx, hash)
-	if err != nil || tx == nil {
-		return tx, err
+	var tx Transaction
+	var valueStr string
+	var isCoinTransfer, isContractCall, isContractCreation bool
+	var tokenTransferCount int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+		FROM transactions t
+		JOIN blocks b ON t.block_number = b.number
+		WHERE t.hash = $1`, hash).Scan(
+		&tx.Hash, &tx.BlockNumber, &tx.BlockTimestamp, &tx.TxIndex, &tx.From, &tx.To, &valueStr,
+		&tx.GasUsed, &tx.GasPrice, &tx.GasLimit, &tx.MaxFeePerGas, &tx.MaxPriorityFeePerGas, &tx.Nonce,
+		&tx.TxType, &tx.InputData, &tx.Status, &tx.Error, &tx.RevertReason, &tx.CreatedAt,
+		&isCoinTransfer, &isContractCall, &isContractCreation, &tokenTransferCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
 	}
-	txs := []Transaction{*tx}
-	s.populateCategories(ctx, txs)
-	tx.TxCategories = txs[0].TxCategories
-	return tx, nil
-}
-
-// populateCategories tries to populate TxCategories from the tx_categories table.
-// If the table doesn't exist, categories remain nil (omitted in JSON).
-func (s *Store) populateCategories(ctx context.Context, txs []Transaction) {
-	if len(txs) == 0 {
-		return
-	}
-	// Build a placeholder list for the IN clause
-	placeholders := make([]string, len(txs))
-	args := make([]interface{}, len(txs))
-	for i, tx := range txs {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = tx.Hash
-	}
-	query := fmt.Sprintf("SELECT tx_hash, category FROM tx_categories WHERE tx_hash IN (%s)",
-		strings.Join(placeholders, ","))
-	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		// Table may not exist; silently ignore
-		return
+		return nil, err
 	}
-	defer rows.Close()
-
-	catMap := make(map[string][]string)
-	for rows.Next() {
-		var txHash, category string
-		if rows.Scan(&txHash, &category) == nil {
-			catMap[txHash] = append(catMap[txHash], category)
-		}
-	}
-
-	for i := range txs {
-		if cats, ok := catMap[txs[i].Hash]; ok {
-			txs[i].TxCategories = cats
-		}
-	}
+	tx.Value = JSONString(valueStr)
+	tx.TxCategories = buildTxCategories(isCoinTransfer, isContractCall, isContractCreation, tokenTransferCount)
+	tx.TokenTransferCount = tokenTransferCount
+	return &tx, nil
 }
 
 // GetTransfersByTransaction returns token transfers for a specific transaction.

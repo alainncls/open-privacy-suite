@@ -146,6 +146,39 @@ docker compose up -d
   it must be reachable by the user's browser, typically `http://localhost:8080`.
 </Callout>
 
+## Transaction Redaction in the Explorer
+
+When the block explorer displays transaction lists, the redaction engine applies per-transaction privacy rules based on the viewer's identity:
+
+| Scenario | Result |
+|----------|--------|
+| Both `from` and `to` are visible to the viewer | Full transaction shown |
+| Both `from` and `to` are hidden | Transaction dropped entirely |
+| One side is hidden, the other is visible | Hidden side replaced with `[PRIVATE]`; `value`, `inputData`, `error`, and `revertReason` stripped |
+
+The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the label "Private". Address labels ("Mine", "Disclosed", "My Org") appear next to addresses the viewer has explicit access to, helping users understand what they are permitted to see.
+
+### Limitation: Value Inference from Balance History
+
+Stripping the `value` field on mixed-party transactions **does not guarantee financial privacy**. A determined observer can infer the transferred amount by comparing the public address's balance at adjacent blocks:
+
+```
+transferred ≈ balance(block N−1) − balance(block N) − (gas_used × gas_price)
+```
+
+All of `balance`, `gas_used`, and `gas_price` are accessible through the explorer for public addresses. This attack requires deliberate cross-block correlation rather than direct reading, but it is feasible.
+
+<Callout type="warning">
+  **This is a partial mitigation, not a privacy guarantee.** The `value` field is
+  not shown directly, which removes the most obvious leakage path. However, any
+  observer with access to the public address's balance history can reconstruct
+  the amount. Stronger financial privacy for mixed-party transactions would require
+  hiding the public address's balance history, which conflicts with a block
+  explorer's core purpose.
+</Callout>
+
+---
+
 ## Feature Separation
 
 For development and maintenance, the Explorer API feature is maintained on a dedicated branch:

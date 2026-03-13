@@ -76,7 +76,7 @@ func TestRedactTransactions_FullVisibility(t *testing.T) {
 	}
 }
 
-func TestRedactTransactions_HiddenFrom_DropsTransaction(t *testing.T) {
+func TestRedactTransactions_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -89,12 +89,21 @@ func TestRedactTransactions_HiddenFrom_DropsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 0 {
-		t.Errorf("expected 0 txs (hidden from), got %d", len(result))
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (hidden from, public to → keep), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
+	}
+	if *result[0].To != to {
+		t.Errorf("To should be unchanged, got %s", *result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped, got %s", result[0].Value)
 	}
 }
 
-func TestRedactTransactions_HiddenTo_DropsTransaction(t *testing.T) {
+func TestRedactTransactions_HiddenTo_KeepsWithPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -107,8 +116,113 @@ func TestRedactTransactions_HiddenTo_DropsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (public from, hidden to → keep), got %d", len(result))
+	}
+	if result[0].From != from {
+		t.Errorf("From should be unchanged, got %s", result[0].From)
+	}
+	if *result[0].To != "[PRIVATE]" {
+		t.Errorf("To should be [PRIVATE], got %s", *result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	}
+}
+
+func TestRedactTransactions_BothHidden_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(result) != 0 {
-		t.Errorf("expected 0 txs (hidden to), got %d", len(result))
+		t.Errorf("expected 0 txs (both hidden → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	errStr := "execution reverted"
+	revertStr := "out of gas"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{{
+		Hash:         "0x01",
+		From:         from,
+		To:           strPtr(to),
+		Value:        "1000",
+		InputData:    "0xdeadbeef",
+		Error:        &errStr,
+		RevertReason: &revertStr,
+	}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	tx := result[0]
+	if tx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", tx.From)
+	}
+	if *tx.To != to {
+		t.Errorf("To should be unchanged, got %s", *tx.To)
+	}
+	if tx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", tx.Value)
+	}
+	if tx.InputData != "" {
+		t.Errorf("InputData should be stripped, got %s", tx.InputData)
+	}
+	if tx.Error != nil {
+		t.Errorf("Error should be nil")
+	}
+	if tx.RevertReason != nil {
+		t.Errorf("RevertReason should be nil")
+	}
+}
+
+func TestRedactTransactions_HiddenTo_PublicFrom_ShowsPrivate(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityFull,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000", InputData: "0xaa"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	tx := result[0]
+	if tx.From != from {
+		t.Errorf("From should be unchanged, got %s", tx.From)
+	}
+	if *tx.To != "[PRIVATE]" {
+		t.Errorf("To should be [PRIVATE], got %s", *tx.To)
+	}
+	if tx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", tx.Value)
+	}
+	if tx.InputData != "" {
+		t.Errorf("InputData should be stripped, got %s", tx.InputData)
 	}
 }
 
@@ -253,24 +367,37 @@ func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
 	})
 
 	txs := []Transaction{
-		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},    // keep, full
-		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},  // drop (hidden to)
-		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)}, // keep, redacted to
-		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},  // drop (hidden from)
+		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},       // keep, full
+		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},     // keep, to=[PRIVATE]
+		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)},   // keep, redacted to
+		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},     // keep, from=[PRIVATE]
+		{Hash: "0x05", From: addrHidden, To: strPtr(addrHidden)},   // drop (both hidden)
 	}
 
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 2 {
-		t.Fatalf("expected 2 txs (0x01 and 0x03), got %d", len(result))
+	if len(result) != 4 {
+		t.Fatalf("expected 4 txs (0x05 dropped, rest kept), got %d", len(result))
 	}
 	if result[0].Hash != "0x01" {
 		t.Errorf("first result should be 0x01, got %s", result[0].Hash)
 	}
-	if result[1].Hash != "0x03" {
-		t.Errorf("second result should be 0x03, got %s", result[1].Hash)
+	if result[1].Hash != "0x02" {
+		t.Errorf("second result should be 0x02, got %s", result[1].Hash)
+	}
+	if *result[1].To != "[PRIVATE]" {
+		t.Errorf("0x02 To should be [PRIVATE], got %s", *result[1].To)
+	}
+	if result[2].Hash != "0x03" {
+		t.Errorf("third result should be 0x03, got %s", result[2].Hash)
+	}
+	if result[3].Hash != "0x04" {
+		t.Errorf("fourth result should be 0x04, got %s", result[3].Hash)
+	}
+	if result[3].From != "[PRIVATE]" {
+		t.Errorf("0x04 From should be [PRIVATE], got %s", result[3].From)
 	}
 }
 
@@ -289,7 +416,7 @@ func TestRedactTransfers_Empty(t *testing.T) {
 	}
 }
 
-func TestRedactTransfers_HiddenDrops(t *testing.T) {
+func TestRedactTransfers_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -302,8 +429,62 @@ func TestRedactTransfers_HiddenDrops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (hidden from, public to → keep), got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
+	}
+	if result[0].To != to {
+		t.Errorf("To should be unchanged, got %s", result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	}
+}
+
+func TestRedactTransfers_BothHidden_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(result) != 0 {
-		t.Errorf("expected 0 transfers, got %d", len(result))
+		t.Errorf("expected 0 transfers (both hidden → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "500"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
+	}
+	if result[0].To != to {
+		t.Errorf("To should be unchanged, got %s", result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped, got %s", result[0].Value)
 	}
 }
 
@@ -379,21 +560,93 @@ func TestRedactInternalTransactions_Empty(t *testing.T) {
 	}
 }
 
-func TestRedactInternalTransactions_HiddenDrops(t *testing.T) {
+func TestRedactInternalTransactions_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xdeadbeef"
+	output := "0x01"
 	engine := newEngine(VisibilityMap{
 		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
 		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
 	})
 
-	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to)}}
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "100", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 (hidden from, public to → keep), got %d", len(result))
+	}
+	itx := result[0]
+	if itx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", itx.From)
+	}
+	if *itx.To != to {
+		t.Errorf("To should be unchanged, got %s", *itx.To)
+	}
+	if itx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", itx.Value)
+	}
+	if itx.Input != nil {
+		t.Errorf("Input should be nil")
+	}
+	if itx.Output != nil {
+		t.Errorf("Output should be nil")
+	}
+}
+
+func TestRedactInternalTransactions_BothHidden_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityHidden,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "100"}}
 	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result) != 0 {
-		t.Errorf("expected 0, got %d", len(result))
+		t.Errorf("expected 0 (both hidden → drop), got %d", len(result))
+	}
+}
+
+func TestRedactInternalTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xdeadbeef"
+	output := "0x01"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "200", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	itx := result[0]
+	if itx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", itx.From)
+	}
+	if *itx.To != to {
+		t.Errorf("To should be unchanged, got %s", *itx.To)
+	}
+	if itx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", itx.Value)
+	}
+	if itx.Input != nil {
+		t.Errorf("Input should be nil")
+	}
+	if itx.Output != nil {
+		t.Errorf("Output should be nil")
 	}
 }
 
