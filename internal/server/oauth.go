@@ -288,7 +288,16 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 		return
 	}
 
-	mockDID := fmt.Sprintf("did:privado:mock_%d", time.Now().UnixNano())
+	// Accept optional DID from request body (for dev identity picker)
+	var body struct {
+		DID string `json:"did"`
+	}
+	_ = c.ShouldBindJSON(&body) // ignore errors — body is optional
+
+	mockDID := body.DID
+	if mockDID == "" {
+		mockDID = fmt.Sprintf("did:privado:mock_%d", time.Now().UnixNano())
+	}
 	kyc := false
 	if s.rbacAccessCtrl != nil {
 		if user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), mockDID, kyc, false); err == nil && user != nil {

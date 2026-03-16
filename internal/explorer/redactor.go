@@ -28,6 +28,8 @@ type RedactionEngine struct {
 // Database interface for the methods RedactionEngine needs from the main DB
 type Database interface {
 	GetBatchVisibility(ctx context.Context, viewerDID string, addresses []string) (VisibilityMap, error)
+	// GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.
+	GetLinkedAddresses(ctx context.Context, did string) ([]string, error)
 }
 
 func NewRedactionEngine(store *Store, db Database) *RedactionEngine {
@@ -71,17 +73,46 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		return nil, err
 	}
 
+	// 2b. Get the viewer's linked addresses for participant visibility.
+	// If the viewer is a participant (from or to) in a transaction, the counterparty
+	// address should be visible in that specific transaction — the viewer already
+	// knows who they sent to / received from via their own wallet.
+	viewerAddrs := make(map[string]bool)
+	if viewerDID != "" {
+		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range linked {
+			viewerAddrs[strings.ToLower(a)] = true
+		}
+	}
+
 	// 3. Apply redactions
 	var redactedTxs []Transaction
 	for _, tx := range txs {
+		// Determine whether the viewer is a participant in this transaction.
+		// If so, the counterparty gets VisibilityFull for THIS tx only.
+		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
+		viewerIsTo := tx.To != nil && *tx.To != "" && viewerAddrs[strings.ToLower(*tx.To)]
+		viewerIsParticipant := viewerIsFrom || viewerIsTo
+
 		fromLevel := VisibilityFull
 		if tx.From != "" {
 			fromLevel = visibilityMap[strings.ToLower(tx.From)]
+			// If the viewer is a participant and the from address is the counterparty,
+			// override to full visibility for this transaction.
+			if viewerIsParticipant && fromLevel != VisibilityFull {
+				fromLevel = VisibilityFull
+			}
 		}
 
 		toLevel := VisibilityFull
 		if tx.To != nil && *tx.To != "" {
 			toLevel = visibilityMap[strings.ToLower(*tx.To)]
+			if viewerIsParticipant && toLevel != VisibilityFull {
+				toLevel = VisibilityFull
+			}
 		}
 
 		// If BOTH participants are hidden, drop the transaction entirely
