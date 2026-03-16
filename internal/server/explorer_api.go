@@ -652,7 +652,14 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 			beforeBlock = &val
 		}
 	}
-	txs, err := s.explorerStore.GetTransactions(c.Request.Context(), limit, beforeBlock)
+	withCategories := c.Query("with_categories") == "true"
+	var txs []explorer.Transaction
+	var err error
+	if withCategories {
+		txs, err = s.explorerStore.GetTransactionsWithCategories(c.Request.Context(), limit, beforeBlock)
+	} else {
+		txs, err = s.explorerStore.GetTransactions(c.Request.Context(), limit, beforeBlock)
+	}
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -674,7 +681,14 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 		return
 	}
 	hash := c.Param("hash")
-	tx, err := s.explorerStore.GetTransaction(c.Request.Context(), hash)
+	withCategories := c.Query("with_categories") == "true"
+	var tx *explorer.Transaction
+	var err error
+	if withCategories {
+		tx, err = s.explorerStore.GetTransactionWithCategories(c.Request.Context(), hash)
+	} else {
+		tx, err = s.explorerStore.GetTransaction(c.Request.Context(), hash)
+	}
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
