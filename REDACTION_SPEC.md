@@ -117,7 +117,28 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 | `transactions` (full objects, `fullTxObjects=true`) | Non-participant txs removed from array | Yes | Yes | Per-tx participant check; block-level fields preserved |
 | `transactions` (hashes only, `fullTxObjects=false`) | Passed through | Yes | Yes | Tx hashes alone are not sensitive |
 
-### 3.7 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
+### 3.7 Explorer API — Participant Visibility Override
+
+The visibility map (`GetBatchVisibility`) resolves each address independently: own address → Full, disclosure grant → grant level, org contract member → Full, everything else → Hidden.
+
+However, **transaction participants must always see their counterparty** in their own transactions. A sender already knows the recipient (it's in their wallet history) and vice versa. Hiding it from them adds no privacy, only confusion.
+
+This is implemented as a **per-transaction override** in `RedactTransactions` (`internal/explorer/redactor.go`):
+
+1. The viewer's linked ETH addresses are fetched via `GetLinkedAddresses(ctx, viewerDID)`.
+2. For each transaction, if any viewer address matches `from` or `to`, both sides are overridden to `VisibilityFull` for that transaction only.
+3. The shared visibility map is **never mutated** — the override uses local variables scoped to the current transaction.
+
+| Scenario | Viewer is participant? | Counterparty visibility | Override |
+|----------|----------------------|------------------------|----------|
+| Viewer is sender | Yes | Hidden → Full | Per-tx only |
+| Viewer is receiver | Yes | Hidden → Full | Per-tx only |
+| Viewer is not involved | No | No override | Normal rules apply |
+| Same tx, different viewer | — | Independent | Each viewer gets their own override |
+
+**Security invariant:** The override ONLY applies within `RedactTransactions`, which processes a specific transaction list. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
+
+### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
 At the RPC layer, visibility is binary: the caller either is or is not a participant (one of their linked addresses matches `from` or `to`).
 
@@ -199,6 +220,10 @@ Every redaction method must have unit tests covering the following scenarios. Te
 | Emitter Full, topic address is private | Topic address zeroed; other topics unchanged |
 | Emitter Full, ABI registered, data has private address | Private address slot in data → zeroed |
 | Deploy tx, sender Hidden | `contractAddress` → nil (currently failing — G7) |
+| Viewer is sender, counterparty Hidden | Counterparty → Full (participant override) |
+| Viewer is receiver, counterparty Hidden | Counterparty → Full (participant override) |
+| Viewer not a participant, both sides Hidden | Entry dropped (no override) |
+| Two txs, viewer participates in one only | Override applies only to the participated tx |
 
 ### Gap behavior must be explicitly asserted
 
