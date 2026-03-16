@@ -21,6 +21,15 @@ function MicrosoftIcon({ className }: { className?: string }) {
 
 // Mock login requires explicit opt-in via VITE_ALLOW_MOCK_LOGIN=true
 const allowMockLogin = import.meta.env.VITE_ALLOW_MOCK_LOGIN === 'true';
+
+interface TestIdentity {
+  did: string;
+  name: string;
+  note?: string;
+  addresses: string[];
+  orgs: string[];
+}
+
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_MAX_POLLS = 150;
 
@@ -46,6 +55,7 @@ export function LoginPage() {
   const location = useLocation();
   const { login, isAuthenticated, isLoading } = useAuth();
   const from = (location.state as { from?: string } | null)?.from || '/link-wallet';
+  const [testIdentities, setTestIdentities] = useState<TestIdentity[]>([]);
   const [providers, setProviders] = useState<string[]>(['privado']);
   const [activeProvider, setActiveProvider] = useState<AuthProvider>('privado');
   const [azureLoading, setAzureLoading] = useState(false);
@@ -68,6 +78,17 @@ export function LoginPage() {
   // Load available providers (silently ignore errors — default to privado only)
   useEffect(() => {
     authApiMethods.getAuthProviders().then((res) => setProviders(res.providers)).catch(() => {});
+  }, []);
+
+  // Fetch test identities for dev identity picker (only in mock login mode)
+  useEffect(() => {
+    if (!allowMockLogin) return;
+    fetch('/api/v1/dev/test-identities')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.identities) setTestIdentities(data.identities);
+      })
+      .catch(() => {}); // silently ignore — endpoint may not exist
   }, []);
 
   // Handle "Sign in with Microsoft" — fetch auth URL then redirect browser
@@ -160,6 +181,45 @@ export function LoginPage() {
         }
         const tokens = await authApiMethods.verifyAuth(authResponse.session_id, `mock.${mockDID}`);
 
+        login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+        setState(prev => ({ ...prev, step: 'success' }));
+        setTimeout(() => navigate(from, { replace: true }), 1000);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Mock login failed';
+      setState(prev => ({ ...prev, step: 'error', error: errorMessage }));
+    }
+  }, [login, navigate, from]);
+
+  // Mock login as a specific test identity (dev identity picker)
+  const handleMockLoginAs = useCallback(async (did: string) => {
+    if (!allowMockLogin) return;
+
+    setState(prev => ({ ...prev, step: 'loading', error: null }));
+
+    try {
+      if (isOAuthMode && oauthSessionId) {
+        // OAuth mode: complete the session with specific DID
+        const res = await fetch(`/oauth/session/${oauthSessionId}/mock-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ did }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'Mock login failed');
+        }
+        const statusRes = await fetch(`/oauth/session/${oauthSessionId}/status`);
+        const statusData = await statusRes.json();
+        if (!statusData.completed || !statusData.redirect_url) {
+          throw new Error('Session did not complete');
+        }
+        setState(prev => ({ ...prev, step: 'success' }));
+        setTimeout(() => { window.location.href = statusData.redirect_url; }, 1000);
+      } else {
+        // Normal mode: request auth, verify with specific DID
+        const authResponse = await authApiMethods.requestAuth();
+        const tokens = await authApiMethods.verifyAuth(authResponse.session_id, `mock.${did}`);
         login(tokens.access_token, tokens.refresh_token, tokens.expires_in);
         setState(prev => ({ ...prev, step: 'success' }));
         setTimeout(() => navigate(from, { replace: true }), 1000);
@@ -537,6 +597,36 @@ export function LoginPage() {
                 Development Only
               </span>
             </div>
+
+            {/* Test Identity Picker — fetched from dev-only backend endpoint */}
+            {testIdentities.length > 0 && (
+              <div className="mb-4 space-y-2" data-testid="identity-picker">
+                <p className="text-xs text-neutral-500 text-center mb-2">Quick login as test identity:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {testIdentities.map((identity) => (
+                    <button
+                      key={identity.did}
+                      onClick={() => handleMockLoginAs(identity.did)}
+                      disabled={state.step === 'loading'}
+                      className="flex flex-col items-start p-2 rounded-lg border border-neutral-200 hover:border-warning hover:bg-warning-light/50 transition-colors text-left text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      data-testid={`identity-btn-${identity.did}`}
+                    >
+                      <span className="font-medium text-neutral-900">{identity.name}</span>
+                      {identity.addresses?.[0] && (
+                        <span className="text-neutral-400 font-mono">
+                          {identity.addresses[0].slice(0, 6)}...{identity.addresses[0].slice(-4)}
+                        </span>
+                      )}
+                      {identity.orgs?.[0] && (
+                        <span className="text-neutral-500">{identity.orgs[0]}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Fallback mock login button for custom/one-off DIDs */}
             <Button
               onClick={handleMockLogin}
               variant="outline"

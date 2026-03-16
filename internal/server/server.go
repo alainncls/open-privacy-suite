@@ -473,6 +473,11 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/api/v1/auth/azure/callback", authRL, s.handleAzureCallback)
 	router.GET("/api/v1/auth/providers", s.handleAuthProviders)
 
+	// Dev identity picker endpoint (development/testing only, mockauth builds)
+	if !s.config.IsProduction() && s.config.AllowMockLogin {
+		router.GET("/api/v1/dev/test-identities", s.handleGetTestIdentities)
+	}
+
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
 		router.POST("/auth/verify", authRL, s.handleAuthVerify)
