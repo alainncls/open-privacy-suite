@@ -110,6 +110,38 @@ docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep 
 docker-compose -f docker-compose.e2e.yml run --rm playwright npm test -- --grep "Hierarchy"
 ```
 
+## Test Identities (Development)
+
+For manual testing of privacy redaction from different user perspectives, the project includes a setup script that creates pre-configured test accounts with well-known Anvil addresses.
+
+### Setup
+
+```bash
+# Requires: services running, ALLOW_MOCK_LOGIN=true, cast + jq installed
+./scripts/setup-test-accounts.sh
+```
+
+This creates:
+
+| Name | DID | Address (Anvil) | Role |
+|------|-----|-----------------|------|
+| Alice | `did:test:alice` | `0x7099...79C8` (account 1) | Alpha Corp deployer |
+| Bob | `did:test:bob` | `0x3C44...93BC` (account 2) | Alpha Corp reader |
+| Charlie | `did:test:charlie` | `0x90F7...3906` (account 3) | Beta Inc deployer |
+| Dave | `did:test:dave` | `0x15d3...A65` (account 4) | No org (anonymous) |
+
+The script also creates orgs, groups with RBAC claims, ETH address links, a disclosure grant (Bob can view Alice's data), and ETH transfers between accounts.
+
+### Identity Picker
+
+When `ALLOW_MOCK_LOGIN=true` (dev builds), the login page shows a **quick login** panel with the test identities. Click a name to instantly authenticate as that user — works for both direct login and OAuth (block explorer SSO).
+
+The identity list is fetched from `GET /api/v1/dev/test-identities`, which only exists in `mockauth` builds and returns 404 in production.
+
+### Re-running
+
+The script is idempotent. Run it again after an Anvil reset to recreate the test data.
+
 ## Access Control
 
 This proxy implements a hierarchical Role-Based Access Control (RBAC) system for fine-grained permission management.
