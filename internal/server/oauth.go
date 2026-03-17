@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	authpkg "privacy-proxy/internal/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
 )
@@ -286,7 +288,16 @@ func (s *Server) handleOAuthMockComplete(c *gin.Context) {
 		return
 	}
 
-	mockDID := fmt.Sprintf("did:privado:mock_%d", time.Now().UnixNano())
+	// Accept optional DID from request body (for dev identity picker)
+	var body struct {
+		DID string `json:"did"`
+	}
+	_ = c.ShouldBindJSON(&body) // ignore errors — body is optional
+
+	mockDID := body.DID
+	if mockDID == "" {
+		mockDID = fmt.Sprintf("did:privado:mock_%d", time.Now().UnixNano())
+	}
 	kyc := false
 	if s.rbacAccessCtrl != nil {
 		if user, err := s.rbacAccessCtrl.EnsureUserExists(c.Request.Context(), mockDID, kyc, false); err == nil && user != nil {
@@ -482,9 +493,10 @@ type OAuthTokenRequest struct {
 
 // OAuthTokenResponse represents the response from /oauth/token
 type OAuthTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 // OAuthErrorResponse represents an OAuth error response
@@ -859,11 +871,34 @@ func (s *Server) handleOAuthToken(c *gin.Context) {
 		return
 	}
 
+	// Issue refresh token so the client can obtain new access tokens without
+	// a full re-authentication. The access token is intentionally short-lived
+	// (AccessTokenTTL = 5 min) so that banning a user takes effect within one
+	// TTL window — banned users are rejected at refresh time.
+	refreshToken, err := s.jwtService.IssueRefreshToken(session.UserDID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			Error:            "server_error",
+			ErrorDescription: "failed to issue refresh token",
+		})
+		return
+	}
+
+	tokenHash := authpkg.HashToken(refreshToken)
+	if err := s.db.SaveRefreshToken(c.Request.Context(), tokenHash, session.UserDID, time.Now().Add(RefreshTokenTTL)); err != nil {
+		c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
+			Error:            "server_error",
+			ErrorDescription: "failed to save refresh token",
+		})
+		return
+	}
+
 	// Return token response
 	c.JSON(http.StatusOK, OAuthTokenResponse{
-		AccessToken: accessToken,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(AccessTokenTTL.Seconds()),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	})
 }
 

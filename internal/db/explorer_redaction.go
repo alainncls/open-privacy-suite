@@ -478,3 +478,32 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 
 	return result, nil
 }
+
+// GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.
+func (d *DB) GetLinkedAddresses(ctx context.Context, did string) ([]string, error) {
+	if did == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT LOWER(eth_address)
+		FROM eth_address_links
+		WHERE did = $1
+		  AND revoked = false`
+
+	rows, err := d.conn.QueryContext(ctx, query, did)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var addrs []string
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs, rows.Err()
+}

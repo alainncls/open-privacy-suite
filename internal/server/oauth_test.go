@@ -1372,3 +1372,132 @@ func TestOAuth_BrowserRedirect(t *testing.T) {
 		assert.Contains(t, location, "/login?oauth_session=")
 	})
 }
+
+// TestOAuth_TokenExchange_ReturnsRefreshToken tests the full OAuth flow returns a refresh token
+// and that the refresh token can be used to obtain new tokens, with old tokens being revoked.
+func TestOAuth_TokenExchange_ReturnsRefreshToken(t *testing.T) {
+	srv := setupTestServerForOAuth(t)
+	defer srv.db.Close()
+	defer srv.oauthSessionStore.Stop()
+	defer srv.sessionStore.Stop()
+
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.GET("/oauth/authorize", srv.handleOAuthAuthorize)
+	router.POST("/oauth/session/:id/mock-complete", srv.handleOAuthMockComplete)
+	router.POST("/oauth/token", srv.handleOAuthToken)
+	router.POST("/api/v1/refresh", srv.handleRefresh)
+
+	// Enable mock login for testing
+	srv.config.AllowMockLogin = true
+
+	// Step 1: Start OAuth flow with authorize request
+	state := "refresh-test-state"
+	redirectURI := "http://localhost:3000/callback"
+
+	q := url.Values{}
+	q.Set("client_id", "explorer-app")
+	q.Set("redirect_uri", redirectURI)
+	q.Set("response_type", "code")
+	q.Set("state", state)
+
+	authorizeReq := httptest.NewRequest("GET", "/oauth/authorize?"+q.Encode(), nil)
+	authorizeW := httptest.NewRecorder()
+	router.ServeHTTP(authorizeW, authorizeReq)
+
+	require.Equal(t, http.StatusOK, authorizeW.Code)
+
+	var authorizeResp map[string]interface{}
+	err := json.Unmarshal(authorizeW.Body.Bytes(), &authorizeResp)
+	require.NoError(t, err)
+
+	oauthSessionID := authorizeResp["oauth_session_id"].(string)
+	require.NotEmpty(t, oauthSessionID)
+
+	// Step 2: Complete the session via mock-complete
+	mockCompleteReq := httptest.NewRequest("POST", "/oauth/session/"+oauthSessionID+"/mock-complete", nil)
+	mockCompleteW := httptest.NewRecorder()
+	router.ServeHTTP(mockCompleteW, mockCompleteReq)
+
+	require.Equal(t, http.StatusOK, mockCompleteW.Code)
+
+	// Step 3: Get the authorization code from the session status
+	session := srv.oauthSessionStore.GetSession(oauthSessionID)
+	require.NotNil(t, session)
+	require.NotEmpty(t, session.Code)
+
+	// Step 4: Exchange the code for tokens via POST /oauth/token
+	tokenRequest := OAuthTokenRequest{
+		GrantType:   "authorization_code",
+		Code:        session.Code,
+		RedirectURI: redirectURI,
+		ClientID:    "explorer-app",
+	}
+	tokenReqBody, _ := json.Marshal(tokenRequest)
+
+	tokenReq := httptest.NewRequest("POST", "/oauth/token", bytes.NewReader(tokenReqBody))
+	tokenReq.Header.Set("Content-Type", "application/json")
+	tokenW := httptest.NewRecorder()
+	router.ServeHTTP(tokenW, tokenReq)
+
+	require.Equal(t, http.StatusOK, tokenW.Code)
+
+	var tokenResp OAuthTokenResponse
+	err = json.Unmarshal(tokenW.Body.Bytes(), &tokenResp)
+	require.NoError(t, err)
+
+	// Step 5: Assert the response includes all expected fields
+	assert.NotEmpty(t, tokenResp.AccessToken, "access_token must be present")
+	assert.NotEmpty(t, tokenResp.RefreshToken, "refresh_token must be present")
+	assert.Equal(t, "Bearer", tokenResp.TokenType, "token_type must be Bearer")
+	assert.Greater(t, tokenResp.ExpiresIn, 0, "expires_in must be positive")
+
+	// Validate the access token is a valid JWT
+	claims, err := srv.jwtService.ValidateAccessToken(tokenResp.AccessToken)
+	require.NoError(t, err)
+	assert.Contains(t, claims.Subject, "did:privado:mock_")
+
+	// Step 6: Use the refresh token to get new tokens via POST /api/v1/refresh
+	refreshReqBody, _ := json.Marshal(RefreshRequest{
+		RefreshToken: tokenResp.RefreshToken,
+	})
+
+	refreshReq := httptest.NewRequest("POST", "/api/v1/refresh", bytes.NewReader(refreshReqBody))
+	refreshReq.Header.Set("Content-Type", "application/json")
+	refreshW := httptest.NewRecorder()
+	router.ServeHTTP(refreshW, refreshReq)
+
+	require.Equal(t, http.StatusOK, refreshW.Code)
+
+	var refreshResp AuthResponse
+	err = json.Unmarshal(refreshW.Body.Bytes(), &refreshResp)
+	require.NoError(t, err)
+
+	// Step 7: Assert the refresh response includes new tokens
+	assert.NotEmpty(t, refreshResp.AccessToken, "refreshed access_token must be present")
+	assert.NotEmpty(t, refreshResp.RefreshToken, "refreshed refresh_token must be present")
+	assert.Equal(t, "Bearer", refreshResp.TokenType, "refreshed token_type must be Bearer")
+	assert.Greater(t, refreshResp.ExpiresIn, 0, "refreshed expires_in must be positive")
+
+	// The new tokens should be different from the original ones (rotation)
+	assert.NotEqual(t, tokenResp.AccessToken, refreshResp.AccessToken, "new access token should differ from old")
+	assert.NotEqual(t, tokenResp.RefreshToken, refreshResp.RefreshToken, "new refresh token should differ from old")
+
+	// Validate the new access token
+	newClaims, err := srv.jwtService.ValidateAccessToken(refreshResp.AccessToken)
+	require.NoError(t, err)
+	assert.Equal(t, claims.Subject, newClaims.Subject, "subject should be preserved across refresh")
+
+	// Step 8: Verify the old refresh token no longer works (it was revoked during rotation)
+	oldRefreshReqBody, _ := json.Marshal(RefreshRequest{
+		RefreshToken: tokenResp.RefreshToken,
+	})
+
+	oldRefreshReq := httptest.NewRequest("POST", "/api/v1/refresh", bytes.NewReader(oldRefreshReqBody))
+	oldRefreshReq.Header.Set("Content-Type", "application/json")
+	oldRefreshW := httptest.NewRecorder()
+	router.ServeHTTP(oldRefreshW, oldRefreshReq)
+
+	assert.Equal(t, http.StatusUnauthorized, oldRefreshW.Code, "old refresh token should be rejected after rotation")
+}

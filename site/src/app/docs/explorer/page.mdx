@@ -157,7 +157,15 @@ When the block explorer displays transaction lists, the redaction engine applies
 | One side is hidden, the other is visible | Hidden side replaced with `[PRIVATE]`; `value`, `inputData`, `error`, `revertReason`, and (if sender is hidden) `nonce` stripped |
 | Sender is redacted (pseudonymous/truncated) | Address masked; `value`, `inputData`, `error`, `revertReason`, and `nonce` stripped |
 
-The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the label "Private". Address labels ("Mine", "Disclosed", "My Org") appear next to addresses the viewer has explicit access to, helping users understand what they are permitted to see.
+The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the label "Private". Address labels ("Mine", "Disclosed", "My Org", "Public", "Private") appear next to addresses, helping users understand what they are permitted to see and why.
+
+### Participant Visibility
+
+Transaction participants (sender or receiver) always see the counterparty's address in their own transactions, even if the counterparty is otherwise private. This override is **per-transaction only** — the counterparty stays hidden in transactions where the viewer is not a participant.
+
+For example, if Alice sends ETH to Bob and Charlie views the global transaction list, Charlie sees `[PRIVATE] → [PRIVATE]` (or the transaction is dropped entirely). But Alice sees `Alice → Bob` and Bob sees `Alice → Bob`, because both are participants.
+
+Counterparty addresses revealed this way are labeled "Private" in the UI — indicating the address is private but visible because the viewer is a transaction participant.
 
 ### Nonce Redaction
 
@@ -168,6 +176,7 @@ The `nonce` field reveals how many transactions a sender has submitted over thei
 When an event log's emitting contract has a registered and verified ABI, the redaction engine scans the non-indexed `data` field for `address`-typed parameters. Any address slot whose visibility is not Full (i.e., the address is redacted or hidden) is zeroed out before the log is returned. Indexed address parameters in `topics[1]`–`topics[3]` are always scanned regardless of ABI registration.
 
 **Limitation:** For contracts without a registered ABI, the `data` field is returned unmodified. Private addresses embedded in non-indexed parameters of unverified contracts will not be redacted from the `data` field.
+
 
 ### Limitation: Value Inference from Balance History
 

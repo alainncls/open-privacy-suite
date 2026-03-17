@@ -12,8 +12,9 @@ import (
 
 // mockDB implements Database for testing
 type mockDB struct {
-	visMap VisibilityMap
-	err    error
+	visMap      VisibilityMap
+	err         error
+	linkedAddrs []string // addresses returned by GetLinkedAddresses
 }
 
 func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (VisibilityMap, error) {
@@ -21,6 +22,13 @@ func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (Vi
 		return nil, m.err
 	}
 	return m.visMap, nil
+}
+
+func (m *mockDB) GetLinkedAddresses(_ context.Context, _ string) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.linkedAddrs, nil
 }
 
 // mockContractStore implements ContractStore for testing
@@ -38,6 +46,10 @@ func (m *mockContractStore) GetContract(_ context.Context, address string) (*Con
 
 func newEngine(visMap VisibilityMap) *RedactionEngine {
 	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap}}
+}
+
+func newEngineWithLinkedAddrs(visMap VisibilityMap, linkedAddrs []string) *RedactionEngine {
+	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, linkedAddrs: linkedAddrs}}
 }
 
 func newEngineWithStore(visMap VisibilityMap, store ContractStore) *RedactionEngine {
@@ -1240,5 +1252,230 @@ func TestApplyRedaction_DefaultFallback(t *testing.T) {
 	}
 	if result != "[PRIVATE]" {
 		t.Errorf("unknown visibility should default to [PRIVATE], got %s", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Participant visibility — viewer sees counterparty in their own transactions
+// ---------------------------------------------------------------------------
+
+func TestRedactTransactions_ParticipantSeesCounterparty(t *testing.T) {
+	// Alice (viewer) sends to Bob. Bob's address is hidden globally,
+	// but Alice should see Bob's address because Alice is the sender.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000", InputData: "0xdeadbeef"},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != alice {
+		t.Errorf("From should be unchanged, got %s", result[0].From)
+	}
+	if *result[0].To != bob {
+		t.Errorf("To should be Bob's real address (participant visibility), got %s", *result[0].To)
+	}
+	// Value and input should be preserved since both sides are now VisibilityFull
+	if result[0].Value != "1000" {
+		t.Errorf("Value should be preserved for participant, got %s", result[0].Value)
+	}
+	if result[0].InputData != "0xdeadbeef" {
+		t.Errorf("InputData should be preserved for participant, got %s", result[0].InputData)
+	}
+}
+
+func TestRedactTransactions_ParticipantSeesCounterparty_Receiver(t *testing.T) {
+	// Bob (viewer) receives from Alice. Alice's address is hidden globally,
+	// but Bob should see Alice's address because Bob is the receiver.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{bob})
+
+	nonce := u64ptr(42)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "500", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != alice {
+		t.Errorf("From should be Alice's real address (participant visibility), got %s", result[0].From)
+	}
+	if *result[0].To != bob {
+		t.Errorf("To should be unchanged, got %s", *result[0].To)
+	}
+	if result[0].Value != "500" {
+		t.Errorf("Value should be preserved for participant, got %s", result[0].Value)
+	}
+	// Nonce must be stripped — the sender is base-level hidden, and nonce reveals
+	// their lifetime tx count. The participant override shows the address, not metadata.
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil when sender is base-level hidden (participant override), got %v", *result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_ParticipantNonceStripped_SenderViewing(t *testing.T) {
+	// Alice (viewer, sender) sends to Bob (hidden). Alice sees Bob's address
+	// via participant visibility, but Alice's own nonce should be preserved
+	// (it's her own nonce, not private from her).
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	nonce := u64ptr(10)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Alice's own nonce should be preserved — it's her own data
+	if result[0].Nonce == nil || *result[0].Nonce != 10 {
+		t.Errorf("Sender's own nonce should be preserved, got %v", result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_ParticipantNonceStripped_ReceiverViewingRedactedSender(t *testing.T) {
+	// Bob (viewer, receiver) sees tx from Alice (redacted). Alice's nonce must be stripped.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityRedacted,
+		bob:   VisibilityFull,
+	}, []string{bob})
+
+	nonce := u64ptr(99)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "200", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil when sender is base-level redacted (participant override), got %v", *result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T) {
+	// Charlie (viewer) is not a participant. Alice and Bob are from/to.
+	// Alice is hidden — Charlie should NOT see Alice's real address.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	charlie := "0xcccccccccccccccccccccccccccccccccccccccc"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{charlie})
+
+	nonce := u64ptr(7)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:charlie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE] for non-participant, got %s", result[0].From)
+	}
+	if *result[0].To != bob {
+		t.Errorf("To should be unchanged, got %s", *result[0].To)
+	}
+	if result[0].Value != "" {
+		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", result[0].Value)
+	}
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil for non-participant when sender is hidden, got %v", *result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testing.T) {
+	// Alice (viewer) is participant in tx1 (Alice -> Bob) but NOT in tx2 (Carol -> Bob).
+	// Bob is hidden globally. Alice should see Bob in tx1 but NOT in tx2.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	carol := "0xcccccccccccccccccccccccccccccccccccccccc"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+		carol: VisibilityFull,
+	}, []string{alice})
+
+	nonce5 := u64ptr(5)
+	nonce8 := u64ptr(8)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce5},  // Alice is participant
+		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8},  // Alice is NOT participant
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 txs, got %d", len(result))
+	}
+
+	// tx1: Alice is participant (sender), Bob should be visible
+	tx1 := result[0]
+	if tx1.Hash != "0x01" {
+		t.Fatalf("expected tx1 hash 0x01, got %s", tx1.Hash)
+	}
+	if *tx1.To != bob {
+		t.Errorf("tx1: To should be Bob's real address (participant), got %s", *tx1.To)
+	}
+	if tx1.Value != "100" {
+		t.Errorf("tx1: Value should be preserved for participant, got %s", tx1.Value)
+	}
+	// Alice is the sender — her own nonce should be preserved (baseFromLevel is Full)
+	if tx1.Nonce == nil || *tx1.Nonce != 5 {
+		t.Errorf("tx1: Sender's own nonce should be preserved, got %v", tx1.Nonce)
+	}
+
+	// tx2: Alice is NOT participant, Bob should be hidden
+	tx2 := result[1]
+	if tx2.Hash != "0x02" {
+		t.Fatalf("expected tx2 hash 0x02, got %s", tx2.Hash)
+	}
+	if *tx2.To != "[PRIVATE]" {
+		t.Errorf("tx2: To should be [PRIVATE] (non-participant), got %s", *tx2.To)
+	}
+	if tx2.Value != "" {
+		t.Errorf("tx2: Value should be stripped (one side hidden, non-participant), got %s", tx2.Value)
+	}
+	// Carol's nonce should be preserved — Carol is Full (public sender), only Bob is hidden
+	// The nonce strip only applies when the SENDER is hidden, not the receiver
+	if tx2.Nonce == nil || *tx2.Nonce != 8 {
+		t.Errorf("tx2: Carol's nonce should be preserved (sender is public), got %v", tx2.Nonce)
 	}
 }

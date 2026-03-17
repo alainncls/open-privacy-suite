@@ -31,10 +31,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// AccessTokenTTL is intentionally short. We do not implement immediate token
+// revocation for access tokens (no per-request DB lookup). This means a banned
+// user stays active until their current access token expires and they attempt a
+// refresh — at which point handleRefresh checks the ban flag and rejects them.
+// The 5-minute window is the maximum time a banned user can continue acting.
+// Do not increase this value without adding an access-token revocation mechanism.
+// Dev builds (mockauth) override this to 30 minutes via init().
+var AccessTokenTTL = 5 * time.Minute
+
 // TTL constants for various components
 const (
-	// JWT token TTLs
-	AccessTokenTTL  = 5 * time.Minute
 	RefreshTokenTTL = 7 * 24 * time.Hour
 
 	// Cache and store TTLs
@@ -467,6 +474,11 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.GET("/api/v1/auth/azure/url", authRL, s.handleAzureAuthURL)
 	router.POST("/api/v1/auth/azure/callback", authRL, s.handleAzureCallback)
 	router.GET("/api/v1/auth/providers", s.handleAuthProviders)
+
+	// Dev identity picker endpoint (development/testing only, mockauth builds)
+	if !s.config.IsProduction() && s.config.AllowMockLogin {
+		router.GET("/api/v1/dev/test-identities", s.handleGetTestIdentities)
+	}
 
 	// Manual verification endpoint (development/testing only)
 	if !s.config.IsProduction() {
