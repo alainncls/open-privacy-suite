@@ -92,30 +92,36 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	var redactedTxs []Transaction
 	for _, tx := range txs {
 		// Determine whether the viewer is a participant in this transaction.
-		// If so, the counterparty gets VisibilityFull for THIS tx only.
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
 		viewerIsTo := tx.To != nil && *tx.To != "" && viewerAddrs[strings.ToLower(*tx.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
-		fromLevel := VisibilityFull
+		// Resolve base visibility from the shared map.
+		baseFromLevel := VisibilityFull
 		if tx.From != "" {
-			fromLevel = visibilityMap[strings.ToLower(tx.From)]
-			// If the viewer is a participant and the from address is the counterparty,
-			// override to full visibility for this transaction.
-			if viewerIsParticipant && fromLevel != VisibilityFull {
-				fromLevel = VisibilityFull
-			}
+			baseFromLevel = visibilityMap[strings.ToLower(tx.From)]
+		}
+		baseToLevel := VisibilityFull
+		if tx.To != nil && *tx.To != "" {
+			baseToLevel = visibilityMap[strings.ToLower(*tx.To)]
 		}
 
-		toLevel := VisibilityFull
-		if tx.To != nil && *tx.To != "" {
-			toLevel = visibilityMap[strings.ToLower(*tx.To)]
-			if viewerIsParticipant && toLevel != VisibilityFull {
+		// Participant override: the counterparty address is revealed (so we don't
+		// replace it with [PRIVATE]), but sensitive metadata like nonce is still
+		// stripped based on the BASE visibility — the participant override only
+		// makes the address visible, not the sender's activity metadata.
+		fromLevel := baseFromLevel
+		toLevel := baseToLevel
+		if viewerIsParticipant {
+			if fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
+				fromLevel = VisibilityFull
+			}
+			if toLevel == VisibilityHidden || toLevel == VisibilityRedacted {
 				toLevel = VisibilityFull
 			}
 		}
 
-		// If BOTH participants are hidden, drop the transaction entirely
+		// If BOTH participants are hidden (and viewer is not a participant), drop entirely.
 		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
 			continue
 		}
@@ -166,6 +172,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			if fromLevel == VisibilityRedacted {
 				redactedTx.Nonce = nil // nonce reveals tx count for private sender
 			}
+		}
+
+		// Participant override: even when the counterparty address is revealed,
+		// strip the sender's nonce if the sender is base-level private. The nonce
+		// reveals their lifetime tx count — the receiver doesn't need that.
+		if viewerIsParticipant && (baseFromLevel == VisibilityHidden || baseFromLevel == VisibilityRedacted) {
+			redactedTx.Nonce = nil
 		}
 
 		redactedTxs = append(redactedTxs, redactedTx)

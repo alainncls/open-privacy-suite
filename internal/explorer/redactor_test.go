@@ -1304,8 +1304,9 @@ func TestRedactTransactions_ParticipantSeesCounterparty_Receiver(t *testing.T) {
 		bob:   VisibilityFull,
 	}, []string{bob})
 
+	nonce := u64ptr(42)
 	txs := []Transaction{
-		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "500"},
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "500", Nonce: nonce},
 	}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:bob")
 	if err != nil {
@@ -1323,6 +1324,64 @@ func TestRedactTransactions_ParticipantSeesCounterparty_Receiver(t *testing.T) {
 	if result[0].Value != "500" {
 		t.Errorf("Value should be preserved for participant, got %s", result[0].Value)
 	}
+	// Nonce must be stripped — the sender is base-level hidden, and nonce reveals
+	// their lifetime tx count. The participant override shows the address, not metadata.
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil when sender is base-level hidden (participant override), got %v", *result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_ParticipantNonceStripped_SenderViewing(t *testing.T) {
+	// Alice (viewer, sender) sends to Bob (hidden). Alice sees Bob's address
+	// via participant visibility, but Alice's own nonce should be preserved
+	// (it's her own nonce, not private from her).
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	nonce := u64ptr(10)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Alice's own nonce should be preserved — it's her own data
+	if result[0].Nonce == nil || *result[0].Nonce != 10 {
+		t.Errorf("Sender's own nonce should be preserved, got %v", result[0].Nonce)
+	}
+}
+
+func TestRedactTransactions_ParticipantNonceStripped_ReceiverViewingRedactedSender(t *testing.T) {
+	// Bob (viewer, receiver) sees tx from Alice (redacted). Alice's nonce must be stripped.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityRedacted,
+		bob:   VisibilityFull,
+	}, []string{bob})
+
+	nonce := u64ptr(99)
+	txs := []Transaction{
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "200", Nonce: nonce},
+	}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil when sender is base-level redacted (participant override), got %v", *result[0].Nonce)
+	}
 }
 
 func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T) {
@@ -1336,8 +1395,9 @@ func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T
 		bob:   VisibilityFull,
 	}, []string{charlie})
 
+	nonce := u64ptr(7)
 	txs := []Transaction{
-		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000"},
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000", Nonce: nonce},
 	}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:charlie")
 	if err != nil {
@@ -1355,6 +1415,9 @@ func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T
 	if result[0].Value != "" {
 		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", result[0].Value)
 	}
+	if result[0].Nonce != nil {
+		t.Errorf("Nonce must be nil for non-participant when sender is hidden, got %v", *result[0].Nonce)
+	}
 }
 
 func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testing.T) {
@@ -1369,9 +1432,11 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 		carol: VisibilityFull,
 	}, []string{alice})
 
+	nonce5 := u64ptr(5)
+	nonce8 := u64ptr(8)
 	txs := []Transaction{
-		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100"},  // Alice is participant
-		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200"},  // Alice is NOT participant
+		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce5},  // Alice is participant
+		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8},  // Alice is NOT participant
 	}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
 	if err != nil {
@@ -1381,7 +1446,7 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 		t.Fatalf("expected 2 txs, got %d", len(result))
 	}
 
-	// tx1: Alice is participant, Bob should be visible
+	// tx1: Alice is participant (sender), Bob should be visible
 	tx1 := result[0]
 	if tx1.Hash != "0x01" {
 		t.Fatalf("expected tx1 hash 0x01, got %s", tx1.Hash)
@@ -1391,6 +1456,10 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 	}
 	if tx1.Value != "100" {
 		t.Errorf("tx1: Value should be preserved for participant, got %s", tx1.Value)
+	}
+	// Alice is the sender — her own nonce should be preserved (baseFromLevel is Full)
+	if tx1.Nonce == nil || *tx1.Nonce != 5 {
+		t.Errorf("tx1: Sender's own nonce should be preserved, got %v", tx1.Nonce)
 	}
 
 	// tx2: Alice is NOT participant, Bob should be hidden
@@ -1403,5 +1472,10 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 	}
 	if tx2.Value != "" {
 		t.Errorf("tx2: Value should be stripped (one side hidden, non-participant), got %s", tx2.Value)
+	}
+	// Carol's nonce should be preserved — Carol is Full (public sender), only Bob is hidden
+	// The nonce strip only applies when the SENDER is hidden, not the receiver
+	if tx2.Nonce == nil || *tx2.Nonce != 8 {
+		t.Errorf("tx2: Carol's nonce should be preserved (sender is public), got %v", tx2.Nonce)
 	}
 }
