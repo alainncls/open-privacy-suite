@@ -17,8 +17,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # Anvil (Foundry's local Ethereum node)
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
     ports:
@@ -36,8 +36,8 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    restart: unless-stopped
 
-  # Privacy proxy backend
   proxy-backend:
     build:
       context: .
@@ -82,8 +82,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
 
-  # Frontend dev server
   proxy-frontend:
     build:
       context: ./frontend
@@ -106,6 +106,7 @@ services:
         condition: service_started
     networks:
       - internal
+    restart: unless-stopped
 
 volumes:
   postgres-data:
