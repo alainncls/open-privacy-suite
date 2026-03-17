@@ -627,6 +627,57 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 			t.Errorf("expected access to be denied for eth_sendTransaction to cross-org contract")
 		}
 	})
+
+	t.Run("SECURITY-011: eth_getTransactionCount on cross-org address is denied", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_getTransactionCount",
+			Params:         []any{contractB, "latest"},
+			TargetAddress:  contractB,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Errorf("expected access to be denied for eth_getTransactionCount on cross-org address")
+		}
+	})
+
+	t.Run("SECURITY-012: eth_getProof on cross-org address is denied", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_getProof",
+			Params:         []any{contractB, []any{"0x0"}, "latest"},
+			TargetAddress:  contractB,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Errorf("expected access to be denied for eth_getProof on cross-org address")
+		}
+	})
+
+	t.Run("SECURITY-013: eth_createAccessList on cross-org contract is denied", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			UserExternalID: "did:test:user-a",
+			Method:         "eth_createAccessList",
+			Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "latest"},
+			TargetAddress:  contractB,
+		}
+
+		result, err := controller.CheckAccess(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Errorf("expected access to be denied for eth_createAccessList on cross-org contract")
+		}
+	})
 }
 
 // TestCheckAccessCrossOrgWithClaims tests that default_claims cannot be used

@@ -1408,7 +1408,10 @@ func GetTargetAddress(method string, params []any) string {
 	}
 
 	switch method {
-	case "eth_call", "eth_estimateGas":
+	case "eth_call", "eth_estimateGas", "eth_createAccessList":
+		// Call-like methods: target is "to" inside the transaction object.
+		// eth_createAccessList reveals storage and address access patterns —
+		// must be gated per-address like eth_call.
 		if callObj, ok := params[0].(map[string]any); ok {
 			if to, ok := callObj["to"].(string); ok {
 				return strings.ToLower(to)
@@ -1425,10 +1428,12 @@ func GetTargetAddress(method string, params []any) string {
 				return addr
 			}
 		}
-	case "eth_getCode", "eth_getStorageAt":
-		// These query contract state and need per-contract access checks.
-		// eth_getBalance and eth_getTransactionCount are account queries (EOA or contract)
-		// and are only checked at the method level (allowed_methods), not contract level.
+	case "eth_getCode", "eth_getStorageAt", "eth_getBalance", "eth_getTransactionCount", "eth_getProof":
+		// All address-targeted state queries need per-address access checks.
+		// On a private network, balances, nonces, bytecode, and storage proofs
+		// are sensitive — cross-org queries leak financial and activity data.
+		// eth_getProof returns balance + nonce + storage hash for an address,
+		// equivalent to eth_getBalance + eth_getStorageAt combined.
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
 		}

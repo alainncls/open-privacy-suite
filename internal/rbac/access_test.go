@@ -370,18 +370,37 @@ func TestGetTargetAddress(t *testing.T) {
 			params:   []any{"0xABCD1234", "0x0", "latest"},
 			expected: "0xabcd1234",
 		},
-		// Account query methods - should NOT extract target address (method-level check only)
+		// Account query methods - MUST extract target address for per-address access checks.
+		// On a private network, balances and nonces are sensitive cross-org data.
 		{
-			name:     "eth_getBalance - account query, no contract target",
+			name:     "eth_getBalance extracts target address",
 			method:   "eth_getBalance",
 			params:   []any{"0xABCD1234", "latest"},
-			expected: "",
+			expected: "0xabcd1234",
 		},
 		{
-			name:     "eth_getTransactionCount - account query, no contract target",
+			name:     "eth_getTransactionCount extracts target address",
 			method:   "eth_getTransactionCount",
 			params:   []any{"0x0000000000000000000000000000000000000000", "latest"},
-			expected: "",
+			expected: "0x0000000000000000000000000000000000000000",
+		},
+		// eth_getProof returns balance + nonce + storage proof — equivalent to
+		// eth_getBalance + eth_getStorageAt combined. Must be per-address gated.
+		{
+			name:     "eth_getProof extracts target address",
+			method:   "eth_getProof",
+			params:   []any{"0xABCD1234", []any{"0x0"}, "latest"},
+			expected: "0xabcd1234",
+		},
+		// eth_createAccessList reveals which storage slots and addresses a call
+		// would access — leaks contract internals cross-org.
+		{
+			name:   "eth_createAccessList extracts to from call object",
+			method: "eth_createAccessList",
+			params: []any{
+				map[string]any{"to": "0xABCD1234", "data": "0x"},
+			},
+			expected: "0xabcd1234",
 		},
 		{
 			name:     "Unknown method",
