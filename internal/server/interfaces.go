@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/iden3/iden3comm/v2/protocol"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/types"
 )
 
 // SessionManager abstracts the session store operations for dependency injection and testing.
@@ -44,8 +45,40 @@ type RateLimiterInterface interface {
 	Stop()
 }
 
+// OAuthSessionManager abstracts OAuth session storage.
+// Uses *types.OAuthSession so that implementations in other packages (e.g. redis)
+// can satisfy the interface without importing the server package.
+type OAuthSessionManager interface {
+	CreateSession(clientID, redirectURI, state, authSessionID string) string
+	GetSession(sessionID string) *types.OAuthSession
+	GetSessionByCode(code string) *types.OAuthSession
+	SetCode(sessionID, code, userDID string, kyc bool) error
+	MarkCodeUsed(code string) bool
+	DeleteSession(sessionID string)
+	Stop()
+}
+
+// AzureStateManager abstracts Azure AD CSRF state storage.
+type AzureStateManager interface {
+	Create() (state, nonce string)
+	Consume(state string) (nonce string, ok bool)
+	Stop()
+}
+
+// ChallengeManager abstracts ETH address linking challenge storage.
+type ChallengeManager interface {
+	CreateChallenge(did string) (*LinkChallenge, error)
+	GetChallenge(nonce string) *LinkChallenge
+	Stop()
+}
+
 // Verify that concrete types implement the interfaces.
+// Redis implementations are verified in internal/redis/interfaces_check.go
+// to avoid a circular dependency.
 var (
 	_ SessionManager       = (*auth.SessionStore)(nil)
 	_ RateLimiterInterface = (*RateLimiter)(nil)
+	_ OAuthSessionManager  = (*OAuthSessionStore)(nil)
+	_ AzureStateManager    = (*AzureStateStore)(nil)
+	_ ChallengeManager     = (*ChallengeStore)(nil)
 )

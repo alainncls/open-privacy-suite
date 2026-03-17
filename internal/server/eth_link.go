@@ -9,6 +9,7 @@ import (
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/types"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +23,8 @@ const (
 	errInvalidIdentity = "invalid identity in context"
 )
 
-// LinkChallenge represents a pending ETH address linking challenge
-type LinkChallenge struct {
-	DID       string
-	Nonce     string
-	Address   string // Optional: pre-specified address
-	Message   string // The message to be signed
-	CreatedAt time.Time
-}
+// LinkChallenge is an alias for the shared type.
+type LinkChallenge = types.LinkChallenge
 
 // ChallengeStore stores pending link challenges with TTL
 type ChallengeStore struct {

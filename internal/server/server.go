@@ -24,6 +24,7 @@ import (
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
+	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/tracer"
 	"strings"
 	"time"
@@ -73,8 +74,8 @@ type Server struct {
 	privadoVerifier    PrivadoVerifier
 	jwtService         *auth.JWTService
 	sessionStore       SessionManager
-	oauthSessionStore  *OAuthSessionStore
-	challengeStore     *ChallengeStore
+	oauthSessionStore  OAuthSessionManager
+	challengeStore     ChallengeManager
 	rateLimiter        RateLimiterInterface
 	authRateLimiter    *AuthRateLimiter
 	disclosureService  *disclosure.DefaultService
@@ -86,15 +87,16 @@ type Server struct {
 	zkRoleExtractor    *auth.ZKRoleExtractor
 	runtimeTracer      *tracer.RuntimeTracer
 	azureAuthenticator *auth.AzureADAuthenticator
-	azureStateStore    *AzureStateStore
+	azureStateStore    AzureStateManager
 	metrics            *metrics.Metrics
-	explorerStore    *explorer.Store
+explorerStore    *explorer.Store
 	explorerMu       sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
 	explorerRedactor *explorer.RedactionEngine
 	siemForwarder    *audit.SIEMForwarder
 	retentionCleaner              *audit.RetentionCleaner
 	governanceEngine              *governance.Engine
 	escalationWorker              *governance.EscalationWorker
+	redisCloser        io.Closer
 }
 
 // DB returns the database instance (for testing)
@@ -138,8 +140,11 @@ func (s *Server) Stop() {
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
 	}
-	if s.escalationWorker != nil {
+if s.escalationWorker != nil {
 		s.escalationWorker.Stop()
+	}
+	if s.redisCloser != nil {
+		s.redisCloser.Close()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -223,7 +228,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	proxySvc := proxy.New(cfg.NodeURL)
 
-	// Initialize RBAC access controller
+// Initialize RBAC access controller
 	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
 	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
 
@@ -251,14 +256,46 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		slog.Info("loaded additional trusted factory hashes from config", "count", len(cfg.TrustedFactoryHashes))
 	}
 
-	// Initialize session store
-	sessionStore := auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
+	// Initialize state stores: Redis-backed when REDIS_URL is set, in-memory otherwise.
+	var sessionStore SessionManager
+	var challengeStore ChallengeManager
+	var rateLimiter RateLimiterInterface
+	var oauthSessionStore OAuthSessionManager
+	var rbacAccessCtrl *rbac.AccessController
+	var redisCloser io.Closer
+	var redisClient *privacyredis.Client
 
-	// Initialize challenge store for ETH address linking
-	challengeStore := NewChallengeStore(ChallengeTTL, ChallengeCleanupInterval)
+	if cfg.RedisURL != "" {
+		var redisErr error
+		redisClient, redisErr = privacyredis.NewClient(cfg.RedisURL)
+		if redisErr != nil {
+			database.Close()
+			return nil, fmt.Errorf("redis: %w", redisErr)
+		}
+		redisCloser = redisClient
+		slog.Info("using Redis-backed state stores", "url", cfg.RedisURL)
 
-	// Initialize rate limiter
-	rateLimiter := NewRateLimiter(RateLimiterCleanupInterval)
+		sessionStore = privacyredis.NewSessionStore(redisClient, SessionTTL, auth.DefaultMaxSessions)
+		challengeStore = privacyredis.NewChallengeStore(redisClient, ChallengeTTL)
+		rateLimiter = privacyredis.NewRateLimiter(redisClient)
+		oauthSessionStore = privacyredis.NewOAuthSessionStore(redisClient, OAuthSessionTTL, DefaultMaxOAuthSessions)
+		rbacCache := privacyredis.NewPermissionCache(redisClient, RBACCacheTTL)
+		rbacAccessCtrl = rbac.NewAccessControllerWithCache(database, RBACCacheTTL, rbacCache)
+	} else {
+		slog.Info("using in-memory state stores")
+		sessionStore = auth.NewSessionStore(SessionTTL, SessionCleanupInterval)
+		challengeStore = NewChallengeStore(ChallengeTTL, ChallengeCleanupInterval)
+		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
+		oauthSessionStore = NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
+		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
+	}
+
+	// Configure runtime tracing mode for deployment validation
+	// When enabled, contracts with dynamic calls are allowed at deploy time
+	// because those calls will be validated at runtime via debug_traceCall
+	if cfg.EnableRuntimeTracing {
+		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
+	}
 
 	// Initialize auth rate limiter for protecting auth endpoints from brute force
 	// Use relaxed limits in development/testing to avoid issues during E2E tests
@@ -282,14 +319,18 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize Azure AD authenticator (optional — only when credentials are configured)
 	var azureAuthenticator *auth.AzureADAuthenticator
-	var azureStateStore *AzureStateStore
+	var azureStateStore AzureStateManager
 	if cfg.AzureADEnabled() {
 		azureAuthenticator, err = auth.NewAzureADAuthenticator(cfg.AzureADClientID, cfg.AzureADClientSecret, cfg.AzureADTenantID)
 		if err != nil {
 			// Log warning but don't fail — Azure AD is optional
 			slog.Warn("failed to initialize Azure AD authenticator", "error", err)
 		} else {
-			azureStateStore = NewAzureStateStore(AzureStateTTL, AzureStateCleanupInterval)
+			if redisClient != nil {
+				azureStateStore = privacyredis.NewAzureStateStore(redisClient, AzureStateTTL)
+			} else {
+				azureStateStore = NewAzureStateStore(AzureStateTTL, AzureStateCleanupInterval)
+			}
 			slog.Info("Azure AD authentication enabled", "tenant", cfg.AzureADTenantID)
 		}
 	}
@@ -299,9 +340,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Initialize disclosure service
 	disclosureService := disclosure.NewService(database)
-
-	// Initialize OAuth session store
-	oauthSessionStore := NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions)
 
 	// Initialize runtime tracer (optional - only when enabled)
 	var runtimeTracer *tracer.RuntimeTracer
@@ -341,8 +379,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
-		explorerStore:    explorerStore,
+explorerStore:    explorerStore,
 		explorerRedactor: explorer.NewRedactionEngine(explorerStore, database),
+		redisCloser:        redisCloser,
 	}
 
 	// Initialize governance engine and escalation worker

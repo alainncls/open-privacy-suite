@@ -14,6 +14,7 @@ import (
 	"time"
 
 	authpkg "privacy-proxy/internal/auth"
+	"privacy-proxy/internal/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iden3/iden3comm/v2/protocol"
@@ -34,30 +35,12 @@ const (
 	DefaultMaxOAuthSessions = 1000
 )
 
-// OAuthSession represents a pending OAuth authorization session
+// OAuthSession wraps types.OAuthSession with an in-memory mutex for the
+// in-process store. The Redis store uses types.OAuthSession directly since
+// Redis provides its own concurrency guarantees.
 type OAuthSession struct {
 	mu sync.Mutex
-
-	// OAuth parameters from the authorize request
-	ClientID    string
-	RedirectURI string
-	State       string
-
-	// Link to the underlying auth session (Privado ID flow)
-	AuthSessionID string
-
-	// Authorization code (set after successful auth)
-	Code        string
-	CodeUsed    bool
-	CodeExpires time.Time
-
-	// User info (set after successful auth)
-	UserDID string
-	KYC     bool
-
-	// Timestamps
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	types.OAuthSession
 }
 
 // OAuthSessionStore manages OAuth authorization sessions
@@ -102,20 +85,24 @@ func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSess
 	now := time.Now()
 
 	session := &OAuthSession{
-		ClientID:      clientID,
-		RedirectURI:   redirectURI,
-		State:         state,
-		AuthSessionID: authSessionID,
-		CreatedAt:     now,
-		ExpiresAt:     now.Add(s.ttl),
+		OAuthSession: types.OAuthSession{
+			ClientID:      clientID,
+			RedirectURI:   redirectURI,
+			State:         state,
+			AuthSessionID: authSessionID,
+			CreatedAt:     now,
+			ExpiresAt:     now.Add(s.ttl),
+		},
 	}
 
 	s.sessions.Store(sessionID, session)
 	return sessionID
 }
 
-// GetSession retrieves an OAuth session by ID
-func (s *OAuthSessionStore) GetSession(sessionID string) *OAuthSession {
+// GetSession retrieves an OAuth session by ID.
+// Returns the embedded types.OAuthSession (without the mutex wrapper) to satisfy
+// the OAuthSessionManager interface.
+func (s *OAuthSessionStore) GetSession(sessionID string) *types.OAuthSession {
 	value, ok := s.sessions.Load(sessionID)
 	if !ok {
 		return nil
@@ -127,11 +114,11 @@ func (s *OAuthSessionStore) GetSession(sessionID string) *OAuthSession {
 		return nil
 	}
 
-	return session
+	return &session.OAuthSession
 }
 
 // GetSessionByCode retrieves an OAuth session by authorization code
-func (s *OAuthSessionStore) GetSessionByCode(code string) *OAuthSession {
+func (s *OAuthSessionStore) GetSessionByCode(code string) *types.OAuthSession {
 	value, ok := s.codeIndex.Load(code)
 	if !ok {
 		return nil

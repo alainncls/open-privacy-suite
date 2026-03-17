@@ -95,6 +95,10 @@ type Config struct {
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
 	AzureADClientSecret string // AZURE_AD_CLIENT_SECRET
 	AzureADTenantID     string // AZURE_AD_TENANT_ID (default: "common" for multi-tenant)
+
+	// Redis URL for shared state stores (e.g., "redis://localhost:6379").
+	// Empty means fall back to in-memory stores.
+	RedisURL string
 }
 
 func Load() *Config {
@@ -293,6 +297,7 @@ func Load() *Config {
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:          getEnv("AZURE_AD_TENANT_ID", "common"),
+		RedisURL:                 getEnv("REDIS_URL", ""),
 	}
 }
 
