@@ -2,9 +2,9 @@
 
 Last updated: 2026-03-17
 
-## Overall Status: Ready for MVP — prod compose gaps fixed (see section 3)
+## Overall Status: Ready for MVP — prod compose mostly fixed (see section 3; `DATABASE_URL` / TLS enforcement still pending)
 
-Infrastructure, security, deployment, and auth systems are solid. One significant gap remains in the KYC flow (see below).
+Infrastructure, security, deployment, and auth systems are solid. One significant gap remains in the KYC flow (see below), and `DATABASE_URL` TLS enforcement is still a known TODO for production.
 
 ---
 
@@ -105,7 +105,7 @@ The following items were identified and addressed during pre-handoff review of `
 |------|-------|--------|
 | `FRONTEND_URL` | Not set in prod overlay — base compose value (`http://localhost:5173`) would cause `config.Validate()` to reject startup in production mode | Added `FRONTEND_URL=${BASE_URL}` to prod backend environment |
 | `VERIFIER_ID` | Base compose dev DID (`did:privado:verifier:dev-0000000000000000`) was not overridden — operators need to supply the real production DID | Overridden to `${VERIFIER_ID}` (required, no default) |
-| `DATABASE_URL` | Not overridden in prod overlay — base compose `sslmode=disable` would remain | Overridden to `${DATABASE_URL}` (operator must supply with `sslmode=require`) |
+| `DATABASE_URL` | Not overridden in prod overlay — base compose `sslmode=disable` would remain, and neither compose nor `config.Validate()` currently enforces `sslmode=require` | Overridden to `${DATABASE_URL}` (operator should supply a TLS-enabled DSN with `sslmode=require`; **TODO:** add explicit production-time validation / make `${DATABASE_URL}` required in compose) |
 | `JWT_SECRET` / `JWT_REFRESH_SECRET` | Base compose dev fallback strings (`:-dev-jwt-secret-...`) would silently apply if env vars not set | Overridden to `${JWT_SECRET}` / `${JWT_REFRESH_SECRET}` (required, no default) |
 | `BASE_URL` (Caddy) | Default of `https://localhost` would cause ACME to fail cert provisioning | Removed default — `${BASE_URL}` is now required |
 | `CORS_ALLOWED_ORIGINS` | Not set anywhere — defaults to `*` in dev mode | Added `CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-${BASE_URL}}` |
