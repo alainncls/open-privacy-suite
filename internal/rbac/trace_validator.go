@@ -183,10 +183,10 @@ func (v *TraceValidator) ValidateTrace(
 			return nil, fmt.Errorf("failed to get contract owner: %w", err)
 		}
 		if ownerOrgID != "" {
-			// The contract is owned by another organization
+			slog.Debug("trace denied: call target owned by another org", "address", addr)
 			return &TraceValidationResult{
 				Allowed:      false,
-				Reason:       fmt.Sprintf("address %s is owned by another organization", addr),
+				Reason:       "contract access denied",
 				DeniedTarget: addr,
 			}, nil
 		}

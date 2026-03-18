@@ -243,7 +243,7 @@ func TestValidateTrace_OtherOrgContractDenied(t *testing.T) {
 	if result.Allowed {
 		t.Errorf("expected call to other org's contract to be denied")
 	}
-	if !strings.Contains(result.Reason, "another organization") {
+	if !strings.Contains(result.Reason, "contract access denied") {
 		t.Errorf("expected cross-org denial, got: %s", result.Reason)
 	}
 	if result.DeniedTarget != "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
@@ -586,7 +586,7 @@ func TestValidateTrace_TableDriven(t *testing.T) {
 				},
 			},
 			expectAllowed: false,
-			expectReason:  "another organization",
+			expectReason:  "contract access denied",
 			expectDenied:  "0xorg2contract",
 		},
 	}
