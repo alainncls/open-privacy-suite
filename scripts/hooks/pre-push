@@ -39,6 +39,9 @@ run_test() {
 # Run unit tests (Go backend)
 run_test "Go Unit Tests" "make test-unit 2>&1 | tail -20"
 
+# Run Go E2E tests
+run_test "Go E2E Tests" "make test-e2e 2>&1 | tail -20"
+
 # Run frontend tests
 run_test "Frontend Tests" "make frontend-test 2>&1 | tail -20"
 
