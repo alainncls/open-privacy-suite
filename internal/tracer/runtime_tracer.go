@@ -91,6 +91,16 @@ func (rt *RuntimeTracer) TraceTransaction(
 	return result, nil
 }
 
+// TraceMinedTransaction traces a mined transaction to discover actual CREATE/CREATE2 addresses.
+// No caching — mined transactions are traced once during deployment finalization.
+func (rt *RuntimeTracer) TraceMinedTransaction(ctx context.Context, txHash string) (*TraceResult, error) {
+	if !rt.enabled {
+		return nil, nil
+	}
+
+	return rt.tracer.TraceTransaction(ctx, txHash)
+}
+
 // Stop gracefully stops the RuntimeTracer.
 func (rt *RuntimeTracer) Stop() {
 	if rt.cache != nil {

@@ -246,6 +246,131 @@ func TestHasCode_RPCError(t *testing.T) {
 	}
 }
 
+func TestTraceTransaction_MockServer(t *testing.T) {
+	// Create a mock server that validates the request and returns a trace with CREATE2
+	txHash := "0xabc123def456789012345678901234567890123456789012345678901234abcd"
+
+	mockResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"type":    "CALL",
+			"from":    "0xdeployer",
+			"to":      "0xfactory",
+			"gasUsed": "0x1e848",
+			"calls": []map[string]any{
+				{
+					"type":    "CREATE2",
+					"from":    "0xfactory",
+					"to":      "0xnewcontract1",
+					"gasUsed": "0xc350",
+				},
+				{
+					"type": "CALL",
+					"from": "0xfactory",
+					"to":   "0xhelper",
+					"calls": []map[string]any{
+						{
+							"type":    "CREATE",
+							"from":    "0xhelper",
+							"to":      "0xnewcontract2",
+							"gasUsed": "0x4e20",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var receivedMethod string
+	var receivedParams []json.RawMessage
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedMethod = req.Method
+		receivedParams = req.Params
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	tracer := NewTracer(server.URL, 5*time.Second)
+	result, err := tracer.TraceTransaction(context.Background(), txHash)
+	if err != nil {
+		t.Fatalf("TraceTransaction failed: %v", err)
+	}
+
+	// Verify the correct RPC method was used
+	if receivedMethod != "debug_traceTransaction" {
+		t.Errorf("expected method debug_traceTransaction, got %s", receivedMethod)
+	}
+
+	// Verify tx hash was passed as first parameter
+	if len(receivedParams) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(receivedParams))
+	}
+	var paramTxHash string
+	json.Unmarshal(receivedParams[0], &paramTxHash)
+	if paramTxHash != txHash {
+		t.Errorf("expected tx hash %s, got %s", txHash, paramTxHash)
+	}
+
+	// Verify tracer config in second parameter
+	var tracerCfg map[string]any
+	json.Unmarshal(receivedParams[1], &tracerCfg)
+	if tracerCfg["tracer"] != "callTracer" {
+		t.Errorf("expected tracer callTracer, got %v", tracerCfg["tracer"])
+	}
+
+	// Verify parsed result
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	if !result.HasCreate2 {
+		t.Error("expected HasCreate2 to be true")
+	}
+	if !result.HasCreate {
+		t.Error("expected HasCreate to be true")
+	}
+
+	// 4 targets: top-level CALL, CREATE2, nested CALL, nested CREATE
+	if len(result.CallTargets) != 4 {
+		t.Errorf("expected 4 call targets, got %d", len(result.CallTargets))
+	}
+
+	// Verify CREATE2 target
+	if result.CallTargets[1].Type != "CREATE2" {
+		t.Errorf("expected target[1] type CREATE2, got %s", result.CallTargets[1].Type)
+	}
+	if result.CallTargets[1].To != "0xnewcontract1" {
+		t.Errorf("expected target[1] to 0xnewcontract1, got %s", result.CallTargets[1].To)
+	}
+	if result.CallTargets[1].From != "0xfactory" {
+		t.Errorf("expected target[1] from 0xfactory, got %s", result.CallTargets[1].From)
+	}
+
+	// Verify nested CREATE target
+	if result.CallTargets[3].Type != "CREATE" {
+		t.Errorf("expected target[3] type CREATE, got %s", result.CallTargets[3].Type)
+	}
+	if result.CallTargets[3].To != "0xnewcontract2" {
+		t.Errorf("expected target[3] to 0xnewcontract2, got %s", result.CallTargets[3].To)
+	}
+	if result.CallTargets[3].Depth != 2 {
+		t.Errorf("expected target[3] depth 2, got %d", result.CallTargets[3].Depth)
+	}
+
+	if result.GasUsed != 125000 { // 0x1e848 = 125000
+		t.Errorf("expected gasUsed 125000, got %d", result.GasUsed)
+	}
+}
+
 func TestTraceCall_RPCError(t *testing.T) {
 	// Create a mock server that returns an RPC error
 	mockResponse := map[string]any{

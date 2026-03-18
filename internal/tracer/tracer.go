@@ -215,6 +215,82 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 	}
 }
 
+// TraceTransaction traces an already-mined transaction by hash using debug_traceTransaction.
+// Used for post-mining verification of runtime CREATE/CREATE2 addresses.
+func (t *Tracer) TraceTransaction(ctx context.Context, txHash string) (*TraceResult, error) {
+	// Use the callTracer preset with onlyTopCall: false to get all nested calls
+	tracerConfig := map[string]any{
+		"tracer": "callTracer",
+		"tracerConfig": map[string]any{
+			"onlyTopCall": false,
+		},
+	}
+
+	// Build the JSON-RPC request
+	req := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "debug_traceTransaction",
+		Params:  []any{txHash, tracerConfig},
+		ID:      1,
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request with context
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.nodeURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Execute the request
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse JSON-RPC response
+	var rpcResp jsonRPCResponse
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+
+	// Parse the call frame result
+	var frame callFrame
+	if err := json.Unmarshal(rpcResp.Result, &frame); err != nil {
+		return nil, fmt.Errorf("failed to parse trace result: %w", err)
+	}
+
+	// Extract all call targets from the trace
+	result := &TraceResult{
+		CallTargets: make([]CallTarget, 0),
+		Error:       frame.Error,
+	}
+
+	// Parse gas used from the top-level frame
+	if frame.GasUsed != "" {
+		result.GasUsed = parseHexUint64(frame.GasUsed)
+	}
+
+	// Recursively extract all call targets
+	t.extractCallTargets(&frame, result, 0)
+
+	return result, nil
+}
+
 // HasCode checks if an address has contract code deployed.
 // Returns true if the address is a contract (has non-empty code), false for EOAs.
 func (t *Tracer) HasCode(ctx context.Context, address string) (bool, error) {
