@@ -343,9 +343,9 @@ func TestFilterBlockTransactions(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			name:      "tx hashes only → pass through unchanged",
+			name:      "tx hashes only → arrays cleared to prevent leak",
 			response:  `{"jsonrpc":"2.0","id":3,"result":{"number":"0x1","transactions":["0xhash1","0xhash2"]}}`,
-			wantCount: -1, // pass through: hashes aren't sensitive
+			wantCount: 0,
 		},
 		{
 			name:      "empty transactions → pass through",
@@ -361,7 +361,7 @@ func TestFilterBlockTransactions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterBlockTransactions([]byte(tt.response), userAddrs)
+			got := FilterBlockTransactions([]byte(tt.response), userAddrs, true)
 			if tt.wantCount == -1 {
 				if string(got) != tt.response {
 					// For hash arrays or empty, response might be restructured but semantically same
