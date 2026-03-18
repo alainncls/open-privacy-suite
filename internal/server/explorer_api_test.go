@@ -2130,9 +2130,13 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 	require.NoError(t, err)
 	require.NoError(t, db.ResetTestDatabase(database))
 
-	// Create explorer tables in the same database.
+	// Create explorer tables in the same database and truncate for test isolation
+	// (CI uses a shared PostgreSQL instance, so data from prior tests may exist).
 	_, err = database.Conn().ExecContext(context.Background(), explorerSchema)
 	require.NoError(t, err, "failed to create explorer schema")
+	_, err = database.Conn().ExecContext(context.Background(),
+		"TRUNCATE transactions, blocks CASCADE")
+	require.NoError(t, err, "failed to truncate explorer tables")
 
 	// Open a separate connection for the explorer store.
 	explorerStore, err := explorer.NewStore(dbURL)
