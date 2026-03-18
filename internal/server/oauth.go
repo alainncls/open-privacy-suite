@@ -323,7 +323,7 @@ func buildOAuthLoginHTML(oauthSessionID, authReqJSON string, allowMockLogin bool
 	mockScript := ""
 	if allowMockLogin {
 		mockScript = `
-  function mockLogin() {
+  window.mockLogin = function() {
     var btn = document.getElementById("mock-btn");
     btn.disabled = true;
     btn.textContent = "Logging in…";
@@ -345,7 +345,7 @@ func buildOAuthLoginHTML(oauthSessionID, authReqJSON string, allowMockLogin bool
         document.getElementById("error-msg").textContent = "Request failed: " + err;
         document.getElementById("error-msg").style.display = "block";
       });
-  }`
+  };`
 	}
 
 	return `<!DOCTYPE html>
