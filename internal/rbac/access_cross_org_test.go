@@ -455,7 +455,7 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		if result.Reason == "" {
 			t.Error("expected a reason for denial")
 		}
-		if !containsString(result.Reason, "belongs to an organization you are not a member of") {
+		if !containsString(result.Reason, ErrContractAccessDenied) {
 			t.Errorf("expected cross-org denial message, got: %s", result.Reason)
 		}
 	})
@@ -476,7 +476,7 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		if result.Allowed {
 			t.Errorf("expected access to be denied for cross-org contract")
 		}
-		if !containsString(result.Reason, "belongs to an organization you are not a member of") {
+		if !containsString(result.Reason, ErrContractAccessDenied) {
 			t.Errorf("expected cross-org denial message, got: %s", result.Reason)
 		}
 	})
@@ -717,7 +717,7 @@ func TestCheckAccessCrossOrgWithClaims(t *testing.T) {
 		if result.Allowed {
 			t.Errorf("expected access to be denied despite permissive default_claims")
 		}
-		if !containsString(result.Reason, "belongs to an organization you are not a member of") {
+		if !containsString(result.Reason, ErrContractAccessDenied) {
 			t.Errorf("expected cross-org denial message, got: %s", result.Reason)
 		}
 	})
@@ -765,8 +765,8 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if result.Allowed {
 			t.Error("expected access to be denied for read-only user without explicit grant")
 		}
-		if !containsString(result.Reason, "requires explicit grant") {
-			t.Errorf("expected 'requires explicit grant' message, got: %s", result.Reason)
+		if !containsString(result.Reason, ErrContractAccessDenied) {
+			t.Errorf("expected '%s' message, got: %s", ErrContractAccessDenied, result.Reason)
 		}
 	})
 
@@ -908,6 +908,62 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			t.Errorf("expected access to be allowed for public contract with deploy user, got: %s", result.Reason)
 		}
 	})
+}
+
+// TestContractExistenceOracle verifies that error messages do not reveal whether
+// a contract is deployed. An attacker querying a registered contract, a cross-org
+// contract, and a completely non-existent address must receive the same denial
+// message so they cannot enumerate deployed contracts.
+func TestContractExistenceOracle(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	contractA := "0xaaaa000000000000000000000000000000000001" // registered to org-a
+	nonExistentAddr := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	// User B queries a registered cross-org contract (exists, but no access)
+	resultExisting, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-b",
+		Method:         "eth_getCode",
+		Params:         []any{contractA, "latest"},
+		TargetAddress:  contractA,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for existing contract: %v", err)
+	}
+	if resultExisting.Allowed {
+		t.Fatal("expected denial for cross-org contract")
+	}
+
+	// User B queries a completely non-existent address
+	resultNonExistent, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-b",
+		Method:         "eth_getCode",
+		Params:         []any{nonExistentAddr, "latest"},
+		TargetAddress:  nonExistentAddr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for non-existent contract: %v", err)
+	}
+	if resultNonExistent.Allowed {
+		t.Fatal("expected denial for non-existent contract")
+	}
+
+	// SECURITY: both denial messages MUST be identical — no existence oracle
+	if resultExisting.Reason != resultNonExistent.Reason {
+		t.Errorf("contract existence oracle: different error messages reveal whether contract is deployed\n"+
+			"  existing contract:     %q\n"+
+			"  non-existent contract: %q",
+			resultExisting.Reason, resultNonExistent.Reason)
+	}
+
+	// Both should use the generic constant
+	if resultExisting.Reason != ErrContractAccessDenied {
+		t.Errorf("expected %q, got %q", ErrContractAccessDenied, resultExisting.Reason)
+	}
 }
 
 // TestCheckAccessMultiOrgUser tests that a user who is member of multiple orgs
@@ -1400,9 +1456,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 		if result.Reason == "" {
 			t.Error("expected denial reason")
 		}
-		// Should specifically mention upgrade claim, not proxy management
-		if !strings.Contains(result.Reason, "upgrade claim") {
-			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		// Generic denial — must not leak which specific claim is missing
+		if !strings.Contains(result.Reason, ErrContractAccessDenied) && result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 
@@ -1524,8 +1580,8 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 		if result.Allowed {
 			t.Error("upgrade tx should be denied when user has deploy but not upgrade")
 		}
-		if !strings.Contains(result.Reason, "upgrade claim") {
-			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		if !strings.Contains(result.Reason, ErrContractAccessDenied) && result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 }
@@ -1627,8 +1683,8 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		if result.Allowed {
 			t.Error("expected read-only user to be denied sending ETH")
 		}
-		if !strings.Contains(result.Reason, "write") {
-			t.Errorf("expected denial to mention write claim, got: %s", result.Reason)
+		if result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 

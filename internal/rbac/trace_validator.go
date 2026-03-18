@@ -186,7 +186,7 @@ func (v *TraceValidator) ValidateTrace(
 			slog.Debug("trace denied: call target owned by another org", "address", addr)
 			return &TraceValidationResult{
 				Allowed:      false,
-				Reason:       "contract access denied",
+				Reason:       ErrContractAccessDenied,
 				DeniedTarget: addr,
 			}, nil
 		}

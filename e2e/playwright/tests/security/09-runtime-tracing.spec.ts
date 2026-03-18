@@ -224,7 +224,7 @@ test.describe('Runtime Transaction Tracing', () => {
       ]);
 
       expect(result.status).toBe(403);
-      expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      expect(result.body.error).toContain('contract access denied');
     });
 
     test('TRACE-002: Transaction touching only own org contracts is allowed', async ({ request }) => {

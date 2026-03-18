@@ -447,7 +447,7 @@ test.describe('RBAC Contract Grants', () => {
         target_address: contractAddr,
       });
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('requires explicit grant');
+      expect(result.reason).toContain('contract access denied');
     });
 
     test('registered contract WITH explicit grant is allowed', async ({ request }) => {

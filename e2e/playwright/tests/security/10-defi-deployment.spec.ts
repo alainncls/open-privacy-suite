@@ -544,7 +544,7 @@ test.describe.serial('DeFi Contract Deployment Flow', () => {
 
       // Should be 403 - cross-org isolation
       expect(result.status).toBe(403);
-      expect(result.body.error).toContain('belongs to an organization you are not a member of');
+      expect(result.body.error).toContain('contract access denied');
     });
 
     test('DEFI-016: Other org user CANNOT call our pool contract', async ({ request }) => {

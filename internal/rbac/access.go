@@ -13,6 +13,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// ErrContractAccessDenied is the generic error message for all contract access
+// denials. Using a single message prevents attackers from enumerating deployed
+// contracts by observing different error strings (contract existence oracle).
+const ErrContractAccessDenied = "contract access denied"
+
 // GlobalBlockedMethods contains methods that are NEVER allowed regardless of RBAC permissions.
 // These methods pose security risks and should never be exposed through the proxy.
 // Using map for O(1) lookup instead of slice.
@@ -385,9 +390,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 	// If user doesn't exist in RBAC, deny access
 	if user == nil {
+		slog.Debug("access denied: user not found", "external_id", req.UserExternalID)
 		return &AccessCheckResult{
 			Allowed: false,
-			Reason:  fmt.Sprintf("user not found: %s", req.UserExternalID),
+			Reason:  "access denied",
 		}, nil
 	}
 
@@ -415,7 +421,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Cross-org violation detected (e.g., contract belongs to org user is not member of)
 		return &AccessCheckResult{
 			Allowed: false,
-			Reason:  err.Error(),
+			Reason:  ErrContractAccessDenied,
 		}, nil
 	}
 
@@ -437,16 +443,18 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			return nil, fmt.Errorf("failed to get organization by ID: %w", err)
 		}
 		if org == nil {
+			slog.Debug("access denied: organization not found", "org_id", req.OrgID, "user", req.UserExternalID)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("organization not found: %s", req.OrgID),
+				Reason:  "access denied",
 			}, nil
 		}
 		// Verify user is a member of this org
 		if !orgCtx.UserOrgIDs()[org.ID] {
+			slog.Debug("access denied: user not member of org", "org_id", req.OrgID, "user", req.UserExternalID)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("user is not a member of organization: %s", req.OrgID),
+				Reason:  "access denied",
 			}, nil
 		}
 	} else if req.OrgSlug != "" && req.OrgSlug != "default" {
@@ -456,16 +464,18 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			return nil, fmt.Errorf("failed to get organization by slug: %w", err)
 		}
 		if org == nil {
+			slog.Debug("access denied: organization not found", "org_slug", req.OrgSlug, "user", req.UserExternalID)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("organization not found: %s", req.OrgSlug),
+				Reason:  "access denied",
 			}, nil
 		}
 		// Verify user is a member of this org
 		if !orgCtx.UserOrgIDs()[org.ID] {
+			slog.Debug("access denied: user not member of org", "org_slug", req.OrgSlug, "user", req.UserExternalID)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("user is not a member of organization: %s", req.OrgSlug),
+				Reason:  "access denied",
 			}, nil
 		}
 	} else {
@@ -554,9 +564,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				// Address is not a known contract — treat as EOA value transfer.
 				// Just verify user has the required write claim.
 				if requiredClaim != "" && !containsClaim(perms.Claims, requiredClaim) {
+					slog.Debug("access denied: missing claim for value transfer", "claim", requiredClaim, "target", req.TargetAddress, "user", req.UserExternalID)
 					return &AccessCheckResult{
 						Allowed: false,
-						Reason:  fmt.Sprintf("missing %s claim for value transfer to %s", requiredClaim, req.TargetAddress),
+						Reason:  "access denied",
 					}, nil
 				}
 				allClaims := collectAllClaims(perms)
@@ -679,9 +690,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 		// If still no access, deny
 		if access == nil {
+			slog.Debug("access denied: no contract access", "contract", req.TargetAddress, "user", req.UserExternalID, "method", req.Method)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("no access to contract %s", req.TargetAddress),
+				Reason:  ErrContractAccessDenied,
 			}, nil
 		}
 
@@ -689,6 +701,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// If user doesn't have explicit access but got access via default_claims,
 		// we must verify the contract isn't registered to a DIFFERENT organization.
 		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
+			slog.Debug("access denied: cross-org isolation", "contract", req.TargetAddress, "user", req.UserExternalID, "detail", err.Error())
 			return &AccessCheckResult{
 				Allowed: false,
 				Reason:  err.Error(),
@@ -697,9 +710,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 		// Check if user has the required claim on this contract
 		if requiredClaim != "" && !containsClaim(access.Claims, requiredClaim) {
+			slog.Debug("access denied: missing claim on contract", "claim", requiredClaim, "contract", req.TargetAddress, "user", req.UserExternalID)
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("missing %s claim on contract %s", requiredClaim, req.TargetAddress),
+				Reason:  ErrContractAccessDenied,
 			}, nil
 		}
 
@@ -785,7 +799,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					if IsUpgradeSelector(selector) && !containsClaim(access.Claims, ClaimUpgrade) {
 						return &AccessCheckResult{
 							Allowed: false,
-							Reason:  fmt.Sprintf("missing upgrade claim for proxy upgrade on contract %s", req.TargetAddress),
+							Reason:  ErrContractAccessDenied,
 						}, nil
 					}
 				}
@@ -840,7 +854,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		if !containsClaim(perms.Claims, ClaimDeploy) {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  "missing required deploy claim for contract deployment",
+				Reason:  "access denied",
 			}, nil
 		}
 
@@ -909,7 +923,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		if !hasClaimOnAnyContract && !containsClaim(perms.Claims, claim) {
 			return &AccessCheckResult{
 				Allowed: false,
-				Reason:  fmt.Sprintf("missing required claim: %s", claim),
+				Reason:  "access denied",
 			}, nil
 		}
 	}
@@ -1363,7 +1377,7 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 
 	// Contract is owned by an org - check if user is a member
 	if !userOrgIDs[ownerOrgID] {
-		return nil, fmt.Errorf("contract %s belongs to an organization you are not a member of", targetAddress)
+		return nil, fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	// User is a member of the org that owns this contract
@@ -1594,10 +1608,10 @@ func ValidateGetLogsAccess(perms *EffectivePermissions, params []any) error {
 	for _, addr := range addresses {
 		access := perms.GetContractAccess(addr)
 		if access == nil {
-			return fmt.Errorf("eth_getLogs: no access to contract %s", addr)
+			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 		if !containsClaim(access.Claims, ClaimRead) {
-			return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 	}
 
@@ -1690,7 +1704,7 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 		if ownerOrgID != "" {
 			// Contract is owned by an org - check if user is a member
 			if !userOrgIDs[ownerOrgID] {
-				return fmt.Errorf("eth_getLogs: contract %s belongs to an organization you are not a member of", addr)
+				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
 			// User is a member of the org that owns this contract - allow access
 			// (The org grants access to its members via group permissions)
@@ -1702,10 +1716,10 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 			// Using default_claims for public contract
 			access := perms.GetContractAccess(addr)
 			if access == nil {
-				return fmt.Errorf("eth_getLogs: no access to contract %s", addr)
+				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
 			if !containsClaim(access.Claims, ClaimRead) {
-				return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
 		}
 
@@ -1713,7 +1727,7 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 		if hasExplicitAccess {
 			access := perms.GetContractAccess(addr)
 			if access == nil || !containsClaim(access.Claims, ClaimRead) {
-				return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
 		}
 	}
@@ -1774,13 +1788,13 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
 			// Contract is in another org - should have been caught by CheckMultiAddressesInScope,
 			// but double-check here for defense in depth
-			return fmt.Errorf("eth_getLogs: %w", err)
+			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 
 		// Verify read claim exists
 		access := perms.GetContractAccess(addr)
 		if access == nil || !containsClaim(access.Claims, ClaimRead) {
-			return fmt.Errorf("eth_getLogs: missing read claim on contract %s", addr)
+			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 	}
 

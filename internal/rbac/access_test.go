@@ -971,7 +971,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xunknowncontract",
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Single address - has write but not read claim",
@@ -980,7 +980,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xnoread",
 			}},
 			expectError: true,
-			errorSubstr: "missing read claim",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Multiple addresses - one without access",
@@ -989,7 +989,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": []any{"0xcontract1", "0xunknowncontract"},
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Multiple addresses - one missing read claim",
@@ -998,7 +998,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": []any{"0xcontract1", "0xnoread"},
 			}},
 			expectError: true,
-			errorSubstr: "missing read claim",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		// Success cases
 		{
@@ -1052,7 +1052,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xunregisteredcontract",
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 	}
 
