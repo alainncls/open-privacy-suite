@@ -8,13 +8,14 @@
 #   - Dev-only flags (MOCK_SIGNATURES, ALLOW_MOCK_LOGIN) are disabled
 #   - Secrets (JWT_SECRET, DATABASE_URL, VERIFIER_ID) must be provided via environment — no defaults
 #
-# Required environment variables (no defaults — server will refuse to start without these):
+# Required environment variables (Compose will hard-fail if any are unset):
 #   BASE_URL                e.g. https://proxy.yourdomain.com
 #   JWT_SECRET              openssl rand -hex 32
 #   JWT_REFRESH_SECRET      openssl rand -hex 32
 #   ADMIN_API_TOKEN         openssl rand -hex 32
 #   VERIFIER_ID             your Privado verifier DID
 #   DATABASE_URL            postgres://user:pass@host:5432/privacy_proxy?sslmode=require
+#   NODE_URL                http(s)://your-ethereum-node:8545  (replaces bundled Anvil)
 
 services:
   postgres:
@@ -34,17 +35,19 @@ services:
       - DEMO_AUTO_AUTH_DELAY=
       - ENABLE_RUNTIME_TRACING=true
       - ENABLE_TRAVEL_RULE=true
-      # Secrets — must be set in host environment, no fallback defaults in production
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
-      - VERIFIER_ID=${VERIFIER_ID}
-      - DATABASE_URL=${DATABASE_URL}
+      # Secrets — Compose hard-fails if any of these are unset
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required}
+      - VERIFIER_ID=${VERIFIER_ID:?VERIFIER_ID is required}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required (use sslmode=require)}
+      # NODE_URL must point at a real node — base compose default is bundled Anvil
+      - NODE_URL=${NODE_URL:?NODE_URL is required}
       # BASE_URL drives OAuth callbacks and must match the public Caddy domain
-      - BASE_URL=${BASE_URL}
+      - BASE_URL=${BASE_URL:?BASE_URL is required}
       # FRONTEND_URL must be HTTPS in production — config.Validate() enforces this.
       # With Caddy serving both frontend and backend on the same domain, set to BASE_URL.
-      - FRONTEND_URL=${BASE_URL}
+      - FRONTEND_URL=${BASE_URL:?BASE_URL is required}
       # Restrict CORS to the actual frontend origin
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-${BASE_URL}}
 
@@ -71,8 +74,8 @@ services:
       - caddy-data:/data         # Persists Let's Encrypt certs
       - caddy-config:/config
     environment:
-      # BASE_URL must be set — no default, Caddy will provision a cert for this domain
-      - BASE_URL=${BASE_URL}
+      # BASE_URL must be set — Caddy provisions a cert for this domain via ACME
+      - BASE_URL=${BASE_URL:?BASE_URL is required}
     depends_on:
       proxy-backend:
         condition: service_started
