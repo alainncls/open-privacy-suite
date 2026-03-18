@@ -96,21 +96,27 @@ func TestFilterTransactionByHash_EmptyAddresses(t *testing.T) {
 func TestFilterTransactionReceipt(t *testing.T) {
 	userAddrs := []string{"0xabc1234567890123456789012345678901234567"}
 
+	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
+
 	tests := []struct {
-		name     string
-		response string
-		wantNull bool // non-participant: result must be null
-		wantFull bool // participant: receipt passes through unchanged
+		name          string
+		response      string
+		wantNull      bool // non-participant: result must be null
+		wantFull      bool // participant: receipt passes through unchanged (for null/error cases)
+		wantReceipt   bool // participant: receipt present with filtered logs
+		wantLogCount  int  // expected number of logs after filtering
 	}{
 		{
-			name:     "participant as from gets full receipt",
-			response: `{"jsonrpc":"2.0","id":1,"result":{"from":"0xabc1234567890123456789012345678901234567","to":"0xother","logs":[{"address":"0x1","topics":["0xevent"]}],"logsBloom":"0x1234"}}`,
-			wantFull: true,
+			name:         "participant as from gets receipt with filtered logs",
+			response:     `{"jsonrpc":"2.0","id":1,"result":{"from":"0xabc1234567890123456789012345678901234567","to":"0xother","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`,
+			wantReceipt:  true,
+			wantLogCount: 1,
 		},
 		{
-			name:     "participant as to gets full receipt",
-			response: `{"jsonrpc":"2.0","id":2,"result":{"from":"0xother","to":"0xabc1234567890123456789012345678901234567","logs":[{"address":"0x1","topics":["0xevent"]}],"logsBloom":"0x1234"}}`,
-			wantFull: true,
+			name:         "participant as to gets receipt with filtered logs",
+			response:     `{"jsonrpc":"2.0","id":2,"result":{"from":"0xother","to":"0xabc1234567890123456789012345678901234567","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`,
+			wantReceipt:  true,
+			wantLogCount: 1,
 		},
 		{
 			name:     "non-participant returns null",
@@ -148,6 +154,23 @@ func TestFilterTransactionReceipt(t *testing.T) {
 				isNull := resp.Result == nil || string(*resp.Result) == "null"
 				if !isNull {
 					t.Errorf("expected null result for non-participant, got: %s", got)
+				}
+				return
+			}
+			if tt.wantReceipt {
+				var resp struct {
+					Result *struct {
+						Logs []json.RawMessage `json:"logs"`
+					} `json:"result"`
+				}
+				if err := json.Unmarshal(got, &resp); err != nil {
+					t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
+				}
+				if resp.Result == nil {
+					t.Fatal("expected non-null result for participant")
+				}
+				if len(resp.Result.Logs) != tt.wantLogCount {
+					t.Errorf("expected %d logs, got %d\noutput: %s", tt.wantLogCount, len(resp.Result.Logs), got)
 				}
 			}
 		})

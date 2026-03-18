@@ -102,12 +102,33 @@ func TestFilterTransactionReceipt_NonParticipant_ReturnsNull(t *testing.T) {
 }
 
 func TestFilterTransactionReceipt_ContractCreation_Participant(t *testing.T) {
-	// Deployer's receipt: to=null, contractAddress present, must pass through unchanged.
+	// Deployer's receipt: to=null, contractAddress present.
+	// Logs are filtered to only entries with topics matching the user's address.
+	// logsBloom is always zeroed for participants.
 	addr := "0xabc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + addr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1"}],"logsBloom":"0xfull"}}`
+	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + addr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0xfull"}}`
 	got := FilterTransactionReceipt([]byte(response), []string{addr})
-	if string(got) != response {
-		t.Errorf("deployer should see full contract creation receipt\ngot: %s", got)
+
+	var resp struct {
+		Result *struct {
+			From            string            `json:"from"`
+			ContractAddress string            `json:"contractAddress"`
+			Status          string            `json:"status"`
+			Logs            []json.RawMessage `json:"logs"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected non-null result for deployer")
+	}
+	if resp.Result.ContractAddress != "0xnewcontract" {
+		t.Errorf("contractAddress must be preserved, got: %s", resp.Result.ContractAddress)
+	}
+	if len(resp.Result.Logs) != 1 {
+		t.Errorf("deployer should see log with matching topic, got %d logs", len(resp.Result.Logs))
 	}
 }
 
@@ -151,12 +172,27 @@ func TestFilterTransactionReceipt_NonParticipant_IDPreserved(t *testing.T) {
 
 func TestFilterTransactionReceipt_CaseInsensitiveAddressMatch(t *testing.T) {
 	// Checksummed from/to in the RPC response must match lowercase stored address.
+	// Participant is recognised, but logs are filtered by topic and logsBloom is zeroed.
 	stored := "0xabc1234567890123456789012345678901234567"
 	checksummed := "0xAbC1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","logs":[{"address":"0x1"}],"logsBloom":"0x1234"}}`
+	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0x1234"}}`
 	got := FilterTransactionReceipt([]byte(response), []string{stored})
-	if string(got) != response {
-		t.Errorf("checksummed 'from' address should match stored lowercase\ngot: %s", got)
+
+	var resp struct {
+		Result *struct {
+			From string            `json:"from"`
+			Logs []json.RawMessage `json:"logs"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\noutput: %s", err, got)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected non-null result for participant")
+	}
+	if len(resp.Result.Logs) != 1 {
+		t.Errorf("expected 1 log with matching topic, got %d", len(resp.Result.Logs))
 	}
 }
 
@@ -426,11 +462,9 @@ func TestFilterBlockTransactions_MultipleLinkedAddresses(t *testing.T) {
 	}
 }
 
-// SECURITY GAP (DOCUMENTED): Block-level logsBloom in the block header is NOT zeroed.
-// An attacker can check for event-signature presence in the block without needing calldata.
-// e.g., they can detect "did a Transfer event happen in this block?" via the bloom filter.
-// Fix: zero block.logsBloom whenever transactions are filtered.
-func TestFilterBlockTransactions_BlockLogsBloom_NotZeroed(t *testing.T) {
+// Block-level logsBloom is zeroed when transactions are filtered, preventing
+// attackers from detecting event-signature presence via the bloom filter.
+func TestFilterBlockTransactions_BlockLogsBloom_Zeroed(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	originalBloom := "0xdeadbeef1234567890abcdef"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"` + originalBloom + `","transactions":[` +
@@ -449,15 +483,10 @@ func TestFilterBlockTransactions_BlockLogsBloom_NotZeroed(t *testing.T) {
 	if resp.Result == nil {
 		t.Fatal("expected non-null result")
 	}
-	// Document the gap: block logsBloom is still the original value.
-	// When this gap is fixed, change this test to assert zeroing.
-	if resp.Result.LogsBloom == strings.Repeat("0", 512) {
-		// Gap was fixed — update this test.
-		t.Logf("NOTE: block logsBloom is now zeroed — update this test to assert zeroing")
-	} else if resp.Result.LogsBloom != originalBloom {
-		t.Errorf("unexpected logsBloom value: got %s", resp.Result.LogsBloom)
+	expectedZeroed := "0x" + strings.Repeat("0", 512)
+	if resp.Result.LogsBloom != expectedZeroed {
+		t.Errorf("block logsBloom must be zeroed when transactions are filtered\ngot:  %s\nwant: %s", resp.Result.LogsBloom, expectedZeroed)
 	}
-	// Expected current behavior: bloom is NOT zeroed (gap exists).
 }
 
 func TestFilterBlockTransactions_ContractCreation_DeployerKept(t *testing.T) {
@@ -557,9 +586,10 @@ func TestFilterBlockReceipts_NonParticipant_NotLeaked(t *testing.T) {
 }
 
 func TestFilterBlockReceipts_ContractCreation_DeployerKeepsLogs(t *testing.T) {
-	// Contract creation receipt in a block — deployer must see their logs.
+	// Contract creation receipt in a block — deployer sees logs whose topics match their address.
 	userAddr := "0xabc1234567890123456789012345678901234567"
-	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1"}],"logsBloom":"0xfull"}]}`
+	paddedAddr := "0x000000000000000000000000abc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":[{"from":"` + userAddr + `","to":null,"contractAddress":"0xnewcontract","status":"0x1","logs":[{"address":"0x1","topics":["0xevent","` + paddedAddr + `"]}],"logsBloom":"0xfull"}]}`
 
 	got := FilterBlockReceipts([]byte(response), []string{userAddr})
 	var resp struct {
@@ -573,8 +603,8 @@ func TestFilterBlockReceipts_ContractCreation_DeployerKeepsLogs(t *testing.T) {
 	if len(resp.Result) != 1 {
 		t.Fatalf("expected 1 receipt, got %d", len(resp.Result))
 	}
-	if len(resp.Result[0].Logs) == 0 {
-		t.Error("deployer must see their own contract creation receipt logs")
+	if len(resp.Result[0].Logs) != 1 {
+		t.Errorf("deployer must see log with matching topic, got %d logs", len(resp.Result[0].Logs))
 	}
 }
 
