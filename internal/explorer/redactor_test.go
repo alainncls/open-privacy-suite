@@ -200,6 +200,73 @@ func TestRedactTransactions_BothHidden_Drops(t *testing.T) {
 	}
 }
 
+func TestRedactTransactions_BothRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 txs (both redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_HiddenPlusRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 txs (hidden + redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_RedactedPlusFull_Keeps(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityFull,
+	})
+
+	txs := []Transaction{{Hash: "0x01", From: from, To: strPtr(to), Value: "1000", InputData: "0xdeadbeef"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (redacted + full → keep), got %d", len(result))
+	}
+	tx := result[0]
+	if tx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE], got %s", tx.From)
+	}
+	if *tx.To != to {
+		t.Errorf("To should be unchanged, got %s", *tx.To)
+	}
+	if tx.Value != "" {
+		t.Errorf("Value should be stripped, got %s", tx.Value)
+	}
+	if tx.InputData != "" {
+		t.Errorf("InputData should be stripped, got %s", tx.InputData)
+	}
+}
+
 func TestRedactTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -593,6 +660,42 @@ func TestRedactTransfers_BothHidden_Drops(t *testing.T) {
 	}
 }
 
+func TestRedactTransfers_BothRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 transfers (both redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactTransfers_HiddenPlusRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	transfers := []TokenTransfer{{ID: 1, From: from, To: to, Value: "100"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 transfers (hidden + redacted → drop), got %d", len(result))
+	}
+}
+
 func TestRedactTransfers_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -743,6 +846,42 @@ func TestRedactInternalTransactions_BothHidden_Drops(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("expected 0 (both hidden → drop), got %d", len(result))
+	}
+}
+
+func TestRedactInternalTransactions_BothRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityRedacted,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "100"}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 (both redacted → drop), got %d", len(result))
+	}
+}
+
+func TestRedactInternalTransactions_HiddenPlusRedacted_Drops(t *testing.T) {
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": VisibilityHidden,
+		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": VisibilityRedacted,
+	})
+
+	itxs := []InternalTransaction{{ID: 1, From: from, To: strPtr(to), Value: "100"}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 (hidden + redacted → drop), got %d", len(result))
 	}
 }
 
