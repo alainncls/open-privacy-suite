@@ -72,7 +72,6 @@ type CheckAddressResponse struct {
 // BatchCheckAddressesRequest is the request body for POST /api/v1/explorer/check-addresses
 type BatchCheckAddressesRequest struct {
 	Addresses []string `json:"addresses" binding:"required,min=1,max=100"`
-	DID       string   `json:"did,omitempty"` // Optional: DID to use directly (bypasses wallet->DID lookup)
 }
 
 // BatchCheckAddressesResponse is the response for POST /api/v1/explorer/check-addresses
@@ -172,10 +171,13 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 // If only wallet is provided, the DID is looked up from the wallet address.
 func (s *Server) getViewableAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
-	did := c.Query("did")
 
-	if wallet == "" && did == "" {
-		respondBadRequest(c, "either wallet or did parameter is required")
+	// SECURITY: Resolve viewer DID from JWT (validated) or wallet (DB-verified).
+	// DID is never accepted directly from query params.
+	viewerDID := s.getViewerDIDFromRequest(c)
+
+	if wallet == "" && viewerDID == "" {
+		respondBadRequest(c, "either wallet or JWT authentication is required")
 		return
 	}
 
@@ -191,14 +193,10 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 		DisclosedAddresses: []DisclosedAddress{},
 	}
 
-	var viewerDID string
 	var err error
 
-	// If DID is provided directly, use it (skip wallet->DID lookup)
-	if did != "" {
-		viewerDID = did
-	} else {
-		// Look up DID from wallet address
+	// If no DID from JWT, look up from wallet
+	if viewerDID == "" && wallet != "" {
 		viewerDID, err = s.db.GetDIDByEthAddress(ctx, wallet)
 		if err != nil {
 			respondInternalError(c, "failed to look up DID: "+err.Error())
@@ -325,10 +323,12 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 // Either wallet or did (or both) can be provided. If did is provided, it is used directly.
 func (s *Server) checkAddressVisibility(c *gin.Context) {
 	wallet := c.Query("wallet")
-	did := c.Query("did")
 
-	if wallet == "" && did == "" {
-		respondBadRequest(c, "either wallet or did parameter is required")
+	// SECURITY: Resolve viewer DID from JWT (validated) or wallet (DB-verified).
+	viewerDID := s.getViewerDIDFromRequest(c)
+
+	if wallet == "" && viewerDID == "" {
+		respondBadRequest(c, "either wallet or JWT authentication is required")
 		return
 	}
 
@@ -344,7 +344,12 @@ func (s *Server) checkAddressVisibility(c *gin.Context) {
 	}
 	targetAddress = strings.ToLower(targetAddress)
 
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), wallet, did, targetAddress)
+	// If no DID from JWT, resolve from wallet
+	if viewerDID == "" && wallet != "" {
+		viewerDID = s.resolveViewerDID(c.Request.Context(), wallet, "")
+	}
+
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), wallet, viewerDID, targetAddress)
 	c.JSON(http.StatusOK, CheckAddressResponse{AddressVisibility: visibility})
 }
 
@@ -354,7 +359,6 @@ func (s *Server) checkAddressVisibility(c *gin.Context) {
 // If did is provided, it is used directly.
 func (s *Server) batchCheckAddresses(c *gin.Context) {
 	wallet := c.Query("wallet")
-	did := c.Query("did")
 
 	var req BatchCheckAddressesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -362,23 +366,13 @@ func (s *Server) batchCheckAddresses(c *gin.Context) {
 		return
 	}
 
-	// DID from request body takes precedence over query string
-	if req.DID != "" {
-		did = req.DID
+	// SECURITY: Resolve viewer identity from JWT (validated) or wallet (DB-verified).
+	// DID is never accepted directly from query params or request body.
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" && wallet != "" {
+		viewerDID, _ = s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(wallet))
 	}
 
-	if wallet == "" && did == "" {
-		respondBadRequest(c, "either wallet or did parameter is required (in query string or request body)")
-		return
-	}
-
-	// Normalize wallet address if provided
-	if wallet != "" {
-		wallet = strings.ToLower(wallet)
-	}
-
-	// Resolve viewer DID once, then batch-query all addresses in a single round trip.
-	viewerDID := s.resolveViewerDID(c.Request.Context(), wallet, did)
 	results, err := s.db.GetBatchVisibilityDetailed(c.Request.Context(), viewerDID, req.Addresses)
 	if err != nil {
 		respondInternalError(c, "failed to check address visibility")
@@ -473,20 +467,17 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 }
 
 // getViewerIdentity extracts the viewer's DID and wallet from a gin context.
-// Priority for DID: gin context "subject" key (set by OptionalJWTAuthMiddleware from Bearer token)
-// then the "did" query parameter (used by direct API callers).
+// DID is extracted ONLY from the validated JWT (set by OptionalJWTAuthMiddleware).
 // Wallet comes from the "wallet" query parameter.
+// SECURITY: DID is never accepted from query parameters to prevent identity spoofing.
 func getViewerIdentity(c *gin.Context) (wallet, did string) {
 	wallet = c.Query("wallet")
-	// JWT-authenticated requests: DID is stored in gin context by OptionalJWTAuthMiddleware
 	if subject, ok := c.Get("subject"); ok {
 		if s, ok := subject.(string); ok && s != "" {
 			did = s
 			return
 		}
 	}
-	// Fallback: explicit query parameter (used by direct API callers passing did= in URL)
-	did = c.Query("did")
 	return
 }
 
@@ -617,10 +608,11 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 }
 
 // getViewerDIDFromRequest extracts the viewer's DID.
-// Priority: (1) validated JWT claims set by OptionalJWTAuthMiddleware, (2) ?did= query param,
-// (3) wallet->DID lookup via ?wallet= query param.
-// JWT claims are preferred because they are cryptographically signed; query params are
-// unsigned and accepted only for backward-compatibility when no JWT is present.
+// Priority: (1) validated JWT claims set by OptionalJWTAuthMiddleware,
+// (2) wallet->DID lookup via ?wallet= query param (verified via DB).
+// SECURITY: DID is never accepted directly from query parameters to prevent
+// identity spoofing. The ?wallet= param is safe because the DB lookup verifies
+// the wallet is actually linked to a DID.
 func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 	// 1. JWT claims (set by OptionalJWTAuthMiddleware)
 	if subject, exists := c.Get("subject"); exists {
@@ -628,11 +620,7 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 			return did
 		}
 	}
-	// 2. Explicit DID query param
-	if did := c.Query("did"); did != "" {
-		return did
-	}
-	// 3. Wallet address lookup
+	// 2. Wallet address lookup (DB-verified)
 	if wallet := c.Query("wallet"); wallet != "" {
 		viewerDID, _ := s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(wallet))
 		return viewerDID

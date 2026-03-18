@@ -121,17 +121,20 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			}
 		}
 
-		// If BOTH participants are hidden (and viewer is not a participant), drop entirely.
-		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
+		// If BOTH participants are non-identifiable to the viewer (hidden or redacted
+		// after participant override), drop entirely. Showing "[PRIVATE] → [PRIVATE]"
+		// leaks transaction existence and timing without any useful information.
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
 			continue
 		}
 
 		redactedTx := tx
 
-		// If one side is hidden but the other is visible, replace the hidden
-		// side with [PRIVATE] and strip financial data (value, input, error).
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
-			if fromLevel == VisibilityHidden {
+		// If one side is non-identifiable (hidden or redacted) but the other is
+		// identifiable, replace the non-identifiable side with [PRIVATE] and strip
+		// financial data (value, input, error).
+		if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
+			if isNonIdentifiable(fromLevel) {
 				redactedTx.From = "[PRIVATE]"
 				// Zero out nonce: it reveals the transaction count of a private account,
 				// and sequential nonces across [PRIVATE] transactions could link them to the same account.
@@ -139,7 +142,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			} else {
 				redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 			}
-			if toLevel == VisibilityHidden {
+			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
 				redactedTx.To = &p
 			} else if tx.To != nil && *tx.To != "" {
@@ -154,24 +157,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			continue
 		}
 
-		// Neither side is hidden — apply normal redaction
+		// Neither side is hidden or redacted — apply normal redaction
 		if tx.From != "" {
 			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 		}
 		if tx.To != nil && *tx.To != "" {
 			redacted := r.applyRedaction(*tx.To, toLevel)
 			redactedTx.To = &redacted
-		}
-
-		// If either participant is redacted, strip the transaction data
-		if fromLevel == VisibilityRedacted || toLevel == VisibilityRedacted {
-			redactedTx.Value = JSONString("")
-			redactedTx.InputData = ""
-			redactedTx.Error = nil
-			redactedTx.RevertReason = nil
-			if fromLevel == VisibilityRedacted {
-				redactedTx.Nonce = nil // nonce reveals tx count for private sender
-			}
 		}
 
 		// Participant override: even when the counterparty address is revealed,
@@ -217,21 +209,21 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		fromLevel := visMap[strings.ToLower(t.From)]
 		toLevel := visMap[strings.ToLower(t.To)]
 
-		// Drop only if both sides are hidden
-		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
+		// Drop if both sides are non-identifiable
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
 			continue
 		}
 
 		redacted := t
 
-		// If one side is hidden, replace with [PRIVATE] and strip amount
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
-			if fromLevel == VisibilityHidden {
+		// If one side is non-identifiable, replace with [PRIVATE] and strip amount
+		if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
+			if isNonIdentifiable(fromLevel) {
 				redacted.From = "[PRIVATE]"
 			} else {
 				redacted.From = r.applyRedaction(t.From, fromLevel)
 			}
-			if toLevel == VisibilityHidden {
+			if isNonIdentifiable(toLevel) {
 				redacted.To = "[PRIVATE]"
 			} else {
 				redacted.To = r.applyRedaction(t.To, toLevel)
@@ -241,12 +233,9 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			continue
 		}
 
-		// Neither side hidden — apply normal redaction
+		// Neither side hidden or redacted — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
 		redacted.To = r.applyRedaction(t.To, toLevel)
-		if fromLevel == VisibilityRedacted || toLevel == VisibilityRedacted {
-			redacted.Value = JSONString("")
-		}
 
 		result = append(result, redacted)
 	}
@@ -286,21 +275,21 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			toLevel = visMap[strings.ToLower(*t.To)]
 		}
 
-		// Drop only if both sides are hidden
-		if fromLevel == VisibilityHidden && toLevel == VisibilityHidden {
+		// Drop if both sides are non-identifiable
+		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
 			continue
 		}
 
 		redacted := t
 
-		// If one side is hidden, replace with [PRIVATE] and strip financial data
-		if fromLevel == VisibilityHidden || toLevel == VisibilityHidden {
-			if fromLevel == VisibilityHidden {
+		// If one side is non-identifiable, replace with [PRIVATE] and strip financial data
+		if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
+			if isNonIdentifiable(fromLevel) {
 				redacted.From = "[PRIVATE]"
 			} else {
 				redacted.From = r.applyRedaction(t.From, fromLevel)
 			}
-			if toLevel == VisibilityHidden {
+			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
 				redacted.To = &p
 			} else if t.To != nil && *t.To != "" {
@@ -314,16 +303,11 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			continue
 		}
 
-		// Neither side hidden — apply normal redaction
+		// Neither side hidden or redacted — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
 		if t.To != nil && *t.To != "" {
 			r2 := r.applyRedaction(*t.To, toLevel)
 			redacted.To = &r2
-		}
-		if fromLevel == VisibilityRedacted || toLevel == VisibilityRedacted {
-			redacted.Value = JSONString("")
-			redacted.Input = nil
-			redacted.Output = nil
 		}
 
 		result = append(result, redacted)
@@ -730,6 +714,12 @@ func (r *RedactionEngine) RedactTokenHolders(ctx context.Context, holders []Toke
 		result = append(result, h)
 	}
 	return result, nil
+}
+
+// isNonIdentifiable returns true if the visibility level means the viewer
+// cannot identify the address — it will render as "[PRIVATE]" either way.
+func isNonIdentifiable(level VisibilityLevel) bool {
+	return level == VisibilityHidden || level == VisibilityRedacted
 }
 
 // applyRedaction modifies an address string based on its visibility level

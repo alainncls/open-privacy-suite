@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,19 +94,34 @@ func setupTestServerForExplorer(t *testing.T) (*Server, *db.DB) {
 	return srv, database
 }
 
-// setupExplorerRouter creates a router with explorer routes for testing
-// Note: We skip the localhost middleware for unit tests
+// setupExplorerRouter creates a router with explorer routes for testing.
+// Includes OptionalJWTAuthMiddleware so tests can authenticate via Bearer token.
+// Note: We skip the localhost middleware for unit tests.
 func setupExplorerRouter(srv *Server) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	// Explorer routes without localhost middleware for unit tests
 	explorer := router.Group("/api/v1/explorer")
+	explorer.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
 	explorer.GET("/viewable-addresses", srv.getViewableAddresses)
 	explorer.GET("/check-address/:address", srv.checkAddressVisibility)
 	explorer.POST("/check-addresses", srv.batchCheckAddresses)
 
 	return router
+}
+
+// issueTestJWT creates a valid JWT for the given DID using the test server's JWT service.
+func issueTestJWT(t *testing.T, srv *Server, did string) string {
+	t.Helper()
+	token, err := srv.jwtService.IssueAccessToken(did, false)
+	require.NoError(t, err)
+	return token
+}
+
+// addBearerToken adds an Authorization: Bearer header with a valid JWT for the given DID.
+func addBearerToken(t *testing.T, req *http.Request, srv *Server, did string) {
+	t.Helper()
+	req.Header.Set("Authorization", "Bearer "+issueTestJWT(t, srv, did))
 }
 
 // createTestUserForExplorer creates a test user and returns the user ID
@@ -171,7 +188,7 @@ func TestExplorerAPI_GetViewableAddresses_MissingWalletAndDID(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
+	assert.Contains(t, w.Body.String(), "either wallet or JWT authentication is required")
 }
 
 func TestExplorerAPI_GetViewableAddresses_UnknownWallet(t *testing.T) {
@@ -293,7 +310,7 @@ func TestExplorerAPI_CheckAddressVisibility_MissingWalletAndDID(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
+	assert.Contains(t, w.Body.String(), "either wallet or JWT authentication is required")
 }
 
 func TestExplorerAPI_CheckAddressVisibility_OwnAddress(t *testing.T) {
@@ -478,10 +495,11 @@ func TestExplorerAPI_CheckAddressVisibility_ExpiredGrant(t *testing.T) {
 // Test: POST /api/v1/explorer/check-addresses
 // ============================================================================
 
-func TestExplorerAPI_BatchCheckAddresses_MissingWalletAndDID(t *testing.T) {
+func TestExplorerAPI_BatchCheckAddresses_AnonymousViewerAllowed(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
+	// Anonymous batch check should succeed — viewer treated as anonymous
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testTargetAddress},
 	}
@@ -492,8 +510,7 @@ func TestExplorerAPI_BatchCheckAddresses_MissingWalletAndDID(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "either wallet or did parameter is required")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestExplorerAPI_BatchCheckAddresses_InvalidBody(t *testing.T) {
@@ -849,8 +866,9 @@ func TestExplorerAPI_GetViewableAddresses_WithDID(t *testing.T) {
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerAddress2)
 
-	// Query using DID directly (no wallet)
-	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?did="+testViewerDID, nil)
+	// Query using JWT auth (no wallet)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses", nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -872,7 +890,7 @@ func TestExplorerAPI_GetViewableAddresses_WithDID(t *testing.T) {
 	assert.True(t, addresses[testViewerAddress2])
 }
 
-func TestExplorerAPI_GetViewableAddresses_DIDTakesPrecedence(t *testing.T) {
+func TestExplorerAPI_GetViewableAddresses_JWTTakesPrecedence(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -883,9 +901,10 @@ func TestExplorerAPI_GetViewableAddresses_DIDTakesPrecedence(t *testing.T) {
 	createTestUserForExplorer(t, database, testTargetDID)
 	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
 
-	// Query with wallet belonging to viewer but DID of target
-	// DID should take precedence
-	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet+"&did="+testTargetDID, nil)
+	// Query with wallet belonging to viewer but JWT of target
+	// JWT should take precedence over wallet
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?wallet="+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testTargetDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -895,7 +914,7 @@ func TestExplorerAPI_GetViewableAddresses_DIDTakesPrecedence(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, testViewerWallet, resp.ViewerWallet) // Wallet is passed through
-	assert.Equal(t, testTargetDID, resp.ViewerDID)       // DID takes precedence
+	assert.Equal(t, testTargetDID, resp.ViewerDID)       // JWT DID takes precedence
 	assert.Len(t, resp.OwnAddresses, 1)
 	assert.Equal(t, testTargetAddress, resp.OwnAddresses[0].Address) // Target's addresses
 }
@@ -908,8 +927,9 @@ func TestExplorerAPI_CheckAddressVisibility_WithDID(t *testing.T) {
 	createTestUserForExplorer(t, database, testViewerDID)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 
-	// Check visibility of own address using DID directly
-	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testViewerWallet+"?did="+testViewerDID, nil)
+	// Check visibility of own address using JWT auth
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testViewerWallet, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -937,8 +957,9 @@ func TestExplorerAPI_CheckAddressVisibility_DIDWithGrant(t *testing.T) {
 	// Create disclosure grant
 	grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Check using DID directly (no wallet)
-	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?did="+testViewerDID, nil)
+	// Check using JWT auth (no wallet)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -962,14 +983,15 @@ func TestExplorerAPI_BatchCheckAddresses_WithDIDInQueryString(t *testing.T) {
 	createTestUserForExplorer(t, database, testViewerDID)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 
-	// Batch check using DID in query string
+	// Batch check using JWT auth
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testViewerWallet, testPublicAddress},
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+testViewerDID, bytes.NewReader(jsonBody))
+	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -989,7 +1011,7 @@ func TestExplorerAPI_BatchCheckAddresses_WithDIDInQueryString(t *testing.T) {
 	assert.Equal(t, ReasonPublicAddress, resp.Results[testPublicAddress].Reason)
 }
 
-func TestExplorerAPI_BatchCheckAddresses_WithDIDInBody(t *testing.T) {
+func TestExplorerAPI_BatchCheckAddresses_WithJWTAuth(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -997,15 +1019,15 @@ func TestExplorerAPI_BatchCheckAddresses_WithDIDInBody(t *testing.T) {
 	createTestUserForExplorer(t, database, testViewerDID)
 	linkEthAddressToUser(t, database, testViewerDID, testViewerWallet)
 
-	// Batch check using DID in request body
+	// Batch check using JWT auth
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testViewerWallet, testPublicAddress},
-		DID:       testViewerDID,
 	}
 	jsonBody, _ := json.Marshal(body)
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1021,7 +1043,7 @@ func TestExplorerAPI_BatchCheckAddresses_WithDIDInBody(t *testing.T) {
 	assert.Equal(t, ReasonOwnAddress, resp.Results[testViewerWallet].Reason)
 }
 
-func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
+func TestExplorerAPI_BatchCheckAddresses_DIDQueryParamIgnored(t *testing.T) {
 	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
@@ -1032,14 +1054,13 @@ func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
 	createTestUserForExplorer(t, database, testTargetDID)
 	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
 
-	// Query string has viewerDID, body has targetDID - body should take precedence
+	// Pass ?did=targetDID in query string WITHOUT JWT — should be treated as anonymous
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testTargetAddress},
-		DID:       testTargetDID,
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+testViewerDID, bytes.NewReader(jsonBody))
+	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+testTargetDID, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -1050,9 +1071,8 @@ func TestExplorerAPI_BatchCheckAddresses_BodyDIDTakesPrecedence(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// Target's address should be their own (body DID = targetDID)
-	assert.True(t, resp.Results[testTargetAddress].Visible)
-	assert.Equal(t, ReasonOwnAddress, resp.Results[testTargetAddress].Reason)
+	// Without JWT, ?did= is ignored — viewer is anonymous, target address is not "own"
+	assert.False(t, resp.Results[testTargetAddress].Visible)
 }
 
 // ============================================================================
@@ -1715,12 +1735,12 @@ func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
 // Test: Edge Cases
 // ============================================================================
 
-func TestEdgeCase_EmptyDID(t *testing.T) {
+func TestEdgeCase_NoAuthParams(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
-	// Query with empty DID should be rejected
-	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses?did=", nil)
+	// Query with no auth parameters should be rejected
+	req := httptest.NewRequest("GET", "/api/v1/explorer/viewable-addresses", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1906,7 +1926,8 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_NonMember(t *testing.T) 
 	// Non-member viewer exists in DB but has no group membership
 	createTestUserForExplorer(t, database, testViewerDID)
 
-	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr+"?did="+testViewerDID, nil)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr, nil)
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1933,7 +1954,8 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_Member(t *testing.T) {
 	memberID := createTestUserForExplorer(t, database, memberDID)
 	addUserToGroup(t, database, memberID, groupID)
 
-	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr+"?did="+memberDID, nil)
+	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+orgAddr, nil)
+	addBearerToken(t, req, srv, memberDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -1973,9 +1995,10 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	explorer := router.Group("/api/v1/explorer")
-	explorer.GET("/check-address/:address", srv.checkAddressVisibility)
-	explorer.POST("/check-addresses", srv.batchCheckAddresses)
+	explorerGrp := router.Group("/api/v1/explorer")
+	explorerGrp.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
+	explorerGrp.GET("/check-address/:address", srv.checkAddressVisibility)
+	explorerGrp.POST("/check-addresses", srv.batchCheckAddresses)
 
 	const orgAddr = "0xaaaa000000000000000000000000000000000014"
 	const publicAddr = "0x9999000000000000000000000000000000000099"
@@ -1990,9 +2013,10 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 	body := `{"addresses":["` + orgAddr + `","` + publicAddr + `"]}`
 
 	t.Run("outsider batch check hides org contract", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+outsiderDID,
+		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses",
 			strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addBearerToken(t, req, srv, outsiderDID)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -2011,9 +2035,10 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 	})
 
 	t.Run("member batch check reveals org contract", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?did="+memberDID2,
+		req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses",
 			strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addBearerToken(t, req, srv, memberDID2)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -2026,4 +2051,383 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 		assert.True(t, orgVis.Visible, "member must see their org contract")
 		assert.Equal(t, VisibilityFull, orgVis.Level)
 	})
+}
+
+// ============================================================================
+// Transaction redaction integration tests
+//
+// These tests exercise the full stack: HTTP endpoint → RedactionEngine →
+// GetBatchVisibility (real PostgreSQL). They would have caught the
+// "Private → Private" privacy leak where transactions between two
+// non-identifiable parties were shown instead of being dropped.
+// ============================================================================
+
+// explorerBlockCounter provides unique block numbers across parallel tests.
+var explorerBlockCounter int64 = 5000
+
+// explorerSchema is the minimal set of explorer tables needed for transaction tests.
+const explorerSchema = `
+CREATE TABLE IF NOT EXISTS blocks (
+    number BIGINT PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,
+    parent_hash TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    gas_used BIGINT NOT NULL,
+    gas_limit BIGINT NOT NULL,
+    base_fee_per_gas BIGINT,
+    transaction_count INT NOT NULL,
+    size BIGINT DEFAULT 0,
+    difficulty TEXT DEFAULT '0',
+    total_difficulty TEXT DEFAULT '0',
+    nonce TEXT DEFAULT '0x0000000000000000',
+    miner TEXT,
+    extra_data TEXT,
+    state_root TEXT,
+    transactions_root TEXT,
+    receipts_root TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    hash TEXT PRIMARY KEY,
+    block_number BIGINT NOT NULL REFERENCES blocks(number) ON DELETE CASCADE,
+    tx_index INT NOT NULL,
+    from_address TEXT NOT NULL,
+    to_address TEXT,
+    value NUMERIC(78, 0) NOT NULL,
+    gas_used BIGINT NOT NULL,
+    gas_price BIGINT NOT NULL,
+    gas_limit BIGINT,
+    max_fee_per_gas BIGINT,
+    max_priority_fee_per_gas BIGINT,
+    nonce BIGINT,
+    tx_type SMALLINT DEFAULT 0,
+    input_data TEXT,
+    status SMALLINT NOT NULL,
+    error TEXT,
+    revert_reason TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+`
+
+// setupTestServerForExplorerTransactions creates a test server with explorer store
+// and redaction engine configured, using a real PostgreSQL database.
+func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql.DB) {
+	t.Helper()
+
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		var cleanup func()
+		dbURL, cleanup = db.SetupTestContainer(t)
+		t.Cleanup(cleanup)
+	} else {
+		if err := db.EnsureTestDatabase(dbURL); err != nil {
+			t.Fatalf("PostgreSQL not available: %v", err)
+		}
+	}
+
+	database, err := db.New(dbURL)
+	require.NoError(t, err)
+	require.NoError(t, db.ResetTestDatabase(database))
+
+	// Create explorer tables in the same database.
+	_, err = database.Conn().ExecContext(context.Background(), explorerSchema)
+	require.NoError(t, err, "failed to create explorer schema")
+
+	// Open a separate connection for the explorer store.
+	explorerStore, err := explorer.NewStore(dbURL)
+	require.NoError(t, err)
+
+	jwtService, err := auth.NewJWTService(
+		"test-secret",
+		"test-refresh-secret",
+		30*time.Minute,
+		7*24*time.Hour,
+	)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		VerifierID:  "did:privado:verifier:test",
+		BaseURL:     "http://localhost:8080",
+		Environment: "development",
+	}
+
+	srv := &Server{
+		db:                database,
+		jwtService:        jwtService,
+		rbacAccessCtrl:    rbac.NewAccessController(database, 5*time.Minute),
+		disclosureService: disclosure.NewService(database),
+		config:            cfg,
+		explorerStore:     explorerStore,
+		explorerRedactor:  explorer.NewRedactionEngine(explorerStore, database),
+	}
+
+	t.Cleanup(func() {
+		explorerStore.Close()
+		srv.db.Close()
+	})
+
+	return srv, database, database.Conn()
+}
+
+// setupExplorerTransactionsRouter creates a gin router with the transactions endpoint.
+func setupExplorerTransactionsRouter(srv *Server) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	explorerGroup := router.Group("/api/v1/explorer")
+	explorerGroup.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
+	explorerGroup.GET("/transactions", srv.getExplorerTransactions)
+	return router
+}
+
+// seedExplorerBlock inserts a block into the explorer tables and returns its number.
+func seedExplorerBlock(t *testing.T, conn *sql.DB) int64 {
+	t.Helper()
+	num := atomic.AddInt64(&explorerBlockCounter, 1)
+	_, err := conn.ExecContext(context.Background(),
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count)
+		 VALUES ($1, $2, $3, $4, 21000, 30000000, 1)`,
+		num, fmt.Sprintf("0xblock%d", num), fmt.Sprintf("0xparent%d", num-1), time.Now().Unix())
+	require.NoError(t, err)
+	return num
+}
+
+// seedExplorerTransaction inserts a transaction into the explorer tables.
+func seedExplorerTransaction(t *testing.T, conn *sql.DB, blockNum int64, hash, from, to string) {
+	t.Helper()
+	_, err := conn.ExecContext(context.Background(),
+		`INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, nonce, status, input_data)
+		 VALUES ($1, $2, 0, $3, $4, 0, 21000, 1000000000, 1, 1, '0x')`,
+		hash, blockNum, from, to)
+	require.NoError(t, err)
+}
+
+// setupOrgContractInPrivacyProxy creates an org, group, contract, and contract_grant
+// in the privacy-proxy database. Returns the group ID for membership assignment.
+func setupOrgContractInPrivacyProxy(t *testing.T, database *db.DB, contractAddr string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "txtest-org-"+orgID[:8], "Tx Test Org")
+	require.NoError(t, err)
+
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupID, orgID)
+	require.NoError(t, err)
+
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+		contractID, orgID, contractAddr, "Test Contract")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, groupID)
+	require.NoError(t, err)
+
+	return groupID
+}
+
+// parseTransactionsResponse unmarshals the JSON response body into a slice of
+// explorer.Transaction.
+func parseTransactionsResponse(t *testing.T, body []byte) []explorer.Transaction {
+	t.Helper()
+	var txs []explorer.Transaction
+	require.NoError(t, json.Unmarshal(body, &txs))
+	return txs
+}
+
+// TestExplorerTransactions_BothOwnedAddresses_AnonymousViewerSeesNothing verifies
+// that a transaction between two owned (private) addresses is completely dropped
+// for an anonymous viewer. Both addresses resolve to VisibilityHidden, so the
+// transaction must not appear at all — showing "[PRIVATE] -> [PRIVATE]" would
+// leak transaction existence and timing.
+func TestExplorerTransactions_BothOwnedAddresses_AnonymousViewerSeesNothing(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerTransactionsRouter(srv)
+
+	// Create two users and link their addresses.
+	addrA := "0xaaaa000000000000000000000000000000000001"
+	addrB := "0xbbbb000000000000000000000000000000000002"
+
+	createTestUserForExplorer(t, database, "did:a:hidden")
+	linkEthAddressToUser(t, database, "did:a:hidden", addrA)
+
+	createTestUserForExplorer(t, database, "did:b:hidden")
+	linkEthAddressToUser(t, database, "did:b:hidden", addrB)
+
+	// Seed a transaction from A to B.
+	blockNum := seedExplorerBlock(t, conn)
+	seedExplorerTransaction(t, conn, blockNum, "0xtx_hidden_hidden_1", addrA, addrB)
+
+	// Anonymous request (no wallet/did param).
+	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	txs := parseTransactionsResponse(t, w.Body.Bytes())
+	assert.Empty(t, txs, "transaction between two Hidden addresses must be dropped for anonymous viewer")
+}
+
+// TestExplorerTransactions_OwnedPlusOrgContract_AnonymousViewerSeesNothing verifies
+// that a transaction between a Hidden address (owned by a user) and a Redacted
+// address (org-owned contract) is dropped for an anonymous viewer. This was the
+// core "Private -> Private" bug: org-owned contracts get VisibilityRedacted (not
+// VisibilityHidden), and the old drop check only matched Hidden+Hidden.
+func TestExplorerTransactions_OwnedPlusOrgContract_AnonymousViewerSeesNothing(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerTransactionsRouter(srv)
+
+	// Create a user with a linked (private) address.
+	addrUser := "0xaaaa000000000000000000000000000000000011"
+	createTestUserForExplorer(t, database, "did:user:orgtest")
+	linkEthAddressToUser(t, database, "did:user:orgtest", addrUser)
+
+	// Create an org-owned contract in the privacy-proxy DB.
+	addrContract := "0xcccc000000000000000000000000000000000011"
+	setupOrgContractInPrivacyProxy(t, database, addrContract)
+
+	// Seed a transaction from the user to the org contract.
+	blockNum := seedExplorerBlock(t, conn)
+	seedExplorerTransaction(t, conn, blockNum, "0xtx_hidden_redacted_1", addrUser, addrContract)
+
+	// Anonymous request.
+	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	txs := parseTransactionsResponse(t, w.Body.Bytes())
+	assert.Empty(t, txs, "transaction between Hidden user and Redacted org contract must be dropped for anonymous viewer")
+}
+
+// TestExplorerTransactions_ParticipantSeesOwnTransaction verifies that a
+// participant in a transaction can see it with full addresses, even when both
+// parties are private to everyone else.
+func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerTransactionsRouter(srv)
+
+	addrA := "0xaaaa000000000000000000000000000000000021"
+	addrB := "0xbbbb000000000000000000000000000000000022"
+	didA := "did:a:participant"
+	didB := "did:b:participant"
+
+	createTestUserForExplorer(t, database, didA)
+	linkEthAddressToUser(t, database, didA, addrA)
+
+	createTestUserForExplorer(t, database, didB)
+	linkEthAddressToUser(t, database, didB, addrB)
+
+	blockNum := seedExplorerBlock(t, conn)
+	txHash := "0xtx_participant_1"
+	seedExplorerTransaction(t, conn, blockNum, txHash, addrA, addrB)
+
+	// Request as participant A.
+	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	addBearerToken(t, req, srv, didA)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	txs := parseTransactionsResponse(t, w.Body.Bytes())
+	require.Len(t, txs, 1, "participant must see their own transaction")
+	assert.Equal(t, txHash, txs[0].Hash)
+	// Participant override reveals both addresses.
+	assert.Equal(t, addrA, strings.ToLower(txs[0].From))
+	require.NotNil(t, txs[0].To)
+	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
+}
+
+// TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty verifies that
+// when viewer A has a disclosure grant on user B, a transaction from B to C
+// (where C is private) is shown with B's address visible and C masked as
+// [PRIVATE]. The transaction is kept because one side (B) is identifiable.
+func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerTransactionsRouter(srv)
+
+	addrA := "0xaaaa000000000000000000000000000000000031"
+	addrB := "0xbbbb000000000000000000000000000000000032"
+	addrC := "0xcccc000000000000000000000000000000000033"
+	didA := "did:a:grantviewer"
+	didB := "did:b:granttarget"
+	didC := "did:c:noaccess"
+
+	// Create viewer A.
+	createTestUserForExplorer(t, database, didA)
+	linkEthAddressToUser(t, database, didA, addrA)
+
+	// Create target B (whose addresses A can see via grant).
+	targetUserID := createTestUserForExplorer(t, database, didB)
+	linkEthAddressToUser(t, database, didB, addrB)
+
+	// Create user C (no grant from A).
+	createTestUserForExplorer(t, database, didC)
+	linkEthAddressToUser(t, database, didC, addrC)
+
+	// Grant A full disclosure on B.
+	createDisclosureGrant(t, database, didA, targetUserID, time.Now().Add(24*time.Hour))
+
+	// Seed a transaction from B to C.
+	blockNum := seedExplorerBlock(t, conn)
+	txHash := "0xtx_grant_1"
+	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
+
+	// Request as viewer A.
+	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	addBearerToken(t, req, srv, didA)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	txs := parseTransactionsResponse(t, w.Body.Bytes())
+	require.Len(t, txs, 1, "transaction should be kept: B is identifiable via grant")
+	assert.Equal(t, txHash, txs[0].Hash)
+	// B's address is visible (grant), C is masked.
+	assert.Equal(t, addrB, strings.ToLower(txs[0].From))
+	require.NotNil(t, txs[0].To)
+	assert.Equal(t, "[PRIVATE]", *txs[0].To)
+}
+
+// TestExplorerTransactions_PublicAddresses_VisibleToAll verifies that
+// transactions between public (unowned) addresses are fully visible to everyone,
+// including anonymous viewers.
+func TestExplorerTransactions_PublicAddresses_VisibleToAll(t *testing.T) {
+	srv, _, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerTransactionsRouter(srv)
+
+	// These addresses are not linked to any user — they are public.
+	addrE := "0xeeee000000000000000000000000000000000041"
+	addrF := "0xffff000000000000000000000000000000000042"
+
+	blockNum := seedExplorerBlock(t, conn)
+	txHash := "0xtx_public_1"
+	seedExplorerTransaction(t, conn, blockNum, txHash, addrE, addrF)
+
+	// Anonymous request.
+	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	txs := parseTransactionsResponse(t, w.Body.Bytes())
+	require.Len(t, txs, 1, "transaction between public addresses must be visible")
+	assert.Equal(t, txHash, txs[0].Hash)
+	assert.Equal(t, addrE, strings.ToLower(txs[0].From))
+	require.NotNil(t, txs[0].To)
+	assert.Equal(t, addrF, strings.ToLower(*txs[0].To))
 }
