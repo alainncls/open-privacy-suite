@@ -341,16 +341,18 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Check for historical state queries (privacy protection)
-	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
-		return &AccessCheckResult{
-			Allowed: false,
-			Reason:  reason,
-		}, nil
-	}
-
 	// Handle anonymous access (no JWT provided)
 	if req.UserExternalID == "" {
+		// Block historical state queries for anonymous users only.
+		// Authenticated users go through full RBAC (which gates which addresses
+		// they can query), so blocking by block number is redundant and breaks
+		// wallets like MetaMask that query at specific blocks for read consistency.
+		if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  reason,
+			}, nil
+		}
 		requiredClaim := ClassifyOperation(req.Method, req.Params)
 
 		// Only pure network/chain metadata methods (eth_blockNumber, eth_chainId,

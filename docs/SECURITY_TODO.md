@@ -88,3 +88,4 @@ Last updated: 2026-03-18
 - [x] Runtime CREATE2 support — conditional on tracing + deploy claim
 - [x] Deploy validator CREATE2 exception — conditional on runtime tracing
 - [x] Dev-admin re-provisioning — skips `did:test:*` users
+- [x] Historical state queries — only block for anonymous, allow authenticated (RBAC gates access)
