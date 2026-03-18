@@ -179,7 +179,9 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	return redactedTxs, nil
 }
 
-// RedactTransfers applies privacy rules to a list of token transfers
+// RedactTransfers applies privacy rules to a list of token transfers.
+// Like RedactTransactions, participants (viewer is sender or receiver) get a
+// visibility override so they can see the transfer amount and counterparty.
 func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []TokenTransfer, viewerDID string) ([]TokenTransfer, error) {
 	if len(transfers) == 0 {
 		return transfers, nil
@@ -204,10 +206,37 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		return nil, err
 	}
 
+	// Get viewer's linked addresses for participant visibility override.
+	viewerAddrs := make(map[string]bool)
+	if viewerDID != "" {
+		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range linked {
+			viewerAddrs[strings.ToLower(a)] = true
+		}
+	}
+
 	var result []TokenTransfer
 	for _, t := range transfers {
+		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
+		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
+		viewerIsParticipant := viewerIsFrom || viewerIsTo
+
 		fromLevel := visMap[strings.ToLower(t.From)]
 		toLevel := visMap[strings.ToLower(t.To)]
+
+		// Participant override: reveal counterparty address so the transfer
+		// isn't stripped — the viewer already knows who they transacted with.
+		if viewerIsParticipant {
+			if isNonIdentifiable(fromLevel) {
+				fromLevel = VisibilityFull
+			}
+			if isNonIdentifiable(toLevel) {
+				toLevel = VisibilityFull
+			}
+		}
 
 		// Drop if both sides are non-identifiable
 		if isNonIdentifiable(fromLevel) && isNonIdentifiable(toLevel) {
@@ -242,7 +271,8 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	return result, nil
 }
 
-// RedactInternalTransactions applies privacy rules to a list of internal transactions
+// RedactInternalTransactions applies privacy rules to a list of internal transactions.
+// Like RedactTransactions, participants get a visibility override.
 func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs []InternalTransaction, viewerDID string) ([]InternalTransaction, error) {
 	if len(itxs) == 0 {
 		return itxs, nil
@@ -267,12 +297,38 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		return nil, err
 	}
 
+	// Get viewer's linked addresses for participant visibility override.
+	viewerAddrs := make(map[string]bool)
+	if viewerDID != "" {
+		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range linked {
+			viewerAddrs[strings.ToLower(a)] = true
+		}
+	}
+
 	var result []InternalTransaction
 	for _, t := range itxs {
+		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
+		viewerIsTo := t.To != nil && *t.To != "" && viewerAddrs[strings.ToLower(*t.To)]
+		viewerIsParticipant := viewerIsFrom || viewerIsTo
+
 		fromLevel := visMap[strings.ToLower(t.From)]
 		toLevel := VisibilityFull
 		if t.To != nil && *t.To != "" {
 			toLevel = visMap[strings.ToLower(*t.To)]
+		}
+
+		// Participant override: reveal counterparty.
+		if viewerIsParticipant {
+			if isNonIdentifiable(fromLevel) {
+				fromLevel = VisibilityFull
+			}
+			if isNonIdentifiable(toLevel) {
+				toLevel = VisibilityFull
+			}
 		}
 
 		// Drop if both sides are non-identifiable
