@@ -181,7 +181,12 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 }
 
 // extractCallTargets recursively extracts all call targets from a call frame.
+const maxTraceDepth = 256 // Prevent stack overflow from malicious/deeply nested traces
+
 func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) {
+	if depth > maxTraceDepth {
+		return
+	}
 	// Check the type and add to result
 	switch frame.Type {
 	case "CALL", "DELEGATECALL", "STATICCALL":
