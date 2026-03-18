@@ -142,7 +142,8 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Limit response size to 64MB to prevent OOM from malicious/broken nodes.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -175,7 +176,9 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	}
 
 	// Recursively extract all call targets
-	t.extractCallTargets(&frame, result, 0)
+	if err := t.extractCallTargets(&frame, result, 0); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -183,9 +186,14 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 // extractCallTargets recursively extracts all call targets from a call frame.
 const maxTraceDepth = 256 // Prevent stack overflow from malicious/deeply nested traces
 
-func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) {
+// errTraceDepthExceeded is returned when a trace exceeds the max recursion depth.
+// The caller should fail closed (deny the transaction) since deeper call targets
+// were not validated.
+var errTraceDepthExceeded = fmt.Errorf("trace exceeds maximum depth (%d)", maxTraceDepth)
+
+func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) error {
 	if depth > maxTraceDepth {
-		return
+		return errTraceDepthExceeded
 	}
 	// Check the type and add to result
 	switch frame.Type {
@@ -216,8 +224,11 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 
 	// Recursively process nested calls
 	for i := range frame.Calls {
-		t.extractCallTargets(&frame.Calls[i], result, depth+1)
+		if err := t.extractCallTargets(&frame.Calls[i], result, depth+1); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // TraceTransaction traces an already-mined transaction by hash using debug_traceTransaction.
@@ -258,7 +269,8 @@ func (t *Tracer) TraceTransaction(ctx context.Context, txHash string) (*TraceRes
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Limit response size to 64MB to prevent OOM from malicious/broken nodes.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -291,7 +303,9 @@ func (t *Tracer) TraceTransaction(ctx context.Context, txHash string) (*TraceRes
 	}
 
 	// Recursively extract all call targets
-	t.extractCallTargets(&frame, result, 0)
+	if err := t.extractCallTargets(&frame, result, 0); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
