@@ -528,7 +528,7 @@ func (s *Server) verifyAndIssueTokens(c *gin.Context, jwzToken string, authReque
 
 	// Auto-grant admin claim to mock-login users (dev builds only, no-op in prod)
 	if isMockLogin && user != nil {
-		s.ensureMockUserIsAdmin(c.Request.Context(), user.ID)
+		s.ensureMockUserIsAdmin(c.Request.Context(), user.ID, userDID)
 	}
 
 	// Process ZK role claims if available and user exists
