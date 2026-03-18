@@ -74,10 +74,10 @@ Transaction receipts contain execution results including status, gas used, and -
 
 | User is a participant? | Response |
 |------------------------|----------|
-| Yes | Full receipt with all logs |
+| Yes | Receipt (but logs are filtered to only show those involving the user, and `logsBloom` is zeroed) |
 | No | `null` |
 
-Non-participants receive `null`, consistent with `eth_getTransactionByHash`. This prevents any information leakage -- a non-participant cannot determine whether a transaction succeeded, how much gas it used, which contract it created, or what events it emitted.
+Non-participants receive `null`, consistent with `eth_getTransactionByHash`. Importantly, even when a user is a participant, the receipt's `logs` array is filtered using the same strict rules as `eth_getLogs`, and the `logsBloom` is zeroed out to prevent leaking the total number or presence of redacted logs.
 
 ---
 
@@ -138,19 +138,22 @@ These methods return an entire block, optionally including full transaction obje
 | Method | `fullTxObjects` | Filtering |
 |--------|-----------------|-----------|
 | `eth_getBlockByHash` | `true` | Per-tx `from`/`to` check; non-participant txs removed from array |
-| `eth_getBlockByHash` | `false` | Passes through (tx hashes only, not sensitive) |
+| `eth_getBlockByHash` | `false` | Per-tx check (proxy requests full objects, filters, and maps to hashes) |
 | `eth_getBlockByNumber` | `true` | Per-tx `from`/`to` check; non-participant txs removed from array |
-| `eth_getBlockByNumber` | `false` | Passes through (tx hashes only, not sensitive) |
+| `eth_getBlockByNumber` | `false` | Per-tx check (proxy requests full objects, filters, and maps to hashes) |
 
-When `fullTxObjects=false`, the `transactions` array contains only hex-encoded hashes. These are not sensitive -- a hash alone does not reveal calldata, value, or counterparty -- so the response is returned unmodified.
+Whether `fullTxObjects` is `true` or `false`, the `transactions` array is strictly filtered. For `false` queries, the proxy transparently fetches full transaction objects behind the scenes, applies the filters, and returns only the hashes of transactions the user participated in. This prevents leaking the exact total number of transactions in a block.
 
-When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `gasUsed`, `timestamp`, etc.) are preserved.
+### Block Transaction Counts (eth_getBlockTransactionCountByHash/Number)
+These methods return the hex-encoded integer count of transactions in a block. The proxy intercepts these calls, fetches the full block, counts only the transactions the user is a participant in, and returns that personalized count.
+
+When `fullTxObjects=true`, the `transactions` array contains full transaction objects (the same shape as `eth_getTransactionByHash` responses). The filter iterates over each transaction and removes entries where neither `from` nor `to` matches a linked address. Block-level fields (`number`, `hash`, `gasUsed`, `timestamp`, etc.) are preserved, but **the block-level `logsBloom` is forcefully scrubbed and zeroed out** to prevent it from leaking the existence of redacted logs across the whole block.
 
 ---
 
 ## Block Receipts (eth\_getBlockReceipts)
 
-`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt participant check as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts are **removed from the array entirely**, consistent with how `eth_getBlockByNumber` removes non-participant transactions. The returned array contains only receipts for transactions the user was a party to.
+`eth_getBlockReceipts` returns all transaction receipts in a block. The filter applies the same per-receipt participant check as `eth_getTransactionReceipt`: for each receipt, it checks whether `from` or `to` matches a linked address. Non-participant receipts are **removed from the array entirely**, consistent with how `eth_getBlockByNumber` removes non-participant transactions. The returned array contains only receipts for transactions the user was a party to, and just like single receipt queries, their inner `logs` arrays are strictly filtered and `logsBloom` is zeroed.
 
 ---
 
@@ -171,7 +174,7 @@ These response-filtering features implement core privacy requirements for regula
 | **Intra-org transaction confidentiality** | `eth_getTransactionByHash` returns `null` for non-participants, preventing co-members from reading each other's calldata and transfer details |
 | **Event log visibility restrictions** | `eth_getLogs` filters entries by indexed address topics, ensuring users see only events involving their own addresses |
 | **Raw state access prevention** | `eth_getStorageAt` is permanently blocked, closing the storage-slot bypass that would defeat all contract-level privacy controls |
-| **Receipt log redaction** | `eth_getTransactionReceipt` strips logs and bloom filters for non-participants while preserving non-sensitive execution metadata |
+| **Receipt log redaction** | `eth_getTransactionReceipt` strictly filters inner logs and zeros bloom filters, ensuring even participants cannot see unrelated logs |
 
 These controls ensure that even within a shared private network where all participants have read access to the same contracts, individual transaction privacy is maintained at the response level.
 
@@ -185,12 +188,13 @@ These controls ensure that even within a shared private network where all partic
 | `eth_getTransactionByHash` | Full transaction | `null` |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` |
-| `eth_getTransactionReceipt` | Full receipt with logs | `null` |
+| `eth_getTransactionReceipt` | Receipt with filtered logs | `null` |
 | `eth_getBlockByHash` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
-| `eth_getBlockByHash` (`fullTxObjects=false`) | Passes through | Passes through |
+| `eth_getBlockByHash` (`fullTxObjects=false`) | Hashes of user's txs | Non-participant hashes removed from array |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
-| `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through |
-| `eth_getBlockReceipts` | Full receipts with logs | Non-participant receipts removed from array |
+| `eth_getBlockByNumber` (`fullTxObjects=false`) | Hashes of user's txs | Non-participant hashes removed from array |
+| `eth_getBlockTransactionCountByHash/Number` | Count of user's txs | Count of user's txs only |
+| `eth_getBlockReceipts` | Receipts with filtered logs | Non-participant receipts removed from array |
 | `eth_getLogs` | Logs where a topic address matches | Those logs removed from response |
 | `eth_newFilter` / `eth_newBlockFilter` / etc. | Blocked (globally) | Blocked (globally) |
 
@@ -201,9 +205,7 @@ These controls ensure that even within a shared private network where all partic
 
   2. **`eth_call` response field-level redaction** -- `eth_call` responses are raw ABI-encoded bytes. For full privacy (e.g., hiding the `amount` field in `getPaymentInfo` unless the caller is a payment party), the proxy would need to decode the ABI response and selectively redact fields. Requires registered contract ABIs and per-function redaction rules.
 
-  3. **Block metadata traffic analysis** -- `eth_getBlockTransactionCountByHash` and `eth_getBlockTransactionCountByNumber` reveal the number of transactions in a block. While this doesn't expose calldata, it enables coarse traffic analysis on a private network. Currently passes through with no filtering.
+  3. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks: `transferred ≈ balance(N−1) − balance(N) − (gas_used × gas_price)`. All inputs to this calculation are visible. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee.
 
-  4. **Value inference for mixed public/private transactions** -- When a transaction involves one private address and one public address, the `value` field is stripped and the private side is replaced with `[PRIVATE]` in the block explorer. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks: `transferred ≈ balance(N−1) − balance(N) − (gas_used × gas_price)`. All inputs to this calculation are visible. Stripping the value removes the direct leakage path but is not a complete financial privacy guarantee.
-
-  5. **Log `data` field for contracts without a registered ABI** -- The explorer redaction engine scans the `data` field of event logs for non-indexed `address`-typed parameters and zeros private addresses when the emitting contract has a registered and verified ABI. For contracts without a registered ABI, the `data` field is returned unmodified and may contain private addresses embedded in ABI-encoded parameters.
+  4. **Log `data` field for contracts without a registered ABI** -- The explorer redaction engine scans the `data` field of event logs for non-indexed `address`-typed parameters and zeros private addresses when the emitting contract has a registered and verified ABI. For contracts without a registered ABI, the `data` field is returned unmodified and may contain private addresses embedded in ABI-encoded parameters.
 </Callout>

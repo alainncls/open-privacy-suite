@@ -337,9 +337,33 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Prepare forward body by rewriting certain queries to ensure we get full tx objects
+	forwardBody := req.Body
+	if req.Method == "eth_getBlockByNumber" || req.Method == "eth_getBlockByHash" {
+		isFull := false // JSON-RPC spec defaults missing to false (hashes only)
+		if len(req.Params) >= 2 {
+			if val, ok := req.Params[1].(bool); ok {
+				isFull = val
+			}
+		}
+		if !isFull {
+			if rewriten := rewriteToFullTxObjects(req.Body, req.Params); rewriten != nil {
+				forwardBody = rewriten
+			}
+		}
+	} else if req.Method == "eth_getBlockTransactionCountByNumber" {
+		if rewriten := rewriteToGetBlock(req.Body, "eth_getBlockByNumber", req.Params); rewriten != nil {
+			forwardBody = rewriten
+		}
+	} else if req.Method == "eth_getBlockTransactionCountByHash" {
+		if rewriten := rewriteToGetBlock(req.Body, "eth_getBlockByHash", req.Params); rewriten != nil {
+			forwardBody = rewriten
+		}
+	}
+
 	// Forward to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	responseBody, statusCode, err := p.proxy.Forward(forwardBody)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -461,7 +485,22 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		if err != nil {
 			return responseBody // pass through on error
 		}
-		return FilterBlockTransactions(responseBody, addrs)
+		
+		originalFull := false // JSON-RPC defaults false
+		if len(req.Params) >= 2 {
+			if isFull, ok := req.Params[1].(bool); ok {
+				originalFull = isFull
+			}
+		}
+		return FilterBlockTransactions(responseBody, addrs, originalFull)
+		
+	case strings.EqualFold(m, "eth_getBlockTransactionCountByHash"),
+		strings.EqualFold(m, "eth_getBlockTransactionCountByNumber"):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil {
+			return FilterBlockTransactionCount(responseBody, nil)
+		}
+		return FilterBlockTransactionCount(responseBody, addrs)
 
 	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -471,6 +510,65 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		return FilterBlockReceipts(responseBody, addrs)
 	}
 	return responseBody
+}
+
+func rewriteToFullTxObjects(originalBody []byte, params []any) []byte {
+	var newParams []any
+	if len(params) >= 2 {
+		newParams = make([]any, len(params))
+		copy(newParams, params)
+		newParams[1] = true
+	} else {
+		newParams = make([]any, 2)
+		if len(params) == 1 {
+			newParams[0] = params[0]
+		}
+		newParams[1] = true
+	}
+
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  []any           `json:"params"`
+		ID      json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(originalBody, &env); err != nil {
+		return nil
+	}
+	env.Params = newParams
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []byte {
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  []any           `json:"params"`
+		ID      json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(originalBody, &env); err != nil {
+		return nil
+	}
+	env.Method = newMethod
+	
+	newParams := make([]any, 0, 2)
+	if len(params) > 0 {
+		newParams = append(newParams, params[0])
+	} else {
+		newParams = append(newParams, "latest")
+	}
+	newParams = append(newParams, true)
+
+	env.Params = newParams
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // autoRegisterFactoryDeploy registers a contract after a successful CREATE3 factory deploy.

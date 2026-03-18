@@ -19,6 +19,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -137,12 +138,68 @@ func FilterTransactionReceipt(responseBody []byte, userAddresses []string) []byt
 	to := strings.ToLower(receipt.To)
 
 	if addrSet[from] || (to != "" && addrSet[to]) {
-		return responseBody // participant -- return full receipt
+		id := rpcResponseID(responseBody)
+		return filterReceiptLogs(raw, addrSet, id)
 	}
 
 	// Non-participant: return null result (consistent with FilterTransactionByHash).
 	id := rpcResponseID(responseBody)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+}
+
+// filterReceiptLogs removes non-viewable logs from a receipt and zeros logsBloom.
+func filterReceiptLogs(rawReceipt []byte, addrSet map[string]bool, rpcID string) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(rawReceipt, &m); err != nil {
+		return rawReceipt
+	}
+
+	if rawLogs, ok := m["logs"]; ok {
+		var arr []json.RawMessage
+		if json.Unmarshal(rawLogs, &arr) == nil {
+			filtered := make([]json.RawMessage, 0, len(arr))
+			for _, logRaw := range arr {
+				var entry struct {
+					Topics []string `json:"topics"`
+				}
+				if json.Unmarshal(logRaw, &entry) == nil {
+					visible := false
+					for i := 0; i < len(entry.Topics); i++ {
+						if topicMatchesAddress(entry.Topics[i], addrSet) {
+							visible = true
+							break
+						}
+					}
+					if visible {
+						filtered = append(filtered, logRaw)
+					}
+				}
+			}
+			newLogs, err := json.Marshal(filtered)
+			if err == nil {
+				m["logs"] = newLogs
+			}
+		}
+	}
+
+	zeroBloom := `"0x` + strings.Repeat("0", 512) + `"`
+	m["logsBloom"] = json.RawMessage(zeroBloom)
+
+	out, _ := json.Marshal(m)
+
+	if rpcID != "" {
+		wrapped, _ := json.Marshal(struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Result  json.RawMessage `json:"result"`
+		}{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(rpcID),
+			Result:  out,
+		})
+		return wrapped
+	}
+	return out
 }
 
 // FilterLogs filters an eth_getLogs response, keeping only log entries where
@@ -225,12 +282,9 @@ func FilterLogs(responseBody []byte, userAddresses []string) []byte {
 }
 
 // FilterBlockTransactions filters an eth_getBlockByNumber or eth_getBlockByHash response.
-// When the block includes full transaction objects (fullTxObjects=true), this removes
-// transactions where the user is not a participant (from/to don't match linked addresses).
-// When the block includes only transaction hashes (fullTxObjects=false), passes through
-// unchanged — hashes are not sensitive without the corresponding calldata.
-// If the result is null or not a block object, passes through unchanged.
-func FilterBlockTransactions(responseBody []byte, userAddresses []string) []byte {
+// Removes non-participant transactions. If the user originally requested hashes, maps the
+// filtered full tx objects back to the transaction hashes.
+func FilterBlockTransactions(responseBody []byte, userAddresses []string, originalFull bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -268,33 +322,41 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string) []byte
 	// Peek at first element to determine if full objects or hashes
 	first := bytes.TrimSpace(rawTxs[0])
 	if len(first) == 0 || first[0] == '"' {
-		// Transaction hashes (strings) — not sensitive, pass through
-		return responseBody
+		// We received hashes. If we already rewrote the request to full objects, this shouldn't happen.
+		// For safety, clear the array.
+		block["transactions"] = []byte("[]")
+	} else {
+		// Full transaction objects — filter to only user's transactions
+		addrSet := addrSetFromLinked(userAddresses)
+		filtered := make([]json.RawMessage, 0, len(rawTxs))
+		for _, rawTx := range rawTxs {
+			var tx struct {
+				From string `json:"from"`
+				To   string `json:"to"`
+				Hash string `json:"hash"`
+			}
+			if err := json.Unmarshal(rawTx, &tx); err != nil {
+				continue
+			}
+			from := strings.ToLower(tx.From)
+			to := strings.ToLower(tx.To)
+			if addrSet[from] || (to != "" && addrSet[to]) {
+				if !originalFull {
+					hashStr, _ := json.Marshal(tx.Hash)
+					filtered = append(filtered, hashStr)
+				} else {
+					filtered = append(filtered, rawTx)
+				}
+			}
+		}
+		block["logsBloom"] = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
+		filteredTxJSON, err := json.Marshal(filtered)
+		if err == nil {
+			block["transactions"] = filteredTxJSON
+		}
 	}
 
-	// Full transaction objects — filter to only user's transactions
-	addrSet := addrSetFromLinked(userAddresses)
-	filtered := make([]json.RawMessage, 0, len(rawTxs))
-	for _, rawTx := range rawTxs {
-		var tx struct {
-			From string `json:"from"`
-			To   string `json:"to"`
-		}
-		if err := json.Unmarshal(rawTx, &tx); err != nil {
-			continue
-		}
-		from := strings.ToLower(tx.From)
-		to := strings.ToLower(tx.To)
-		if addrSet[from] || (to != "" && addrSet[to]) {
-			filtered = append(filtered, rawTx)
-		}
-	}
 
-	filteredTxJSON, err := json.Marshal(filtered)
-	if err != nil {
-		return responseBody
-	}
-	block["transactions"] = filteredTxJSON
 
 	blockJSON, err := json.Marshal(block)
 	if err != nil {
@@ -359,7 +421,8 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 		to := strings.ToLower(receipt.To)
 
 		if addrSet[from] || (to != "" && addrSet[to]) {
-			receiptsFiltered = append(receiptsFiltered, rawReceipt)
+			filteredReceipt := filterReceiptLogs(rawReceipt, addrSet, "")
+			receiptsFiltered = append(receiptsFiltered, filteredReceipt)
 		}
 		// Non-participant: omit entirely (consistent with FilterBlockTransactions).
 	}
@@ -383,4 +446,74 @@ func FilterBlockReceipts(responseBody []byte, userAddresses []string) []byte {
 		return responseBody
 	}
 	return receiptsOut
+}
+
+// FilterBlockTransactionCount takes a response to eth_getBlockByNumber or Hash
+// (which we rewrite into fetching the full block) and counts only the user's transactions.
+func FilterBlockTransactionCount(responseBody []byte, userAddresses []string) []byte {
+	var resp struct {
+		JSONRPC string           `json:"jsonrpc"`
+		ID      json.RawMessage  `json:"id"`
+		Result  *json.RawMessage `json:"result"`
+		Error   *json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(responseBody, &resp); err != nil {
+		return responseBody
+	}
+	if resp.Error != nil || resp.Result == nil {
+		return responseBody
+	}
+	raw := []byte(*resp.Result)
+	if string(raw) == "null" {
+		return responseBody
+	}
+
+	var block map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return responseBody
+	}
+
+	txsRaw, ok := block["transactions"]
+	if !ok {
+		return responseBody
+	}
+
+	var rawTxs []json.RawMessage
+	if err := json.Unmarshal(txsRaw, &rawTxs); err != nil || len(rawTxs) == 0 {
+		return responseBody
+	}
+
+	addrSet := addrSetFromLinked(userAddresses)
+	count := 0
+	for _, rawTx := range rawTxs {
+		var tx struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := json.Unmarshal(rawTx, &tx); err != nil {
+			continue
+		}
+		from := strings.ToLower(tx.From)
+		to := strings.ToLower(tx.To)
+		if addrSet[from] || (to != "" && addrSet[to]) {
+			count++
+		}
+	}
+
+	hexCount := fmt.Sprintf("0x%x", count)
+	hexResult, _ := json.Marshal(hexCount)
+
+	out, err := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  json.RawMessage `json:"result"`
+	}{
+		JSONRPC: "2.0",
+		ID:      resp.ID,
+		Result:  hexResult,
+	})
+	if err != nil {
+		return responseBody
+	}
+	return out
 }

@@ -382,7 +382,7 @@ func TestFilterBlockTransactions_UserAsTo(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr})
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -409,7 +409,7 @@ func TestFilterBlockTransactions_MultipleLinkedAddresses(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{addr1, addr2})
+	got := FilterBlockTransactions([]byte(response), []string{addr1, addr2}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -437,7 +437,7 @@ func TestFilterBlockTransactions_BlockLogsBloom_NotZeroed(t *testing.T) {
 		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr})
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			LogsBloom string `json:"logsBloom"`
@@ -468,7 +468,7 @@ func TestFilterBlockTransactions_ContractCreation_DeployerKept(t *testing.T) {
 		`{"from":"0xother","to":null,"input":"0x60806040"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr})
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Transactions []json.RawMessage `json:"transactions"`
@@ -493,7 +493,7 @@ func TestFilterBlockTransactions_AllNonParticipant_BlockMetadataPreserved(t *tes
 		`{"from":"0xother3","to":"0xother4","input":"0x"}` +
 		`]}}`
 
-	got := FilterBlockTransactions([]byte(response), []string{userAddr})
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
 	var resp struct {
 		Result *struct {
 			Number       string            `json:"number"`
@@ -679,7 +679,7 @@ func TestBehavioralConsistency_BlockTxAndBlockReceipts_BothShrink(t *testing.T) 
 		`{"from":"0xother3","to":"0xother4","status":"0x1","logs":[],"logsBloom":"0x0"}` +
 		`]}`
 
-	filteredTxBlock := FilterBlockTransactions([]byte(txBlock), []string{userAddr})
+	filteredTxBlock := FilterBlockTransactions([]byte(txBlock), []string{userAddr}, true)
 	filteredReceiptBlock := FilterBlockReceipts([]byte(receiptBlock), []string{userAddr})
 
 	var txResp struct {
