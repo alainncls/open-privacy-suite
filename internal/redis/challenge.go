@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"privacy-proxy/internal/auth"
@@ -45,7 +46,9 @@ func (cs *ChallengeStore) CreateChallenge(did string) (*types.LinkChallenge, err
 	}
 
 	ctx := context.Background()
-	cs.client.Set(ctx, "pp:challenge:"+nonce, data, cs.ttl)
+	if err := cs.client.Set(ctx, "pp:challenge:"+nonce, data, cs.ttl).Err(); err != nil {
+		return nil, fmt.Errorf("redis SET challenge: %w", err)
+	}
 
 	return challenge, nil
 }

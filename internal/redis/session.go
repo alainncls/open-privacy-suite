@@ -18,9 +18,71 @@ const (
 	// sessionKeyPrefix is the Redis key prefix for auth sessions.
 	sessionKeyPrefix = "pp:session:"
 
+	// sessionCountKey is the Redis key for the atomic session counter.
+	sessionCountKey = "pp:session:_count"
+
 	// defaultSessionScanCount is the COUNT hint for SCAN operations.
 	defaultSessionScanCount = 100
 )
+
+// reserveSessionScript atomically increments the session counter and checks
+// whether the new value exceeds the capacity limit. If over limit, it
+// decrements back and returns 0. Otherwise it returns 1, reserving a slot.
+//
+// KEYS[1] = counter key (pp:session:_count)
+// ARGV[1] = max sessions
+//
+// Returns 1 if a slot was reserved, 0 if at capacity.
+var reserveSessionScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if count > tonumber(ARGV[1]) then
+	redis.call('DECR', KEYS[1])
+	return 0
+end
+return 1
+`)
+
+// updateSessionScript atomically updates a session's auth_request field.
+// It GETs the session, decodes it, replaces the auth_request, and writes it
+// back with KEEPTTL — all in a single Lua script to eliminate TOCTOU races.
+//
+// KEYS[1] = session key (pp:session:{id})
+// ARGV[1] = new auth_request JSON string
+//
+// Returns 1 on success, 0 if the key doesn't exist.
+var updateSessionScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return 0 end
+local session = cjson.decode(data)
+session['auth_request'] = cjson.decode(ARGV[1])
+redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
+return 1
+`)
+
+// completeSessionScript atomically marks a session as completed with tokens.
+// It GETs the session, decodes it, sets the completion fields, and writes it
+// back with a new TTL — all in a single Lua script to eliminate TOCTOU races.
+//
+// KEYS[1] = session key (pp:session:{id})
+// ARGV[1] = access_token
+// ARGV[2] = refresh_token
+// ARGV[3] = completed_at (unix timestamp)
+// ARGV[4] = expires_at (unix timestamp)
+// ARGV[5] = new TTL in seconds
+//
+// Returns 1 on success, 0 if the key doesn't exist.
+var completeSessionScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return 0 end
+local session = cjson.decode(data)
+session['completed'] = true
+session['access_token'] = ARGV[1]
+session['refresh_token'] = ARGV[2]
+session['completed_at'] = ARGV[3]
+session['expires_at'] = ARGV[4]
+redis.call('SET', KEYS[1], cjson.encode(session), 'EX', tonumber(ARGV[5]))
+return 1
+`)
 
 // SessionStore is a Redis-backed implementation of the SessionManager interface.
 // It stores auth sessions as JSON values with Redis TTL for automatic expiry,
@@ -42,12 +104,21 @@ func NewSessionStore(client *redis.Client, sessionTTL time.Duration, maxSessions
 
 // CreateSession creates a new session and returns the session ID.
 // Returns empty string if the store is at capacity.
+// Uses an atomic Lua script to reserve a slot in the counter, preventing
+// race conditions across multiple proxy instances.
 func (s *SessionStore) CreateSession(authRequest *protocol.AuthorizationRequestMessage) string {
 	ctx := context.Background()
 
-	// Check capacity via SCAN count (approximate, same as in-memory store).
-	if s.maxSessions > 0 && s.Count() >= int64(s.maxSessions) {
-		return ""
+	// Atomically reserve a session slot via the counter.
+	if s.maxSessions > 0 {
+		reserved, err := reserveSessionScript.Run(ctx, s.client, []string{sessionCountKey}, s.maxSessions).Int()
+		if err != nil {
+			slog.Error("redis session store: failed to reserve session slot", "error", err)
+			return ""
+		}
+		if reserved == 0 {
+			return ""
+		}
 	}
 
 	sessionID := uuid.New().String()
@@ -63,12 +134,20 @@ func (s *SessionStore) CreateSession(authRequest *protocol.AuthorizationRequestM
 	data, err := json.Marshal(session)
 	if err != nil {
 		slog.Error("redis session store: failed to marshal session", "error", err)
+		// Release the reserved slot since we failed to create the session.
+		if s.maxSessions > 0 {
+			s.decrCount(ctx)
+		}
 		return ""
 	}
 
 	key := sessionKeyPrefix + sessionID
 	if err := s.client.Set(ctx, key, data, s.ttl).Err(); err != nil {
 		slog.Error("redis session store: failed to store session", "error", err)
+		// Release the reserved slot since we failed to store the session.
+		if s.maxSessions > 0 {
+			s.decrCount(ctx)
+		}
 		return ""
 	}
 
@@ -98,87 +177,66 @@ func (s *SessionStore) GetSession(sessionID string) *auth.Session {
 	return &session
 }
 
-// DeleteSession removes a session.
+// DeleteSession removes a session and decrements the atomic session counter.
 func (s *SessionStore) DeleteSession(sessionID string) {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
-	if err := s.client.Del(ctx, key).Err(); err != nil {
+
+	deleted, err := s.client.Del(ctx, key).Result()
+	if err != nil {
 		slog.Error("redis session store: failed to delete session", "error", err)
+		return
+	}
+
+	// Only decrement the counter if a key was actually deleted, to avoid
+	// the counter drifting negative from double-deletes.
+	if deleted > 0 && s.maxSessions > 0 {
+		s.decrCount(ctx)
 	}
 }
 
-// UpdateSession updates an existing session's auth request.
+// UpdateSession atomically updates an existing session's auth request.
+// Uses a Lua script to avoid TOCTOU races from separate GET/SET operations.
 func (s *SessionStore) UpdateSession(sessionID string, authRequest *protocol.AuthorizationRequestMessage) error {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
 
-	// GET existing session
-	data, err := s.client.Get(ctx, key).Bytes()
+	authRequestJSON, err := json.Marshal(authRequest)
 	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("session not found")
-		}
-		return fmt.Errorf("redis get: %w", err)
+		return fmt.Errorf("marshal auth request: %w", err)
 	}
 
-	var session auth.Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return fmt.Errorf("unmarshal session: %w", err)
-	}
-
-	session.AuthRequest = authRequest
-
-	newData, err := json.Marshal(&session)
+	result, err := updateSessionScript.Run(ctx, s.client, []string{key}, string(authRequestJSON)).Int()
 	if err != nil {
-		return fmt.Errorf("marshal session: %w", err)
+		return fmt.Errorf("redis update session script: %w", err)
 	}
-
-	// Preserve the remaining TTL
-	ttl, err := s.client.TTL(ctx, key).Result()
-	if err != nil || ttl <= 0 {
-		ttl = s.ttl
-	}
-
-	if err := s.client.Set(ctx, key, newData, ttl).Err(); err != nil {
-		return fmt.Errorf("redis set: %w", err)
+	if result == 0 {
+		return fmt.Errorf("session not found")
 	}
 
 	return nil
 }
 
-// CompleteSession marks a session as completed with tokens.
+// CompleteSession atomically marks a session as completed with tokens.
 // Extends the TTL to 2 minutes so the frontend can poll for completion.
+// Uses a Lua script to avoid TOCTOU races from separate GET/SET operations.
 func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken string) error {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
 
-	data, err := s.client.Get(ctx, key).Bytes()
+	now := time.Now()
+	completedAt := now.Format(time.RFC3339Nano)
+	expiresAt := now.Add(2 * time.Minute).Format(time.RFC3339Nano)
+	ttlSeconds := 120
+
+	result, err := completeSessionScript.Run(ctx, s.client, []string{key},
+		accessToken, refreshToken, completedAt, expiresAt, ttlSeconds,
+	).Int()
 	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("session not found")
-		}
-		return fmt.Errorf("redis get: %w", err)
+		return fmt.Errorf("redis complete session script: %w", err)
 	}
-
-	var session auth.Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return fmt.Errorf("unmarshal session: %w", err)
-	}
-
-	session.Completed = true
-	session.AccessToken = accessToken
-	session.RefreshToken = refreshToken
-	session.CompletedAt = time.Now()
-	session.ExpiresAt = time.Now().Add(2 * time.Minute)
-
-	newData, err := json.Marshal(&session)
-	if err != nil {
-		return fmt.Errorf("marshal session: %w", err)
-	}
-
-	// Set with the extended 2-minute TTL
-	if err := s.client.Set(ctx, key, newData, 2*time.Minute).Err(); err != nil {
-		return fmt.Errorf("redis set: %w", err)
+	if result == 0 {
+		return fmt.Errorf("session not found")
 	}
 
 	return nil
@@ -218,15 +276,18 @@ func (s *SessionStore) ListSessions() []*auth.SessionInfo {
 	return sessions
 }
 
-// Count returns the current number of sessions.
-// Uses SCAN to count keys matching the session prefix.
+// Count returns the current number of sessions from the atomic counter.
 func (s *SessionStore) Count() int64 {
 	ctx := context.Background()
-	var count int64
-
-	iter := s.client.Scan(ctx, 0, sessionKeyPrefix+"*", defaultSessionScanCount).Iterator()
-	for iter.Next(ctx) {
-		count++
+	count, err := s.client.Get(ctx, sessionCountKey).Int64()
+	if err != nil {
+		if err != redis.Nil {
+			slog.Error("redis session store: failed to read session count", "error", err)
+		}
+		return 0
+	}
+	if count < 0 {
+		return 0
 	}
 	return count
 }
@@ -234,3 +295,18 @@ func (s *SessionStore) Count() int64 {
 // Stop is a no-op for the Redis store. Redis handles TTL expiry natively,
 // so there is no cleanup goroutine to stop.
 func (s *SessionStore) Stop() {}
+
+// decrCount decrements the session counter, clamping at zero to prevent
+// negative drift from TTL-expired sessions that were never explicitly deleted.
+func (s *SessionStore) decrCount(ctx context.Context) {
+	val, err := s.client.Decr(ctx, sessionCountKey).Result()
+	if err != nil {
+		slog.Error("redis session store: failed to decrement session count", "error", err)
+		return
+	}
+	// If the counter went negative (e.g. Redis restart lost the counter but
+	// sessions expired naturally), reset it to zero.
+	if val < 0 {
+		s.client.Set(ctx, sessionCountKey, 0, 0)
+	}
+}

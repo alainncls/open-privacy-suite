@@ -22,10 +22,14 @@ services:
   # Redis for shared state stores (rate limiting, OAuth state, nonces)
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass devpassword123
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "devpassword123", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   anvil:
@@ -75,7 +79,7 @@ services:
       - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
       - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
       - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:devpassword123@redis:6379
     depends_on:
       postgres:
         condition: service_healthy

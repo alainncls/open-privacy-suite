@@ -18,12 +18,60 @@ const (
 	// oauthSessionKeyPrefix is the Redis key prefix for OAuth sessions.
 	oauthSessionKeyPrefix = "pp:oauth:sess:"
 
-	// oauthCodeKeyPrefix is the Redis key prefix for the code→sessionID index.
+	// oauthCodeKeyPrefix is the Redis key prefix for the code->sessionID index.
 	oauthCodeKeyPrefix = "pp:oauth:code:"
+
+	// oauthSessionCountKey is the Redis key for the atomic OAuth session counter.
+	oauthSessionCountKey = "pp:oauth:sess:_count"
 
 	// oauthCodeTTL is how long authorization codes are valid.
 	oauthCodeTTL = 5 * time.Minute
 )
+
+// reserveOAuthSessionScript atomically increments the OAuth session counter and
+// checks whether the new value exceeds the capacity limit. If over limit, it
+// decrements back and returns 0. Otherwise it returns 1, reserving a slot.
+//
+// KEYS[1] = counter key (pp:oauth:sess:_count)
+// ARGV[1] = max sessions
+//
+// Returns 1 if a slot was reserved, 0 if at capacity.
+var reserveOAuthSessionScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if count > tonumber(ARGV[1]) then
+	redis.call('DECR', KEYS[1])
+	return 0
+end
+return 1
+`)
+
+// setCodeScript atomically sets the authorization code on an existing session.
+// It GETs the session, decodes it, updates code/code_expires/user_did/kyc,
+// writes it back with KEEPTTL, and creates the code index key — all in one
+// atomic Lua script to eliminate the TOCTOU race in the original GET+SET flow.
+//
+// KEYS[1] = session key     (pp:oauth:sess:{id})
+// KEYS[2] = code index key  (pp:oauth:code:{code})
+// ARGV[1] = code
+// ARGV[2] = code_expires    (RFC 3339 string, matching Go json.Marshal of time.Time)
+// ARGV[3] = user_did
+// ARGV[4] = kyc             ("true" / "false")
+// ARGV[5] = code TTL        (seconds)
+// ARGV[6] = session ID      (value stored in the code index key)
+//
+// Returns {1} on success, {0} if the session does not exist.
+var setCodeScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then return {0} end
+local session = cjson.decode(data)
+session.code = ARGV[1]
+session.code_expires = ARGV[2]
+session.user_did = ARGV[3]
+session.kyc = (ARGV[4] == 'true')
+redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
+redis.call('SET', KEYS[2], ARGV[6], 'EX', tonumber(ARGV[5]))
+return {1}
+`)
 
 // markCodeUsedScript atomically marks an OAuth authorization code as used.
 // It looks up the session via the code index, checks that the code hasn't been
@@ -49,7 +97,7 @@ return {1, sess_id}
 `)
 
 // OAuthSessionStore is a Redis-backed implementation of the OAuthSessionManager interface.
-// It maintains a dual index: session ID → session data, and authorization code → session ID.
+// It maintains a dual index: session ID -> session data, and authorization code -> session ID.
 type OAuthSessionStore struct {
 	client      *redis.Client
 	ttl         time.Duration
@@ -67,13 +115,19 @@ func NewOAuthSessionStore(client *redis.Client, sessionTTL time.Duration, maxSes
 
 // CreateSession creates a new OAuth session.
 // Returns the session ID or empty string if at capacity.
+// Uses an atomic Lua script to reserve a slot in the counter, preventing
+// race conditions across multiple proxy instances.
 func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSessionID string) string {
 	ctx := context.Background()
 
-	// Approximate capacity check via SCAN.
+	// Atomically reserve a session slot via the counter.
 	if s.maxSessions > 0 {
-		count := s.countSessions(ctx)
-		if count >= int64(s.maxSessions) {
+		reserved, err := reserveOAuthSessionScript.Run(ctx, s.client, []string{oauthSessionCountKey}, s.maxSessions).Int()
+		if err != nil {
+			slog.Error("redis oauth store: failed to reserve session slot", "error", err)
+			return ""
+		}
+		if reserved == 0 {
 			return ""
 		}
 	}
@@ -93,12 +147,20 @@ func (s *OAuthSessionStore) CreateSession(clientID, redirectURI, state, authSess
 	data, err := json.Marshal(session)
 	if err != nil {
 		slog.Error("redis oauth store: failed to marshal session", "error", err)
+		// Release the reserved slot since we failed to create the session.
+		if s.maxSessions > 0 {
+			s.decrCount(ctx)
+		}
 		return ""
 	}
 
 	key := oauthSessionKeyPrefix + sessionID
 	if err := s.client.Set(ctx, key, data, s.ttl).Err(); err != nil {
 		slog.Error("redis oauth store: failed to store session", "error", err)
+		// Release the reserved slot since we failed to store the session.
+		if s.maxSessions > 0 {
+			s.decrCount(ctx)
+		}
 		return ""
 	}
 
@@ -143,56 +205,41 @@ func (s *OAuthSessionStore) GetSessionByCode(code string) *types.OAuthSession {
 	return s.GetSession(sessionID)
 }
 
-// SetCode sets the authorization code for a session.
+// SetCode atomically sets the authorization code for a session.
+// Uses a Lua script to eliminate the TOCTOU race between reading and updating the session.
 func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) error {
 	ctx := context.Background()
 	sessKey := oauthSessionKeyPrefix + sessionID
-
-	// Get and update the session
-	data, err := s.client.Get(ctx, sessKey).Bytes()
-	if err != nil {
-		if err == redis.Nil {
-			return fmt.Errorf("session not found")
-		}
-		return fmt.Errorf("redis get: %w", err)
-	}
-
-	var session types.OAuthSession
-	if err := json.Unmarshal(data, &session); err != nil {
-		return fmt.Errorf("unmarshal session: %w", err)
-	}
-
-	session.Code = code
-	session.CodeExpires = time.Now().Add(oauthCodeTTL)
-	session.UserDID = userDID
-	session.KYC = kyc
-
-	newData, err := json.Marshal(&session)
-	if err != nil {
-		return fmt.Errorf("marshal session: %w", err)
-	}
-
-	// Preserve the remaining TTL on the session key
-	ttl, err := s.client.TTL(ctx, sessKey).Result()
-	if err != nil || ttl <= 0 {
-		ttl = s.ttl
-	}
-
-	// Pipeline: update session + create code index
-	pipe := s.client.Pipeline()
-	pipe.Set(ctx, sessKey, newData, ttl)
-
-	// Code index TTL = min(code TTL, session remaining TTL) so the index
-	// never outlives the session.
-	codeTTL := oauthCodeTTL
-	if ttl < codeTTL {
-		codeTTL = ttl
-	}
 	codeKey := oauthCodeKeyPrefix + code
-	pipe.Set(ctx, codeKey, sessionID, codeTTL)
 
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis pipeline: %w", err)
+	codeExpires := time.Now().Add(oauthCodeTTL)
+	codeTTLSeconds := int64(oauthCodeTTL.Seconds())
+
+	kycStr := "false"
+	if kyc {
+		kycStr = "true"
+	}
+
+	result, err := setCodeScript.Run(ctx, s.client,
+		[]string{sessKey, codeKey},
+		code,
+		codeExpires.Format(time.RFC3339Nano),
+		userDID,
+		kycStr,
+		codeTTLSeconds,
+		sessionID,
+	).Slice()
+	if err != nil {
+		return fmt.Errorf("redis setCode script: %w", err)
+	}
+
+	if len(result) < 1 {
+		return fmt.Errorf("session not found")
+	}
+
+	success, ok := result[0].(int64)
+	if !ok || success != 1 {
+		return fmt.Errorf("session not found")
 	}
 
 	return nil
@@ -224,7 +271,8 @@ func (s *OAuthSessionStore) MarkCodeUsed(code string) bool {
 	return success == 1
 }
 
-// DeleteSession removes an OAuth session and its code index entry.
+// DeleteSession removes an OAuth session, its code index entry, and decrements
+// the atomic session counter.
 func (s *OAuthSessionStore) DeleteSession(sessionID string) {
 	ctx := context.Background()
 	sessKey := oauthSessionKeyPrefix + sessionID
@@ -236,7 +284,13 @@ func (s *OAuthSessionStore) DeleteSession(sessionID string) {
 			slog.Error("redis oauth store: failed to get session for deletion", "error", err)
 		}
 		// Even if we can't read the session, try to delete the key.
-		s.client.Del(ctx, sessKey)
+		deleted, delErr := s.client.Del(ctx, sessKey).Result()
+		if delErr != nil {
+			slog.Error("redis oauth store: failed to delete session key", "error", delErr)
+		}
+		if deleted > 0 && s.maxSessions > 0 {
+			s.decrCount(ctx)
+		}
 		return
 	}
 
@@ -246,22 +300,36 @@ func (s *OAuthSessionStore) DeleteSession(sessionID string) {
 		keys = append(keys, oauthCodeKeyPrefix+session.Code)
 	}
 
-	if err := s.client.Del(ctx, keys...).Err(); err != nil {
+	deleted, err := s.client.Del(ctx, keys...).Result()
+	if err != nil {
 		slog.Error("redis oauth store: failed to delete session", "error", err)
+		return
+	}
+
+	// The session key is always first in the keys slice. If at least one key
+	// was deleted and we know the session key existed (we read it above),
+	// decrement the counter.
+	if deleted > 0 && s.maxSessions > 0 {
+		s.decrCount(ctx)
 	}
 }
 
 // Stop is a no-op for the Redis store. Redis handles TTL expiry natively.
 func (s *OAuthSessionStore) Stop() {}
 
-// countSessions counts OAuth session keys via SCAN.
-func (s *OAuthSessionStore) countSessions(ctx context.Context) int64 {
-	var count int64
-	iter := s.client.Scan(ctx, 0, oauthSessionKeyPrefix+"*", defaultSessionScanCount).Iterator()
-	for iter.Next(ctx) {
-		count++
+// decrCount decrements the OAuth session counter, clamping at zero to prevent
+// negative drift from TTL-expired sessions that were never explicitly deleted.
+func (s *OAuthSessionStore) decrCount(ctx context.Context) {
+	val, err := s.client.Decr(ctx, oauthSessionCountKey).Result()
+	if err != nil {
+		slog.Error("redis oauth store: failed to decrement session count", "error", err)
+		return
 	}
-	return count
+	// If the counter went negative (e.g. Redis restart lost the counter but
+	// sessions expired naturally), reset it to zero.
+	if val < 0 {
+		s.client.Set(ctx, oauthSessionCountKey, 0, 0)
+	}
 }
 
 // generateSecureCode generates a cryptographically secure random hex string.

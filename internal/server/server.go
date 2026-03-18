@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
@@ -228,21 +229,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	proxySvc := proxy.New(cfg.NodeURL)
 
-// Initialize RBAC access controller
-	// Note: Unregistered address handling is now controlled by default_claims in GroupAccess
-	rbacAccessCtrl := rbac.NewAccessController(database, RBACCacheTTL)
-
-	// Configure runtime tracing mode for deployment validation
-	// When enabled, contracts with dynamic calls are allowed at deploy time
-	// because those calls will be validated at runtime via debug_traceCall
-	if cfg.EnableRuntimeTracing {
-		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
-	}
-
-	// Configure RPC API key encryption for decrypting keys from the database
-	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
-		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
-	}
 
 	// Load additional trusted factory hashes from config
 	if len(cfg.TrustedFactoryHashes) > 0 {
@@ -273,7 +259,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 			return nil, fmt.Errorf("redis: %w", redisErr)
 		}
 		redisCloser = redisClient
-		slog.Info("using Redis-backed state stores", "url", cfg.RedisURL)
+		slog.Info("using Redis-backed state stores", "url", redactRedisURL(cfg.RedisURL))
 
 		sessionStore = privacyredis.NewSessionStore(redisClient, SessionTTL, auth.DefaultMaxSessions)
 		challengeStore = privacyredis.NewChallengeStore(redisClient, ChallengeTTL)
@@ -295,6 +281,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// because those calls will be validated at runtime via debug_traceCall
 	if cfg.EnableRuntimeTracing {
 		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
+	}
+
+	// Configure RPC API key encryption for decrypting keys from the database
+	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
+		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
 	}
 
 	// Initialize auth rate limiter for protecting auth endpoints from brute force
@@ -1327,4 +1318,18 @@ func (s *Server) recordTokenRefresh(outcome string) {
 	if s.metrics != nil {
 		s.metrics.AuthTokenRefreshesTotal.WithLabelValues(outcome).Inc()
 	}
+}
+
+// redactRedisURL parses a Redis URL and masks any password so credentials
+// are never written to logs. If the URL cannot be parsed, it returns
+// "<redacted>" to avoid leaking a malformed but credential-bearing string.
+func redactRedisURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted>"
+	}
+	if _, hasPassword := u.User.Password(); hasPassword {
+		u.User = url.UserPassword(u.User.Username(), "***")
+	}
+	return u.String()
 }

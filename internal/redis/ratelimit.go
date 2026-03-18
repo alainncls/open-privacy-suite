@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -87,8 +89,11 @@ func (r *RateLimiter) CheckAndIncrement(userID string, rpsLimit, dailyLimit *int
 
 	rpsKey := fmt.Sprintf("pp:rl:rps:%s", userID)
 	dailyKey := fmt.Sprintf("pp:rl:daily:%s:%s", userID, now.Format("20060102"))
-	// Unique member: microsecond timestamp + nanosecond remainder to avoid collisions
-	memberID := fmt.Sprintf("%d:%d", nowUs, now.UnixNano()%1000)
+	// Unique member: microsecond timestamp + random suffix to avoid collisions
+	// across concurrent goroutines within the same microsecond.
+	var randBuf [8]byte
+	_, _ = rand.Read(randBuf[:])
+	memberID := fmt.Sprintf("%d:%s", nowUs, hex.EncodeToString(randBuf[:]))
 
 	ctx := context.Background()
 	result, err := checkAndIncrScript.Run(ctx, r.client,
