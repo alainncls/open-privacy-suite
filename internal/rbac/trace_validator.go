@@ -141,7 +141,7 @@ func (v *TraceValidator) ValidateTrace(
 			// The contract is owned by another organization
 			return &TraceValidationResult{
 				Allowed:      false,
-				Reason:       fmt.Sprintf("address %s is owned by another organization", addr),
+				Reason:       ErrContractAccessDenied,
 				DeniedTarget: addr,
 			}, nil
 		}

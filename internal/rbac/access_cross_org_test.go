@@ -1456,9 +1456,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 		if result.Reason == "" {
 			t.Error("expected denial reason")
 		}
-		// Should specifically mention upgrade claim, not proxy management
-		if !strings.Contains(result.Reason, "upgrade claim") {
-			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		// Generic denial — must not leak which specific claim is missing
+		if !strings.Contains(result.Reason, ErrContractAccessDenied) && result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 
@@ -1580,8 +1580,8 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 		if result.Allowed {
 			t.Error("upgrade tx should be denied when user has deploy but not upgrade")
 		}
-		if !strings.Contains(result.Reason, "upgrade claim") {
-			t.Errorf("expected reason to mention 'upgrade claim', got: %s", result.Reason)
+		if !strings.Contains(result.Reason, ErrContractAccessDenied) && result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 }
@@ -1683,8 +1683,8 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		if result.Allowed {
 			t.Error("expected read-only user to be denied sending ETH")
 		}
-		if !strings.Contains(result.Reason, "write") {
-			t.Errorf("expected denial to mention write claim, got: %s", result.Reason)
+		if result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 
