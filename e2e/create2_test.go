@@ -303,13 +303,16 @@ func ensureDefaultOrgGroup(t *testing.T, database *db.DB) {
 }
 
 // createOrgWithUser creates an organization, group, group access, user, and membership.
-// Returns the org ID and user DID.
+// If ethAddress is non-empty, it also links that ETH address to the user's DID so that
+// the response filter recognizes the address as belonging to the authenticated user.
+// Returns the org ID.
 func createOrgWithUser(
 	t *testing.T,
 	database *db.DB,
 	orgSlug, groupSlug, userDID string,
 	claims []rbac.Claim,
 	methods []string,
+	ethAddress string,
 ) string {
 	t.Helper()
 	ctx := context.Background()
@@ -362,6 +365,12 @@ func createOrgWithUser(
 	}
 	require.NoError(t, database.CreateMembership(ctx, membership))
 
+	// Link the ETH address to the user's DID so the response filter
+	// recognizes transactions from/to this address as belonging to the user.
+	if ethAddress != "" {
+		require.NoError(t, database.SystemLinkEthAddress(ctx, userDID, ethAddress))
+	}
+
 	return orgID
 }
 
@@ -392,22 +401,40 @@ func deployFactory(t *testing.T, serverURL, token string) string {
 	return factoryAddr
 }
 
-// registerContract registers a contract address to an org in the database.
+// registerContract ensures a contract address is registered to an org in the database
+// and that a grant exists for the org's first group. If the contract was already
+// auto-registered by the proxy's runtime tracing, it reuses the existing record.
 func registerContract(t *testing.T, database *db.DB, orgID, address, name string) {
 	t.Helper()
 	ctx := context.Background()
+	addr := strings.ToLower(address)
 
-	contract := &rbac.Contract{
-		ID:       uuid.New().String(),
-		OrgID:    orgID,
-		Address:  strings.ToLower(address),
-		Name:     name,
-		Metadata: map[string]any{},
+	// Wait briefly for auto-registration (runtime tracing may have already registered it).
+	var contract *rbac.Contract
+	for i := 0; i < 10; i++ {
+		c, err := database.GetContractByAddressGlobal(ctx, addr)
+		if err == nil && c != nil {
+			contract = c
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	require.NoError(t, database.CreateContract(ctx, contract))
+
+	// If not auto-registered, create it manually.
+	if contract == nil {
+		contract = &rbac.Contract{
+			ID:       uuid.New().String(),
+			OrgID:    orgID,
+			Address:  addr,
+			Name:     name,
+			Metadata: map[string]any{},
+		}
+		require.NoError(t, database.CreateContract(ctx, contract))
+	} else {
+		require.Equal(t, orgID, contract.OrgID, "auto-registered contract belongs to wrong org")
+	}
 
 	// Also create a grant for the org's first group so that users can access it.
-	// Find groups for this org.
 	groups, err := database.ListGroups(ctx, orgID)
 	require.NoError(t, err)
 	require.NotEmpty(t, groups)
@@ -440,6 +467,7 @@ func TestCreate2RuntimeDeployment_HappyPath(t *testing.T) {
 	orgID := createOrgWithUser(t, env.srv.DB(), "test-org", "deployers", userDID,
 		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
 		deployMethods,
+		anvilAccount0,
 	)
 
 	// Get JWT token via mock login.
@@ -555,12 +583,14 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 	orgAID := createOrgWithUser(t, env.srv.DB(), "org-a", "a-deployers", userADID,
 		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
 		allMethods,
+		anvilAccount0,
 	)
 
-	// Create org-b with read-only claims.
+	// Create org-b with read-only claims (no ETH address linked — different identity).
 	_ = createOrgWithUser(t, env.srv.DB(), "org-b", "b-readers", userBDID,
 		[]rbac.Claim{rbac.ClaimRead},
 		[]string{"eth_call", "eth_blockNumber", "eth_chainId", "eth_getCode"},
+		"",
 	)
 
 	// Get tokens for both users.
@@ -650,6 +680,7 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 	orgID := createOrgWithUser(t, env.srv.DB(), "write-org", "deployers", deployerDID,
 		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
 		allMethods,
+		anvilAccount0,
 	)
 
 	// Create a second user in the same org with only read+write (no deploy).
