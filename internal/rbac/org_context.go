@@ -71,7 +71,7 @@ func NewOrgContext(ctx context.Context, store Store, user *User, targetAddress s
 
 	// Contract is owned by an org - verify user is a member
 	if !userOrgIDs[ownerOrgID] {
-		return nil, fmt.Errorf("contract %s belongs to an organization you are not a member of", targetAddress)
+		return nil, fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	// User is a member - set the org context
@@ -175,7 +175,7 @@ func (oc *OrgContext) CheckAddressInScope(ctx context.Context, address string) e
 
 	// Contract is owned by an org - check if user is a member
 	if !oc.userOrgIDs[ownerOrgID] {
-		return fmt.Errorf("contract %s belongs to an organization you are not a member of", address)
+		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	return nil
@@ -228,7 +228,7 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 
 	// Contract belongs to a different org - deny
 	if !oc.userOrgIDs[ownerOrgID] {
-		return fmt.Errorf("belongs to an organization you are not a member of")
+		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	// Contract is in user's own org - deploy/admin users can access via default claims
@@ -237,7 +237,7 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 	}
 
 	// Read/write-only users need explicit grants for registered contracts
-	return fmt.Errorf("contract %s requires explicit grant (no access via default claims)", address)
+	return fmt.Errorf(ErrContractAccessDenied)
 }
 
 // ValidateFactoryCallOrgs checks factory calls against all orgs the user belongs to.

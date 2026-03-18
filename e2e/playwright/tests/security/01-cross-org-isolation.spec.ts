@@ -249,7 +249,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied due to cross-org isolation
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('belongs to an organization you are not a member of');
+    expect(result.body.error).toContain('contract access denied');
   });
 
   test('SECURITY-002: User B cannot access Contract A (cross-org isolation)', async ({ request }) => {
@@ -261,7 +261,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied due to cross-org isolation
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('belongs to an organization you are not a member of');
+    expect(result.body.error).toContain('contract access denied');
   });
 
   test('SECURITY-003: User A CAN access their own Contract A', async ({ request }) => {
@@ -282,7 +282,7 @@ test.describe('Cross-Organization Isolation', () => {
 
     // Should be denied
     expect(result.status).toBe(403);
-    expect(result.body.error).toContain('belongs to an organization you are not a member of');
+    expect(result.body.error).toContain('contract access denied');
   });
 
   test('SECURITY-005: eth_getLogs with mixed-org addresses is denied', async ({ request }) => {

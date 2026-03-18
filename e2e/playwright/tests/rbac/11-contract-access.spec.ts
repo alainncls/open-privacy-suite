@@ -75,7 +75,7 @@ test.describe('RBAC Contract Access Enforcement', () => {
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('requires explicit grant');
+    expect(result.reason).toContain('contract access denied');
   });
 
   test('deploy user allowed access to unregistered contracts', async ({ request }) => {
