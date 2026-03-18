@@ -5,8 +5,9 @@
 	demo demo-record demo-process demo-all demo-setup demo-clean \
 	setup-hooks ensure-hooks
 
-# Auto-install hooks on first make usage
-HOOKS_MARKER := .git/.hooks-installed
+# Auto-install hooks on first make usage (works in worktrees where .git is a file)
+GIT_DIR := $(shell git rev-parse --git-dir)
+HOOKS_MARKER := $(GIT_DIR)/.hooks-installed
 $(HOOKS_MARKER):
 	@./scripts/setup-hooks.sh
 	@touch $(HOOKS_MARKER)
@@ -55,14 +56,13 @@ run-binary: build
 dev: ensure-hooks
 	go run ./cmd/server
 
-# Run all tests (Go + Frontend)
-test: ensure-hooks test-unit frontend-test
+# Run all tests (Go unit + Go e2e + Frontend)
+test: ensure-hooks test-go frontend-test
 
-# Run Go tests
-test-go:
-	go test ./... -v
+# Run all Go tests (unit + e2e)
+test-go: test-unit test-e2e
 
-# Run unit tests only (with -p 1 to avoid database conflicts between packages)
+# Run Go unit tests only (with -p 1 to avoid database conflicts between packages)
 test-unit: test-db-ready
 	go test ./internal/... -v -p 1
 
@@ -94,7 +94,7 @@ test-db-ready:
 	@echo "PostgreSQL is ready"
 
 # Run Go E2E tests
-test-e2e:
+test-e2e: test-db-ready
 	go test ./e2e/... -v -p 1
 
 # E2E compose command - isolated from local dev
@@ -135,16 +135,17 @@ frontend-dev:
 frontend-build:
 	cd frontend && npm run build
 
-# Run frontend tests
+# Run frontend tests (auto-install if node_modules missing)
 frontend-test:
+	@test -x frontend/node_modules/.bin/vitest || (echo "Installing frontend dependencies..." && cd frontend && npm install)
 	cd frontend && npm run test:run
 
 # Run frontend tests with coverage
 frontend-test-coverage:
 	cd frontend && npm run test:coverage
 
-# Run all tests (Go + Frontend)
-test-all: test-unit frontend-test
+# Alias for 'test'
+test-all: test
 
 # Clean Docker environment (stop services, remove volumes)
 clean:

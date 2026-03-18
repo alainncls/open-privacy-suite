@@ -154,6 +154,23 @@ When a user accesses a contract:
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
 - Regular `read`/`write` users must have an explicit `ContractGrant`
 
+### Per-Address Access Checks
+
+All methods that accept a target address enforce cross-org isolation at the address level, not just the method level. This includes:
+
+| Method | What it returns | Why it's gated |
+|--------|----------------|----------------|
+| `eth_call` | ABI-encoded return data | Contract state read |
+| `eth_estimateGas` | Gas estimate | Reveals contract behavior |
+| `eth_getCode` | Deployed bytecode | Contract internals |
+| `eth_getBalance` | Native ETH balance | Financial data |
+| `eth_getTransactionCount` | Nonce (tx count) | Activity tracking |
+| `eth_getProof` | Balance + nonce + storage proof | Combines balance and storage |
+| `eth_createAccessList` | Storage slots and addresses accessed | Contract internals |
+| `eth_sendTransaction` | Submits transaction | Write access |
+
+`eth_getStorageAt` is **globally blocked** (raw storage access bypasses all contract-level privacy controls).
+
 ### Plain CREATE Pre-registration
 
 When a user with the `deploy` claim sends `eth_sendTransaction` without a `to` address (plain CREATE deployment), the proxy:
@@ -371,5 +388,5 @@ When a user first authenticates via Azure AD, their `auth_tenant_id` is set in t
 | Multicall | Only 3 hardcoded addresses blocked | Mitigated by runtime tracing (all calls validated regardless of target) |
 | Method case sensitivity | Methods checked case-sensitively | Ethereum nodes typically reject wrong case |
 | Localhost IP ranges | `172.x` prefix check is overly broad | See SECURITY\_FINDINGS.md for fix |
-| Historical state | Only `eth_call` blocked for historical state | Other methods (`eth_getBalance`) accept historical blocks |
+| Historical state | Only `eth_call` blocked for historical state | Other address-targeted methods accept historical blocks (per-address RBAC still applies) |
 | Response filtering gaps | `eth_getBlockByNumber`/`eth_getBlockByHash` (with full tx objects), `eth_getTransactionByBlockHashAndIndex`/`eth_getTransactionByBlockNumberAndIndex`, and `eth_getBlockReceipts` are not yet response-filtered | See [Response Filtering known gaps](/docs/security/response-filtering) |
