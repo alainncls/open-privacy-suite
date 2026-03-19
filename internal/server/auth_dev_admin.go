@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"privacy-proxy/internal/rbac"
@@ -29,8 +30,15 @@ var devAdmin devAdminProvisioner
 // ensureMockUserIsAdmin grants the admin claim to a mock-login user.
 // It lazily creates the dev-admin org+group on first call, then adds the user
 // as a member (idempotent — skips if already a member).
-func (s *Server) ensureMockUserIsAdmin(ctx context.Context, userID string) {
+func (s *Server) ensureMockUserIsAdmin(ctx context.Context, userID, userDID string) {
 	if !s.config.AllowMockLogin || s.rbacAccessCtrl == nil {
+		return
+	}
+
+	// Skip script-provisioned users (did:test:*) — they have intentional
+	// group setups from setup-test-accounts.sh and should not be auto-added
+	// to the dev-admin group on every login.
+	if strings.HasPrefix(userDID, "did:test:") {
 		return
 	}
 

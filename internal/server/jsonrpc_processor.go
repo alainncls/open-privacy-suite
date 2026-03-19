@@ -288,7 +288,8 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	p.recordRBACDecision("allowed")
 
 	// Runtime tracing: validate all call targets for eth_sendTransaction
-	if traceErr := p.validateWithTracing(ctx, req, targetAddr); traceErr != nil {
+	runtimeCreateTargets, traceErr := p.validateWithTracing(ctx, req, targetAddr)
+	if traceErr != nil {
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: traceErr,
@@ -337,9 +338,39 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Pre-register runtime CREATE/CREATE2 addresses discovered during trace validation.
+	var runtimeCreateAddrs []string
+	if len(runtimeCreateTargets) > 0 && req.Method == "eth_sendTransaction" {
+		runtimeCreateAddrs = p.preRegisterRuntimeCreates(ctx, result.OrgID, runtimeCreateTargets)
+	}
+
+	// Prepare forward body by rewriting certain queries to ensure we get full tx objects
+	forwardBody := req.Body
+	if req.Method == "eth_getBlockByNumber" || req.Method == "eth_getBlockByHash" {
+		isFull := false // JSON-RPC spec defaults missing to false (hashes only)
+		if len(req.Params) >= 2 {
+			if val, ok := req.Params[1].(bool); ok {
+				isFull = val
+			}
+		}
+		if !isFull {
+			if rewriten := rewriteToFullTxObjects(req.Body, req.Params); rewriten != nil {
+				forwardBody = rewriten
+			}
+		}
+	} else if req.Method == "eth_getBlockTransactionCountByNumber" {
+		if rewriten := rewriteToGetBlock(req.Body, "eth_getBlockByNumber", req.Params); rewriten != nil {
+			forwardBody = rewriten
+		}
+	} else if req.Method == "eth_getBlockTransactionCountByHash" {
+		if rewriten := rewriteToGetBlock(req.Body, "eth_getBlockByHash", req.Params); rewriten != nil {
+			forwardBody = rewriten
+		}
+	}
+
 	// Forward to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	responseBody, statusCode, err := p.proxy.Forward(forwardBody)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -380,6 +411,31 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 				context.Background(), plainCreatePreRegAddr); delErr != nil {
 				slog.Warn("failed to clean up plain CREATE pre-registration", "address", plainCreatePreRegAddr, "error", delErr)
+			}
+		}
+	}
+
+	// Handle runtime CREATE/CREATE2 tracking/cleanup.
+	if len(runtimeCreateAddrs) > 0 {
+		var rpcResp2 struct {
+			Result string                         `json:"result"`
+			Error  *struct{ Message string `json:"message"` } `json:"error"`
+		}
+		nodeAccepted := statusCode == http.StatusOK &&
+			err == nil &&
+			json.Unmarshal(responseBody, &rpcResp2) == nil &&
+			rpcResp2.Error == nil &&
+			rpcResp2.Result != ""
+
+		if nodeAccepted {
+			go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+		} else {
+			// Node rejected — clean up pre-registrations
+			for _, addr := range runtimeCreateAddrs {
+				if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+					context.Background(), addr); delErr != nil {
+					slog.Warn("failed to clean up runtime create pre-registration", "address", addr, "error", delErr)
+				}
 			}
 		}
 	}
@@ -461,7 +517,22 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		if err != nil {
 			return responseBody // pass through on error
 		}
-		return FilterBlockTransactions(responseBody, addrs)
+		
+		originalFull := false // JSON-RPC defaults false
+		if len(req.Params) >= 2 {
+			if isFull, ok := req.Params[1].(bool); ok {
+				originalFull = isFull
+			}
+		}
+		return FilterBlockTransactions(responseBody, addrs, originalFull)
+		
+	case strings.EqualFold(m, "eth_getBlockTransactionCountByHash"),
+		strings.EqualFold(m, "eth_getBlockTransactionCountByNumber"):
+		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if err != nil {
+			return FilterBlockTransactionCount(responseBody, nil)
+		}
+		return FilterBlockTransactionCount(responseBody, addrs)
 
 	case strings.EqualFold(m, rbac.MethodGetBlockReceipts):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -471,6 +542,65 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		return FilterBlockReceipts(responseBody, addrs)
 	}
 	return responseBody
+}
+
+func rewriteToFullTxObjects(originalBody []byte, params []any) []byte {
+	var newParams []any
+	if len(params) >= 2 {
+		newParams = make([]any, len(params))
+		copy(newParams, params)
+		newParams[1] = true
+	} else {
+		newParams = make([]any, 2)
+		if len(params) == 1 {
+			newParams[0] = params[0]
+		}
+		newParams[1] = true
+	}
+
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  []any           `json:"params"`
+		ID      json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(originalBody, &env); err != nil {
+		return nil
+	}
+	env.Params = newParams
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []byte {
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  []any           `json:"params"`
+		ID      json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(originalBody, &env); err != nil {
+		return nil
+	}
+	env.Method = newMethod
+	
+	newParams := make([]any, 0, 2)
+	if len(params) > 0 {
+		newParams = append(newParams, params[0])
+	} else {
+		newParams = append(newParams, "latest")
+	}
+	newParams = append(newParams, true)
+
+	env.Params = newParams
+	b, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // autoRegisterFactoryDeploy registers a contract after a successful CREATE3 factory deploy.
@@ -526,28 +656,28 @@ func (p *JSONRPCProcessor) autoRegisterFactoryDeploy(ctx context.Context, info *
 }
 
 // validateWithTracing performs runtime trace validation for eth_sendTransaction.
-// Returns nil if tracing is disabled, not applicable, or validation passes.
-// Returns a ProcessError if validation fails.
-func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
+// Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
+// and a ProcessError if validation fails.
+func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) ([]rbac.CreateTarget, *ProcessError) {
 	// Skip if tracing is not configured
 	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
-		return nil
+		return nil, nil
 	}
 
 	// Only trace eth_sendTransaction (state-changing calls)
 	if req.Method != "eth_sendTransaction" {
-		return nil
+		return nil, nil
 	}
 
 	// Skip contract deployments (no target address) - deployment validation is separate
 	if targetAddr == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Get user info early for tiered validation
 	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 	if err != nil || user == nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user for trace validation",
 		}
@@ -556,7 +686,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	// Get user's org memberships
 	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user memberships for trace validation",
 		}
@@ -591,7 +721,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 				if factoryAddr != "" && strings.ToLower(factoryAddr) == normalizedTarget {
 					// Target is org's factory - skip tracing
 					// Factory behavior is deterministic and already validated
-					return nil
+					return nil, nil
 				}
 			}
 		}
@@ -600,7 +730,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	// Extract transaction parameters for tracing
 	from, to, data, value := extractTxParams(req.Params)
 	if to == "" {
-		return nil // Deployment - skip (handled by bytecode validation)
+		return nil, nil // Deployment - skip (handled by bytecode validation)
 	}
 
 	// Only skip tracing for simple value transfers to EOAs.
@@ -611,7 +741,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 			// Fail closed - if we can't check, trace anyway
 			// (fall through to tracing below)
 		} else if !hasCode {
-			return nil // EOA - safe to skip tracing
+			return nil, nil // EOA - safe to skip tracing
 		}
 		// Contract with empty calldata - must trace (receive/fallback could make calls)
 	}
@@ -620,7 +750,7 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
 	if err != nil {
 		// Trace failed - log and deny for safety
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    fmt.Sprintf("runtime trace failed: %v", err),
 		}
@@ -628,29 +758,32 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 
 	if traceResult == nil {
 		// Fail closed: if tracing was expected but returned no result, deny
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "runtime trace returned no result",
 		}
 	}
 
+	// Determine if user has deploy claim from any of their memberships
+	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
+
 	// Validate the trace against org isolation rules
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
 	if err != nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusInternalServerError,
 			Message:    fmt.Sprintf("trace validation error: %v", err),
 		}
 	}
 
 	if !validationResult.Allowed {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    fmt.Sprintf("cross-org call denied: %s", validationResult.Reason),
 		}
 	}
 
-	return nil
+	return validationResult.CreateTargets, nil
 }
 
 // checkCompliance runs travel rule compliance checks if the checker is configured.
@@ -808,6 +941,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	p.recordRBACDecision("allowed")
 
 	// Runtime tracing validation (always runs for raw transactions)
+	var runtimeCreateTargets []rbac.CreateTarget
 	if to != "" {
 		skipTrace := false
 		if isSimpleValueTransfer(data) {
@@ -820,13 +954,14 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			// If err or hasCode: fall through to tracing
 		}
 		if !skipTrace {
-			traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
+			rawRuntimeCreateTargets, traceErr := p.validateRawTxWithTracing(ctx, req, from, to, data, value)
 			if traceErr != nil {
 				p.logAccess(ctx, req, http.StatusForbidden)
 				return &ProcessResult{
 					Error: traceErr,
 				}
 			}
+			runtimeCreateTargets = rawRuntimeCreateTargets
 		}
 	}
 
@@ -865,6 +1000,12 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
+	// Pre-register runtime CREATE/CREATE2 addresses discovered during trace validation.
+	var runtimeCreateAddrs []string
+	if len(runtimeCreateTargets) > 0 {
+		runtimeCreateAddrs = p.preRegisterRuntimeCreates(ctx, result.OrgID, runtimeCreateTargets)
+	}
+
 	// Forward the original raw transaction to node
 	forwardStart := time.Now()
 	responseBody, statusCode, err := p.proxy.Forward(req.Body)
@@ -878,6 +1019,12 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
 				context.Background(), rawTxPlainCreateAddr); delErr != nil {
 				slog.Warn("failed to clean up plain CREATE pre-registration", "address", rawTxPlainCreateAddr, "error", delErr)
+			}
+		}
+		for _, addr := range runtimeCreateAddrs {
+			if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+				context.Background(), addr); delErr != nil {
+				slog.Warn("failed to clean up runtime create pre-registration on forward error", "address", addr, "error", delErr)
 			}
 		}
 		p.logAccess(ctx, req, http.StatusBadGateway)
@@ -914,6 +1061,31 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
+	// Handle runtime CREATE/CREATE2 tracking/cleanup.
+	if len(runtimeCreateAddrs) > 0 {
+		var rpcResp2 struct {
+			Result string                         `json:"result"`
+			Error  *struct{ Message string `json:"message"` } `json:"error"`
+		}
+		nodeAccepted := statusCode == http.StatusOK &&
+			err == nil &&
+			json.Unmarshal(responseBody, &rpcResp2) == nil &&
+			rpcResp2.Error == nil &&
+			rpcResp2.Result != ""
+
+		if nodeAccepted {
+			go p.pollAndFinalizeRuntimeCreates(rpcResp2.Result, runtimeCreateAddrs, result.OrgID, result.UserID)
+		} else {
+			// Node rejected — clean up pre-registrations
+			for _, addr := range runtimeCreateAddrs {
+				if delErr := p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(
+					context.Background(), addr); delErr != nil {
+					slog.Warn("failed to clean up runtime create pre-registration", "address", addr, "error", delErr)
+				}
+			}
+		}
+	}
+
 	// System-link the sender's ETH address to their DID.
 	if statusCode == http.StatusOK && from != "" && req.UserID != "" {
 		if err := p.rbacAccessCtrl.Store().SystemLinkEthAddress(ctx, req.UserID, from); err != nil {
@@ -932,11 +1104,13 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 }
 
 // validateRawTxWithTracing performs runtime trace validation for raw transactions.
-func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *ProcessRequest, from, to, data, value string) *ProcessError {
+// Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
+// and a ProcessError if validation fails.
+func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *ProcessRequest, from, to, data, value string) ([]rbac.CreateTarget, *ProcessError) {
 	// Get user info for trace validation
 	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
 	if err != nil || user == nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user for trace validation",
 		}
@@ -945,7 +1119,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	// Get user's org memberships
 	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
 	if err != nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "failed to get user memberships for trace validation",
 		}
@@ -961,7 +1135,7 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 	// Perform the trace
 	traceResult, err := p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
 	if err != nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    fmt.Sprintf("runtime trace failed: %v", err),
 		}
@@ -969,29 +1143,51 @@ func (p *JSONRPCProcessor) validateRawTxWithTracing(ctx context.Context, req *Pr
 
 	if traceResult == nil {
 		// Fail closed: if tracing was expected but returned no result, deny
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    "runtime trace returned no result",
 		}
 	}
 
+	// Determine if user has deploy claim from any of their memberships
+	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
+
 	// Validate the trace against org isolation rules
-	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult)
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
 	if err != nil {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusInternalServerError,
 			Message:    fmt.Sprintf("trace validation error: %v", err),
 		}
 	}
 
 	if !validationResult.Allowed {
-		return &ProcessError{
+		return nil, &ProcessError{
 			StatusCode: http.StatusForbidden,
 			Message:    fmt.Sprintf("cross-org call denied: %s", validationResult.Reason),
 		}
 	}
 
-	return nil
+	return validationResult.CreateTargets, nil
+}
+
+// userHasDeployClaim checks whether any of the user's memberships grant the deploy claim.
+func (p *JSONRPCProcessor) userHasDeployClaim(ctx context.Context, memberships []*rbac.MembershipWithDetails) bool {
+	for _, m := range memberships {
+		if m.Membership == nil {
+			continue
+		}
+		access, err := p.rbacAccessCtrl.Store().GetGroupAccess(ctx, m.Membership.GroupID)
+		if err != nil || access == nil {
+			continue
+		}
+		for _, c := range access.Claims {
+			if c == rbac.ClaimDeploy || c == rbac.ClaimAdmin {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractRawTxHex extracts the raw transaction hex from eth_sendRawTransaction params.
@@ -1283,6 +1479,176 @@ func (p *JSONRPCProcessor) getTransactionReceipt(txHash string) (string, error) 
 		return "", nil
 	}
 	return strings.ToLower(resp.Result.ContractAddress), nil
+}
+
+// getTransactionReceiptStatus fetches the receipt for a tx and returns whether it succeeded.
+// Returns (true, nil) if the receipt shows success (status "0x1").
+// Returns (false, nil) if the receipt shows a revert (status "0x0").
+// Returns (false, error) if the receipt is not yet available (tx not mined).
+func (p *JSONRPCProcessor) getTransactionReceiptStatus(txHash string) (bool, error) {
+	reqBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getTransactionReceipt",
+		"params":  []any{txHash},
+		"id":      1,
+	})
+	if err != nil {
+		return false, err
+	}
+	respBody, _, err := p.proxy.Forward(reqBody)
+	if err != nil {
+		return false, fmt.Errorf("receipt RPC: %w", err)
+	}
+	var resp struct {
+		Result *struct {
+			Status string `json:"status"` // "0x1" = success, "0x0" = fail
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return false, fmt.Errorf("parse receipt: %w", err)
+	}
+	if resp.Error != nil {
+		return false, fmt.Errorf("receipt RPC error: %s", resp.Error.Message)
+	}
+	if resp.Result == nil {
+		return false, fmt.Errorf("receipt not yet available")
+	}
+	return resp.Result.Status == "0x1", nil
+}
+
+// preRegisterRuntimeCreates pre-registers addresses from runtime CREATE/CREATE2 operations
+// discovered during trace validation. Returns the list of successfully pre-registered addresses.
+func (p *JSONRPCProcessor) preRegisterRuntimeCreates(ctx context.Context, orgID string, targets []rbac.CreateTarget) []string {
+	var addrs []string
+	for _, t := range targets {
+		addr := strings.ToLower(t.Address)
+		note := fmt.Sprintf("runtime %s from %s", t.Type, t.From)
+		if err := p.rbacAccessCtrl.Store().PreRegisterPlainCreate(ctx, orgID, addr, note); err != nil {
+			slog.Warn("runtime create pre-registration failed", "address", addr, "type", t.Type, "error", err)
+			continue
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs
+}
+
+// pollAndFinalizeRuntimeCreates polls for the receipt of a transaction that contains
+// runtime CREATE/CREATE2 operations, then reconciles pre-registered addresses with
+// the actual addresses from the mined trace.
+func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAddrs []string, orgID, userID string) {
+	ctx := context.Background()
+	const maxAttempts = 12
+	const baseDelay = 2 * time.Second
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			if delay > 60*time.Second {
+				delay = 60 * time.Second
+			}
+			time.Sleep(delay)
+		}
+
+		// Get receipt status (not contractAddress — runtime creates are internal)
+		success, err := p.getTransactionReceiptStatus(txHash)
+		if err != nil {
+			continue // Not mined yet
+		}
+
+		if !success {
+			// Transaction reverted — clean up all pre-registrations
+			for _, addr := range preRegAddrs {
+				_ = p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(ctx, addr)
+			}
+			slog.Info("runtime creates cleaned up (tx reverted)", "tx_hash", txHash)
+			return
+		}
+
+		// Transaction succeeded — trace to get actual created addresses
+		actualAddrs := make(map[string]bool)
+		if p.runtimeTracer != nil {
+			traceResult, traceErr := p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
+			if traceErr == nil && traceResult != nil {
+				for _, target := range traceResult.CallTargets {
+					if target.Type == "CREATE" || target.Type == "CREATE2" {
+						actualAddrs[strings.ToLower(target.To)] = true
+					}
+				}
+			} else {
+				slog.Warn("failed to trace mined tx for runtime creates", "tx_hash", txHash, "error", traceErr)
+				// Fall back: assume pre-registered addresses are correct
+				for _, addr := range preRegAddrs {
+					actualAddrs[addr] = true
+				}
+			}
+		} else {
+			// No tracer available — assume pre-registered addresses are correct
+			for _, addr := range preRegAddrs {
+				actualAddrs[addr] = true
+			}
+		}
+
+		// Reconcile: finalize actual addresses, clean up stale pre-registrations
+		preRegSet := make(map[string]bool)
+		for _, addr := range preRegAddrs {
+			preRegSet[addr] = true
+		}
+
+		// Finalize addresses that were actually created
+		now := time.Now()
+		for addr := range actualAddrs {
+			// Use NotifyDeploymentMined for addresses we tracked via the pending tracker
+			if preRegSet[addr] {
+				// Track it so NotifyDeploymentMined can find it
+				p.rbacAccessCtrl.TrackPlainCreateDeployment(txHash, orgID, userID, addr)
+				if err := p.rbacAccessCtrl.NotifyDeploymentMined(ctx, txHash, addr); err != nil {
+					slog.Warn("runtime create finalization via NotifyDeploymentMined failed",
+						"address", addr, "tx_hash", txHash, "error", err)
+				}
+			} else {
+				// Address wasn't pre-registered (diverged from simulation) — register directly
+				slog.Info("runtime create: registering diverged address", "address", addr, "tx_hash", txHash, "org_id", orgID)
+				contract := &rbac.Contract{
+					ID:      uuid.New().String(),
+					OrgID:   orgID,
+					Address: addr,
+					Name:    fmt.Sprintf("Contract %s", addr[:10]),
+					Metadata: map[string]any{
+						"auto_registered": true,
+						"via":             "runtime_create",
+						"tx_hash":         txHash,
+					},
+				}
+				if userID != "" {
+					contract.DeployedByUserID = &userID
+				}
+				contract.DeployedAt = &now
+				if createErr := p.rbacAccessCtrl.Store().CreateContract(ctx, contract); createErr != nil {
+					slog.Warn("failed to register diverged runtime create", "address", addr, "error", createErr)
+				}
+			}
+		}
+
+		// Clean up pre-registrations that weren't actually created (simulation diverged)
+		for _, addr := range preRegAddrs {
+			if !actualAddrs[addr] {
+				slog.Info("runtime create: cleaning up diverged pre-registration", "address", addr, "tx_hash", txHash)
+				_ = p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(ctx, addr)
+			}
+		}
+
+		slog.Info("runtime creates finalized", "tx_hash", txHash, "pre_registered", len(preRegAddrs), "actual", len(actualAddrs))
+		return
+	}
+
+	// Exhausted retries — clean up orphaned pre-registrations
+	slog.Warn("runtime create finalization exhausted retries", "tx_hash", txHash)
+	for _, addr := range preRegAddrs {
+		_ = p.rbacAccessCtrl.Store().DeletePreregisteredAddressByAddress(ctx, addr)
+	}
 }
 
 // recordRPCOutcome records RPC request count and duration metrics.

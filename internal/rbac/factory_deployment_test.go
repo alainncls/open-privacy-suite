@@ -422,8 +422,8 @@ func TestDeploymentWithoutDeployClaim(t *testing.T) {
 		if result.Allowed {
 			t.Error("expected deployment to be denied without deploy claim")
 		}
-		if !strings.Contains(result.Reason, "deploy") {
-			t.Errorf("expected reason to mention deploy claim, got: %s", result.Reason)
+		if result.Reason != "access denied" {
+			t.Errorf("expected generic denial, got: %s", result.Reason)
 		}
 	})
 }

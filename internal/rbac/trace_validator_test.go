@@ -79,7 +79,7 @@ func TestValidateTrace_NilTrace(t *testing.T) {
 	store := NewMockTraceStore()
 	validator := NewTraceValidator(store)
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, nil)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestValidateTrace_EmptyTrace(t *testing.T) {
 		CallTargets: []tracer.CallTarget{},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestValidateTrace_CreateDenied(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,8 +126,8 @@ func TestValidateTrace_CreateDenied(t *testing.T) {
 	if result.Allowed {
 		t.Errorf("expected CREATE to be denied")
 	}
-	if !strings.Contains(result.Reason, "CREATE") {
-		t.Errorf("expected reason to mention CREATE, got: %s", result.Reason)
+	if !strings.Contains(result.Reason, "deploy claim") {
+		t.Errorf("expected reason to mention deploy claim, got: %s", result.Reason)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestValidateTrace_Create2Denied(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,8 +150,8 @@ func TestValidateTrace_Create2Denied(t *testing.T) {
 	if result.Allowed {
 		t.Errorf("expected CREATE2 to be denied")
 	}
-	if !strings.Contains(result.Reason, "CREATE2") {
-		t.Errorf("expected reason to mention CREATE2, got: %s", result.Reason)
+	if !strings.Contains(result.Reason, "deploy claim") {
+		t.Errorf("expected reason to mention deploy claim, got: %s", result.Reason)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestValidateTrace_PrecompileAllowed(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestValidateTrace_SharedInfrastructureAllowed(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestValidateTrace_OrgOwnedContractAllowed(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestValidateTrace_OtherOrgContractDenied(t *testing.T) {
 	}
 
 	// User is member of org1, not org2
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,8 +243,8 @@ func TestValidateTrace_OtherOrgContractDenied(t *testing.T) {
 	if result.Allowed {
 		t.Errorf("expected call to other org's contract to be denied")
 	}
-	if !strings.Contains(result.Reason, "another organization") {
-		t.Errorf("expected reason to mention another organization, got: %s", result.Reason)
+	if !strings.Contains(result.Reason, ErrContractAccessDenied) {
+		t.Errorf("expected generic denial, got: %s", result.Reason)
 	}
 	if result.DeniedTarget != "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Errorf("expected DeniedTarget to be the denied address, got: %s", result.DeniedTarget)
@@ -263,7 +263,7 @@ func TestValidateTrace_PublicContractAllowed(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestValidateTrace_MultiOrgUserAllowed(t *testing.T) {
 	}
 
 	// User is member of both orgs
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true, "org2": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true, "org2": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestValidateTrace_MixedTargets(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestValidateTrace_DenyOnFirstViolation(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestValidateTrace_AddressNormalization(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestValidateTrace_EmptyUserOrgs(t *testing.T) {
 	}
 
 	// User has no org memberships
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestValidateTrace_SkipsZeroAddress(t *testing.T) {
 		},
 	}
 
-	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace)
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,16 +430,106 @@ func TestValidateTrace_SkipsZeroAddress(t *testing.T) {
 	}
 }
 
+func TestValidateTrace_Create2AllowedWithDeployClaim(t *testing.T) {
+	store := NewMockTraceStore()
+	// Created address is public (not owned by any org)
+	validator := NewTraceValidator(store)
+
+	trace := &tracer.TraceResult{
+		HasCreate2: true,
+		CallTargets: []tracer.CallTarget{
+			{Type: "CREATE2", From: "0xfactory", To: "0xnewcontract1234567890123456789012345678"},
+		},
+	}
+
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected CREATE2 with deploy claim to be allowed, got denied: %s", result.Reason)
+	}
+	if len(result.CreateTargets) != 1 {
+		t.Fatalf("expected 1 CreateTarget, got %d", len(result.CreateTargets))
+	}
+	if result.CreateTargets[0].Type != "CREATE2" {
+		t.Errorf("expected CreateTarget type CREATE2, got: %s", result.CreateTargets[0].Type)
+	}
+	if result.CreateTargets[0].Address != "0xnewcontract1234567890123456789012345678" {
+		t.Errorf("expected CreateTarget address 0xnewcontract1234567890123456789012345678, got: %s", result.CreateTargets[0].Address)
+	}
+	if result.CreateTargets[0].From != "0xfactory" {
+		t.Errorf("expected CreateTarget from 0xfactory, got: %s", result.CreateTargets[0].From)
+	}
+}
+
+func TestValidateTrace_Create2DeniedCrossOrg(t *testing.T) {
+	store := NewMockTraceStore()
+	// The created address is already owned by org2
+	store.AddOwnedAddress("org2", "0xnewcontract1234567890123456789012345678")
+
+	validator := NewTraceValidator(store)
+
+	trace := &tracer.TraceResult{
+		HasCreate2: true,
+		CallTargets: []tracer.CallTarget{
+			{Type: "CREATE2", From: "0xfactory", To: "0xnewcontract1234567890123456789012345678"},
+		},
+	}
+
+	// User is org1, created address is owned by org2
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Errorf("expected CREATE2 to cross-org owned address to be denied")
+	}
+	if !strings.Contains(result.Reason, "contract access denied") {
+		t.Errorf("expected generic denial, got: %s", result.Reason)
+	}
+	if result.DeniedTarget != "0xnewcontract1234567890123456789012345678" {
+		t.Errorf("expected DeniedTarget to be the created address, got: %s", result.DeniedTarget)
+	}
+}
+
+func TestValidateTrace_Create2DeniedWithoutDeployClaim(t *testing.T) {
+	store := NewMockTraceStore()
+	validator := NewTraceValidator(store)
+
+	trace := &tracer.TraceResult{
+		HasCreate2: true,
+		CallTargets: []tracer.CallTarget{
+			{Type: "CREATE2", From: "0xfactory", To: "0xnewcontract1234567890123456789012345678"},
+		},
+	}
+
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Errorf("expected CREATE2 without deploy claim to be denied")
+	}
+	if !strings.Contains(result.Reason, "deploy claim") {
+		t.Errorf("expected reason to mention deploy claim, got: %s", result.Reason)
+	}
+}
+
 // TestValidateTrace_TableDriven provides comprehensive table-driven tests.
 func TestValidateTrace_TableDriven(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupStore     func(*MockTraceStore)
-		userOrgIDs     map[string]bool
-		trace          *tracer.TraceResult
-		expectAllowed  bool
-		expectReason   string
-		expectDenied   string
+		name          string
+		setupStore    func(*MockTraceStore)
+		userOrgIDs    map[string]bool
+		userHasDeploy bool
+		trace         *tracer.TraceResult
+		expectAllowed bool
+		expectReason  string
+		expectDenied  string
 	}{
 		{
 			name:          "nil trace allowed",
@@ -449,14 +539,14 @@ func TestValidateTrace_TableDriven(t *testing.T) {
 			expectAllowed: true,
 		},
 		{
-			name:       "CREATE blocked",
+			name:       "CREATE blocked without deploy claim",
 			setupStore: func(s *MockTraceStore) {},
 			userOrgIDs: map[string]bool{"org1": true},
 			trace: &tracer.TraceResult{
 				HasCreate: true,
 			},
 			expectAllowed: false,
-			expectReason:  "CREATE",
+			expectReason:  "deploy claim",
 		},
 		{
 			name:       "all precompiles allowed",
@@ -496,7 +586,7 @@ func TestValidateTrace_TableDriven(t *testing.T) {
 				},
 			},
 			expectAllowed: false,
-			expectReason:  "another organization",
+			expectReason:  ErrContractAccessDenied,
 			expectDenied:  "0xorg2contract",
 		},
 	}
@@ -507,7 +597,7 @@ func TestValidateTrace_TableDriven(t *testing.T) {
 			tt.setupStore(store)
 
 			validator := NewTraceValidator(store)
-			result, err := validator.ValidateTrace(context.Background(), tt.userOrgIDs, tt.trace)
+			result, err := validator.ValidateTrace(context.Background(), tt.userOrgIDs, tt.trace, tt.userHasDeploy)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

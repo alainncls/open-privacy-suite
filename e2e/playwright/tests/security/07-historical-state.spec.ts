@@ -1,9 +1,11 @@
 /**
- * Security Tests: Historical State Query Blocking
+ * Security Tests: Historical State Query Policy
  *
  * Historical state queries allow reading blockchain state at specific past blocks.
- * This can be used for privacy attacks (e.g., tracking address balances over time).
- * The proxy should block queries with specific block numbers or hashes.
+ * For anonymous users, these are blocked to prevent privacy attacks (balance tracking).
+ * For authenticated users, RBAC already gates which addresses they can query,
+ * so blocking by block number is redundant and breaks wallets like MetaMask
+ * that query at specific blocks for read consistency.
  */
 
 import { test, expect } from '@playwright/test';
@@ -152,24 +154,26 @@ test.describe('eth_call Historical State Blocking', () => {
     expect(result.status).not.toBe(403);
   });
 
-  test('HIST-005: eth_call with block number is BLOCKED', async ({ request }) => {
+  test('HIST-005: eth_call with block number is ALLOWED for authenticated users', async ({ request }) => {
+    // Authenticated users go through full RBAC which gates address access.
+    // Historical block queries are only blocked for anonymous users.
     const result = await rpcCall(request, 'eth_call', [
       { to: TEST_ADDRESS, data: '0x' },
       HISTORICAL_BLOCK
     ]);
 
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('historical');
+    // Should NOT be blocked — RBAC is the access gate, not the block parameter
+    expect(result.status).not.toBe(403);
   });
 
-  test('HIST-006: eth_call with block hash is BLOCKED', async ({ request }) => {
+  test('HIST-006: eth_call with block hash is ALLOWED for authenticated users', async ({ request }) => {
     const result = await rpcCall(request, 'eth_call', [
       { to: TEST_ADDRESS, data: '0x' },
       { blockHash: BLOCK_HASH }
     ]);
 
-    // Block hash counts as historical
-    expect(result.status).toBe(403);
+    // Should NOT be blocked for authenticated users
+    expect(result.status).not.toBe(403);
   });
 
   test('HIST-007: eth_call with no block param defaults to latest', async ({ request }) => {
@@ -198,27 +202,26 @@ test.describe('eth_getStorageAt Historical State Blocking', () => {
     expect(result.status).not.toBe(403);
   });
 
-  test('HIST-009: eth_getStorageAt with block number is BLOCKED', async ({ request }) => {
+  test('HIST-009: eth_getStorageAt with block number is ALLOWED for authenticated users', async ({ request }) => {
     const result = await rpcCall(request, 'eth_getStorageAt', [
       TEST_ADDRESS,
       '0x0',
       HISTORICAL_BLOCK
     ]);
 
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('historical');
+    // Authenticated users are not blocked by historical check — RBAC gates access
+    expect(result.status).not.toBe(403);
   });
 
-  test('HIST-010: eth_getStorageAt with decimal block number', async ({ request }) => {
-    // Some clients might send decimal instead of hex
+  test('HIST-010: eth_getStorageAt with decimal block number is ALLOWED for authenticated users', async ({ request }) => {
     const result = await rpcCall(request, 'eth_getStorageAt', [
       TEST_ADDRESS,
       '0x0',
       '256'  // Same as 0x100
     ]);
 
-    // Should be treated as historical
-    expect(result.status).toBe(403);
+    // Authenticated users are not blocked by historical check
+    expect(result.status).not.toBe(403);
   });
 });
 

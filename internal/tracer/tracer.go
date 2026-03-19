@@ -142,7 +142,8 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Limit response size to 64MB to prevent OOM from malicious/broken nodes.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -175,13 +176,25 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 	}
 
 	// Recursively extract all call targets
-	t.extractCallTargets(&frame, result, 0)
+	if err := t.extractCallTargets(&frame, result, 0); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
 
 // extractCallTargets recursively extracts all call targets from a call frame.
-func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) {
+const maxTraceDepth = 256 // Prevent stack overflow from malicious/deeply nested traces
+
+// errTraceDepthExceeded is returned when a trace exceeds the max recursion depth.
+// The caller should fail closed (deny the transaction) since deeper call targets
+// were not validated.
+var errTraceDepthExceeded = fmt.Errorf("trace exceeds maximum depth (%d)", maxTraceDepth)
+
+func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) error {
+	if depth > maxTraceDepth {
+		return errTraceDepthExceeded
+	}
 	// Check the type and add to result
 	switch frame.Type {
 	case "CALL", "DELEGATECALL", "STATICCALL":
@@ -211,8 +224,90 @@ func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth
 
 	// Recursively process nested calls
 	for i := range frame.Calls {
-		t.extractCallTargets(&frame.Calls[i], result, depth+1)
+		if err := t.extractCallTargets(&frame.Calls[i], result, depth+1); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// TraceTransaction traces an already-mined transaction by hash using debug_traceTransaction.
+// Used for post-mining verification of runtime CREATE/CREATE2 addresses.
+func (t *Tracer) TraceTransaction(ctx context.Context, txHash string) (*TraceResult, error) {
+	// Use the callTracer preset with onlyTopCall: false to get all nested calls
+	tracerConfig := map[string]any{
+		"tracer": "callTracer",
+		"tracerConfig": map[string]any{
+			"onlyTopCall": false,
+		},
+	}
+
+	// Build the JSON-RPC request
+	req := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "debug_traceTransaction",
+		Params:  []any{txHash, tracerConfig},
+		ID:      1,
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request with context
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.nodeURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Execute the request
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Limit response size to 64MB to prevent OOM from malicious/broken nodes.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse JSON-RPC response
+	var rpcResp jsonRPCResponse
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+
+	// Parse the call frame result
+	var frame callFrame
+	if err := json.Unmarshal(rpcResp.Result, &frame); err != nil {
+		return nil, fmt.Errorf("failed to parse trace result: %w", err)
+	}
+
+	// Extract all call targets from the trace
+	result := &TraceResult{
+		CallTargets: make([]CallTarget, 0),
+		Error:       frame.Error,
+	}
+
+	// Parse gas used from the top-level frame
+	if frame.GasUsed != "" {
+		result.GasUsed = parseHexUint64(frame.GasUsed)
+	}
+
+	// Recursively extract all call targets
+	if err := t.extractCallTargets(&frame, result, 0); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // HasCode checks if an address has contract code deployed.

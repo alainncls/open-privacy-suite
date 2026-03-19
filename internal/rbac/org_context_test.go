@@ -197,7 +197,7 @@ func TestNewOrgContext(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for cross-org access")
 		}
-		if !strings.Contains(err.Error(),"belongs to an organization you are not a member of") {
+		if !strings.Contains(err.Error(), ErrContractAccessDenied) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
@@ -391,7 +391,7 @@ func TestOrgContext_CheckAddressInScope(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for cross-org address")
 		}
-		if !strings.Contains(err.Error(),"belongs to an organization you are not a member of") {
+		if !strings.Contains(err.Error(), ErrContractAccessDenied) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
@@ -525,7 +525,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for read-only user without explicit grant")
 		}
-		if !strings.Contains(err.Error(), "requires explicit grant") {
+		if !strings.Contains(err.Error(), ErrContractAccessDenied) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
@@ -556,7 +556,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for cross-org contract")
 		}
-		if !strings.Contains(err.Error(), "not a member of") {
+		if !strings.Contains(err.Error(), ErrContractAccessDenied) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})

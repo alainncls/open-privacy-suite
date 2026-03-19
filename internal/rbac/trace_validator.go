@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -34,9 +35,17 @@ type TraceValidator struct {
 
 // TraceValidationResult contains the result of trace validation.
 type TraceValidationResult struct {
-	Allowed      bool   // Whether the transaction trace is allowed
-	Reason       string // Reason for denial (if any)
-	DeniedTarget string // Address that caused denial (if any)
+	Allowed       bool           // Whether the transaction trace is allowed
+	Reason        string         // Reason for denial (if any)
+	DeniedTarget  string         // Address that caused denial (if any)
+	CreateTargets []CreateTarget // Contract addresses created during trace execution
+}
+
+// CreateTarget represents a contract address created during trace execution.
+type CreateTarget struct {
+	Type    string // "CREATE" or "CREATE2"
+	Address string // Created contract address (from trace)
+	From    string // The contract that executed the CREATE/CREATE2
 }
 
 // SharedInfrastructure represents a globally accessible contract (e.g., Uniswap router).
@@ -60,8 +69,9 @@ func NewTraceValidator(store TraceValidatorStore) *TraceValidator {
 // for the user's organizations.
 //
 // The validation follows this order:
-// 1. If trace has CREATE or CREATE2, deny (runtime contract creation not permitted)
-// 2. For each CallTarget:
+// 1. If trace has CREATE or CREATE2 and user lacks deploy claim, deny
+// 2. If user has deploy claim, validate created addresses aren't owned by another org
+// 3. For each CallTarget:
 //    a. Filter precompiles (0x01-0x09): always allow
 //    b. Check if target is shared infrastructure: always allow
 //    c. Check if target is owned by any of user's orgs: allow if member
@@ -71,6 +81,7 @@ func (v *TraceValidator) ValidateTrace(
 	ctx context.Context,
 	userOrgIDs map[string]bool,
 	trace *tracer.TraceResult,
+	userHasDeploy bool,
 ) (*TraceValidationResult, error) {
 	if trace == nil {
 		return &TraceValidationResult{
@@ -79,17 +90,51 @@ func (v *TraceValidator) ValidateTrace(
 		}, nil
 	}
 
-	// Rule 1: Block runtime CREATE/CREATE2 operations
+	// Rule 1: Handle runtime CREATE/CREATE2 operations
+	var createTargets []CreateTarget
 	if trace.HasCreate || trace.HasCreate2 {
-		return &TraceValidationResult{
-			Allowed: false,
-			Reason:  "runtime CREATE/CREATE2 not permitted",
-		}, nil
+		if !userHasDeploy {
+			return &TraceValidationResult{
+				Allowed: false,
+				Reason:  "runtime contract creation requires deploy claim",
+			}, nil
+		}
+
+		// User has deploy claim — collect and validate CREATE/CREATE2 targets
+		for _, target := range trace.CallTargets {
+			if target.Type != "CREATE" && target.Type != "CREATE2" {
+				continue
+			}
+			addr := normalizeTraceAddr(target.To)
+			if addr == "" || addr == "0x" || addr == "0x0000000000000000000000000000000000000000" {
+				continue
+			}
+
+			// Ensure the created address isn't already owned by another org
+			ownerOrgID, err := v.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get contract owner for created address: %w", err)
+			}
+			if ownerOrgID != "" && !userOrgIDs[ownerOrgID] {
+				slog.Debug("runtime create denied: address owned by another org", "address", addr, "user_orgs", userOrgIDs)
+				return &TraceValidationResult{
+					Allowed:      false,
+					Reason:       "contract access denied",
+					DeniedTarget: addr,
+				}, nil
+			}
+
+			createTargets = append(createTargets, CreateTarget{
+				Type:    target.Type,
+				Address: addr,
+				From:    normalizeTraceAddr(target.From),
+			})
+		}
 	}
 
 	// Rule 2: Validate each call target
 	for _, target := range trace.CallTargets {
-		// Skip CREATE/CREATE2 targets (already handled above, but be defensive)
+		// Skip CREATE/CREATE2 targets — handled above
 		if target.Type == "CREATE" || target.Type == "CREATE2" {
 			continue
 		}
@@ -138,10 +183,10 @@ func (v *TraceValidator) ValidateTrace(
 			return nil, fmt.Errorf("failed to get contract owner: %w", err)
 		}
 		if ownerOrgID != "" {
-			// The contract is owned by another organization
+			slog.Debug("trace denied: call target owned by another org", "address", addr)
 			return &TraceValidationResult{
 				Allowed:      false,
-				Reason:       fmt.Sprintf("address %s is owned by another organization", addr),
+				Reason:       ErrContractAccessDenied,
 				DeniedTarget: addr,
 			}, nil
 		}
@@ -151,7 +196,8 @@ func (v *TraceValidator) ValidateTrace(
 	}
 
 	return &TraceValidationResult{
-		Allowed: true,
+		Allowed:       true,
+		CreateTargets: createTargets,
 	}, nil
 }
 

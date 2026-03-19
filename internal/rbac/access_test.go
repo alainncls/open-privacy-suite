@@ -971,7 +971,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xunknowncontract",
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Single address - has write but not read claim",
@@ -980,7 +980,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xnoread",
 			}},
 			expectError: true,
-			errorSubstr: "missing read claim",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Multiple addresses - one without access",
@@ -989,7 +989,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": []any{"0xcontract1", "0xunknowncontract"},
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
 			name:  "Multiple addresses - one missing read claim",
@@ -998,7 +998,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": []any{"0xcontract1", "0xnoread"},
 			}},
 			expectError: true,
-			errorSubstr: "missing read claim",
+			errorSubstr: ErrContractAccessDenied,
 		},
 		// Success cases
 		{
@@ -1052,7 +1052,7 @@ func TestValidateGetLogsAccess(t *testing.T) {
 				"address": "0xunregisteredcontract",
 			}},
 			expectError: true,
-			errorSubstr: "no access to contract",
+			errorSubstr: ErrContractAccessDenied,
 		},
 	}
 
@@ -2645,6 +2645,82 @@ func TestIsHistoricalStateQuery(t *testing.T) {
 					reason, tt.expectedReason)
 			}
 		})
+	}
+}
+
+// TestHistoricalStateQuery_AnonymousBlocked verifies that anonymous users
+// are blocked from querying historical state (specific block numbers).
+func TestHistoricalStateQuery_AnonymousBlocked(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	// Anonymous user queries eth_call at a specific block number
+	result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "", // anonymous
+		Method:         "eth_call",
+		Params:         []any{map[string]any{"to": "0x1234"}, "0x100"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Allowed {
+		t.Error("expected anonymous historical state query to be denied")
+	}
+	if !strings.Contains(result.Reason, "historical") {
+		t.Errorf("expected 'historical' in reason, got: %s", result.Reason)
+	}
+}
+
+// TestHistoricalStateQuery_AuthenticatedAllowed verifies that authenticated users
+// can query at specific block numbers (RBAC gates address access, not block number).
+func TestHistoricalStateQuery_AuthenticatedAllowed(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+
+	// Authenticated user (user-a) queries their own org's contract at a specific block
+	result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-a",
+		Method:         "eth_call",
+		Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "0x100"},
+		TargetAddress:  contractA,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should be allowed — RBAC gates access, not block number
+	if !result.Allowed {
+		t.Errorf("expected authenticated historical query to be allowed, got denied: %s", result.Reason)
+	}
+}
+
+// TestHistoricalStateQuery_AuthenticatedCrossOrgStillDenied verifies that
+// RBAC still blocks cross-org access even at historical blocks.
+func TestHistoricalStateQuery_AuthenticatedCrossOrgStillDenied(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	contractB := "0xbbbb000000000000000000000000000000000002" // owned by org-b
+
+	// User-a tries to query org-b's contract at a historical block
+	result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-a",
+		Method:         "eth_call",
+		Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "0x100"},
+		TargetAddress:  contractB,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should STILL be denied — RBAC blocks cross-org regardless of block number
+	if result.Allowed {
+		t.Error("expected cross-org query to be denied even without historical check")
 	}
 }
 

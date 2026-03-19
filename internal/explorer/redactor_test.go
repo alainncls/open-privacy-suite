@@ -1618,3 +1618,250 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 		t.Errorf("tx2: Carol's nonce should be preserved (sender is public), got %v", tx2.Nonce)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// RedactTransfers — Participant visibility override
+// ---------------------------------------------------------------------------
+
+func TestRedactTransfers_ParticipantSeesCounterparty_Sender(t *testing.T) {
+	// Alice (viewer) is the sender (From). Bob (To) is hidden globally,
+	// but Alice should see Bob's address and the transfer value because
+	// Alice is a participant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	transfers := []TokenTransfer{{ID: 1, From: alice, To: bob, Value: "750"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	tr := result[0]
+	if tr.From != alice {
+		t.Errorf("From should be unchanged, got %s", tr.From)
+	}
+	if tr.To != bob {
+		t.Errorf("To should be Bob's real address (participant visibility), got %s", tr.To)
+	}
+	if tr.Value != "750" {
+		t.Errorf("Value should be preserved for participant, got %s", tr.Value)
+	}
+}
+
+func TestRedactTransfers_ParticipantSeesCounterparty_Receiver(t *testing.T) {
+	// Bob (viewer) is the receiver (To). Alice (From) is hidden globally,
+	// but Bob should see Alice's address and the transfer value because
+	// Bob is a participant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{bob})
+
+	transfers := []TokenTransfer{{ID: 1, From: alice, To: bob, Value: "300"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	tr := result[0]
+	if tr.From != alice {
+		t.Errorf("From should be Alice's real address (participant visibility), got %s", tr.From)
+	}
+	if tr.To != bob {
+		t.Errorf("To should be unchanged, got %s", tr.To)
+	}
+	if tr.Value != "300" {
+		t.Errorf("Value should be preserved for participant, got %s", tr.Value)
+	}
+}
+
+func TestRedactTransfers_NonParticipantDoesNotSeeHiddenTransfer(t *testing.T) {
+	// Charlie (viewer) is not a participant. Alice (From) is hidden.
+	// Charlie should see [PRIVATE] for Alice and Value should be stripped.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	charlie := "0xcccccccccccccccccccccccccccccccccccccccc"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{charlie})
+
+	transfers := []TokenTransfer{{ID: 1, From: alice, To: bob, Value: "500"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:charlie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(result))
+	}
+	tr := result[0]
+	if tr.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE] for non-participant, got %s", tr.From)
+	}
+	if tr.To != bob {
+		t.Errorf("To should be unchanged, got %s", tr.To)
+	}
+	if tr.Value != "" {
+		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", tr.Value)
+	}
+}
+
+func TestRedactTransfers_ParticipantBothHidden_StillVisible(t *testing.T) {
+	// Alice (viewer) is the sender (From). Both Alice and Bob are hidden
+	// in the visibility map. With participant override, both should become
+	// visible and the transfer should be kept with value preserved.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	transfers := []TokenTransfer{{ID: 1, From: alice, To: bob, Value: "1000"}}
+	result, err := engine.RedactTransfers(context.Background(), transfers, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 transfer (participant override prevents drop), got %d", len(result))
+	}
+	tr := result[0]
+	if tr.From != alice {
+		t.Errorf("From should be Alice's real address (participant visibility), got %s", tr.From)
+	}
+	if tr.To != bob {
+		t.Errorf("To should be Bob's real address (participant visibility), got %s", tr.To)
+	}
+	if tr.Value != "1000" {
+		t.Errorf("Value should be preserved for participant, got %s", tr.Value)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RedactInternalTransactions — Participant visibility override
+// ---------------------------------------------------------------------------
+
+func TestRedactInternalTransactions_ParticipantSeesCounterparty_Sender(t *testing.T) {
+	// Alice (viewer) is From. Bob (To) is hidden globally, but Alice
+	// should see Bob's address and all data because Alice is a participant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xdeadbeef"
+	output := "0x01"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityFull,
+		bob:   VisibilityHidden,
+	}, []string{alice})
+
+	itxs := []InternalTransaction{{ID: 1, From: alice, To: strPtr(bob), Value: "400", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 internal tx, got %d", len(result))
+	}
+	itx := result[0]
+	if itx.From != alice {
+		t.Errorf("From should be unchanged, got %s", itx.From)
+	}
+	if *itx.To != bob {
+		t.Errorf("To should be Bob's real address (participant visibility), got %s", *itx.To)
+	}
+	if itx.Value != "400" {
+		t.Errorf("Value should be preserved for participant, got %s", itx.Value)
+	}
+	if itx.Input == nil || *itx.Input != "0xdeadbeef" {
+		t.Errorf("Input should be preserved for participant, got %v", itx.Input)
+	}
+	if itx.Output == nil || *itx.Output != "0x01" {
+		t.Errorf("Output should be preserved for participant, got %v", itx.Output)
+	}
+}
+
+func TestRedactInternalTransactions_ParticipantSeesCounterparty_Receiver(t *testing.T) {
+	// Bob (viewer) is To. Alice (From) is hidden globally, but Bob
+	// should see Alice's address and all data because Bob is a participant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := "0xcafebabe"
+	output := "0xff"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{bob})
+
+	itxs := []InternalTransaction{{ID: 1, From: alice, To: strPtr(bob), Value: "600", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 internal tx, got %d", len(result))
+	}
+	itx := result[0]
+	if itx.From != alice {
+		t.Errorf("From should be Alice's real address (participant visibility), got %s", itx.From)
+	}
+	if *itx.To != bob {
+		t.Errorf("To should be unchanged, got %s", *itx.To)
+	}
+	if itx.Value != "600" {
+		t.Errorf("Value should be preserved for participant, got %s", itx.Value)
+	}
+	if itx.Input == nil || *itx.Input != "0xcafebabe" {
+		t.Errorf("Input should be preserved for participant, got %v", itx.Input)
+	}
+	if itx.Output == nil || *itx.Output != "0xff" {
+		t.Errorf("Output should be preserved for participant, got %v", itx.Output)
+	}
+}
+
+func TestRedactInternalTransactions_NonParticipantDoesNotSeeHidden(t *testing.T) {
+	// Charlie (viewer) is not a participant. Alice (From) is hidden.
+	// Charlie should see [PRIVATE] for Alice, Value stripped, Input/Output nil.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	charlie := "0xcccccccccccccccccccccccccccccccccccccccc"
+	input := "0xdeadbeef"
+	output := "0x01"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice: VisibilityHidden,
+		bob:   VisibilityFull,
+	}, []string{charlie})
+
+	itxs := []InternalTransaction{{ID: 1, From: alice, To: strPtr(bob), Value: "250", Input: &input, Output: &output}}
+	result, err := engine.RedactInternalTransactions(context.Background(), itxs, "did:charlie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 internal tx, got %d", len(result))
+	}
+	itx := result[0]
+	if itx.From != "[PRIVATE]" {
+		t.Errorf("From should be [PRIVATE] for non-participant, got %s", itx.From)
+	}
+	if *itx.To != bob {
+		t.Errorf("To should be unchanged, got %s", *itx.To)
+	}
+	if itx.Value != "" {
+		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", itx.Value)
+	}
+	if itx.Input != nil {
+		t.Errorf("Input should be nil for non-participant with hidden side")
+	}
+	if itx.Output != nil {
+		t.Errorf("Output should be nil for non-participant with hidden side")
+	}
+}

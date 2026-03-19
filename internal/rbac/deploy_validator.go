@@ -132,10 +132,15 @@ func (v *DeploymentValidator) ValidateDeployment(
 			return result, nil
 		}
 
-		// Non-trusted factory contracts are always blocked
-		result.Allowed = false
-		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
-		return result, nil
+		// When runtime tracing is enabled, allow CREATE/CREATE2 — the trace validator
+		// will validate the actual execution and auto-register created addresses.
+		if v.runtimeTracingEnabled {
+			// Fall through to remaining checks (dynamic calls, etc.)
+		} else {
+			result.Allowed = false
+			result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
+			return result, nil
+		}
 	}
 
 	// Check 2: Block contracts with dynamic call targets
@@ -275,10 +280,15 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 			return result, nil
 		}
 
-		// Non-trusted factory contracts are always blocked
-		result.Allowed = false
-		result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
-		return result, nil
+		// When runtime tracing is enabled, allow CREATE/CREATE2 — the trace validator
+		// will validate the actual execution and auto-register created addresses.
+		if v.runtimeTracingEnabled {
+			// Fall through to remaining checks (dynamic calls, etc.)
+		} else {
+			result.Allowed = false
+			result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
+			return result, nil
+		}
 	}
 
 	// Check 2: Block contracts with dynamic call targets
