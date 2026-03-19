@@ -1,3 +1,5 @@
+//go:build mockauth
+
 package e2e
 
 import (
