@@ -235,8 +235,8 @@ func TestE2E_ParamConstraints_BalanceOfSelf(t *testing.T) {
 	// The RBAC check should pass (param constraint satisfied).
 	// The actual eth_call may fail with 502 if no node is running, or return
 	// a JSON-RPC error from the node. Either way, it should NOT be 403.
-	assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
-		"balanceOf(ownAddress) should not be forbidden; got response: %s", string(respBody))
+	assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+		"balanceOf(ownAddress) should not be denied; got response: %s", string(respBody))
 
 	// Accept 200 (node responded) or 502 (node not running) as success
 	assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusBadGateway,
@@ -263,16 +263,10 @@ func TestE2E_ParamConstraints_BalanceOfOther(t *testing.T) {
 
 	resp, respBody := doRPCRequest(t, serverURL, accessToken, body)
 
-	// The RBAC check should deny this because the address does not match the user's linked address
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
-		"balanceOf(otherAddress) should be forbidden; got response: %s", string(respBody))
-
-	// Verify the error message mentions parameter constraint violation
-	var errResp map[string]string
-	if err := json.Unmarshal(respBody, &errResp); err == nil {
-		assert.Contains(t, errResp["error"], "parameter constraint violation",
-			"error should mention parameter constraint violation")
-	}
+	// The RBAC check should deny this because the address does not match the user's linked address.
+	// Opaque 404 — no access control info leaked to caller.
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"balanceOf(otherAddress) should return opaque 404; got response: %s", string(respBody))
 }
 
 // TestE2E_ParamConstraints_TotalSupplyAllowed tests that a user can call totalSupply()
@@ -296,8 +290,8 @@ func TestE2E_ParamConstraints_TotalSupplyAllowed(t *testing.T) {
 
 	// totalSupply() is in the grant's function list with no param constraints, so it should pass RBAC.
 	// It may fail with 502 if no node is running.
-	assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
-		"totalSupply() should not be forbidden; got response: %s", string(respBody))
+	assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+		"totalSupply() should not be denied; got response: %s", string(respBody))
 
 	assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusBadGateway,
 		"expected 200 or 502, got %d: %s", resp.StatusCode, string(respBody))
@@ -327,16 +321,10 @@ func TestE2E_ParamConstraints_UnlistedFunctionDenied(t *testing.T) {
 
 	resp, respBody := doRPCRequest(t, serverURL, accessToken, body)
 
-	// The function selector is not in the grant's allowed list, so RBAC should deny
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
-		"transfer() should be forbidden (not in grant function list); got response: %s", string(respBody))
-
-	// Verify the error message mentions the function selector
-	var errResp map[string]string
-	if err := json.Unmarshal(respBody, &errResp); err == nil {
-		assert.Contains(t, errResp["error"], "function",
-			"error should mention function access denial")
-	}
+	// The function selector is not in the grant's allowed list, so RBAC should deny.
+	// Opaque 404 — no access control info leaked to caller.
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"transfer() should return opaque 404; got response: %s", string(respBody))
 }
 
 // TestE2E_ParamConstraints_MultipleLinkedAddresses tests that param constraints work
@@ -407,8 +395,8 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 		body := buildEthCallBody(contractAddr, calldata)
 		resp, respBody := doRPCRequest(t, serverURL, accessToken, body)
 
-		assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
-			"balanceOf(linkedAddr1) should not be forbidden; got: %s", string(respBody))
+		assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"balanceOf(linkedAddr1) should not be denied; got: %s", string(respBody))
 	})
 
 	t.Run("second linked address allowed", func(t *testing.T) {
@@ -416,8 +404,8 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 		body := buildEthCallBody(contractAddr, calldata)
 		resp, respBody := doRPCRequest(t, serverURL, accessToken, body)
 
-		assert.NotEqual(t, http.StatusForbidden, resp.StatusCode,
-			"balanceOf(linkedAddr2) should not be forbidden; got: %s", string(respBody))
+		assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+			"balanceOf(linkedAddr2) should not be denied; got: %s", string(respBody))
 	})
 
 	t.Run("unlinked address denied", func(t *testing.T) {
@@ -426,7 +414,7 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 		body := buildEthCallBody(contractAddr, calldata)
 		resp, respBody := doRPCRequest(t, serverURL, accessToken, body)
 
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode,
-			"balanceOf(unlinkedAddr) should be forbidden; got: %s", string(respBody))
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+			"balanceOf(unlinkedAddr) should return opaque 404; got: %s", string(respBody))
 	})
 }
