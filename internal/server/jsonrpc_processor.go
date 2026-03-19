@@ -267,7 +267,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusNotFound)
+		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -277,10 +277,14 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	if !result.Allowed {
+		realStatus := http.StatusForbidden
+		if result.AuthRequired {
+			realStatus = http.StatusUnauthorized
+		}
 		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusNotFound)
+		p.logAccess(ctx, req, realStatus)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -918,7 +922,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusNotFound)
+		p.logAccess(ctx, req, http.StatusInternalServerError)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -928,10 +932,14 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	if !result.Allowed {
+		realStatus := http.StatusForbidden
+		if result.AuthRequired {
+			realStatus = http.StatusUnauthorized
+		}
 		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, http.StatusNotFound)
+		p.logAccess(ctx, req, realStatus)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
