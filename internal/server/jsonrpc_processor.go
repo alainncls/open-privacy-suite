@@ -265,28 +265,26 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
+		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusInternalServerError)
+		p.logAccess(ctx, req, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusInternalServerError,
-				Message:    "access check failed: " + err.Error(),
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
 			},
 		}
 	}
 
 	if !result.Allowed {
-		statusCode := http.StatusForbidden
-		if result.AuthRequired {
-			statusCode = http.StatusUnauthorized
-		}
+		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, statusCode)
+		p.logAccess(ctx, req, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: statusCode,
-				Message:    "access denied: " + result.Reason,
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
 			},
 		}
 	}
@@ -918,28 +916,26 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Check RBAC access
 	result, err := p.rbacAccessCtrl.CheckAccess(ctx, accessReq)
 	if err != nil {
+		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusInternalServerError)
+		p.logAccess(ctx, req, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: http.StatusInternalServerError,
-				Message:    "access check failed: " + err.Error(),
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
 			},
 		}
 	}
 
 	if !result.Allowed {
-		statusCode := http.StatusForbidden
-		if result.AuthRequired {
-			statusCode = http.StatusUnauthorized
-		}
+		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, statusCode)
+		p.logAccess(ctx, req, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
-				StatusCode: statusCode,
-				Message:    "access denied: " + result.Reason,
+				StatusCode: http.StatusNotFound,
+				Message:    "method not found",
 			},
 		}
 	}
