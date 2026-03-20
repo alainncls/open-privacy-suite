@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
+import { Input } from '@/components/ui/input';
 import {
   FolderTree,
   FolderOpen,
@@ -28,6 +29,7 @@ import {
   Shield,
   Bot,
   X,
+  Search,
 } from 'lucide-react';
 
 const PAGE_SIZE = 50;
@@ -49,6 +51,15 @@ export default function GroupList() {
   // Filter state: 'all' | 'auto' | 'manual'
   const [filterMode, setFilterMode] = useState<'all' | 'auto' | 'manual'>('all');
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Multi-select for batch delete
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBatchDelete, setShowBatchDelete] = useState(false);
@@ -66,18 +77,19 @@ export default function GroupList() {
     if (orgId) {
       loadGroups(0);
     }
-  }, [orgId, filterMode]);
+  }, [orgId, filterMode, debouncedSearch]);
 
   const loadGroups = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const params: { limit: number; offset: number; auto_created?: boolean } = {
+      const params: { limit: number; offset: number; auto_created?: boolean; search?: string } = {
         limit: PAGE_SIZE,
         offset: newOffset,
       };
       if (filterMode === 'auto') params.auto_created = true;
       if (filterMode === 'manual') params.auto_created = false;
+      if (debouncedSearch) params.search = debouncedSearch;
       const response = await rbacApi.groups.list(orgId, params);
       const page = response.data;
       const groupsList = page.data || [];
@@ -252,8 +264,23 @@ export default function GroupList() {
         </Button>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex items-center gap-2">
+      {/* Search + Filter bar */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+          <Input
+            type="text"
+            placeholder="Search by name or slug..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {searchQuery && (
+          <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')} className="text-neutral-500">
+            Clear
+          </Button>
+        )}
         <div className="flex rounded-lg border border-neutral-200 overflow-hidden">
           {(['all', 'auto', 'manual'] as const).map(mode => (
             <button

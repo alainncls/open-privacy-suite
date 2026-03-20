@@ -28,7 +28,8 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
-import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -46,6 +47,15 @@ export default function ContractList() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [managingGrants, setManagingGrants] = useState<Contract | null>(null);
   const [grantSummary, setGrantSummary] = useState<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>({});
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -88,13 +98,15 @@ export default function ContractList() {
     if (orgId) {
       loadContracts(0);
     }
-  }, [orgId]);
+  }, [orgId, debouncedSearch]);
 
   const loadContracts = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const response = await rbacApi.contracts.list(orgId, { limit: PAGE_SIZE, offset: newOffset });
+      const params: { limit: number; offset: number; search?: string } = { limit: PAGE_SIZE, offset: newOffset };
+      if (debouncedSearch) params.search = debouncedSearch;
+      const response = await rbacApi.contracts.list(orgId, params);
       const page = response.data;
       setContracts(page.data || []);
       setTotal(page.total);
@@ -223,6 +235,25 @@ export default function ContractList() {
             Add Contract
           </Button>
         </div>
+      </div>
+
+      {/* Search */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+          <Input
+            type="text"
+            placeholder="Search by name or address..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {searchQuery && (
+          <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')} className="text-neutral-500">
+            Clear search
+          </Button>
+        )}
       </div>
 
       {loading ? (

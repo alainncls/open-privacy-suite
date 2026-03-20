@@ -351,6 +351,10 @@ func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address stri
 	return nil
 }
 
+func (m *MockStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 // Paginated list stubs
 func (m *MockStore) ListOrganizationsPaginated(ctx context.Context, limit, offset int) ([]*Organization, int, error) {
 	return nil, 0, nil

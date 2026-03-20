@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 
 	"github.com/google/uuid"
@@ -579,23 +578,34 @@ func TestCreateDeployerAutoGrants(t *testing.T) {
 	contractID := createTestContract(t, server, org.ID, addr, "Auto Grant Contract")
 
 	// Call CreateDeployerAutoGrants directly
-	group, err := server.db.CreateDeployerAutoGrants(ctx, db.DeployerAutoGrantParams{
-		OrgID:              org.ID,
-		ContractID:         contractID,
-		DeployerUserID:     user.ID,
-		DeployerExternalID: user.ExternalID,
-	})
+	err := server.db.CreateDeployerAutoGrants(ctx, org.ID, contractID, user.ID, user.ExternalID)
 	require.NoError(t, err)
-	require.NotNil(t, group)
+
+	// Find the auto-created group via contract grants
+	grants, err := server.db.ListContractGrantsByContract(ctx, contractID)
+	require.NoError(t, err)
+	require.NotEmpty(t, grants, "contract should have at least one grant")
+
+	// Find the auto-created group among the grants
+	var autoGroupID string
+	for _, g := range grants {
+		grp, gErr := server.db.GetGroup(ctx, g.GroupID)
+		require.NoError(t, gErr)
+		if grp != nil && grp.AutoCreated {
+			autoGroupID = grp.ID
+			break
+		}
+	}
+	require.NotEmpty(t, autoGroupID, "should find an auto-created group via contract grants")
 
 	// Verify the group was created with auto_created: true
-	fetchedGroup, err := server.db.GetGroup(ctx, group.ID)
+	fetchedGroup, err := server.db.GetGroup(ctx, autoGroupID)
 	require.NoError(t, err)
 	require.NotNil(t, fetchedGroup)
 	assert.True(t, fetchedGroup.AutoCreated)
 
 	// Verify group access has deploy claims
-	access, err := server.db.GetGroupAccess(ctx, group.ID)
+	access, err := server.db.GetGroupAccess(ctx, autoGroupID)
 	require.NoError(t, err)
 	require.NotNil(t, access)
 
@@ -608,21 +618,8 @@ func TestCreateDeployerAutoGrants(t *testing.T) {
 	assert.True(t, claimSet[rbac.ClaimWrite], "should have write claim (expanded)")
 
 	// Verify user has membership in the group
-	members, err := server.db.ListGroupMembers(ctx, group.ID)
+	members, err := server.db.ListGroupMembers(ctx, autoGroupID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal(t, user.ID, members[0].UserID)
-
-	// Verify contract has a grant to the group
-	grants, err := server.db.ListContractGrantsByContract(ctx, contractID)
-	require.NoError(t, err)
-
-	found := false
-	for _, g := range grants {
-		if g.GroupID == group.ID {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "contract should have a grant to the auto-created group")
 }

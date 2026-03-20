@@ -69,6 +69,11 @@ type Store interface {
 	DeleteContractGrant(ctx context.Context, id string) error
 	GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error)
 
+	// Deployer auto-grant operations
+	// CreateDeployerAutoGrants atomically creates a deployer group (auto_created: true),
+	// group access with deploy claims, deployer membership, and contract grant.
+	CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error
+
 	// ETH Address operations (for parameter constraint enforcement)
 	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)
 	SystemLinkEthAddress(ctx context.Context, did, ethAddress string) error

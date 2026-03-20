@@ -69,6 +69,10 @@ func (m *MockUpgradeStore) AddOwnedAddress(orgID, address string) {
 	m.ownedAddresses[orgID][addr] = true
 }
 
+func (m *MockUpgradeStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 func TestIsUpgradeSelector(t *testing.T) {
 	tests := []struct {
 		name     string

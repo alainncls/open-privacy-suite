@@ -2031,6 +2031,15 @@ func (c *AccessController) NotifyDeploymentMined(
 		if err := c.store.CreateContract(ctx, contract); err != nil {
 			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
 			// Still clean up pre-registration even if contract creation failed.
+		} else if deployment.DeployerUserID != "" {
+			// Create deployer auto-grant group (non-fatal if it fails)
+			deployerDID := ""
+			if user, err := c.store.GetUser(ctx, deployment.DeployerUserID); err == nil && user != nil {
+				deployerDID = user.ExternalID
+			}
+			if err := c.store.CreateDeployerAutoGrants(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID, deployerDID); err != nil {
+				slog.Warn("failed to create deployer auto-grants", "address", contractAddress, "error", err)
+			}
 		}
 		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
 			slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)

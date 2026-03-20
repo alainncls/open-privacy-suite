@@ -20,7 +20,12 @@ import (
 func (s *Server) listContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
 	limit, offset := parsePaginationParams(c, 50)
-	contracts, total, err := s.db.ListContractsPaginated(c.Request.Context(), orgID, limit, offset)
+
+	filter := db.ContractListFilter{
+		Search: c.Query("search"),
+	}
+
+	contracts, total, err := s.db.ListContractsFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

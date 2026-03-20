@@ -158,14 +158,6 @@ func (d *DB) EnsureUserExistsWithMembership(ctx context.Context, user *rbac.User
 	return resultUser, err
 }
 
-// DeployerAutoGrantParams contains the parameters for creating deployer auto-grants.
-type DeployerAutoGrantParams struct {
-	OrgID              string
-	ContractID         string // The already-created contract ID
-	DeployerUserID     string // Internal user ID
-	DeployerExternalID string // User's DID or display identifier
-}
-
 // CreateDeployerAutoGrants atomically creates a deployer auto-grant group with:
 // - A group (auto_created: true) with a descriptive name
 // - Group access with [deploy] claims (expanded to [deploy, read, write])
@@ -174,9 +166,9 @@ type DeployerAutoGrantParams struct {
 //
 // This is called after a contract is auto-registered from a deployment.
 // If any step fails, the entire operation is rolled back (no orphaned groups).
-func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGrantParams) (*rbac.Group, error) {
+func (d *DB) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
 	// Build a human-readable name: "Deploy by <short_id> · Mar 20"
-	shortID := params.DeployerExternalID
+	shortID := deployerExternalID
 	if len(shortID) > 16 {
 		shortID = shortID[:16]
 	}
@@ -189,7 +181,7 @@ func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGr
 	groupID := uuid.New().String()
 	group := &rbac.Group{
 		ID:          groupID,
-		OrgID:       params.OrgID,
+		OrgID:       orgID,
 		Slug:        slug,
 		Name:        groupName,
 		Depth:       0,
@@ -220,11 +212,11 @@ func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGr
 		}
 
 		// 3. Create membership for the deployer
-		if params.DeployerUserID != "" {
+		if deployerUserID != "" {
 			membershipID := uuid.New().String()
 			if err := tx.CreateMembership(ctx, &rbac.UserMembership{
 				ID:      membershipID,
-				UserID:  params.DeployerUserID,
+				UserID:  deployerUserID,
 				GroupID: groupID,
 				Source:  rbac.MembershipSourceAdmin,
 			}); err != nil {
@@ -236,7 +228,7 @@ func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGr
 		grantID := uuid.New().String()
 		if err := tx.CreateContractGrant(ctx, &rbac.ContractGrant{
 			ID:         grantID,
-			ContractID: params.ContractID,
+			ContractID: contractID,
 			GroupID:    groupID,
 		}); err != nil {
 			return fmt.Errorf("failed to create deployer contract grant: %w", err)
@@ -244,9 +236,5 @@ func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGr
 
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return group, nil
+	return err
 }

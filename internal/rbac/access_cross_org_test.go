@@ -326,6 +326,10 @@ func (m *MockCrossOrgStore) DeleteSharedInfrastructure(ctx context.Context, addr
 	return nil
 }
 
+func (m *MockCrossOrgStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 // Helper to normalize address
 func normalizeAddress(addr string) string {
 	if len(addr) >= 2 && addr[:2] == "0x" {

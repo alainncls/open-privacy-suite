@@ -80,6 +80,10 @@ func (s *factoryCallTestStore) DeletePreregisteredAddressByAddress(ctx context.C
 	return nil
 }
 
+func (s *factoryCallTestStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 // buildDeployCalldata builds calldata for factory.deploy(bytes32 salt, bytes creationCode)
 // Selector: 0xcdcb760a
 func buildDeployCalldata(salt [32]byte, creationCode []byte) []byte {
