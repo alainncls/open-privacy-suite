@@ -1988,7 +1988,7 @@ func (c *AccessController) NotifyDeploymentMined(
 		if err := c.store.CreateContract(ctx, contract); err != nil {
 			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
 			// Still clean up pre-registration even if contract creation failed.
-		} else {
+		} else if deployment.DeployerUserID != "" {
 			// Contract created successfully — auto-grant deployer's groups access
 			c.CreateDeployerAutoGrants(ctx, contract.ID, deployment.DeployerUserID, deployment.OrgID)
 		}
