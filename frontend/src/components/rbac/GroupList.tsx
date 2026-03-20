@@ -301,7 +301,7 @@ export default function GroupList() {
 
       {/* Selection toolbar */}
       {selectedIds.size > 0 && (
-        <div data-testid="group-selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-error-light rounded-lg border border-error/20">
+        <div data-testid="selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-error-light rounded-lg border border-error/20">
           <span className="text-sm font-medium text-error-dark">
             {selectedIds.size} selected
           </span>

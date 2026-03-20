@@ -291,6 +291,10 @@ async function ensureAdminClaim(userDID: string): Promise<void> {
     body: JSON.stringify({ group_id: groupId }),
   });
   if (!memberRes.ok && memberRes.status !== 409) {
-    throw new Error(`Failed to add admin membership: ${memberRes.status} - ${await memberRes.text()}`);
+    const body = await memberRes.text();
+    // Treat duplicate key constraint as success (membership already exists via dev provisioner)
+    if (!body.includes('duplicate key') && !body.includes('23505')) {
+      throw new Error(`Failed to add admin membership: ${memberRes.status} - ${body}`);
+    }
   }
 }

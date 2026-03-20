@@ -1,6 +1,7 @@
 import { APIRequestContext } from '@playwright/test';
 
 const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+const ADMIN_TOKEN = process.env.ADMIN_API_TOKEN || 'e2e-test-admin-token';
 
 // === Types ===
 
@@ -247,6 +248,11 @@ export function fns(...selectors: string[]): FunctionRule[] {
 // === API Client ===
 
 export class RBACApiClient {
+  private adminHeaders = {
+    'Content-Type': 'application/json',
+    'X-Admin-Token': ADMIN_TOKEN,
+  };
+
   constructor(private request: APIRequestContext) {}
 
   // === Organizations ===
@@ -265,7 +271,7 @@ export class RBACApiClient {
 
   async createOrganization(input: CreateOrgInput): Promise<Organization> {
     const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -289,7 +295,7 @@ export class RBACApiClient {
 
   async updateOrganization(orgId: string, input: UpdateOrgInput): Promise<Organization> {
     const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -321,7 +327,7 @@ export class RBACApiClient {
 
   async createGroup(orgId: string, input: CreateGroupInput): Promise<Group> {
     const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -345,7 +351,7 @@ export class RBACApiClient {
 
   async updateGroup(orgId: string, groupId: string, input: UpdateGroupInput): Promise<Group> {
     const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -385,7 +391,7 @@ export class RBACApiClient {
     const response = await this.request.put(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`,
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.adminHeaders,
         data: input,
       }
     );
@@ -424,7 +430,7 @@ export class RBACApiClient {
 
   async updateUser(userId: string, input: UpdateUserInput): Promise<User> {
     const response = await this.request.put(`${ADMIN_URL}/api/v1/admin/users/${userId}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -469,7 +475,7 @@ export class RBACApiClient {
 
   async createMembership(userId: string, input: CreateMembershipInput): Promise<UserMembership> {
     const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/users/${userId}/memberships`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -503,7 +509,7 @@ export class RBACApiClient {
 
   async createContract(orgId: string, input: CreateContractInput): Promise<Contract> {
     const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: input,
     });
     if (!response.ok()) {
@@ -521,7 +527,7 @@ export class RBACApiClient {
     const response = await this.request.put(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`,
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.adminHeaders,
         data: input,
       }
     );
@@ -560,7 +566,7 @@ export class RBACApiClient {
     const response = await this.request.put(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/abi`,
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.adminHeaders,
         data: { abi },
       }
     );
@@ -593,7 +599,7 @@ export class RBACApiClient {
     const response = await this.request.post(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants`,
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.adminHeaders,
         data: input,
       }
     );
@@ -613,7 +619,7 @@ export class RBACApiClient {
     const response = await this.request.put(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants/${groupId}`,
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.adminHeaders,
         data: input,
       }
     );
@@ -638,7 +644,7 @@ export class RBACApiClient {
 
   async checkAccess(req: AccessCheckRequest): Promise<AccessCheckResult> {
     const response = await this.request.post(`${ADMIN_URL}/api/v1/admin/access/check`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.adminHeaders,
       data: req,
     });
     if (!response.ok()) {
@@ -679,7 +685,7 @@ export class RBACApiClient {
   }): Promise<{ target_group_id: string; moved_count: number; deleted_group_ids?: string[] }> {
     const response = await this.request.post(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/batch-move`,
-      { headers: { 'Content-Type': 'application/json' }, data: body }
+      { headers: this.adminHeaders, data: body }
     );
     if (!response.ok()) {
       const text = await response.text();
@@ -691,7 +697,7 @@ export class RBACApiClient {
   async batchDeleteGroups(orgId: string, groupIds: string[]): Promise<{ deleted_count: number }> {
     const response = await this.request.post(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/batch-delete`,
-      { headers: { 'Content-Type': 'application/json' }, data: { group_ids: groupIds } }
+      { headers: this.adminHeaders, data: { group_ids: groupIds } }
     );
     if (!response.ok()) {
       const text = await response.text();
@@ -708,7 +714,7 @@ export class RBACApiClient {
   }> {
     const response = await this.request.post(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/batch-delete-preview`,
-      { headers: { 'Content-Type': 'application/json' }, data: { group_ids: groupIds } }
+      { headers: this.adminHeaders, data: { group_ids: groupIds } }
     );
     if (!response.ok()) {
       const text = await response.text();

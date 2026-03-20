@@ -61,16 +61,16 @@ export const selectors = {
   // Batch operations
   batch: {
     // Contract list
-    contractSelectAll: '[data-testid="contract-select-all"]',
-    contractSelectionToolbar: '[data-testid="contract-selection-toolbar"]',
-    moveToGroupBtn: '[data-testid="move-to-group-btn"]',
-    clearSelectionBtn: '[data-testid="clear-selection-btn"]',
+    selectAll: '[data-testid="contract-select-all"]',
+    toolbar: '[data-testid="selection-toolbar"]',
+    moveBtn: '[data-testid="move-to-group-btn"]',
+    clearBtn: '[data-testid="clear-selection-btn"]',
     // Group list
-    groupFilterAll: '[data-testid="group-filter-all"]',
-    groupFilterAuto: '[data-testid="group-filter-auto"]',
-    groupFilterManual: '[data-testid="group-filter-manual"]',
-    groupSelectionToolbar: '[data-testid="group-selection-toolbar"]',
-    batchDeleteBtn: '[data-testid="batch-delete-btn"]',
+    filterAll: '[data-testid="group-filter-all"]',
+    filterAuto: '[data-testid="group-filter-auto"]',
+    filterManual: '[data-testid="group-filter-manual"]',
+    // groupToolbar intentionally same as toolbar — only one is visible at a time
+    deleteBtn: '[data-testid="batch-delete-btn"]',
     autoBadge: '[data-testid="auto-badge"]',
     // Move dialog
     moveDialog: '[data-testid="move-dialog"]',

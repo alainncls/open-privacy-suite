@@ -261,7 +261,7 @@ export default function ContractList() {
           <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
         </div>
       ) : selectedIds.size > 0 ? (
-        <div data-testid="contract-selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary/20">
+        <div data-testid="selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary/20">
           <span className="text-sm font-medium text-primary">
             {selectedIds.size} selected
           </span>
