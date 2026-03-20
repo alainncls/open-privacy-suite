@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -16,7 +18,17 @@ import (
 func (s *Server) listGroups(c *gin.Context) {
 	orgID := c.Param("org_id")
 	limit, offset := parsePaginationParams(c, 50)
-	groups, total, err := s.db.ListGroupsWithAccessPaginated(c.Request.Context(), orgID, limit, offset)
+
+	// Parse optional filters
+	filter := db.GroupListFilter{
+		Search: c.Query("search"),
+	}
+	if ac := c.Query("auto_created"); ac != "" {
+		val := ac == "true"
+		filter.AutoCreated = &val
+	}
+
+	groups, total, err := s.db.ListGroupsWithAccessFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -41,6 +53,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		Description string  `json:"description"`
 		ParentID    *string `json:"parent_id"`
 		IsOrgAdmin  bool    `json:"is_org_admin"`
+		AutoCreated bool    `json:"auto_created"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -88,6 +101,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		Depth:       depth,
 		Path:        path,
 		IsOrgAdmin:  input.IsOrgAdmin,
+		AutoCreated: input.AutoCreated,
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
@@ -313,4 +327,151 @@ func (s *Server) populateEffectiveClaims(ctx context.Context, group *rbac.Group,
 			}
 		}
 	}
+}
+
+// batchDeletePreview returns information about groups to be deleted.
+// POST /orgs/:org_id/groups/batch-delete-preview
+func (s *Server) batchDeletePreview(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		GroupIDs []string `json:"group_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(input.GroupIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group_ids is required"})
+		return
+	}
+
+	type groupPreview struct {
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Slug          string   `json:"slug"`
+		AutoCreated   bool     `json:"auto_created"`
+		ContractCount int      `json:"contract_count"`
+		MemberCount   int      `json:"member_count"`
+		Contracts     []string `json:"contracts"` // contract addresses
+	}
+
+	var previews []groupPreview
+	for _, gid := range input.GroupIDs {
+		group, err := s.db.GetGroup(c.Request.Context(), gid)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if group == nil || group.OrgID != orgID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "group " + gid + " not found in this organization"})
+			return
+		}
+
+		// Count grants and get contract addresses
+		grants, err := s.db.ListContractGrantsByGroup(c.Request.Context(), gid)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		var contractAddresses []string
+		if len(grants) > 0 {
+			contractIDs := make([]string, len(grants))
+			for i, g := range grants {
+				contractIDs[i] = g.ContractID
+			}
+			contracts, err := s.db.GetContractsByIDs(c.Request.Context(), contractIDs)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			for _, contract := range contracts {
+				contractAddresses = append(contractAddresses, contract.Address)
+			}
+		}
+
+		// Count members
+		members, err := s.db.ListGroupMembers(c.Request.Context(), gid)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		previews = append(previews, groupPreview{
+			ID:            group.ID,
+			Name:          group.Name,
+			Slug:          group.Slug,
+			AutoCreated:   group.AutoCreated,
+			ContractCount: len(grants),
+			MemberCount:   len(members),
+			Contracts:     contractAddresses,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"groups": previews})
+}
+
+// batchDeleteGroups deletes multiple groups atomically.
+// POST /orgs/:org_id/groups/batch-delete
+func (s *Server) batchDeleteGroups(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		GroupIDs []string `json:"group_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(input.GroupIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group_ids is required"})
+		return
+	}
+
+	err := s.db.WithTx(c.Request.Context(), func(tx *db.Tx) error {
+		ctx := c.Request.Context()
+
+		// Verify all groups belong to this org
+		groups, err := tx.GetGroupsByIDs(ctx, orgID, input.GroupIDs)
+		if err != nil {
+			return fmt.Errorf("failed to get groups: %w", err)
+		}
+		foundIDs := make(map[string]bool, len(groups))
+		for _, g := range groups {
+			foundIDs[g.ID] = true
+		}
+		for _, gid := range input.GroupIDs {
+			if !foundIDs[gid] {
+				return fmt.Errorf("group %s not found in this organization", gid)
+			}
+		}
+
+		// Delete each group with dependencies
+		for _, gid := range input.GroupIDs {
+			if err := tx.DeleteGroupWithDependenciesTx(ctx, gid); err != nil {
+				return fmt.Errorf("failed to delete group %s: %w", gid, err)
+			}
+		}
+
+		// Invalidate org cache
+		if err := tx.InvalidateCacheForOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("failed to invalidate cache: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted_count": len(input.GroupIDs)})
 }

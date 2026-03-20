@@ -66,9 +66,7 @@ var GlobalBlockedMethods = map[string]bool{
 	"debug_traceblockbyhash":            true,
 	"debug_traceblockbynumber":          true,
 	"debug_traceblockfromfile":          true,
-	"debug_tracecall":                   true,
 	"debug_tracechain":                  true,
-	"debug_tracetransaction":            true,
 	"debug_unsubscribe":                 true,
 	"debug_verbosity":                   true,
 	"debug_vmodule":                     true,
@@ -187,6 +185,13 @@ var blockedMethodPrefixes = []string{
 	"les_",
 }
 
+// prefixBlockExemptions are methods that match a blocked prefix but are explicitly
+// allowed through to the RBAC layer (e.g., debug trace methods gated by deploy claim).
+var prefixBlockExemptions = map[string]bool{
+	"debug_tracetransaction": true,
+	"debug_tracecall":        true,
+}
+
 // IsMethodBlocked checks if a method is globally blocked.
 // Case-insensitive matching is used for security.
 func IsMethodBlocked(method string) bool {
@@ -195,6 +200,11 @@ func IsMethodBlocked(method string) bool {
 	// Check exact match in map (O(1) lookup)
 	if GlobalBlockedMethods[method] {
 		return true
+	}
+
+	// Check exemptions before prefix blocking
+	if prefixBlockExemptions[method] {
+		return false
 	}
 
 	// Check prefix matches for future-proofing

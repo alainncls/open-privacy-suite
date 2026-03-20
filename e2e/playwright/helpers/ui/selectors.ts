@@ -57,6 +57,36 @@ export const selectors = {
     dialogTitle: '[role="dialog"] h2',
     alertDialog: '[role="alertdialog"]',
   },
+
+  // Batch operations
+  batch: {
+    // Contract list
+    contractSelectAll: '[data-testid="contract-select-all"]',
+    contractSelectionToolbar: '[data-testid="contract-selection-toolbar"]',
+    moveToGroupBtn: '[data-testid="move-to-group-btn"]',
+    clearSelectionBtn: '[data-testid="clear-selection-btn"]',
+    // Group list
+    groupFilterAll: '[data-testid="group-filter-all"]',
+    groupFilterAuto: '[data-testid="group-filter-auto"]',
+    groupFilterManual: '[data-testid="group-filter-manual"]',
+    groupSelectionToolbar: '[data-testid="group-selection-toolbar"]',
+    batchDeleteBtn: '[data-testid="batch-delete-btn"]',
+    autoBadge: '[data-testid="auto-badge"]',
+    // Move dialog
+    moveDialog: '[data-testid="move-dialog"]',
+    moveExistingRadio: '[data-testid="move-existing-radio"]',
+    moveNewRadio: '[data-testid="move-new-radio"]',
+    moveGroupSelect: '[data-testid="move-group-select"]',
+    moveNewName: '[data-testid="move-new-name"]',
+    moveNewSlug: '[data-testid="move-new-slug"]',
+    moveDeleteEmptyCheckbox: '[data-testid="move-delete-empty-checkbox"]',
+    moveConfirmBtn: '[data-testid="move-confirm-btn"]',
+    moveCancelBtn: '[data-testid="move-cancel-btn"]',
+    // Batch delete dialog
+    batchDeleteDialog: '[data-testid="batch-delete-dialog"]',
+    batchDeleteConfirmBtn: '[data-testid="batch-delete-confirm-btn"]',
+    batchDeleteCancelBtn: '[data-testid="batch-delete-cancel-btn"]',
+  },
 } as const;
 
 /**

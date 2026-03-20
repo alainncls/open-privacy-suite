@@ -3,8 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"privacy-proxy/internal/rbac"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // CreateContractWithGrant creates a contract and its initial grant atomically.
@@ -152,4 +156,97 @@ func (d *DB) EnsureUserExistsWithMembership(ctx context.Context, user *rbac.User
 	})
 
 	return resultUser, err
+}
+
+// DeployerAutoGrantParams contains the parameters for creating deployer auto-grants.
+type DeployerAutoGrantParams struct {
+	OrgID              string
+	ContractID         string // The already-created contract ID
+	DeployerUserID     string // Internal user ID
+	DeployerExternalID string // User's DID or display identifier
+}
+
+// CreateDeployerAutoGrants atomically creates a deployer auto-grant group with:
+// - A group (auto_created: true) with a descriptive name
+// - Group access with [deploy] claims (expanded to [deploy, read, write])
+// - A membership for the deployer user
+// - A contract grant linking the group to the contract
+//
+// This is called after a contract is auto-registered from a deployment.
+// If any step fails, the entire operation is rolled back (no orphaned groups).
+func (d *DB) CreateDeployerAutoGrants(ctx context.Context, params DeployerAutoGrantParams) (*rbac.Group, error) {
+	// Build a human-readable name: "Deploy by <short_id> · Mar 20"
+	shortID := params.DeployerExternalID
+	if len(shortID) > 16 {
+		shortID = shortID[:16]
+	}
+	dateSuffix := time.Now().Format("Jan 02")
+	groupName := fmt.Sprintf("Deploy by %s · %s", shortID, dateSuffix)
+
+	// Slug: deploy-<contract_address_prefix>-<random_suffix>
+	slug := fmt.Sprintf("deploy-%s", uuid.New().String()[:8])
+
+	groupID := uuid.New().String()
+	group := &rbac.Group{
+		ID:          groupID,
+		OrgID:       params.OrgID,
+		Slug:        slug,
+		Name:        groupName,
+		Depth:       0,
+		Path:        slug,
+		AutoCreated: true,
+	}
+
+	err := d.WithTx(ctx, func(tx *Tx) error {
+		// 1. Create the group
+		if err := tx.CreateGroup(ctx, group); err != nil {
+			return fmt.Errorf("failed to create deployer group: %w", err)
+		}
+
+		// 2. Create group access with deploy claims (expanded)
+		claims := rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy})
+		claimStrs := make([]string, len(claims))
+		for i, c := range claims {
+			claimStrs[i] = string(c)
+		}
+		accessID := uuid.New().String()
+		_, err := tx.tx.ExecContext(ctx,
+			`INSERT INTO group_access (id, group_id, allowed_methods, claims)
+			 VALUES ($1, $2, $3, $4)`,
+			accessID, groupID, pq.Array([]string{"*"}), pq.Array(claimStrs),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create deployer group access: %w", err)
+		}
+
+		// 3. Create membership for the deployer
+		if params.DeployerUserID != "" {
+			membershipID := uuid.New().String()
+			if err := tx.CreateMembership(ctx, &rbac.UserMembership{
+				ID:      membershipID,
+				UserID:  params.DeployerUserID,
+				GroupID: groupID,
+				Source:  rbac.MembershipSourceAdmin,
+			}); err != nil {
+				return fmt.Errorf("failed to create deployer membership: %w", err)
+			}
+		}
+
+		// 4. Create contract grant
+		grantID := uuid.New().String()
+		if err := tx.CreateContractGrant(ctx, &rbac.ContractGrant{
+			ID:         grantID,
+			ContractID: params.ContractID,
+			GroupID:    groupID,
+		}); err != nil {
+			return fmt.Errorf("failed to create deployer contract grant: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return group, nil
 }

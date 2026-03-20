@@ -474,10 +474,14 @@ func TestIsMethodBlocked(t *testing.T) {
 		method   string
 		expected bool
 	}{
-		// Should be blocked - debug namespace
-		{"debug_traceTransaction", "debug_traceTransaction", true},
+		// Should be blocked - debug namespace (except exempted trace methods)
 		{"debug_setHead", "debug_setHead", true},
 		{"debug_unknown", "debug_unknown", true}, // prefix match
+
+		// Should NOT be blocked - exempted debug trace methods (gated by deploy claim instead)
+		{"debug_traceTransaction", "debug_traceTransaction", false},
+		{"debug_traceCall", "debug_traceCall", false},
+		{"debug_traceCall_case", "DEBUG_TRACECALL", false}, // case-insensitive exemption
 
 		// Should be blocked - admin namespace
 		{"admin_addPeer", "admin_addPeer", true},

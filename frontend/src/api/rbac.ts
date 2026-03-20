@@ -30,6 +30,12 @@ import type {
   ContractSyncDeleteResponse,
   PaginatedResponse,
   GroupWithAccess,
+  BatchMoveRequest,
+  BatchMoveResponse,
+  BatchDeleteRequest,
+  BatchDeleteResponse,
+  BatchDeletePreviewRequest,
+  BatchDeletePreviewResponse,
 } from '../types/rbac';
 
 const api = adminApi;
@@ -48,7 +54,7 @@ export const rbacApi = {
 
   // Groups
   groups: {
-    list: (orgId: string, params?: { limit?: number; offset?: number }) =>
+    list: (orgId: string, params?: { limit?: number; offset?: number; auto_created?: boolean; search?: string }) =>
       api.get<PaginatedResponse<GroupWithAccess>>(`/orgs/${orgId}/groups`, { params }),
     get: (orgId: string, groupId: string) =>
       api.get<Group>(`/orgs/${orgId}/groups/${groupId}`),
@@ -63,6 +69,10 @@ export const rbacApi = {
       api.get<GroupAccess>(`/orgs/${orgId}/groups/${groupId}/access`),
     setAccess: (orgId: string, groupId: string, input: SetGroupAccessInput) =>
       api.put<GroupAccess>(`/orgs/${orgId}/groups/${groupId}/access`, input),
+    batchDelete: (orgId: string, input: BatchDeleteRequest) =>
+      api.post<BatchDeleteResponse>(`/orgs/${orgId}/groups/batch-delete`, input),
+    batchDeletePreview: (orgId: string, input: BatchDeletePreviewRequest) =>
+      api.post<BatchDeletePreviewResponse>(`/orgs/${orgId}/groups/batch-delete-preview`, input),
   },
 
   // Users
@@ -117,6 +127,9 @@ export const rbacApi = {
       api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),
     syncDelete: (orgId: string, contractIds: string[]) =>
       api.post<ContractSyncDeleteResponse>(`/orgs/${orgId}/contracts/sync-delete`, { contract_ids: contractIds }),
+    // Batch move contracts between groups
+    batchMove: (orgId: string, input: BatchMoveRequest) =>
+      api.post<BatchMoveResponse>(`/orgs/${orgId}/contracts/batch-move`, input),
     // Grant summary (counts + group names per contract)
     grantSummary: (orgId: string) =>
       api.get<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>(

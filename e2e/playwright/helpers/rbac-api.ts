@@ -27,6 +27,7 @@ export interface Group {
   description: string;
   depth: number;
   path: string;
+  auto_created?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -187,6 +188,7 @@ export interface CreateGroupInput {
   name: string;
   description?: string;
   parent_id?: string;
+  auto_created?: boolean;
 }
 
 export interface UpdateGroupInput {
@@ -665,5 +667,53 @@ export class RBACApiClient {
       throw new Error(`Failed to get cache stats: ${response.status()} - ${body}`);
     }
     return (await response.json()) as CacheStats;
+  }
+
+  // === Batch Operations ===
+
+  async batchMoveContracts(orgId: string, body: {
+    contract_ids: string[];
+    target_group_id?: string;
+    new_group?: { slug: string; name: string };
+    delete_empty_auto_groups?: boolean;
+  }): Promise<{ target_group_id: string; moved_count: number; deleted_group_ids?: string[] }> {
+    const response = await this.request.post(
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/batch-move`,
+      { headers: { 'Content-Type': 'application/json' }, data: body }
+    );
+    if (!response.ok()) {
+      const text = await response.text();
+      throw new Error(`Failed to batch move contracts: ${response.status()} - ${text}`);
+    }
+    return (await response.json()) as any;
+  }
+
+  async batchDeleteGroups(orgId: string, groupIds: string[]): Promise<{ deleted_count: number }> {
+    const response = await this.request.post(
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/batch-delete`,
+      { headers: { 'Content-Type': 'application/json' }, data: { group_ids: groupIds } }
+    );
+    if (!response.ok()) {
+      const text = await response.text();
+      throw new Error(`Failed to batch delete groups: ${response.status()} - ${text}`);
+    }
+    return (await response.json()) as any;
+  }
+
+  async batchDeletePreview(orgId: string, groupIds: string[]): Promise<{
+    groups: Array<{
+      id: string; name: string; slug: string; auto_created: boolean;
+      contract_count: number; member_count: number; contracts: string[];
+    }>;
+  }> {
+    const response = await this.request.post(
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/batch-delete-preview`,
+      { headers: { 'Content-Type': 'application/json' }, data: { group_ids: groupIds } }
+    );
+    if (!response.ok()) {
+      const text = await response.text();
+      throw new Error(`Failed to batch delete preview: ${response.status()} - ${text}`);
+    }
+    return (await response.json()) as any;
   }
 }
