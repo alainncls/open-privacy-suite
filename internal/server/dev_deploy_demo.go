@@ -182,6 +182,17 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 			return
 		}
 		registered = true
+
+		// Auto-create deployer group + grant for the admin who triggered the deploy.
+		if s.rbacAccessCtrl != nil {
+			adminSubject, _ := c.Get("admin_subject")
+			if adminDID, ok := adminSubject.(string); ok && adminDID != "" {
+				user, err := s.db.GetUserByExternalID(ctx, adminDID)
+				if err == nil && user != nil {
+					s.rbacAccessCtrl.CreateDeployerAutoGrants(ctx, contract.ID, user.ID, req.OrgID)
+				}
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, DeployDemoERC20Response{
