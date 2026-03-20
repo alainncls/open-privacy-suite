@@ -184,8 +184,8 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		registered = true
 
 		// Create deployer auto-grant group (best-effort, non-fatal)
-		// Try to get the authenticated user from JWT context
-		if subject, exists := c.Get("subject"); exists {
+		// Try to get the authenticated user from JWT context (admin middleware uses "admin_subject")
+		if subject, exists := c.Get("admin_subject"); exists {
 			if userDID, ok := subject.(string); ok && userDID != "" {
 				if user, err := s.db.GetUserByExternalID(ctx, userDID); err == nil && user != nil {
 					if err := s.db.CreateDeployerAutoGrants(ctx, req.OrgID, contract.ID, user.ID, user.ExternalID); err != nil {
