@@ -255,10 +255,20 @@ export class RBACApiClient {
 
   constructor(private request: APIRequestContext) {}
 
+  // Helper: GET with admin auth headers
+  private get(url: string) {
+    return this.request.get(url, { headers: this.adminHeaders });
+  }
+
+  // Helper: DELETE with admin auth headers
+  private del(url: string) {
+    return this.request.delete(url, { headers: this.adminHeaders });
+  }
+
   // === Organizations ===
 
   async listOrganizations(limit = 1000, offset = 0): Promise<Organization[]> {
-    const response = await this.request.get(
+    const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/orgs?limit=${limit}&offset=${offset}`
     );
     if (!response.ok()) {
@@ -282,7 +292,7 @@ export class RBACApiClient {
   }
 
   async getOrganization(orgId: string): Promise<Organization | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -306,7 +316,7 @@ export class RBACApiClient {
   }
 
   async deleteOrganization(orgId: string): Promise<void> {
-    const response = await this.request.delete(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
+    const response = await this.del(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}`);
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
       throw new Error(`Failed to delete organization: ${response.status()} - ${body}`);
@@ -316,7 +326,7 @@ export class RBACApiClient {
   // === Groups ===
 
   async listGroups(orgId: string): Promise<Group[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list groups: ${response.status()} - ${body}`);
@@ -338,7 +348,7 @@ export class RBACApiClient {
   }
 
   async getGroup(orgId: string, groupId: string): Promise<Group | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -362,7 +372,7 @@ export class RBACApiClient {
   }
 
   async deleteGroup(orgId: string, groupId: string): Promise<void> {
-    const response = await this.request.delete(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
+    const response = await this.del(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
     if (!response.ok() && response.status() !== 404) {
       const body = await response.text();
       throw new Error(`Failed to delete group: ${response.status()} - ${body}`);
@@ -370,7 +380,7 @@ export class RBACApiClient {
   }
 
   async getGroupAccess(orgId: string, groupId: string): Promise<GroupAccess | null> {
-    const response = await this.request.get(
+    const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`
     );
     if (response.status() === 404) {
@@ -405,7 +415,7 @@ export class RBACApiClient {
   // === Users ===
 
   async listUsers(limit = 100, offset = 0): Promise<User[]> {
-    const response = await this.request.get(
+    const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/users?limit=${limit}&offset=${offset}`
     );
     if (!response.ok()) {
@@ -417,7 +427,7 @@ export class RBACApiClient {
   }
 
   async getUser(userId: string): Promise<User | null> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/users/${userId}`);
     if (response.status() === 404) {
       return null;
     }
@@ -448,7 +458,7 @@ export class RBACApiClient {
   // === Linked Addresses ===
 
   async getUserLinkedAddresses(userId: string): Promise<LinkedAddress[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/linked-addresses`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/linked-addresses`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to get user linked addresses: ${response.status()} - ${body}`);
@@ -464,7 +474,7 @@ export class RBACApiClient {
   // === Memberships ===
 
   async listUserMemberships(userId: string): Promise<MembershipWithDetails[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/memberships`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/users/${userId}/memberships`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list user memberships: ${response.status()} - ${body}`);
@@ -486,7 +496,7 @@ export class RBACApiClient {
   }
 
   async deleteMembership(userId: string, membershipId: string): Promise<void> {
-    const response = await this.request.delete(
+    const response = await this.del(
       `${ADMIN_URL}/api/v1/admin/users/${userId}/memberships/${membershipId}`
     );
     if (!response.ok() && response.status() !== 404) {
@@ -498,7 +508,7 @@ export class RBACApiClient {
   // === Contracts ===
 
   async listContracts(orgId: string): Promise<Contract[]> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to list contracts: ${response.status()} - ${body}`);
@@ -539,7 +549,7 @@ export class RBACApiClient {
   }
 
   async deleteContract(orgId: string, address: string): Promise<void> {
-    const response = await this.request.delete(
+    const response = await this.del(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`
     );
     if (!response.ok() && response.status() !== 404) {
@@ -549,7 +559,7 @@ export class RBACApiClient {
   }
 
   async getContract(orgId: string, address: string): Promise<Contract | null> {
-    const response = await this.request.get(
+    const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}`
     );
     if (response.status() === 404) {
@@ -580,7 +590,7 @@ export class RBACApiClient {
   // === Contract Grants ===
 
   async listContractGrants(orgId: string, address: string): Promise<ContractGrant[]> {
-    const response = await this.request.get(
+    const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants`
     );
     if (!response.ok()) {
@@ -631,7 +641,7 @@ export class RBACApiClient {
   }
 
   async deleteContractGrant(orgId: string, address: string, groupId: string): Promise<void> {
-    const response = await this.request.delete(
+    const response = await this.del(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/grants/${groupId}`
     );
     if (!response.ok() && response.status() !== 404) {
@@ -658,7 +668,7 @@ export class RBACApiClient {
     const url = orgSlug
       ? `${ADMIN_URL}/api/v1/admin/users/${userId}/effective-permissions?org=${orgSlug}`
       : `${ADMIN_URL}/api/v1/admin/users/${userId}/effective-permissions`;
-    const response = await this.request.get(url);
+    const response = await this.get(url);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to get effective permissions: ${response.status()} - ${body}`);
@@ -667,7 +677,7 @@ export class RBACApiClient {
   }
 
   async getCacheStats(): Promise<CacheStats> {
-    const response = await this.request.get(`${ADMIN_URL}/api/v1/admin/cache/stats`);
+    const response = await this.get(`${ADMIN_URL}/api/v1/admin/cache/stats`);
     if (!response.ok()) {
       const body = await response.text();
       throw new Error(`Failed to get cache stats: ${response.status()} - ${body}`);

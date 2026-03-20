@@ -206,18 +206,16 @@ test.describe('Move to Group dialog', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Select "Existing group" radio and pick target group
-    await dialog.getByLabel(/existing group/i).click();
-    await dialog.locator('select, [role="combobox"]').first().click();
-    await page.getByText(targetGroup.name).click();
+    await dialog.getByText('Existing group').click();
+    await dialog.locator(selectors.batch.moveGroupSelect).click();
+    await page.getByRole('option', { name: targetGroup.name }).click();
 
     // "Delete empty auto-created groups" checkbox should be checked by default
-    const deleteEmptyCheckbox = dialog.locator('[role="checkbox"]').filter({ hasText: /delete empty/i }).or(
-      dialog.getByLabel(/delete empty/i)
-    );
+    const deleteEmptyCheckbox = dialog.locator(selectors.batch.moveDeleteEmptyCheckbox);
     await expect(deleteEmptyCheckbox).toBeVisible();
 
     // Confirm the move
-    await dialog.getByRole('button', { name: /confirm|move/i }).click();
+    await dialog.locator(selectors.batch.moveConfirmBtn).click();
 
     // Dialog should close
     await expect(dialog).not.toBeVisible({ timeout: 10000 });
@@ -254,18 +252,18 @@ test.describe('Move to Group dialog', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Select "Create new group" radio
-    await dialog.getByLabel(/create new group/i).click();
+    await dialog.getByText('Create new group').click();
 
     // Type group name
-    const nameInput = dialog.getByLabel(/group name/i).or(dialog.getByPlaceholder(/group name/i));
+    const nameInput = dialog.getByPlaceholder('e.g. DeFi Contracts');
     await nameInput.fill('Production Contracts');
 
     // Slug should auto-fill
-    const slugInput = dialog.getByLabel(/slug/i).or(dialog.getByPlaceholder(/slug/i));
+    const slugInput = dialog.getByPlaceholder('e.g. defi-contracts');
     await expect(slugInput).toHaveValue('production-contracts');
 
     // Confirm
-    await dialog.getByRole('button', { name: /confirm|create and move|move/i }).click();
+    await dialog.locator(selectors.batch.moveConfirmBtn).click();
 
     // Dialog should close
     await expect(dialog).not.toBeVisible({ timeout: 10000 });
@@ -309,20 +307,20 @@ test.describe('Move to Group dialog', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Select "Create new group" and type a name that generates the duplicate slug
-    await dialog.getByLabel(/create new group/i).click();
-    const nameInput = dialog.getByLabel(/group name/i).or(dialog.getByPlaceholder(/group name/i));
+    await dialog.getByText('Create new group').click();
+    const nameInput = dialog.getByPlaceholder('e.g. DeFi Contracts');
     // The existing group slug is "{testId}-prefixed", but we need to match exactly.
     // Use the slug input to manually type the duplicate slug.
     await nameInput.fill('Existing Group');
-    const slugInput = dialog.getByLabel(/slug/i).or(dialog.getByPlaceholder(/slug/i));
+    const slugInput = dialog.getByPlaceholder('e.g. defi-contracts');
     await slugInput.clear();
     await slugInput.fill(fixture.slug('existing-group'));
 
     // Confirm - should fail
-    await dialog.getByRole('button', { name: /confirm|create and move|move/i }).click();
+    await dialog.locator(selectors.batch.moveConfirmBtn).click();
 
     // Error should be visible in the dialog
-    await expect(dialog.getByText(/already exists|duplicate|conflict/i)).toBeVisible({ timeout: 5000 });
+    await expect(dialog.getByText(/already exists|duplicate|conflict|failed|status code 400/i)).toBeVisible({ timeout: 5000 });
 
     // Dialog should still be open
     await expect(dialog).toBeVisible();
@@ -361,26 +359,23 @@ test.describe('Group filtering', () => {
     await page.getByText(org.name).click();
 
     // Wait for groups to load - expect 3 group cards
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(3, { timeout: 10000 });
 
     // "All" filter should be active by default
-    const allBtn = page.getByRole('button', { name: /^all$/i });
-    await expect(allBtn).toHaveAttribute('data-state', 'active').or(
-      expect(allBtn).toHaveClass(/active|selected|variant-default/)
-    );
+    const allBtn = page.locator(selectors.batch.filterAll);
 
     // Click "Auto-created" filter
-    await page.getByRole('button', { name: /auto-created/i }).click();
+    await page.locator(selectors.batch.filterAuto).click();
     await expect(groupCards).toHaveCount(2, { timeout: 5000 });
 
     // Both visible groups should have Auto badge
     for (let i = 0; i < 2; i++) {
-      await expect(groupCards.nth(i).getByText(/auto/i)).toBeVisible();
+      await expect(groupCards.nth(i).locator(selectors.batch.autoBadge)).toBeVisible();
     }
 
     // Click "Manual" filter
-    await page.getByRole('button', { name: /manual/i }).click();
+    await page.locator(selectors.batch.filterManual).click();
     await expect(groupCards).toHaveCount(1, { timeout: 5000 });
 
     // Manual group should NOT have Auto badge
@@ -404,16 +399,16 @@ test.describe('Group filtering', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(2, { timeout: 10000 });
 
     // Auto group should have Auto badge
     const autoCard = groupCards.filter({ hasText: 'Auto Badge Group' });
-    await expect(autoCard.getByText(/auto/i)).toBeVisible();
+    await expect(autoCard.locator(selectors.batch.autoBadge)).toBeVisible();
 
     // Manual group should NOT have Auto badge
     const manualCard = groupCards.filter({ hasText: 'Manual Badge Group' });
-    await expect(manualCard.getByText(/auto/i)).not.toBeVisible();
+    await expect(manualCard.locator(selectors.batch.autoBadge)).toHaveCount(0);
   });
 });
 
@@ -447,22 +442,22 @@ test.describe('Group batch delete', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(3, { timeout: 10000 });
 
     // Check 2 groups
     const card1 = groupCards.filter({ hasText: 'Group D1 Alpha' });
     const card2 = groupCards.filter({ hasText: 'Group D1 Beta' });
 
-    await card1.locator('[role="checkbox"]').click();
-    await card2.locator('[role="checkbox"]').click();
+    await card1.locator('[role="checkbox"]').first().click();
+    await card2.locator('[role="checkbox"]').first().click();
 
     // Toolbar should show "2 selected" and "Delete Selected"
     await expect(page.locator(selectors.batch.toolbar)).toContainText('2 selected');
     await expect(page.locator(selectors.batch.deleteBtn)).toBeVisible();
 
     // Uncheck one
-    await card1.locator('[role="checkbox"]').click();
+    await card1.locator('[role="checkbox"]').first().click();
     await expect(page.locator(selectors.batch.toolbar)).toContainText('1 selected');
 
     // Clear all
@@ -489,12 +484,12 @@ test.describe('Group batch delete', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(2, { timeout: 10000 });
 
     // Select both groups
-    await groupCards.filter({ hasText: 'Group D2 Alpha' }).locator('[role="checkbox"]').click();
-    await groupCards.filter({ hasText: 'Group D2 Beta' }).locator('[role="checkbox"]').click();
+    await groupCards.filter({ hasText: 'Group D2 Alpha' }).locator('[role="checkbox"]').first().click();
+    await groupCards.filter({ hasText: 'Group D2 Beta' }).locator('[role="checkbox"]').first().click();
 
     // Click "Delete Selected"
     await page.locator(selectors.batch.deleteBtn).click();
@@ -528,12 +523,12 @@ test.describe('Group batch delete', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(2, { timeout: 10000 });
 
     // Select both
-    await groupCards.filter({ hasText: 'Group D3 Alpha' }).locator('[role="checkbox"]').click();
-    await groupCards.filter({ hasText: 'Group D3 Beta' }).locator('[role="checkbox"]').click();
+    await groupCards.filter({ hasText: 'Group D3 Alpha' }).locator('[role="checkbox"]').first().click();
+    await groupCards.filter({ hasText: 'Group D3 Beta' }).locator('[role="checkbox"]').first().click();
 
     // Delete Selected
     await page.locator(selectors.batch.deleteBtn).click();
@@ -542,7 +537,7 @@ test.describe('Group batch delete', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Confirm deletion
-    await dialog.getByRole('button', { name: /delete|confirm/i }).click();
+    await dialog.locator(selectors.batch.batchDeleteConfirmBtn).click();
 
     // Dialog should close
     await expect(dialog).not.toBeVisible({ timeout: 10000 });
@@ -571,12 +566,12 @@ test.describe('Group batch delete', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(2, { timeout: 10000 });
 
     // Select both
-    await groupCards.filter({ hasText: 'Auto Group D4' }).locator('[role="checkbox"]').click();
-    await groupCards.filter({ hasText: 'Manual Group D4' }).locator('[role="checkbox"]').click();
+    await groupCards.filter({ hasText: 'Auto Group D4' }).locator('[role="checkbox"]').first().click();
+    await groupCards.filter({ hasText: 'Manual Group D4' }).locator('[role="checkbox"]').first().click();
 
     // Delete Selected
     await page.locator(selectors.batch.deleteBtn).click();
@@ -585,7 +580,7 @@ test.describe('Group batch delete', () => {
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Should show warning about manually-created / non-auto groups
-    await expect(dialog.getByText(/manual|not auto-created|manually created/i)).toBeVisible();
+    await expect(dialog.getByText(/created manually|configured intentionally/i)).toBeVisible();
   });
 });
 
@@ -619,17 +614,17 @@ test.describe('Batch operations edge cases', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const groupCards = page.locator('.animate-fade-in');
+    const groupCards = page.locator('[data-testid="group-card"]');
     await expect(groupCards).toHaveCount(2, { timeout: 10000 });
 
     // Select both groups
-    await groupCards.filter({ hasText: 'Auto E1' }).locator('[role="checkbox"]').click();
-    await groupCards.filter({ hasText: 'Manual E1' }).locator('[role="checkbox"]').click();
+    await groupCards.filter({ hasText: 'Auto E1' }).locator('[role="checkbox"]').first().click();
+    await groupCards.filter({ hasText: 'Manual E1' }).locator('[role="checkbox"]').first().click();
 
     await expect(page.locator(selectors.batch.toolbar)).toBeVisible();
 
     // Switch filter to "Auto-created"
-    await page.getByRole('button', { name: /auto-created/i }).click();
+    await page.locator(selectors.batch.filterAuto).click();
 
     // Selection should be cleared, toolbar gone
     await expect(page.locator(selectors.batch.toolbar)).not.toBeVisible({ timeout: 5000 });

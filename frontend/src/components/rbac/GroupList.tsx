@@ -150,7 +150,7 @@ export default function GroupList() {
       (gwa.access.allowed_methods?.length || 0) > 0;
 
     return (
-      <div key={gwa.group.id} className="animate-fade-in">
+      <div key={gwa.group.id} data-testid="group-card" className="animate-fade-in">
         <div
           className={`flex items-center gap-3 p-3 rounded-lg bg-neutral-100 hover:bg-primary-50 transition-colors ${
             level > 0 ? 'ml-6 border-l-2 border-neutral-200' : ''
@@ -316,6 +316,7 @@ export default function GroupList() {
             Delete Selected
           </Button>
           <Button
+            data-testid="clear-selection-btn"
             size="sm"
             variant="ghost"
             className="text-neutral-500"

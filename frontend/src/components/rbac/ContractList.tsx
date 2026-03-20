@@ -94,6 +94,11 @@ export default function ContractList() {
   const [deletingStale, setDeletingStale] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Clear selection when org changes
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [orgId]);
+
   useEffect(() => {
     if (orgId) {
       loadContracts(0);

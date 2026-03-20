@@ -106,8 +106,11 @@ export default function MoveToGroupDialog({
       onSuccess();
       onOpenChange(false);
     } catch (err: unknown) {
+      // Extract error message from Axios response if available
+      const axiosErr = err as { response?: { data?: { error?: string } } };
       const message =
-        err instanceof Error ? err.message : 'Failed to move contracts';
+        axiosErr?.response?.data?.error ||
+        (err instanceof Error ? err.message : 'Failed to move contracts');
       setError(message);
     } finally {
       setSubmitting(false);
