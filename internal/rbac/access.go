@@ -634,59 +634,13 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}
 		}
 
-		// Cross-org deploy claim check: for unregistered contracts, permissions are resolved
-		// for one org (typically default), which may not have deploy claims. Check if the user
-		// has deploy/admin claims in ANY of their group memberships across all orgs.
-		if access == nil && !hasExplicitAccess && ownerOrgID == "" {
-			hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, user.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check cross-org deploy claims: %w", err)
-			}
-			if hasDeployClaim {
-				access = &ContractAccess{
-					Claims:    []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
-					Functions: nil,
-				}
-			}
-		}
+		// NOTE: Broad deploy-claim access for unregistered contracts was removed.
+		// Deploy users now get access via auto-grants created at deployment time,
+		// not via a blanket "deploy claim = access to all unregistered contracts" rule.
 
-		// Deployer auto-grant: if the user deployed this contract, they get read+write access automatically.
-		// This happens even without explicit grants - the deployer should always be able to interact
-		// with their own contracts. Note: this does NOT grant upgrade/admin claims.
-		if access == nil || !containsClaim(access.Claims, requiredClaim) {
-			deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check contract deployer: %w", err)
-			}
-			if deployerID != nil && *deployerID == user.ID {
-				// User is the deployer - grant read+write access
-				deployerClaims := []Claim{ClaimRead, ClaimWrite}
-				if access == nil {
-					access = &ContractAccess{
-						Claims:    deployerClaims,
-						Functions: nil, // All functions allowed
-					}
-				} else {
-					// Merge deployer claims with existing claims (union)
-					mergedClaims := make(map[Claim]bool)
-					for _, c := range access.Claims {
-						mergedClaims[c] = true
-					}
-					for _, c := range deployerClaims {
-						mergedClaims[c] = true
-					}
-					combined := make([]Claim, 0, len(mergedClaims))
-					for c := range mergedClaims {
-						combined = append(combined, c)
-					}
-					access = &ContractAccess{
-						Claims:    combined,
-						Functions: access.Functions, // Keep existing function restrictions
-					}
-				}
-				hasExplicitAccess = true // Deployer access counts as explicit for cross-org check
-			}
-		}
+		// All contract access requires explicit ContractGrants. When a contract is deployed,
+		// CreateDeployerAutoGrants creates grants for the deployer's groups automatically.
+		// Admin can reassign or revoke access via the admin API.
 
 		// If still no access, deny
 		if access == nil {
@@ -838,10 +792,11 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						factoryOrgID = org.ID
 					}
 					factoryDeployInfo = &FactoryDeployInfo{
-						OrgID:         factoryOrgID,
-						TargetAddress: factoryResult.TargetAddress,
-						FactoryAddr:   addr,
-						Salt:          factoryResult.Salt,
+						OrgID:          factoryOrgID,
+						DeployerUserID: user.ID,
+						TargetAddress:  factoryResult.TargetAddress,
+						FactoryAddr:    addr,
+						Salt:           factoryResult.Salt,
 					}
 				}
 			}
@@ -1301,31 +1256,6 @@ func (c *AccessController) getUserOrganizationIDs(ctx context.Context, userID st
 	return orgIDs, nil
 }
 
-// userHasDeployClaimInAnyOrg checks if the user has deploy or admin claims
-// in any of their group memberships across all organizations.
-// This is used for unregistered contract access where permissions are resolved
-// for one org but deploy claims may exist in another.
-func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userID string) (bool, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-	for _, m := range memberships {
-		if m.Membership == nil {
-			continue
-		}
-		access, err := c.store.GetGroupAccess(ctx, m.Membership.GroupID)
-		if err != nil || access == nil {
-			continue
-		}
-		for _, claim := range access.Claims {
-			if claim == ClaimDeploy || claim == ClaimAdmin {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
 
 // getUserDefaultOrganization returns the user's default (first) organization.
 // Used for operations without a target address (e.g., deployments).
@@ -1769,18 +1699,9 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 				return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
 			}
 			if ownerOrgID == "" {
-				// Truly unregistered: allow only if user has deploy claims, consistent
-				// with the deployment-window access granted in CheckAccess.
-				hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, perms.UserID)
-				if err != nil {
-					return fmt.Errorf("eth_getLogs: failed to check deploy claims: %w", err)
-				}
-				if !hasDeployClaim {
-					return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
-				}
-				// Deploy-claim user in deployment window: grant read access and skip
-				// the claim checks below (which assume a registered contract).
-				continue
+				// Truly unregistered contract: deny access. Deploy users get access
+				// via auto-grants created at deployment time, not via broad deploy-claim bypass.
+				return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
 			}
 		}
 
@@ -1971,6 +1892,52 @@ func (c *AccessController) TrackPlainCreateDeployment(
 	c.pendingTracker.Track(txHash, deployment)
 }
 
+// CreateDeployerAutoGrants creates ContractGrants linking the deployer's groups
+// to the newly deployed contract. This gives the deployer explicit access via
+// their existing group claims, without relying on the broad "deploy claim = access all" path.
+func (c *AccessController) CreateDeployerAutoGrants(ctx context.Context, contractID, deployerUserID, orgID string) {
+	if contractID == "" || deployerUserID == "" || orgID == "" {
+		return
+	}
+
+	memberships, err := c.store.ListUserMembershipsInOrg(ctx, deployerUserID, orgID)
+	if err != nil {
+		slog.Warn("auto-grant: failed to list deployer memberships",
+			"user_id", deployerUserID, "org_id", orgID, "error", err)
+		return
+	}
+
+	for _, m := range memberships {
+		if m.Membership == nil {
+			continue
+		}
+		groupID := m.Membership.GroupID
+
+		// Check if grant already exists (idempotent)
+		existing, _ := c.store.GetContractGrantByContractAndGroup(ctx, contractID, groupID)
+		if existing != nil {
+			continue
+		}
+
+		grant := &ContractGrant{
+			ID:         uuid.New().String(),
+			ContractID: contractID,
+			GroupID:    groupID,
+			Functions:  nil, // All functions allowed
+		}
+		if err := c.store.CreateContractGrant(ctx, grant); err != nil {
+			slog.Warn("auto-grant: failed to create grant",
+				"contract_id", contractID, "group_id", groupID, "error", err)
+			continue
+		}
+		slog.Info("auto-grant: created deployer grant",
+			"contract_id", contractID, "group_id", groupID, "user_id", deployerUserID)
+	}
+
+	// Invalidate permission cache so the new grants take effect immediately
+	c.cache.InvalidateUser(deployerUserID)
+}
+
 // NotifyDeploymentMined processes a mined deployment transaction.
 // This should be called by the RPC layer after receiving the transaction receipt.
 //
@@ -2021,6 +1988,9 @@ func (c *AccessController) NotifyDeploymentMined(
 		if err := c.store.CreateContract(ctx, contract); err != nil {
 			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
 			// Still clean up pre-registration even if contract creation failed.
+		} else {
+			// Contract created successfully — auto-grant deployer's groups access
+			c.CreateDeployerAutoGrants(ctx, contract.ID, deployment.DeployerUserID, deployment.OrgID)
 		}
 		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
 			slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)

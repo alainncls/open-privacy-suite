@@ -231,12 +231,9 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
-	// Contract is in user's own org - deploy/admin users can access via default claims
-	if hasClaim(claims, ClaimDeploy) || hasClaim(claims, ClaimAdmin) {
-		return nil
-	}
-
-	// Read/write-only users need explicit grants for registered contracts
+	// Contract is in user's own org but user has no explicit grant.
+	// All users (including deploy/admin) need explicit grants for registered contracts.
+	// Deploy users get these grants automatically at deployment time via auto-grants.
 	return fmt.Errorf(ErrContractAccessDenied)
 }
 

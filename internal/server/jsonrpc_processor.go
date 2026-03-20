@@ -648,11 +648,18 @@ func (p *JSONRPCProcessor) autoRegisterFactoryDeploy(ctx context.Context, info *
 		},
 	}
 
+	if info.DeployerUserID != "" {
+		contract.DeployedByUserID = &info.DeployerUserID
+	}
+
 	if err := store.CreateContract(ctx, contract); err != nil {
 		// Log error but don't fail the request - the preregistered address still works
 		// The contract can be manually registered later if needed
 		return
 	}
+
+	// Auto-grant deployer's groups access to the new contract
+	p.rbacAccessCtrl.CreateDeployerAutoGrants(ctx, contract.ID, info.DeployerUserID, info.OrgID)
 }
 
 // validateWithTracing performs runtime trace validation for eth_sendTransaction.
@@ -1628,6 +1635,9 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 				contract.DeployedAt = &now
 				if createErr := p.rbacAccessCtrl.Store().CreateContract(ctx, contract); createErr != nil {
 					slog.Warn("failed to register diverged runtime create", "address", addr, "error", createErr)
+				} else {
+					// Auto-grant deployer's groups access to the new contract
+					p.rbacAccessCtrl.CreateDeployerAutoGrants(ctx, contract.ID, userID, orgID)
 				}
 			}
 		}

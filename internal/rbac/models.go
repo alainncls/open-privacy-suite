@@ -258,10 +258,11 @@ type DeploymentInfo struct {
 // FactoryDeployInfo contains information about a CREATE3 factory deployment.
 // This is used to auto-register contracts after successful factory deploys.
 type FactoryDeployInfo struct {
-	OrgID         string `json:"org_id"`          // Organization that owns the deployment
-	TargetAddress string `json:"target_address"`  // Computed CREATE3 address
-	FactoryAddr   string `json:"factory_address"` // Factory contract address
-	Salt          string `json:"salt"`            // Salt used for deployment
+	OrgID          string `json:"org_id"`           // Organization that owns the deployment
+	DeployerUserID string `json:"deployer_user_id"` // Internal user ID of the deployer
+	TargetAddress  string `json:"target_address"`   // Computed CREATE3 address
+	FactoryAddr    string `json:"factory_address"`  // Factory contract address
+	Salt           string `json:"salt"`             // Salt used for deployment
 }
 
 // GroupWithAccess combines a Group with its access settings.
@@ -321,15 +322,9 @@ func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess
 	if access, ok := e.ContractAccess[addr]; ok {
 		return &access
 	}
-	// Only deploy/admin users can access unregistered contracts.
-	// All traffic goes through the proxy on a private network —
-	// regular read/write users must use registered contracts with explicit grants.
-	if len(e.Claims) > 0 && (hasClaim(e.Claims, ClaimDeploy) || hasClaim(e.Claims, ClaimAdmin)) {
-		return &ContractAccess{
-			Claims:    e.Claims,
-			Functions: nil, // All functions allowed for default
-		}
-	}
+	// No explicit grant for this contract — access denied.
+	// Deploy users get access via auto-grants created at deployment time,
+	// not via a blanket deploy-claim bypass.
 	return nil
 }
 

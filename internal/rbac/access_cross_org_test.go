@@ -770,8 +770,9 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-011b: Deploy user ALLOWED for registered contract in own org without explicit grant", func(t *testing.T) {
-		// Deploy users can access registered contracts in their own org via default claims.
+	t.Run("SECURITY-011b: Deploy user DENIED for registered contract in own org without explicit grant", func(t *testing.T) {
+		// Deploy users now need explicit grants (auto-created at deployment time)
+		// for registered contracts, even in their own org.
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
 			UserID:         "user-a",
@@ -796,9 +797,9 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Deploy users can access registered contracts in their own org
-		if !result.Allowed {
-			t.Errorf("expected deploy user to access own-org registered contract, got denied: %s", result.Reason)
+		// Deploy users need explicit grants for registered contracts
+		if result.Allowed {
+			t.Error("expected deploy user to be denied for registered contract without explicit grant")
 		}
 	})
 
@@ -869,7 +870,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-013b: Public contract allowed for deploy user via default_claims", func(t *testing.T) {
+	t.Run("SECURITY-013b: Public contract DENIED for deploy user without explicit grant", func(t *testing.T) {
 		publicContract := "0x1111111111111111111111111111111111111111"
 
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
@@ -881,13 +882,6 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
-		}
-		// userHasDeployClaimInAnyOrg checks actual group access records, not cached
-		// permissions, so we need the group to have deploy claims too.
-		store.groupAccess["group-a"] = &GroupAccess{
-			ID:      "access-a",
-			GroupID: "group-a",
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
 		}
 
 		controller := NewAccessController(store, 5*time.Minute)
@@ -903,9 +897,10 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be ALLOWED - deploy user can access unregistered contracts
-		if !result.Allowed {
-			t.Errorf("expected access to be allowed for public contract with deploy user, got: %s", result.Reason)
+		// Deploy users no longer get blanket access to unregistered contracts.
+		// They need explicit grants (auto-created at deployment time).
+		if result.Allowed {
+			t.Error("expected deploy user to be denied for unregistered contract without explicit grant")
 		}
 	})
 }
@@ -1224,7 +1219,9 @@ func TestCheckAccessDeployerAutoGrant(t *testing.T) {
 
 	controller := NewAccessController(store, 5*time.Minute)
 
-	t.Run("DEPLOYER-001: Deployer can read their deployed contract", func(t *testing.T) {
+	t.Run("DEPLOYER-001: Deployer WITHOUT grant is denied read access", func(t *testing.T) {
+		// All access requires explicit ContractGrants. The implicit deployer fallback
+		// was removed — deployers get grants via CreateDeployerAutoGrants at deploy time.
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
 			Method:         "eth_call",
@@ -1236,12 +1233,12 @@ func TestCheckAccessDeployerAutoGrant(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected deployer to have read access to their deployed contract, got: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected deployer WITHOUT grant to be denied")
 		}
 	})
 
-	t.Run("DEPLOYER-002: Deployer can write to their deployed contract", func(t *testing.T) {
+	t.Run("DEPLOYER-002: Deployer WITHOUT grant is denied write access", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
 			Method:         "eth_sendTransaction",
@@ -1253,8 +1250,8 @@ func TestCheckAccessDeployerAutoGrant(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected deployer to have write access to their deployed contract, got: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected deployer WITHOUT grant to be denied")
 		}
 	})
 
@@ -1369,8 +1366,10 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 
 	controller := NewAccessController(store, 5*time.Minute)
 
-	t.Run("DEPLOYER-MERGE-001: Deployer gets write even with read-only defaults", func(t *testing.T) {
-		// User has read via default_claims, but deployer auto-grant should add write
+	t.Run("DEPLOYER-MERGE-001: Deployer WITHOUT grant is denied even with read-only defaults", func(t *testing.T) {
+		// Implicit deployer fallback removed. Without an explicit ContractGrant,
+		// even the actual deployer is denied. Grants are created automatically
+		// at deploy time via CreateDeployerAutoGrants.
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
 			Method:         "eth_sendTransaction",
@@ -1382,8 +1381,8 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected deployer to have write access (merged with read defaults), got: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected deployer WITHOUT grant to be denied")
 		}
 	})
 }
