@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,10 @@ type MockCrossOrgStore struct {
 	createdGrants      []*ContractGrant                    // tracks grants created via CreateContractGrant
 	createdGroups      []*Group                            // tracks groups created via CreateGroup
 	createdMemberships []*UserMembership                   // tracks memberships created
+
+	// Error injection fields for failure testing
+	errorOnCreateGroup bool // if true, CreateGroup returns an error
+	errorOnCreateGrant bool // if true, CreateContractGrant returns an error
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
@@ -188,6 +193,9 @@ func (m *MockCrossOrgStore) GetContractDeployerByAddress(ctx context.Context, ad
 
 // Group operations
 func (m *MockCrossOrgStore) CreateGroup(ctx context.Context, group *Group) error {
+	if m.errorOnCreateGroup {
+		return fmt.Errorf("mock: CreateGroup error")
+	}
 	m.createdGroups = append(m.createdGroups, group)
 	m.groups[group.ID] = group
 	return nil
@@ -228,6 +236,9 @@ func (m *MockCrossOrgStore) DeleteGroupAccess(ctx context.Context, groupID strin
 
 // Contract grant operations
 func (m *MockCrossOrgStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error {
+	if m.errorOnCreateGrant {
+		return fmt.Errorf("mock: CreateContractGrant error")
+	}
 	m.createdGrants = append(m.createdGrants, grant)
 	return nil
 }
@@ -1484,6 +1495,385 @@ func TestCreateDeployerAutoGrants(t *testing.T) {
 			t.Fatalf("expected 0 groups for unknown contract, got %d", len(store.createdGroups))
 		}
 	})
+}
+
+// TestDeployerAccessIsolation_TwoDeployersSameOrg tests that two deployers in the same
+// org are isolated: each deployer can only access their own deployed contract, not the
+// other deployer's contract.
+func TestDeployerAccessIsolation_TwoDeployersSameOrg(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create two deployers
+	deployerA := &User{ID: "deployer-a", ExternalID: "did:test:deployer-a", KYC: true, Banned: false}
+	deployerB := &User{ID: "deployer-b", ExternalID: "did:test:deployer-b", KYC: true, Banned: false}
+	store.users["did:test:deployer-a"] = deployerA
+	store.users["did:test:deployer-b"] = deployerB
+
+	// Create auto-grant groups (one per contract, as CreateDeployerAutoGrants would create)
+	groupForA := &Group{ID: "group-deploy-a", OrgID: "org-a", Slug: "deploy-0xaaaa000000000000000000000000000000000001", Name: "Deployers: 0xaaaa...0001"}
+	groupForB := &Group{ID: "group-deploy-b", OrgID: "org-a", Slug: "deploy-0xbbbb000000000000000000000000000000000002", Name: "Deployers: 0xbbbb...0002"}
+	store.groups[groupForA.ID] = groupForA
+	store.groups[groupForB.ID] = groupForB
+
+	// deployer-a is member of groupForA, deployer-b is member of groupForB
+	store.memberships["deployer-a"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-da", UserID: "deployer-a", GroupID: "group-deploy-a"}, Group: groupForA},
+	}
+	store.memberships["deployer-b"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-db", UserID: "deployer-b", GroupID: "group-deploy-b"}, Group: groupForB},
+	}
+
+	// Group access: deploy claim (implies read+write)
+	store.groupAccess["group-deploy-a"] = &GroupAccess{
+		ID: "access-da", GroupID: "group-deploy-a",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+	store.groupAccess["group-deploy-b"] = &GroupAccess{
+		ID: "access-db", GroupID: "group-deploy-b",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+	contractB := "0xbbbb000000000000000000000000000000000002"
+
+	// Both contracts registered to org-a
+	store.contractOwners[contractA] = "org-a"
+	store.contractOwners[contractB] = "org-a"
+	store.registeredToAnyOrg[contractA] = true
+	store.registeredToAnyOrg[contractB] = true
+	store.addressOwnedByOrg[contractA] = map[string]bool{"org-a": true}
+	store.addressOwnedByOrg[contractB] = map[string]bool{"org-a": true}
+
+	// Cached permissions: each deployer only has ContractAccess for THEIR contract
+	store.cachedPermissions["deployer-a:org-a"] = &EffectivePermissions{
+		ID: "perms-da", UserID: "deployer-a", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}}, // Only contract A
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+	store.cachedPermissions["deployer-b:org-a"] = &EffectivePermissions{
+		ID: "perms-db", UserID: "deployer-b", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractB: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}}, // Only contract B
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("deployer-a can eth_call Contract-A", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer-a to access Contract-A, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("deployer-a CANNOT eth_call Contract-B", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-a",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "latest"},
+			TargetAddress:  contractB,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected deployer-a to be denied access to Contract-B")
+		}
+	})
+
+	t.Run("deployer-b can eth_call Contract-B", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-b",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "latest"},
+			TargetAddress:  contractB,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer-b to access Contract-B, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("deployer-b CANNOT eth_call Contract-A", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-b",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected deployer-b to be denied access to Contract-A")
+		}
+	})
+}
+
+// TestDeployerAccessIsolation_SameDeployerTwoContracts tests that a single deployer
+// who deployed two contracts gets access to both, with distinct auto-grant groups.
+func TestDeployerAccessIsolation_SameDeployerTwoContracts(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user
+	deployer := &User{ID: "deployer-user", ExternalID: "did:test:deployer", KYC: true, Banned: false}
+	store.users["did:test:deployer"] = deployer
+
+	// Two distinct auto-grant groups (one per contract)
+	groupForA := &Group{ID: "group-for-a", OrgID: "org-a", Slug: "deploy-0xaaaa000000000000000000000000000000000001", Name: "Deployers: 0xaaaa...0001"}
+	groupForB := &Group{ID: "group-for-b", OrgID: "org-a", Slug: "deploy-0xbbbb000000000000000000000000000000000002", Name: "Deployers: 0xbbbb...0002"}
+	store.groups[groupForA.ID] = groupForA
+	store.groups[groupForB.ID] = groupForB
+
+	// Deployer is member of both groups
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-a", UserID: "deployer-user", GroupID: "group-for-a"}, Group: groupForA},
+		{Membership: &UserMembership{ID: "mem-b", UserID: "deployer-user", GroupID: "group-for-b"}, Group: groupForB},
+	}
+
+	// Group access for both
+	store.groupAccess["group-for-a"] = &GroupAccess{
+		ID: "access-a", GroupID: "group-for-a",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+	store.groupAccess["group-for-b"] = &GroupAccess{
+		ID: "access-b", GroupID: "group-for-b",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+	contractB := "0xbbbb000000000000000000000000000000000002"
+
+	// Both contracts registered to org-a
+	store.contractOwners[contractA] = "org-a"
+	store.contractOwners[contractB] = "org-a"
+	store.registeredToAnyOrg[contractA] = true
+	store.registeredToAnyOrg[contractB] = true
+	store.addressOwnedByOrg[contractA] = map[string]bool{"org-a": true}
+	store.addressOwnedByOrg[contractB] = map[string]bool{"org-a": true}
+
+	// Cached permissions: deployer has ContractAccess for BOTH contracts
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-deployer", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}},
+			contractB: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}},
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("deployer can eth_call Contract-A", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to access Contract-A, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("deployer can eth_call Contract-B", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractB, "data": "0x"}, "latest"},
+			TargetAddress:  contractB,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to access Contract-B, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("two groups are distinct", func(t *testing.T) {
+		if groupForA.ID == groupForB.ID {
+			t.Error("expected distinct group IDs for the two auto-grant groups")
+		}
+		if groupForA.Slug == groupForB.Slug {
+			t.Error("expected distinct group slugs for the two auto-grant groups")
+		}
+	})
+}
+
+// TestDeployerRemovedFromGroup_AccessDenied tests that removing a deployer from their
+// auto-grant group (by updating the permission cache) revokes their access.
+func TestDeployerRemovedFromGroup_AccessDenied(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user
+	deployer := &User{ID: "deployer-user", ExternalID: "did:test:deployer", KYC: true, Banned: false}
+	store.users["did:test:deployer"] = deployer
+
+	// Create auto-grant group
+	deployGroup := &Group{ID: "group-deploy", OrgID: "org-a", Slug: "deploy-contract-a", Name: "Deployers: contract-a"}
+	store.groups[deployGroup.ID] = deployGroup
+
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-d", UserID: "deployer-user", GroupID: "group-deploy"}, Group: deployGroup},
+	}
+
+	store.groupAccess["group-deploy"] = &GroupAccess{
+		ID: "access-d", GroupID: "group-deploy",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+
+	store.contractOwners[contractA] = "org-a"
+	store.registeredToAnyOrg[contractA] = true
+	store.addressOwnedByOrg[contractA] = map[string]bool{"org-a": true}
+
+	// Phase 1: deployer HAS access via ContractAccess
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-d", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}},
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("before removal: deployer can eth_call Contract-A", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to access Contract-A before removal, got: %s", result.Reason)
+		}
+	})
+
+	// Phase 2: simulate removal by updating cached permissions to remove ContractAccess
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-d-updated", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{}, // Contract access removed
+		Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	// Create a fresh controller so the in-memory cache doesn't interfere
+	controller = NewAccessController(store, 5*time.Minute)
+
+	t.Run("after removal: deployer CANNOT eth_call Contract-A", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+			TargetAddress:  contractA,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected deployer to be denied access after removal from group")
+		}
+	})
+}
+
+// TestCreateDeployerAutoGrants_GroupCreationFails tests that when CreateGroup fails,
+// no grants or memberships are created (function returns silently on group creation failure).
+func TestCreateDeployerAutoGrants_GroupCreationFails(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	store.contracts["contract-fail"] = &Contract{ID: "contract-fail", OrgID: "org-a", Address: "0xfail000000000000000000000000000000000001"}
+	store.errorOnCreateGroup = true
+
+	controller := NewAccessController(store, 5*time.Minute)
+	controller.CreateDeployerAutoGrants(ctx, "contract-fail", "deployer-user", "org-a")
+
+	if len(store.createdGroups) != 0 {
+		t.Errorf("expected 0 groups when CreateGroup fails, got %d", len(store.createdGroups))
+	}
+	if len(store.createdMemberships) != 0 {
+		t.Errorf("expected 0 memberships when CreateGroup fails, got %d", len(store.createdMemberships))
+	}
+	if len(store.createdGrants) != 0 {
+		t.Errorf("expected 0 grants when CreateGroup fails, got %d", len(store.createdGrants))
+	}
+}
+
+// TestCreateDeployerAutoGrants_GrantCreationFails tests that when CreateContractGrant fails,
+// the group and membership are still created but the grant is not.
+func TestCreateDeployerAutoGrants_GrantCreationFails(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	store.contracts["contract-gfail"] = &Contract{ID: "contract-gfail", OrgID: "org-a", Address: "0xgfai000000000000000000000000000000000001"}
+	store.errorOnCreateGrant = true
+
+	controller := NewAccessController(store, 5*time.Minute)
+	controller.CreateDeployerAutoGrants(ctx, "contract-gfail", "deployer-user", "org-a")
+
+	// Group should have been created
+	if len(store.createdGroups) != 1 {
+		t.Fatalf("expected 1 group even when grant creation fails, got %d", len(store.createdGroups))
+	}
+
+	// Membership should have been created
+	if len(store.createdMemberships) != 1 {
+		t.Fatalf("expected 1 membership even when grant creation fails, got %d", len(store.createdMemberships))
+	}
+
+	// Grant should NOT have been created
+	if len(store.createdGrants) != 0 {
+		t.Errorf("expected 0 grants when CreateContractGrant fails, got %d", len(store.createdGrants))
+	}
 }
 
 // TestCheckAccessUpgradeClaimEnforcement tests that eth_sendTransaction with an upgrade
