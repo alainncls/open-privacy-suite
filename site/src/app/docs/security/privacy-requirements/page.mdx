@@ -153,7 +153,7 @@ To achieve the maximum redaction coverage described in this document:
    {"abi": [...]}
    ```
 
-2. **Assign all deployed contracts to the correct organization.** The redaction engine determines visibility by checking whether a contract address is registered to an organization. Contracts that are not registered to any organization are treated as public. Register contracts with the same organization as their deployer.
+2. **Contract registration is automatic.** All contracts deployed through the proxy are automatically registered to the deployer's organization and granted to the deployer's groups. Admin can revoke or reassign these grants. Contracts not registered to any organization are denied access (not treated as public).
 
 3. **Assign disclosure levels to sensitive addresses.** Addresses that are not explicitly registered receive default public visibility. Ensure that all addresses that should be private are registered to an organization and assigned the appropriate disclosure level. See [Selective Disclosure](/docs/disclosure).
 

@@ -75,10 +75,8 @@ Contract deployments require the `deploy` claim:
 
 **Bytecode validation** is performed on deployments:
 
-- No CREATE/CREATE2 opcodes (prevents nested deployments)
 - All static CALL targets must be org-owned or precompiles
-
-When `ENABLE_RUNTIME_TRACING=true` (the default), dynamic calls are allowed at deployment because they are validated at runtime via transaction tracing.
+- When `ENABLE_RUNTIME_TRACING=true`, CREATE/CREATE2 opcodes and dynamic calls are allowed — they are validated at runtime via `debug_traceCall`. Child contracts from runtime CREATE/CREATE2 are auto-registered to the deployer's org.
 
 ### Runtime Transaction Validation
 
@@ -149,10 +147,10 @@ When a user accesses a contract:
 ### Isolation Rules
 
 - Users can only access contracts owned by organizations they belong to
-- Unregistered contracts (no registered owner) are accessible only to users with `deploy` or `admin` claims -- the deploy-claim fallback only fires when `ownerOrgID == ""`
 - A contract registered to another org is **always denied**, regardless of the requester's claims
-- Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
-- Regular `read`/`write` users must have an explicit `ContractGrant`
+- **All users** (including deployers and admins) require an explicit `ContractGrant` linking their group to the contract
+- When a contract is deployed, the proxy automatically creates grants for the deployer's groups (`CreateDeployerAutoGrants`). Admin can revoke or reassign these grants at any time.
+- Unregistered contracts (no registered owner) are denied — all deployed contracts are auto-registered to the deployer's org at deploy time
 
 ### Per-Address Access Checks
 
@@ -178,10 +176,10 @@ When a user with the `deploy` claim sends `eth_sendTransaction` without a `to` a
 1. Computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` before forwarding
 2. Pre-registers the address to the deployer's organization immediately, closing the cross-org access window
 3. Forwards the transaction to the node
-4. On successful mining: finalizes the pre-registration as a full `Contract` record (`auto_registered: true`, `via: plain_create`)
+4. On successful mining: finalizes the pre-registration as a full `Contract` record and **auto-creates `ContractGrant`s** for all the deployer's groups in the org
 5. On revert or failure: deletes the pre-registration
 
-This ensures that from the moment the transaction is forwarded, the freshly deployed address belongs to the deployer's org and cannot be accessed by users in other organizations.
+This ensures that from the moment the transaction is forwarded, the freshly deployed address belongs to the deployer's org. The auto-grants give the deployer explicit access via their group's claims. Admin can later revoke the deployer's access or reassign the contract to different groups (e.g., a stablecoin-admins group instead of the engineering group).
 
 ### Multi-Organization Users
 

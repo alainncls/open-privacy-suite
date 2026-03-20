@@ -89,3 +89,4 @@ Last updated: 2026-03-18
 - [x] Deploy validator CREATE2 exception — conditional on runtime tracing
 - [x] Dev-admin re-provisioning — skips `did:test:*` users
 - [x] Historical state queries — only block for anonymous, allow authenticated (RBAC gates access)
+- [x] Deployer access restricted to explicit grants — removed all 3 implicit access paths (deploy-claim blanket, default_claims bypass, deployed_by_user_id fallback). Auto-grants created at deploy time via `CreateDeployerAutoGrants`.
