@@ -1892,50 +1892,89 @@ func (c *AccessController) TrackPlainCreateDeployment(
 	c.pendingTracker.Track(txHash, deployment)
 }
 
-// CreateDeployerAutoGrants creates ContractGrants linking the deployer's groups
-// to the newly deployed contract. This gives the deployer explicit access via
-// their existing group claims, without relying on the broad "deploy claim = access all" path.
+// CreateDeployerAutoGrants creates a per-contract group for the deployer with
+// deploy+read+write claims, adds the deployer as a member, and grants the group
+// access to the contract. This gives the deployer explicit, scoped access.
+// Admin can later add/remove members or reassign the contract to different groups.
 func (c *AccessController) CreateDeployerAutoGrants(ctx context.Context, contractID, deployerUserID, orgID string) {
 	if contractID == "" || deployerUserID == "" || orgID == "" {
 		return
 	}
 
-	memberships, err := c.store.ListUserMembershipsInOrg(ctx, deployerUserID, orgID)
-	if err != nil {
-		slog.Warn("auto-grant: failed to list deployer memberships",
-			"user_id", deployerUserID, "org_id", orgID, "error", err)
+	// Get contract address for naming
+	contract, err := c.store.GetContract(ctx, contractID)
+	if err != nil || contract == nil {
+		slog.Warn("auto-grant: failed to get contract", "contract_id", contractID, "error", err)
 		return
 	}
 
-	for _, m := range memberships {
-		if m.Membership == nil {
-			continue
-		}
-		groupID := m.Membership.GroupID
+	addr := contract.Address
+	shortAddr := addr
+	if len(shortAddr) > 10 {
+		shortAddr = shortAddr[:6] + "..." + shortAddr[len(shortAddr)-4:]
+	}
 
-		// Check if grant already exists (idempotent)
-		existing, _ := c.store.GetContractGrantByContractAndGroup(ctx, contractID, groupID)
-		if existing != nil {
-			continue
-		}
+	// Create a dedicated group for this contract
+	groupID := uuid.New().String()
+	group := &Group{
+		ID:    groupID,
+		OrgID: orgID,
+		Slug:  fmt.Sprintf("deploy-%s", addr),
+		Name:  fmt.Sprintf("Deployers: %s", shortAddr),
+		Depth: 0,
+		Path:  fmt.Sprintf("deploy-%s", addr),
+	}
+	if err := c.store.CreateGroup(ctx, group); err != nil {
+		slog.Warn("auto-grant: failed to create deployer group",
+			"contract", addr, "org_id", orgID, "error", err)
+		return
+	}
 
-		grant := &ContractGrant{
-			ID:         uuid.New().String(),
-			ContractID: contractID,
-			GroupID:    groupID,
-			Functions:  nil, // All functions allowed
-		}
-		if err := c.store.CreateContractGrant(ctx, grant); err != nil {
-			slog.Warn("auto-grant: failed to create grant",
-				"contract_id", contractID, "group_id", groupID, "error", err)
-			continue
-		}
-		slog.Info("auto-grant: created deployer grant",
-			"contract_id", contractID, "group_id", groupID, "user_id", deployerUserID)
+	// Set group claims: deploy (implies read+write) so the deployer can
+	// interact with the contract immediately after deployment
+	access := &GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        groupID,
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimDeploy},
+	}
+	if err := c.store.CreateGroupAccess(ctx, access); err != nil {
+		slog.Warn("auto-grant: failed to create group access",
+			"contract", addr, "group_id", groupID, "error", err)
+		return
+	}
+
+	// Add the deployer to the group
+	membership := &UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  deployerUserID,
+		GroupID: groupID,
+		Source:  MembershipSourceAdmin,
+	}
+	if err := c.store.CreateMembership(ctx, membership); err != nil {
+		slog.Warn("auto-grant: failed to add deployer to group",
+			"contract", addr, "user_id", deployerUserID, "error", err)
+		return
+	}
+
+	// Grant the group access to the contract
+	grant := &ContractGrant{
+		ID:         uuid.New().String(),
+		ContractID: contractID,
+		GroupID:    groupID,
+		Functions:  nil, // All functions allowed
+	}
+	if err := c.store.CreateContractGrant(ctx, grant); err != nil {
+		slog.Warn("auto-grant: failed to create contract grant",
+			"contract", addr, "group_id", groupID, "error", err)
+		return
 	}
 
 	// Invalidate permission cache so the new grants take effect immediately
 	c.cache.InvalidateUser(deployerUserID)
+
+	slog.Info("auto-grant: created deployer group for contract",
+		"contract", addr, "group", group.Name, "group_id", groupID, "user_id", deployerUserID)
 }
 
 // NotifyDeploymentMined processes a mined deployment transaction.
