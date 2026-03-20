@@ -27,7 +27,11 @@ authproxy: ensure-hooks
 	go build -o bin/authproxy ./cmd/authproxy
 
 # Run full Docker stack (postgres, anvil, backend, frontend)
+# Removes the anonymous frontend node_modules volume to prevent stale Vite
+# dependency cache (white screen). Postgres/anvil data volumes are preserved.
 run: ensure-hooks
+	@docker-compose rm -sf proxy-frontend 2>/dev/null || true
+	@docker volume ls -q | grep -E 'privacy-proxy.*node_modules' | xargs -r docker volume rm 2>/dev/null || true
 	docker-compose up --build -d
 	@./scripts/print-urls.sh
 
@@ -37,7 +41,9 @@ stop:
 
 # Restart all services
 restart:
-	docker-compose down && docker-compose up --build -d
+	docker-compose down
+	@docker volume ls -q | grep -E 'privacy-proxy.*node_modules' | xargs -r docker volume rm 2>/dev/null || true
+	docker-compose up --build -d
 	@./scripts/print-urls.sh
 
 # View logs
