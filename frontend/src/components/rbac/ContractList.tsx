@@ -404,7 +404,15 @@ export default function ContractList() {
       />
 
       {/* Grants Manager Dialog */}
-      <Dialog open={!!managingGrants} onOpenChange={open => !open && setManagingGrants(null)}>
+      <Dialog open={!!managingGrants} onOpenChange={open => {
+        if (!open) {
+          setManagingGrants(null);
+          // Refresh grant summary so the groups count updates immediately
+          if (orgId) {
+            rbacApi.contracts.grantSummary(orgId).then(res => setGrantSummary(res.data || {})).catch(() => {});
+          }
+        }
+      }}>
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Contract Permissions</DialogTitle>
