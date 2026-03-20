@@ -309,15 +309,33 @@ export default function GroupList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <FolderTree className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-neutral-500 mb-4">No groups found</p>
-          <Button
-            variant="outline"
-            onClick={() => setShowForm(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Create your first group
-          </Button>
+          {filterMode === 'auto' ? (
+            <p className="text-neutral-500">No auto-created groups. These are generated automatically when deployers deploy contracts.</p>
+          ) : filterMode === 'manual' ? (
+            <>
+              <p className="text-neutral-500 mb-4">No manually created groups</p>
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create a group
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-neutral-500 mb-4">No groups found</p>
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create your first group
+              </Button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-2">{getRootGroups().map(g => renderGroup(g))}</div>
