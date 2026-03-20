@@ -21,6 +21,7 @@ type MockCrossOrgStore struct {
 	cachedPermissions  map[string]*EffectivePermissions    // userID:orgID -> perms
 	contractGrants     map[string][]*ContractGrant         // groupID -> grants
 	contractDeployers  map[string]*string                  // lowercase address -> userID (deployer)
+	createdGrants      []*ContractGrant                    // tracks grants created via CreateContractGrant
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
@@ -213,12 +214,18 @@ func (m *MockCrossOrgStore) DeleteGroupAccess(ctx context.Context, groupID strin
 
 // Contract grant operations
 func (m *MockCrossOrgStore) CreateContractGrant(ctx context.Context, grant *ContractGrant) error {
+	m.createdGrants = append(m.createdGrants, grant)
 	return nil
 }
 func (m *MockCrossOrgStore) GetContractGrant(ctx context.Context, id string) (*ContractGrant, error) {
 	return nil, nil
 }
 func (m *MockCrossOrgStore) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*ContractGrant, error) {
+	for _, g := range m.createdGrants {
+		if g.ContractID == contractID && g.GroupID == groupID {
+			return g, nil
+		}
+	}
 	return nil, nil
 }
 func (m *MockCrossOrgStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error {
@@ -1383,6 +1390,125 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		}
 		if result.Allowed {
 			t.Error("expected deployer WITHOUT grant to be denied")
+		}
+	})
+}
+
+// TestCreateDeployerAutoGrants tests the auto-grant creation for deployers.
+func TestCreateDeployerAutoGrants(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates grants for deployer's groups in org", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		store.organizations["org-a"] = &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+		store.users["did:test:deployer"] = &User{ID: "deployer-user", ExternalID: "did:test:deployer"}
+
+		groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "engineers", Name: "Engineers"}
+		store.memberships["deployer-user"] = []*MembershipWithDetails{
+			{Membership: &UserMembership{ID: "mem-a", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.CreateDeployerAutoGrants(ctx, "contract-123", "deployer-user", "org-a")
+
+		if len(store.createdGrants) != 1 {
+			t.Fatalf("expected 1 grant, got %d", len(store.createdGrants))
+		}
+		if store.createdGrants[0].ContractID != "contract-123" {
+			t.Errorf("expected contract-123, got %s", store.createdGrants[0].ContractID)
+		}
+		if store.createdGrants[0].GroupID != "group-a" {
+			t.Errorf("expected group-a, got %s", store.createdGrants[0].GroupID)
+		}
+	})
+
+	t.Run("creates grants for multiple groups", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		store.organizations["org-a"] = &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+		store.users["did:test:deployer"] = &User{ID: "deployer-user", ExternalID: "did:test:deployer"}
+
+		groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "engineers"}
+		groupB := &Group{ID: "group-b", OrgID: "org-a", Slug: "auditors"}
+		store.memberships["deployer-user"] = []*MembershipWithDetails{
+			{Membership: &UserMembership{ID: "mem-a", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+			{Membership: &UserMembership{ID: "mem-b", UserID: "deployer-user", GroupID: "group-b"}, Group: groupB},
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.CreateDeployerAutoGrants(ctx, "contract-456", "deployer-user", "org-a")
+
+		if len(store.createdGrants) != 2 {
+			t.Fatalf("expected 2 grants, got %d", len(store.createdGrants))
+		}
+	})
+
+	t.Run("only grants for groups in the deploying org", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		store.organizations["org-a"] = &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+		store.organizations["org-b"] = &Organization{ID: "org-b", Slug: "org-b", Name: "Org B"}
+		store.users["did:test:deployer"] = &User{ID: "deployer-user", ExternalID: "did:test:deployer"}
+
+		groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "engineers"}
+		groupB := &Group{ID: "group-b", OrgID: "org-b", Slug: "other-org-group"}
+		store.memberships["deployer-user"] = []*MembershipWithDetails{
+			{Membership: &UserMembership{ID: "mem-a", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+			{Membership: &UserMembership{ID: "mem-b", UserID: "deployer-user", GroupID: "group-b"}, Group: groupB},
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+		// Deploy to org-a — should only grant to group-a, not group-b
+		controller.CreateDeployerAutoGrants(ctx, "contract-789", "deployer-user", "org-a")
+
+		if len(store.createdGrants) != 1 {
+			t.Fatalf("expected 1 grant (only org-a group), got %d", len(store.createdGrants))
+		}
+		if store.createdGrants[0].GroupID != "group-a" {
+			t.Errorf("expected group-a, got %s", store.createdGrants[0].GroupID)
+		}
+	})
+
+	t.Run("idempotent — no duplicate grants", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		store.organizations["org-a"] = &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+		store.users["did:test:deployer"] = &User{ID: "deployer-user", ExternalID: "did:test:deployer"}
+
+		groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "engineers"}
+		store.memberships["deployer-user"] = []*MembershipWithDetails{
+			{Membership: &UserMembership{ID: "mem-a", UserID: "deployer-user", GroupID: "group-a"}, Group: groupA},
+		}
+
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.CreateDeployerAutoGrants(ctx, "contract-123", "deployer-user", "org-a")
+		controller.CreateDeployerAutoGrants(ctx, "contract-123", "deployer-user", "org-a")
+
+		if len(store.createdGrants) != 1 {
+			t.Fatalf("expected 1 grant (idempotent), got %d", len(store.createdGrants))
+		}
+	})
+
+	t.Run("no-op for empty inputs", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		controller := NewAccessController(store, 5*time.Minute)
+
+		controller.CreateDeployerAutoGrants(ctx, "", "user", "org")
+		controller.CreateDeployerAutoGrants(ctx, "contract", "", "org")
+		controller.CreateDeployerAutoGrants(ctx, "contract", "user", "")
+
+		if len(store.createdGrants) != 0 {
+			t.Fatalf("expected 0 grants for empty inputs, got %d", len(store.createdGrants))
+		}
+	})
+
+	t.Run("no-op for user with no memberships in org", func(t *testing.T) {
+		store := NewMockCrossOrgStore()
+		store.users["did:test:deployer"] = &User{ID: "deployer-user", ExternalID: "did:test:deployer"}
+		// No memberships set up
+
+		controller := NewAccessController(store, 5*time.Minute)
+		controller.CreateDeployerAutoGrants(ctx, "contract-123", "deployer-user", "org-a")
+
+		if len(store.createdGrants) != 0 {
+			t.Fatalf("expected 0 grants for user with no memberships, got %d", len(store.createdGrants))
 		}
 	})
 }
