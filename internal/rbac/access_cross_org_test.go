@@ -2218,3 +2218,302 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		}
 	})
 }
+
+// TestDeployerAccess_MethodCoverage tests that a deployer with an explicit ContractGrant
+// can use all common methods on their deployed contract.
+func TestDeployerAccess_MethodCoverage(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user
+	deployer := &User{ID: "deployer-user", ExternalID: "did:test:deployer-user", KYC: true, Banned: false}
+	store.users["did:test:deployer-user"] = deployer
+
+	// Create auto-grant group with deploy claim
+	group := &Group{ID: "group-deploy", OrgID: "org-a", Slug: "deploy-contract-a", Name: "Deployers: contract-a"}
+	store.groups[group.ID] = group
+
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-deployer", UserID: "deployer-user", GroupID: "group-deploy"}, Group: group},
+	}
+
+	store.groupAccess["group-deploy"] = &GroupAccess{
+		ID: "access-deploy", GroupID: "group-deploy",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+
+	// Contract registered to org-a
+	store.contractOwners[contractA] = "org-a"
+	store.registeredToAnyOrg[contractA] = true
+	store.addressOwnedByOrg[contractA] = map[string]bool{"org-a": true}
+
+	// Cached permissions with explicit ContractAccess for Contract-A
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-deployer", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}},
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	// Sub-tests that should be ALLOWED
+	allowedTests := []struct {
+		name   string
+		method string
+		params []any
+	}{
+		{
+			name:   "eth_call targeting Contract-A",
+			method: "eth_call",
+			params: []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+		},
+		{
+			name:   "eth_estimateGas targeting Contract-A",
+			method: "eth_estimateGas",
+			params: []any{map[string]any{"to": contractA, "data": "0x"}, "latest"},
+		},
+		{
+			name:   "eth_getCode targeting Contract-A",
+			method: "eth_getCode",
+			params: []any{contractA, "latest"},
+		},
+		{
+			name:   "eth_getBalance targeting Contract-A",
+			method: "eth_getBalance",
+			params: []any{contractA, "latest"},
+		},
+		{
+			name:   "eth_sendTransaction write to Contract-A",
+			method: "eth_sendTransaction",
+			params: []any{map[string]any{"to": contractA, "from": "0x1111111111111111111111111111111111111111", "data": "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001"}},
+		},
+	}
+
+	for _, tt := range allowedTests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: "did:test:deployer-user",
+				Method:         tt.method,
+				Params:         tt.params,
+				TargetAddress:  contractA,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.Allowed {
+				t.Errorf("expected ALLOWED for %s, got denied: %s", tt.method, result.Reason)
+			}
+		})
+	}
+
+	// Sub-test that should be DENIED: upgrade selector requires upgrade claim
+	t.Run("eth_sendTransaction with upgrade selector denied", func(t *testing.T) {
+		// upgradeTo(address) selector = 0x3659cfe6
+		upgradeCalldata := "0x3659cfe6000000000000000000000000bbbb000000000000000000000000000000000002"
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID:   "did:test:deployer-user",
+			Method:           "eth_sendTransaction",
+			Params:           []any{map[string]any{"to": contractA, "from": "0x1111111111111111111111111111111111111111", "data": upgradeCalldata}},
+			TargetAddress:    contractA,
+			FunctionSelector: "3659cfe6",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected DENIED for upgrade selector without upgrade claim")
+		}
+	})
+}
+
+// TestDeployerAccess_GetLogs tests that eth_getLogs works for a deployer with a grant,
+// and is denied when one of the addresses has no grant.
+func TestDeployerAccess_GetLogs(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user
+	deployer := &User{ID: "deployer-user", ExternalID: "did:test:deployer-user", KYC: true, Banned: false}
+	store.users["did:test:deployer-user"] = deployer
+
+	// Create group with deploy claim
+	group := &Group{ID: "group-deploy", OrgID: "org-a", Slug: "deploy-contract-a", Name: "Deployers: contract-a"}
+	store.groups[group.ID] = group
+
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-deployer", UserID: "deployer-user", GroupID: "group-deploy"}, Group: group},
+	}
+
+	store.groupAccess["group-deploy"] = &GroupAccess{
+		ID: "access-deploy", GroupID: "group-deploy",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	contractA := "0xaaaa000000000000000000000000000000000001"
+	unknownContract := "0xcccc000000000000000000000000000000000003"
+
+	// Contract-A registered to org-a
+	store.contractOwners[contractA] = "org-a"
+	store.registeredToAnyOrg[contractA] = true
+	store.addressOwnedByOrg[contractA] = map[string]bool{"org-a": true}
+
+	// unknownContract is NOT registered (contractOwners returns "")
+
+	// Cached permissions with read claim on Contract-A
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-deployer", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{
+			contractA: {Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}},
+		},
+		Claims:     []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("eth_getLogs with granted contract address allowed", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-user",
+			Method:         "eth_getLogs",
+			Params: []any{map[string]any{
+				"address": contractA,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected ALLOWED for eth_getLogs on granted contract, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("eth_getLogs with granted + unknown contract denied", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-user",
+			Method:         "eth_getLogs",
+			Params: []any{map[string]any{
+				"address": []any{contractA, unknownContract},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected DENIED for eth_getLogs when one address has no grant")
+		}
+	})
+}
+
+// TestDeployerAccess_PlainCREATEDeployment tests that a user with deploy claim can
+// deploy (send tx with no `to` field), and that a user without deploy claim is denied.
+func TestDeployerAccess_PlainCREATEDeployment(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Create organization
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	// Create deployer user (has deploy claim)
+	deployer := &User{ID: "deployer-user", ExternalID: "did:test:deployer-user", KYC: true, Banned: false}
+	store.users["did:test:deployer-user"] = deployer
+
+	deployGroup := &Group{ID: "group-deploy", OrgID: "org-a", Slug: "deployers", Name: "Deployers"}
+	store.groups[deployGroup.ID] = deployGroup
+
+	store.memberships["deployer-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-deployer", UserID: "deployer-user", GroupID: "group-deploy"}, Group: deployGroup},
+	}
+
+	store.groupAccess["group-deploy"] = &GroupAccess{
+		ID: "access-deploy", GroupID: "group-deploy",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimDeploy},
+	}
+
+	store.cachedPermissions["deployer-user:org-a"] = &EffectivePermissions{
+		ID: "perms-deployer", UserID: "deployer-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	// Create read+write user (no deploy claim)
+	rwUser := &User{ID: "rw-user", ExternalID: "did:test:rw-user", KYC: true, Banned: false}
+	store.users["did:test:rw-user"] = rwUser
+
+	rwGroup := &Group{ID: "group-rw", OrgID: "org-a", Slug: "readers-writers", Name: "Readers Writers"}
+	store.groups[rwGroup.ID] = rwGroup
+
+	store.memberships["rw-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-rw", UserID: "rw-user", GroupID: "group-rw"}, Group: rwGroup},
+	}
+
+	store.groupAccess["group-rw"] = &GroupAccess{
+		ID: "access-rw", GroupID: "group-rw",
+		AllowedMethods: []string{"*"}, Claims: []Claim{ClaimRead, ClaimWrite},
+	}
+
+	store.cachedPermissions["rw-user:org-a"] = &EffectivePermissions{
+		ID: "perms-rw", UserID: "rw-user", OrgID: "org-a",
+		AllowedMethods: []string{"*"},
+		ContractAccess: map[string]ContractAccess{},
+		Claims:         []Claim{ClaimRead, ClaimWrite},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(1 * time.Hour),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	// Minimal valid bytecode: a contract that returns nothing.
+	// PUSH1 0x00 PUSH1 0x00 RETURN = 0x60006000f3
+	deploymentBytecode := "0x60006000f3"
+
+	t.Run("deployer can deploy (empty to field)", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:deployer-user",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"from": "0x1111111111111111111111111111111111111111", "data": deploymentBytecode}},
+			TargetAddress:  "", // No target = deployment
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected deployer to be allowed to deploy, got: %s", result.Reason)
+		}
+	})
+
+	t.Run("read-write user cannot deploy (no deploy claim)", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:rw-user",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"from": "0x2222222222222222222222222222222222222222", "data": deploymentBytecode}},
+			TargetAddress:  "", // No target = deployment
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected read-write user without deploy claim to be denied deployment")
+		}
+	})
+}

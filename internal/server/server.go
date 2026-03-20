@@ -974,8 +974,9 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 		return
 	}
 
-	// Use synthetic identity for test requests or extract from JWT token
-	testIdentity := "test:dashboard"
+	// Extract identity from JWT token. Without JWT, the request is anonymous
+	// (empty UserExternalID) — same as a real unauthenticated RPC request.
+	var testIdentity string
 	if input.JWTToken != "" {
 		claims, err := s.jwtService.ValidateAccessToken(input.JWTToken)
 		if err != nil {
