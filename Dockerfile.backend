@@ -33,8 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgmp10 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN useradd -r -u 1000 -m appuser
+
 WORKDIR /app
 EXPOSE 8080
+
+USER appuser
+
 CMD ["./privacy-proxy"]
 
 # --- Dev target ---
