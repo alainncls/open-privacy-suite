@@ -66,6 +66,86 @@ func (s *Store) GetChainStats(ctx context.Context) (*ChainStats, error) {
 	return &stats, nil
 }
 
+// GetChainStatsFiltered returns chain stats with visibility filtering.
+// TotalTransactions and TotalAddresses exclude hidden/private data.
+func (s *Store) GetChainStatsFiltered(ctx context.Context, filter *VisibilityFilter) (*ChainStats, error) {
+	stats, err := s.GetChainStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if filter == nil || len(filter.HiddenAddresses) == 0 {
+		return stats, nil
+	}
+
+	// Adjust TotalTransactions: subtract txs that would be filtered
+	visClause, visArgs, _ := visibilityWhereClause(filter, 1)
+	var filteredTxCount int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE 1=1%s", visClause)
+	if err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&filteredTxCount); err != nil {
+		return nil, err
+	}
+	stats.TotalTransactions = filteredTxCount
+
+	// Adjust TotalAddresses: subtract hidden addresses from count
+	stats.TotalAddresses -= int64(len(filter.HiddenAddresses))
+	if stats.TotalAddresses < 0 {
+		stats.TotalAddresses = 0
+	}
+
+	return stats, nil
+}
+
+// GetTransactionHistoryFiltered returns tx history with visibility filtering.
+func (s *Store) GetTransactionHistoryFiltered(ctx context.Context, intervalSeconds int, limit int, filter *VisibilityFilter) ([]TxHistoryPoint, error) {
+	if filter == nil || len(filter.HiddenAddresses) == 0 {
+		return s.GetTransactionHistory(ctx, intervalSeconds, limit)
+	}
+
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+	intervalArg := nextArg
+	limitArg := nextArg + 1
+	query := fmt.Sprintf(`
+		SELECT bucket, cnt FROM (
+			SELECT (b.timestamp / $%d) * $%d AS bucket, COUNT(*) AS cnt
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE 1=1%s
+			GROUP BY bucket ORDER BY bucket DESC LIMIT $%d
+		) sub ORDER BY bucket ASC`, intervalArg, intervalArg, visClause, limitArg)
+
+	args := append(visArgs, intervalSeconds, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []TxHistoryPoint
+	for rows.Next() {
+		var p TxHistoryPoint
+		if err := rows.Scan(&p.Timestamp, &p.Count); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
+// GetBlockTransactionCountFiltered returns the visible tx count for a block.
+func (s *Store) GetBlockTransactionCountFiltered(ctx context.Context, blockNumber uint64, filter *VisibilityFilter) (int, error) {
+	if filter == nil || len(filter.HiddenAddresses) == 0 {
+		var count int
+		err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM transactions WHERE block_number = $1", blockNumber).Scan(&count)
+		return count, err
+	}
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE t.block_number = $%d%s", nextArg, visClause)
+	args := append(visArgs, blockNumber)
+	var count int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
 // Block operations
 
 func (s *Store) GetBlock(ctx context.Context, number uint64) (*Block, error) {

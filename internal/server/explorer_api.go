@@ -539,7 +539,9 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 		respondServiceUnavailable(c, "explorer store not configured")
 		return
 	}
-	stats, err := s.explorerStore.GetChainStats(c.Request.Context())
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	stats, err := s.explorerStore.GetChainStatsFiltered(c.Request.Context(), filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -586,6 +588,15 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 		respondNotFound(c, "block not found")
 		return
 	}
+	// Adjust TransactionCount to reflect only visible transactions
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	if filter != nil {
+		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
+		if err == nil {
+			block.TransactionCount = filteredCount
+		}
+	}
 	c.JSON(http.StatusOK, block)
 }
 
@@ -603,6 +614,15 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	if block == nil {
 		respondNotFound(c, "block not found")
 		return
+	}
+	// Adjust TransactionCount to reflect only visible transactions
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	if filter != nil {
+		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
+		if err == nil {
+			block.TransactionCount = filteredCount
+		}
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -1733,7 +1753,9 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 		}
 	}
 
-	history, err := s.explorerStore.GetTransactionHistory(c.Request.Context(), interval, limit)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	history, err := s.explorerStore.GetTransactionHistoryFiltered(c.Request.Context(), interval, limit, filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
