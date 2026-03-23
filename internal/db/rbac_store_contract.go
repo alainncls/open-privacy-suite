@@ -179,7 +179,7 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 
 	if filter.Search != "" {
 		where += fmt.Sprintf(" AND (name ILIKE $%d OR address ILIKE $%d)", argIdx, argIdx)
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, "%"+escapeILIKE(filter.Search)+"%")
 		argIdx++
 	}
 

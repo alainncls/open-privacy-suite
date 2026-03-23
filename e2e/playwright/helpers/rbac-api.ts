@@ -195,6 +195,7 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
+  auto_created?: boolean;
 }
 
 export interface SetGroupAccessInput {

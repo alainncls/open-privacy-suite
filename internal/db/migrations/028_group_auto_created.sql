@@ -4,8 +4,8 @@
 
 ALTER TABLE groups ADD COLUMN auto_created BOOLEAN NOT NULL DEFAULT false;
 
--- Backfill: groups with slugs matching the deployer auto-grant pattern
-UPDATE groups SET auto_created = true WHERE slug LIKE 'deploy-0x%';
+-- Backfill: groups with slugs matching the deployer auto-grant pattern (deploy-<uuid>)
+UPDATE groups SET auto_created = true WHERE slug LIKE 'deploy-%';
 
 -- Index for filtering by auto_created within an org
 CREATE INDEX idx_groups_auto_created ON groups (org_id, auto_created);

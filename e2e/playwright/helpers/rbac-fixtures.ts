@@ -133,8 +133,10 @@ export class RBACTestFixture {
     const group = await this.rbac.createGroup(orgId, {
       slug: groupSlug,
       name: opts?.name ?? `Auto Deploy ${groupSlug}`,
-      auto_created: true,
     });
+    // auto_created is not accepted on create — set via update
+    await this.rbac.updateGroup(orgId, group.id, { auto_created: true } as any);
+    group.auto_created = true;
     this.groups.push({ orgId, group });
     return group;
   }

@@ -667,6 +667,10 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "contract_ids is required"})
 		return
 	}
+	if len(input.ContractIDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many contract_ids (max 200)"})
+		return
+	}
 	if input.TargetGroupID == "" && input.NewGroup == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "either target_group_id or new_group is required"})
 		return

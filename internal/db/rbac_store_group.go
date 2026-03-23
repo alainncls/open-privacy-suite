@@ -210,6 +210,14 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 	return results, total, nil
 }
 
+// escapeILIKE escapes PostgreSQL ILIKE metacharacters (%, _, \) in a search string.
+func escapeILIKE(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // GroupListFilter contains optional filters for listing groups.
 type GroupListFilter struct {
 	AutoCreated *bool  // Filter by auto_created status
@@ -230,7 +238,7 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 	}
 	if filter.Search != "" {
 		where += fmt.Sprintf(" AND (g.name ILIKE $%d OR g.slug ILIKE $%d)", argIdx, argIdx)
-		args = append(args, "%"+filter.Search+"%")
+		args = append(args, "%"+escapeILIKE(filter.Search)+"%")
 		argIdx++
 	}
 

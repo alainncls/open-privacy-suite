@@ -53,8 +53,9 @@ func (s *Server) createGroup(c *gin.Context) {
 		Description string  `json:"description"`
 		ParentID    *string `json:"parent_id"`
 		IsOrgAdmin  bool    `json:"is_org_admin"`
-		AutoCreated bool    `json:"auto_created"`
 	}
+	// Note: auto_created is intentionally NOT accepted from API input.
+	// Only the system (CreateDeployerAutoGrants) should set it.
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -101,7 +102,6 @@ func (s *Server) createGroup(c *gin.Context) {
 		Depth:       depth,
 		Path:        path,
 		IsOrgAdmin:  input.IsOrgAdmin,
-		AutoCreated: input.AutoCreated,
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
@@ -148,6 +148,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
 		IsOrgAdmin  *bool   `json:"is_org_admin"`
+		AutoCreated *bool   `json:"auto_created"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -162,6 +163,9 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.IsOrgAdmin != nil {
 		group.IsOrgAdmin = *input.IsOrgAdmin
+	}
+	if input.AutoCreated != nil {
+		group.AutoCreated = *input.AutoCreated
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
@@ -346,6 +350,10 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "group_ids is required"})
 		return
 	}
+	if len(input.GroupIDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many group_ids (max 200)"})
+		return
+	}
 
 	type groupPreview struct {
 		ID            string   `json:"id"`
@@ -428,6 +436,10 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 
 	if len(input.GroupIDs) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "group_ids is required"})
+		return
+	}
+	if len(input.GroupIDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many group_ids (max 200)"})
 		return
 	}
 
