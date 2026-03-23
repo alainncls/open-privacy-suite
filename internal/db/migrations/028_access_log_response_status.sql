@@ -7,7 +7,10 @@
 -- chain verification can deterministically reconstruct entries across
 -- format changes. Version 1 = original format, version 2 = includes response_status.
 ALTER TABLE access_logs ADD COLUMN IF NOT EXISTS response_status INTEGER;
-ALTER TABLE access_logs ADD COLUMN IF NOT EXISTS hash_format_version SMALLINT NOT NULL DEFAULT 2;
+ALTER TABLE access_logs ADD COLUMN IF NOT EXISTS hash_format_version SMALLINT;
+UPDATE access_logs SET hash_format_version = 1 WHERE hash_format_version IS NULL;
+ALTER TABLE access_logs ALTER COLUMN hash_format_version SET NOT NULL;
+ALTER TABLE access_logs ALTER COLUMN hash_format_version SET DEFAULT 2;
 
 ---- create above / drop below ----
 
