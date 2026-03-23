@@ -1190,6 +1190,111 @@ func TestRedactLogs_UnknownTopic0_DataUnchanged(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RedactLogs — participant override
+// ---------------------------------------------------------------------------
+
+func TestRedactLogs_ParticipantOverride_SeeOwnLogs(t *testing.T) {
+	// Eve's EOA calls a private contract. The contract emits a log.
+	// Without participant override: log dropped (contract is Redacted).
+	// With participant override: log visible (Eve is the tx sender).
+	contractAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	eveAddr := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	topic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		contractAddr: VisibilityRedacted,
+	}, []string{eveAddr})
+
+	logs := []Log{{
+		ID: 1, Address: contractAddr, TxHash: "0xabc",
+		Topic0: &topic0, Data: "0x0000000000000000000000000000000000000000000000000000000002faf080",
+	}}
+
+	// Without participant context — log should be stripped (topics/data nil)
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log (redacted), got %d", len(result))
+	}
+	if result[0].Topic0 != nil {
+		t.Error("without participant context, topic0 should be nil")
+	}
+	if result[0].Data != "" {
+		t.Error("without participant context, data should be stripped")
+	}
+
+	// With participant context (Eve is the tx sender) — log should be fully visible
+	result, err = engine.RedactLogs(context.Background(), logs, "did:test:eve", eveAddr, contractAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(result))
+	}
+	if result[0].Topic0 == nil || *result[0].Topic0 != topic0 {
+		t.Errorf("with participant override, topic0 should be preserved, got %v", result[0].Topic0)
+	}
+	if result[0].Data == "" {
+		t.Error("with participant override, data should be preserved")
+	}
+}
+
+func TestRedactLogs_ParticipantOverride_NonParticipantStillRedacted(t *testing.T) {
+	// Mallory is NOT a participant in the tx (different address from from/to).
+	// Even though she passes participant addresses, her linked address doesn't match.
+	contractAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	senderAddr := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	malloryAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	topic0 := "0xddf252ad"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		contractAddr: VisibilityRedacted,
+	}, []string{malloryAddr})
+
+	logs := []Log{{ID: 1, Address: contractAddr, Topic0: &topic0, Data: "0xdata"}}
+
+	// participantAddrs are from the parent tx (sender → contract).
+	// Mallory's linked addr (0xbbbb...) does NOT match sender (0xeeee...) or contract.
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:mallory", senderAddr, contractAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Topic0 != nil {
+		t.Error("non-participant should still get redacted logs (topics stripped)")
+	}
+	if result[0].Data != "" {
+		t.Error("non-participant should still get redacted logs (data stripped)")
+	}
+}
+
+func TestRedactLogs_ParticipantOverride_HiddenStillDropped(t *testing.T) {
+	// Even with participant override, Hidden logs should stay dropped.
+	// (Hidden = completely invisible, not just redacted)
+	contractAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	eveAddr := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	topic0 := "0xddf252ad"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		contractAddr: VisibilityHidden,
+	}, []string{eveAddr})
+
+	logs := []Log{{ID: 1, Address: contractAddr, Topic0: &topic0, Data: "0xdata"}}
+
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:eve", eveAddr, contractAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("Hidden logs should still be dropped even with participant override, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RedactAddress
 // ---------------------------------------------------------------------------
 

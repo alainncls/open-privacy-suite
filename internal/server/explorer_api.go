@@ -1053,7 +1053,18 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 		logs = []explorer.Log{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
+
+	// Fetch parent tx to get from/to for participant override.
+	// If the viewer is the sender/receiver, they should see the logs.
+	var participantAddrs []string
+	if parentTx, err := s.explorerStore.GetTransaction(c.Request.Context(), hash); err == nil && parentTx != nil {
+		participantAddrs = append(participantAddrs, parentTx.From)
+		if parentTx.To != nil {
+			participantAddrs = append(participantAddrs, *parentTx.To)
+		}
+	}
+
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID, participantAddrs...)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
