@@ -168,7 +168,9 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 
 // ContractListFilter contains optional filters for listing contracts.
 type ContractListFilter struct {
-	Search string // ILIKE filter on name or address
+	Search       string // ILIKE filter on name or address
+	CreatedAfter string // ISO8601 date — only contracts created on or after this date
+	CreatedBefore string // ISO8601 date — only contracts created before this date
 }
 
 // ListContractsFiltered lists contracts with optional search filter.
@@ -180,6 +182,16 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 	if filter.Search != "" {
 		where += fmt.Sprintf(" AND (name ILIKE $%d OR address ILIKE $%d)", argIdx, argIdx)
 		args = append(args, "%"+escapeILIKE(filter.Search)+"%")
+		argIdx++
+	}
+	if filter.CreatedAfter != "" {
+		where += fmt.Sprintf(" AND created_at >= $%d", argIdx)
+		args = append(args, filter.CreatedAfter)
+		argIdx++
+	}
+	if filter.CreatedBefore != "" {
+		where += fmt.Sprintf(" AND created_at < $%d", argIdx)
+		args = append(args, filter.CreatedBefore)
 		argIdx++
 	}
 

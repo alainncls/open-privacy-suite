@@ -22,7 +22,9 @@ func (s *Server) listContracts(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
 
 	filter := db.ContractListFilter{
-		Search: c.Query("search"),
+		Search:        c.Query("search"),
+		CreatedAfter:  c.Query("created_after"),
+		CreatedBefore: c.Query("created_before"),
 	}
 
 	contracts, total, err := s.db.ListContractsFiltered(c.Request.Context(), orgID, limit, offset, filter)

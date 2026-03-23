@@ -100,7 +100,7 @@ export const rbacApi = {
 
   // Contracts (first-class resources)
   contracts: {
-    list: (orgId: string, params?: { limit?: number; offset?: number; search?: string }) =>
+    list: (orgId: string, params?: { limit?: number; offset?: number; search?: string; created_after?: string; created_before?: string }) =>
       api.get<PaginatedResponse<Contract>>(`/orgs/${orgId}/contracts`, { params }),
     get: (orgId: string, address: string) =>
       api.get<Contract>(`/orgs/${orgId}/contracts/${address}`),

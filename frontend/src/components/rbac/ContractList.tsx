@@ -57,6 +57,10 @@ export default function ContractList() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Date filter state
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showMoveDialog, setShowMoveDialog] = useState(false);
@@ -103,14 +107,16 @@ export default function ContractList() {
     if (orgId) {
       loadContracts(0);
     }
-  }, [orgId, debouncedSearch]);
+  }, [orgId, debouncedSearch, dateFrom, dateTo]);
 
   const loadContracts = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const params: { limit: number; offset: number; search?: string } = { limit: PAGE_SIZE, offset: newOffset };
+      const params: { limit: number; offset: number; search?: string; created_after?: string; created_before?: string } = { limit: PAGE_SIZE, offset: newOffset };
       if (debouncedSearch) params.search = debouncedSearch;
+      if (dateFrom) params.created_after = dateFrom + 'T00:00:00Z';
+      if (dateTo) params.created_before = dateTo + 'T23:59:59Z';
       const response = await rbacApi.contracts.list(orgId, params);
       const page = response.data;
       setContracts(page.data || []);
@@ -242,9 +248,9 @@ export default function ContractList() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
+      {/* Search + Date Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
           <Input
             type="text"
@@ -254,9 +260,27 @@ export default function ContractList() {
             className="pl-9"
           />
         </div>
-        {searchQuery && (
-          <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')} className="text-neutral-500">
-            Clear search
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-neutral-500">From</span>
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="w-[140px] text-xs"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-neutral-500">To</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            className="w-[140px] text-xs"
+          />
+        </div>
+        {(searchQuery || dateFrom || dateTo) && (
+          <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setDateFrom(''); setDateTo(''); }} className="text-neutral-500">
+            Clear
           </Button>
         )}
       </div>
