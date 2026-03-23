@@ -1226,7 +1226,7 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	itxs, total, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
+	itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1243,7 +1243,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.InternalTransaction{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerAddressLogs(c *gin.Context) {
@@ -1263,7 +1264,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	logs, total, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
+	logs, _, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1280,7 +1281,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Log{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerAddressContract(c *gin.Context) {
@@ -1485,7 +1487,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	holders, total, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
+	holders, _, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1502,7 +1504,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenHolder{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
@@ -1520,7 +1523,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	transfers, total, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
+	transfers, _, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1537,7 +1540,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 // --- Transfers ---
@@ -1556,7 +1560,7 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	transfers, total, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
+	transfers, _, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1573,7 +1577,8 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 // --- Accounts ---
@@ -1597,7 +1602,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
+	accounts, _, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1630,14 +1635,11 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
-		total -= int64(len(accounts) - len(filtered))
-		if total < 0 {
-			total = 0
-		}
 		accounts = filtered
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": len(accounts)})
 }
 
 // --- Search ---
