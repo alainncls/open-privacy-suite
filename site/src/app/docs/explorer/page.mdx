@@ -159,6 +159,15 @@ When the block explorer displays transaction lists, the redaction engine applies
 
 The `[PRIVATE]` placeholder is rendered in the frontend as a lock icon with the label "Private". Address labels ("Mine", "Disclosed", "My Org", "Public", "Private") appear next to addresses, helping users understand what they are permitted to see and why.
 
+### Strict Visibility Filtering (Pagination & Stats)
+
+To ensure that raw transaction counts never leak, the Explorer API employs SQL-level visibility filtering. When a user requests a paginated list of transactions, interactions that are completely hidden from the user are dropped *before* the results are paginated or counted. 
+
+This provides a strict **behavioral privacy guarantee**:
+- The total transaction count returned for pagination never includes transactions the user is not allowed to see.
+- Pagination works seamlessly without producing "empty" pages or revealing the presence of redacted data.
+- Global Chain Stats and Chart Data reflect only the activity the viewer is authorized to see.
+
 ### Participant Visibility
 
 Transaction participants (sender or receiver) always see the counterparty's address in their own transactions, even if the counterparty is otherwise private. This override is **per-transaction only** — the counterparty stays hidden in transactions where the viewer is not a participant.

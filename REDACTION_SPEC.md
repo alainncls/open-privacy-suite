@@ -20,6 +20,34 @@ Runs on structured data objects before they are serialised and returned by the E
 
 Called by: Explorer API handlers → `RedactionEngine.RedactTransaction(tx, viewerOrgID)` etc.
 
+### Layer 2a — SQL-Level Visibility Filtering (`internal/explorer/visibility_filter.go`)
+
+Runs **before** data is fetched from the explorer database. Where Layer 2 redacts individual fields on already-fetched rows, this layer prevents invisible rows from being fetched at all. This is critical for correct pagination and count totals — without it, a page of 25 items might contain only 3 visible rows after post-fetch redaction.
+
+The filter is built by `buildVisibilityFilter()`:
+
+1. `GetAllRegisteredAddresses()` loads every contract address from the RBAC database.
+2. `GetBatchVisibility(addresses, viewerOrgID)` classifies each address as Full, Redacted, or Hidden for the current viewer.
+3. Addresses classified as Hidden are collected into a set.
+4. A `VisibilityFilter` struct is constructed containing the hidden address set.
+
+The SQL `WHERE NOT(...)` clause excludes:
+
+- **Contract creation transactions from hidden deployers**: `to_address IS NULL AND from_address IN (hidden set)` — deployment activity from other orgs is completely invisible.
+- **Transactions where both from AND to are hidden**: neither party is visible to the viewer, so the transaction is dropped entirely.
+
+**Count/Total Security:** All paginated endpoints return only the count of rows that pass the visibility filter, never the raw database total. This prevents information disclosure about private transaction volume. A viewer cannot determine how many transactions exist that they are not allowed to see.
+
+**Block Transaction Counts:** Per-block transaction counts returned by the explorer API are adjusted per-viewer via `GetBlockTransactionCountFiltered`, which applies the same visibility filter. The `transaction_count` in block list responses reflects only the transactions visible to the current viewer.
+
+**Chain Stats:** `TotalTransactions` and `TotalAddresses` in the `/api/explorer/stats` response are filtered for viewer visibility. The raw database totals are never exposed.
+
+**Transaction History:** Daily and hourly transaction count charts (`/api/explorer/stats/charts/txs`) are filtered to exclude hidden transactions. A viewer's chart data reflects only transaction volume they are permitted to see.
+
+**Contract Creation Redaction:** Contract deployments from non-identifiable deployers (Hidden visibility) are completely dropped at the SQL level, not just field-redacted. This is stronger than Layer 2's field-level redaction: the transaction never appears in any list, and is not counted in any total.
+
+**Interaction with Layer 2:** SQL-level filtering handles row-level drops (entire transactions removed). Layer 2 (`RedactTransactions`) still runs on the surviving rows for field-level redaction: replacing addresses with `[PRIVATE]`, zeroing values, and applying the participant visibility override. The two layers are complementary and both are required.
+
 ---
 
 ## 2. Visibility Levels
@@ -57,7 +85,7 @@ These levels are computed per-address by the redaction engine based on the viewe
 | `maxFeePerGas` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 | `maxPriorityFeePerGas` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 | `gasLimit` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
-| `contractAddress` | **unchanged** | **unchanged** | **unchanged** | unchanged | **No** | No | **GAP G7** — deploy tx leaks deployed contract address when deployer is hidden |
+| `contractAddress` | — (tx dropped)* | `[PRIVATE]` | pseudonym | unchanged | Yes | Yes | *Dropped by SQL visibility filter when deployer is hidden |
 | `txCategories` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted: derived labels, not raw addresses |
 
 ### 3.2 InternalTransaction (Explorer API)
@@ -165,6 +193,7 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 - **G1 (resolved):** Nonce not stripped when sender was hidden — now nil when `from` is Hidden/Redacted.
 - **G2 (resolved):** `value` and `inputData` not zeroed for mixed-party txs (one side hidden) — now zeroed when either side is Hidden or Redacted.
 - **G3 (resolved):** Log topics[1..3] not scanned for embedded address parameters — now scanned for all logs where emitter is Full; private addresses zeroed.
+- **G7 (resolved):** Transaction.contractAddress leaks deployed address — contract deployment transactions from hidden deployers are now dropped entirely via SQL-level visibility filtering.
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
 
@@ -178,9 +207,6 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 
 - **G6: Block.logsBloom not zeroed**
   The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed (not raw) representations of addresses. A viewer who already knows a target address can probe whether that address has activity in a given block in O(1). Zeroing the bloom field for all blocks would require per-block address scanning against the private address registry, which is expensive. Risk is low — probabilistic membership test only, requires knowing the target address. Accepted for now; track as a future hardening item.
-
-- **G7: Transaction.contractAddress leaks deployed address when deployer is hidden**
-  When a deploy transaction (`to == null`, `contractAddress != null`) is made by a Hidden or Redacted address, the resulting `contractAddress` is included in the redacted transaction object. A viewer can learn a new contract address was deployed by the private party. This is meaningful because the deployed contract may itself be discoverable via block explorer and correlatable. The `contractAddress` field should be set to nil when the sender is Hidden or Redacted. Currently not implemented.
 
 ---
 
@@ -219,7 +245,7 @@ Every redaction method must have unit tests covering the following scenarios. Te
 | Emitter Redacted (logs) | Address → `[PRIVATE]`; all topics → nil; data → nil |
 | Emitter Full, topic address is private | Topic address zeroed; other topics unchanged |
 | Emitter Full, ABI registered, data has private address | Private address slot in data → zeroed |
-| Deploy tx, sender Hidden | `contractAddress` → nil (currently failing — G7) |
+| Deploy tx, sender Hidden | Entry dropped entirely (SQL-level) |
 | Viewer is sender, counterparty Hidden | Counterparty → Full (participant override) |
 | Viewer is receiver, counterparty Hidden | Counterparty → Full (participant override) |
 | Viewer not a participant, both sides Hidden | Entry dropped (no override) |

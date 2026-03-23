@@ -152,6 +152,8 @@ This proxy implements a hierarchical Role-Based Access Control (RBAC) system for
 - **Restrictive inheritance**: Child groups can only narrow parent permissions
 - **Dual membership support**: Admin assignment and ZK-attested credentials
 - **Contract ownership tracking** with special abilities
+- **Advanced Tracing**: Secure, rate-limited access to `debug_traceTransaction` and `debug_traceCall` with cross-org trace-tree validator
+- **Batch Management**: Comprehensive UI for batch-moving contracts and batch-deleting groups
 
 ### Quick Start
 

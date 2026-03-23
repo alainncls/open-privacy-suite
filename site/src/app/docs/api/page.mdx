@@ -374,6 +374,11 @@ Available claims: `reader`, `writer`, `deployer`, `admin`, `upgrade`
 | PUT | `/api/orgs/:org_id/contracts/:addr` | Update contract |
 | DELETE | `/api/orgs/:org_id/contracts/:addr` | Delete contract |
 
+The list contracts endpoint supports optional filters:
+- `?search=term` — filter by contract name or address prefix (case-insensitive)
+- `?created_after=timestamp` — return contracts created after this date
+- `?created_before=timestamp` — return contracts created before this date
+
 **Body:**
 
 ```json
