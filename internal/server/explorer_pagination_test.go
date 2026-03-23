@@ -234,6 +234,69 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 	})
 }
 
+// TestExplorerTransactions_NoAdminGroups verifies that org contracts are hidden
+// from anonymous users even when the org has NO admin groups at all.
+// This is the regression test for the bug where org contract detection was
+// coupled with admin group lookup — if no admin groups existed, the contract
+// fell through as VisibilityFull.
+func TestExplorerTransactions_NoAdminGroups(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupPaginatedTransactionsRouter(srv)
+	ctx := context.Background()
+
+	// Create org with a contract — registerOrgContract creates a regular group
+	// (is_org_admin=false) with a contract_grant that has no claims.
+	// Deliberately do NOT create any admin group.
+	privateAddr := "0xdddd000000000000000000000000000000000001"
+	_ = registerOrgContract(t, database, privateAddr)
+
+	publicFrom := "0xeeee000000000000000000000000000000000001"
+	publicTo := "0xeeee000000000000000000000000000000000002"
+
+	_, err := conn.ExecContext(ctx,
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (100, '0xblock_noadmin', '0x0', 2000, 21000, 30000000, 3, '0x0000000000000000000000000000000000000000', '0x', '0x', '0x', '0x')`)
+	require.NoError(t, err)
+
+	// tx1: from org contract, contract creation — must be hidden
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data)
+		 VALUES ('0xtx_noadmin1', 100, 0, $1, NULL, 0, 21000, 1000, 1, '0x')`, privateAddr)
+	require.NoError(t, err)
+
+	// tx2: public to org contract — both-sides check: from is public, to is private
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data)
+		 VALUES ('0xtx_noadmin2', 100, 1, $1, $2, 0, 21000, 1000, 1, '0x')`, publicFrom, privateAddr)
+	require.NoError(t, err)
+
+	// tx3: public to public — always visible
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data)
+		 VALUES ('0xtx_noadmin3', 100, 2, $1, $2, 0, 21000, 1000, 1, '0x')`, publicFrom, publicTo)
+	require.NoError(t, err)
+
+	t.Run("anonymous sees only public tx despite no admin groups existing", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		// tx1 dropped: contract creation from hidden deployer
+		// tx2 survives SQL (only to is hidden, not both) but to-address gets redacted
+		// tx3 fully visible
+		assert.Equal(t, int64(2), total, "anonymous should see 2 txs: 1 public + 1 with redacted to-address")
+		assert.Len(t, txs, 2)
+
+		for _, tx := range txs {
+			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From),
+				"org contract address must not appear as from even without admin groups")
+		}
+	})
+}
+
 // parseBlocksResponse parses a json array of blocks
 func parseBlocksResponse(t *testing.T, body []byte) []explorer.Block {
 	t.Helper()

@@ -189,6 +189,58 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 	})
 }
 
+// TestGetBatchVisibility_NoAdminGroups verifies that org contracts are
+// VisibilityRedacted even when no admin groups exist at all. Regression test
+// for the bug where org contract detection was coupled with admin group lookup —
+// if no admin groups existed, the contract fell through as VisibilityFull.
+func TestGetBatchVisibility_NoAdminGroups(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "no-admin-org", "No Admin Org")
+	require.NoError(t, err)
+
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'readers', 'Readers', 0, 'readers', false)",
+		groupID, orgID)
+	require.NoError(t, err)
+
+	contractAddr := "0xbbbb000000000000000000000000000000000099"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'No Admin Contract')",
+		contractID, orgID, contractAddr)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{read}')",
+		uuid.New().String(), contractID, groupID)
+	require.NoError(t, err)
+
+	t.Run("anonymous sees Redacted", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"org contract must be Redacted for anonymous even with no admin groups")
+	})
+
+	t.Run("read-only member sees Redacted", func(t *testing.T) {
+		memberDID := "did:test:reader_no_admin"
+		addMember(t, database, memberDID, groupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"read-only member must see Redacted when no admin groups exist")
+	})
+}
+
 // ============================================================================
 // ViewerHasContractAccess
 // ============================================================================
