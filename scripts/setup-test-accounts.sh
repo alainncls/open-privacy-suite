@@ -72,30 +72,29 @@ step()  { echo -e "\n${CYAN}==> $*${NC}"; }
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Build admin auth header(s)
-admin_headers() {
-    if [[ -n "$ADMIN_TOKEN" ]]; then
-        echo "-H" "X-Admin-Token: $ADMIN_TOKEN"
-    fi
-}
+# Build admin auth headers as an array (avoids word-splitting issues)
+ADMIN_CURL_HEADERS=()
+if [[ -n "$ADMIN_TOKEN" ]]; then
+    ADMIN_CURL_HEADERS=(-H "X-Admin-Token: $ADMIN_TOKEN")
+fi
 
 # Admin API request helper
 admin_get() {
     local path="$1"
-    curl -sf $(admin_headers) "${ADMIN_URL}${path}" 2>/dev/null || echo ""
+    curl -sf "${ADMIN_CURL_HEADERS[@]}" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
 }
 
 admin_post() {
     local path="$1"
     local data="$2"
-    curl -sf -X POST $(admin_headers) -H "Content-Type: application/json" \
+    curl -sf -X POST "${ADMIN_CURL_HEADERS[@]}" -H "Content-Type: application/json" \
         -d "$data" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
 }
 
 admin_put() {
     local path="$1"
     local data="$2"
-    curl -sf -X PUT $(admin_headers) -H "Content-Type: application/json" \
+    curl -sf -X PUT "${ADMIN_CURL_HEADERS[@]}" -H "Content-Type: application/json" \
         -d "$data" "${ADMIN_URL}${path}" 2>/dev/null || echo ""
 }
 
