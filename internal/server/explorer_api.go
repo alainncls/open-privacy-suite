@@ -917,12 +917,11 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	withCategories := c.Query("with_categories") == "true"
 
 	var txs []explorer.Transaction
-	var total int64
 	var err error
 	if withCategories {
-		txs, total, err = s.explorerStore.GetTransactionsPaginatedWithCategories(c.Request.Context(), page, pageSize)
+		txs, _, err = s.explorerStore.GetTransactionsPaginatedWithCategories(c.Request.Context(), page, pageSize)
 	} else {
-		txs, total, err = s.explorerStore.GetTransactionsPaginated(c.Request.Context(), page, pageSize)
+		txs, _, err = s.explorerStore.GetTransactionsPaginated(c.Request.Context(), page, pageSize)
 	}
 	if err != nil {
 		respondInternalError(c, err.Error())
@@ -940,14 +939,10 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
-	// Adjust total: the DB total doesn't account for redaction drops.
-	// Estimate by scaling: if we fetched N and kept M after redaction,
-	// the visible total is approximately total * M / N.
-	visibleTotal := total
-	if len(txs) > 0 && len(redacted) < len(txs) {
-		visibleTotal = int64(float64(total) * float64(len(redacted)) / float64(len(txs)))
-	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": visibleTotal})
+	// Return only the count of visible transactions — never expose the
+	// unfiltered DB total, as the difference reveals how many private
+	// transactions were redacted.
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
