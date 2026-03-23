@@ -1856,3 +1856,123 @@ func TestBasicAddressQueryOnOrgContract(t *testing.T) {
 		t.Error("expected eth_getBalance on cross-org contract to be denied")
 	}
 }
+
+// TestEthGetLogsOrgResolutionForMultiOrgUser verifies that eth_getLogs resolves
+// to the correct org when a user belongs to multiple orgs. This was a real bug:
+// GetTargetAddress returned "" for eth_getLogs, causing the resolver to use the
+// user's default org instead of the contract's owning org, resulting in empty
+// contract_access.
+func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	// Two orgs: system default + demo
+	systemOrg := &Organization{ID: "system-org", Slug: "default", Name: "System"}
+	demoOrg := &Organization{ID: "demo-org", Slug: "demo", Name: "Demo Org"}
+	store.organizations["system-org"] = systemOrg
+	store.organizations["demo-org"] = demoOrg
+
+	// Alice is in both orgs
+	alice := &User{ID: "alice", ExternalID: "did:test:alice", KYC: true}
+	store.users["did:test:alice"] = alice
+
+	systemGroup := &Group{ID: "sys-group", OrgID: "system-org", Slug: "default", Name: "Default"}
+	demoGroup := &Group{ID: "demo-group", OrgID: "demo-org", Slug: "admins", Name: "Admins"}
+
+	store.memberships["alice"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-sys", UserID: "alice", GroupID: "sys-group"}, Group: systemGroup},
+		{Membership: &UserMembership{ID: "mem-demo", UserID: "alice", GroupID: "demo-group"}, Group: demoGroup},
+	}
+
+	store.groupAccess["sys-group"] = &GroupAccess{
+		GroupID:        "sys-group",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+	}
+	store.groupAccess["demo-group"] = &GroupAccess{
+		GroupID:        "demo-group",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
+	}
+
+	// A stablecoin contract owned by the demo org
+	contractAddr := "0xstable0000000000000000000000000000000001"
+	store.contractOwners[contractAddr] = "demo-org"
+	store.registeredToAnyOrg[contractAddr] = true
+
+	// Contract grant: demo-group has a grant to the stablecoin contract
+	store.contractGrants["demo-group"] = []*ContractGrant{
+		{ID: "grant-1", ContractID: "contract-stable", GroupID: "demo-group"},
+	}
+
+	// Pre-populate cached permissions for DEMO org (the correct one)
+	store.cachedPermissions["alice:demo-org"] = &EffectivePermissions{
+		UserID:         "alice",
+		OrgID:          "demo-org",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+		},
+		ComputedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(5 * time.Minute),
+	}
+
+	// Pre-populate cached permissions for SYSTEM org (the wrong one — no contract access)
+	store.cachedPermissions["alice:system-org"] = &EffectivePermissions{
+		UserID:         "alice",
+		OrgID:          "system-org",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{}, // empty!
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(5 * time.Minute),
+	}
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	t.Run("eth_getLogs resolves to contract owning org", func(t *testing.T) {
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:alice",
+			Method:         "eth_getLogs",
+			Params: []any{
+				map[string]any{
+					"address":   contractAddr,
+					"fromBlock": "0x0",
+					"toBlock":   "latest",
+				},
+			},
+			TargetAddress: contractAddr, // set by GetTargetAddress
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected eth_getLogs to be allowed for Alice on her org's contract, got denied: %s", result.Reason)
+		}
+		if result.OrgID != "demo-org" {
+			t.Errorf("expected org_id=demo-org, got %s", result.OrgID)
+		}
+	})
+
+	t.Run("eth_getLogs without address is denied", func(t *testing.T) {
+		// No address in filter — denied on a private network (address filter required)
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:alice",
+			Method:         "eth_getLogs",
+			Params: []any{
+				map[string]any{
+					"fromBlock": "0x0",
+					"toBlock":   "latest",
+				},
+			},
+			TargetAddress: "", // no target — GetTargetAddress returns ""
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.Allowed {
+			t.Error("expected eth_getLogs without address filter to be denied on private network")
+		}
+	})
+}
