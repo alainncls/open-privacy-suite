@@ -145,10 +145,8 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 		}
 
 		// Compute and store hash chain entry (format version 2)
-		// TODO: request_params is stored as JSONB which doesn't preserve key
-		// ordering or whitespace — hash chain verification from DB state alone
-		// may be non-deterministic for entries with params. Consider storing
-		// params as TEXT/BYTEA or a separate params_hash column.
+		// All fields stored in DB and verifiable — request_params is TEXT
+		// (not JSONB) to preserve exact bytes for hash chain verification.
 		paramsDigest := ""
 		if len(params) > 0 {
 			paramsDigest = string(params)
