@@ -52,8 +52,9 @@ type AccessLogger interface {
 }
 
 // EnhancedAccessLogger logs access with correlation ID, params, and returns the entry ID for hash chain.
+// responseStatus is nil when it matches statusCode (non-opaque request).
 type EnhancedAccessLogger interface {
-	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte) (int64, time.Time, error)
+	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error)
 	UpdateAccessLogHash(ctx context.Context, id int64, hash string) error
 }
 
@@ -132,7 +133,11 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			params = audit.RedactParams(req.Method, req.Params)
 		}
 
-		id, createdAt, err := p.enhancedLogger.LogAccessEnhanced(ctx, req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID, params)
+		var respStatusPtr *int
+		if respStatus != statusCode {
+			respStatusPtr = &respStatus
+		}
+		id, createdAt, err := p.enhancedLogger.LogAccessEnhanced(ctx, req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID, params, respStatusPtr)
 		if err != nil {
 			// Fallback to basic logging
 			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)

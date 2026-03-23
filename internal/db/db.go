@@ -249,9 +249,10 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 }
 
 // LogAccessEnhanced inserts an access log entry with correlation ID, optional request params, and returns the ID and created_at for hash chain computation.
-func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte) (int64, time.Time, error) {
-	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+// responseStatus is the HTTP status returned to the client (may differ from statusCode for opaque denials).
+func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error) {
+	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params, response_status)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING id, created_at`
 
 	var id int64
@@ -261,7 +262,7 @@ func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, s
 		corrID = &correlationID
 	}
 
-	err := d.conn.QueryRowContext(ctx, query, externalID, method, statusCode, ipAddress, corrID, params).Scan(&id, &createdAt)
+	err := d.conn.QueryRowContext(ctx, query, externalID, method, statusCode, ipAddress, corrID, params, responseStatus).Scan(&id, &createdAt)
 	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("failed to log enhanced access: %w", err)
 	}
