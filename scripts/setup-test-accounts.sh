@@ -484,7 +484,82 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 9: ETH transfers between accounts (directly on Anvil)
+# Step 9: Deploy contracts through the proxy (registers to orgs with auto-grants)
+# ---------------------------------------------------------------------------
+
+step "Deploying contracts through the proxy"
+
+# Helper: deploy DemoERC20 through the dev endpoint and register to an org
+deploy_contract_for_org() {
+    local token="$1"
+    local org_id="$2"
+    local name="$3"
+
+    local resp
+    resp=$(curl -sf -X POST \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "{\"org_id\":\"$org_id\",\"name\":\"$name\"}" \
+        "${PROXY_URL}/api/v1/admin/dev/deploy-demo-erc20" 2>/dev/null)
+
+    local addr
+    addr=$(echo "$resp" | jq -r '.address // empty')
+    if [[ -n "$addr" ]]; then
+        ok "Deployed $name at $addr (registered to org)"
+        echo "$addr"
+    else
+        err "Failed to deploy $name: $resp"
+        echo ""
+    fi
+}
+
+# Helper: send ERC20 transfer through the proxy (creates org-private tx)
+send_erc20_transfer() {
+    local from_key="$1"
+    local from_addr="$2"
+    local to_addr="$3"
+    local token_addr="$4"
+    local amount="$5"
+    local label="$6"
+
+    # ERC20 transfer(address,uint256) selector = 0xa9059cbb
+    local padded_to
+    padded_to=$(printf '%064s' "$(echo "$to_addr" | sed 's/0x//')" | tr ' ' '0')
+    local padded_amount
+    padded_amount=$(printf '%064x' "$amount")
+    local calldata="0xa9059cbb${padded_to}${padded_amount}"
+
+    cast send --private-key "$from_key" "$token_addr" "$calldata" \
+        --rpc-url "$PROXY_URL" > /dev/null 2>&1 && ok "$label" || warn "$label (may need auth)"
+}
+
+# Deploy Alpha Corp contracts (Alice deploys)
+info "Alice deploying contracts for Alpha Corp..."
+ALPHA_TOKEN1_ADDR=$(deploy_contract_for_org "$ALICE_TOKEN" "$ALPHA_ORG_ID" "Alpha Treasury Token")
+ALPHA_TOKEN2_ADDR=$(deploy_contract_for_org "$ALICE_TOKEN" "$ALPHA_ORG_ID" "Alpha Governance Token")
+
+# Deploy Beta Inc contracts (Charlie deploys)
+info "Charlie deploying contracts for Beta Inc..."
+BETA_TOKEN1_ADDR=$(deploy_contract_for_org "$CHARLIE_TOKEN" "$BETA_ORG_ID" "Beta Utility Token")
+BETA_TOKEN2_ADDR=$(deploy_contract_for_org "$CHARLIE_TOKEN" "$BETA_ORG_ID" "Beta Staking Token")
+
+# Send some ERC20 transfers to create org-private transactions
+step "Creating org-private ERC20 transfers"
+
+if [[ -n "$ALPHA_TOKEN1_ADDR" ]]; then
+    info "Alice transfers Alpha Treasury tokens to Bob..."
+    send_erc20_transfer "$ALICE_KEY" "$ALICE_ADDR" "$BOB_ADDR" "$ALPHA_TOKEN1_ADDR" 1000000000000000000000 "Alice -> Bob: 1000 Alpha Treasury"
+    send_erc20_transfer "$ALICE_KEY" "$ALICE_ADDR" "$CHARLIE_ADDR" "$ALPHA_TOKEN1_ADDR" 500000000000000000000 "Alice -> Charlie: 500 Alpha Treasury (cross-org!)"
+fi
+
+if [[ -n "$BETA_TOKEN1_ADDR" ]]; then
+    info "Charlie transfers Beta Utility tokens..."
+    send_erc20_transfer "$CHARLIE_KEY" "$CHARLIE_ADDR" "$DAVE_ADDR" "$BETA_TOKEN1_ADDR" 2000000000000000000000 "Charlie -> Dave: 2000 Beta Utility"
+    send_erc20_transfer "$CHARLIE_KEY" "$CHARLIE_ADDR" "$ALICE_ADDR" "$BETA_TOKEN1_ADDR" 750000000000000000000 "Charlie -> Alice: 750 Beta Utility (cross-org!)"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 10: ETH transfers between accounts (directly on Anvil)
 # ---------------------------------------------------------------------------
 
 step "Making ETH transfers between accounts"
@@ -527,8 +602,19 @@ printf "  %-10s %-20s %-44s %s\n" "Dave"    "$DAVE_DID"    "$DAVE_ADDR"    "No o
 echo ""
 echo -e "${CYAN}Disclosure:${NC} Bob can view Alice's data"
 echo ""
+echo -e "${CYAN}Contracts deployed:${NC}"
+echo "  Alpha Corp: ${ALPHA_TOKEN1_ADDR:-none} (Treasury), ${ALPHA_TOKEN2_ADDR:-none} (Governance)"
+echo "  Beta Inc:   ${BETA_TOKEN1_ADDR:-none} (Utility), ${BETA_TOKEN2_ADDR:-none} (Staking)"
+echo ""
+echo -e "${CYAN}Privacy isolation test:${NC}"
+echo "  - Alice (Alpha) should see Alpha contract txs, NOT Beta contract details"
+echo "  - Charlie (Beta) should see Beta contract txs, NOT Alpha contract details"
+echo "  - Bob (Alpha reader) should see Alpha contract txs (read-only)"
+echo "  - Dave (anonymous) should see public chain data, redacted contract internals"
+echo ""
 echo -e "${CYAN}Next steps:${NC}"
 echo "  1. Open the login page in the browser"
 echo "  2. Test identities appear in the 'Development Only' section"
 echo "  3. Click a name to instantly log in as that identity"
+echo "  4. Open the block explorer to verify privacy isolation"
 echo ""

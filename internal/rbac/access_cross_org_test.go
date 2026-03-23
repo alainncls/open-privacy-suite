@@ -1734,3 +1734,125 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		}
 	})
 }
+
+// TestBasicAddressQueryOnEOA verifies that eth_getBalance, eth_getTransactionCount,
+// and eth_getCode on unregistered EOAs are allowed with just a read claim,
+// while eth_getStorageAt on the same EOA is denied.
+func TestBasicAddressQueryOnEOA(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	store.organizations["org-a"] = orgA
+
+	user := &User{ID: "reader-user", ExternalID: "did:test:reader", KYC: true}
+	store.users["did:test:reader"] = user
+
+	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "readers", Name: "Readers"}
+	store.groupAccess["group-a"] = &GroupAccess{
+		GroupID:        "group-a",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+	}
+	store.memberships["reader-user"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-1", UserID: "reader-user", GroupID: "group-a"}, Group: groupA},
+	}
+
+	// Pre-populate cached permissions so the resolver doesn't need to compute
+	store.cachedPermissions["reader-user:org-a"] = &EffectivePermissions{
+		UserID:         "reader-user",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(5 * time.Minute),
+	}
+
+	// EOA address — not registered to any org
+	eoaAddr := "0x1111111111111111111111111111111111111111"
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	tests := []struct {
+		name    string
+		method  string
+		allowed bool
+	}{
+		{"eth_getBalance on EOA allowed", "eth_getBalance", true},
+		{"eth_getTransactionCount on EOA allowed", "eth_getTransactionCount", true},
+		{"eth_getCode on EOA denied (existence oracle)", "eth_getCode", false},
+		{"eth_getStorageAt on EOA denied", "eth_getStorageAt", false},
+		{"eth_getProof on EOA denied", "eth_getProof", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: "did:test:reader",
+				Method:         tt.method,
+				TargetAddress:  eoaAddr,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Allowed != tt.allowed {
+				t.Errorf("expected allowed=%v, got allowed=%v (reason: %s)", tt.allowed, result.Allowed, result.Reason)
+			}
+		})
+	}
+}
+
+// TestBasicAddressQueryOnOrgContract verifies that eth_getBalance on an address
+// owned by another org is still denied (the EOA bypass only applies to unregistered addresses).
+func TestBasicAddressQueryOnOrgContract(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+
+	orgA := &Organization{ID: "org-a", Slug: "org-a", Name: "Org A"}
+	orgB := &Organization{ID: "org-b", Slug: "org-b", Name: "Org B"}
+	store.organizations["org-a"] = orgA
+	store.organizations["org-b"] = orgB
+
+	user := &User{ID: "user-a", ExternalID: "did:test:user-a", KYC: true}
+	store.users["did:test:user-a"] = user
+
+	groupA := &Group{ID: "group-a", OrgID: "org-a", Slug: "readers", Name: "Readers"}
+	store.groupAccess["group-a"] = &GroupAccess{
+		GroupID:        "group-a",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+	}
+	store.memberships["user-a"] = []*MembershipWithDetails{
+		{Membership: &UserMembership{ID: "mem-1", UserID: "user-a", GroupID: "group-a"}, Group: groupA},
+	}
+
+	store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
+		UserID:         "user-a",
+		OrgID:          "org-a",
+		AllowedMethods: []string{"*"},
+		Claims:         []Claim{ClaimRead},
+		ContractAccess: map[string]ContractAccess{},
+		ComputedAt:     time.Now(),
+		ExpiresAt:      time.Now().Add(5 * time.Minute),
+	}
+
+	// Contract owned by Org B — user is in Org A
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	store.contractOwners[contractAddr] = "org-b"
+	store.registeredToAnyOrg[contractAddr] = true
+
+	controller := NewAccessController(store, 5*time.Minute)
+
+	result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-a",
+		Method:         "eth_getBalance",
+		TargetAddress:  contractAddr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Allowed {
+		t.Error("expected eth_getBalance on cross-org contract to be denied")
+	}
+}

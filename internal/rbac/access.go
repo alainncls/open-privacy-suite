@@ -593,6 +593,38 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 	}
 
+	// Basic state queries (balance, nonce, code) on addresses not registered to any org
+	// are allowed with the read claim. These are needed for:
+	//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
+	//   - eth_getBalance: wallet balance display
+	//   - eth_getCode: EOA vs contract detection
+	// Only eth_getStorageAt and eth_getProof need strict contract-level gating since
+	// they access contract-internal state that could leak sensitive data.
+	if req.TargetAddress != "" && isBasicAddressQuery(req.Method) {
+		addr := strings.ToLower(req.TargetAddress)
+		if !perms.IsContractRegistered(addr) {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID == "" {
+				// Not owned by any org — allow with read claim (public EOA data)
+				if containsClaim(perms.Claims, ClaimRead) {
+					allClaims := collectAllClaims(perms)
+					return &AccessCheckResult{
+						Allowed:        true,
+						OrgID:          org.ID,
+						UserID:         user.ID,
+						RateLimitRPS:   perms.RateLimitRPS,
+						RateLimitDaily: perms.RateLimitDaily,
+						Claims:         allClaims,
+					}, nil
+				}
+			}
+			// Owned by an org — fall through to contract access check
+		}
+	}
+
 	// Check contract access if target address is specified
 	if req.TargetAddress != "" {
 		addr := strings.ToLower(req.TargetAddress)
@@ -1397,6 +1429,24 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 	}
 
 	return org, nil
+}
+
+// isBasicAddressQuery returns true for state queries that target an address but
+// only return public non-sensitive data. These are safe to allow on unregistered
+// EOAs without contract-level grants:
+//   - eth_getBalance: always returns a value (0 for non-existent) — no existence leak
+//   - eth_getTransactionCount: always returns a value (0 for non-existent) — needed for tx nonce
+//
+// NOT included:
+//   - eth_getCode: reveals whether an address has deployed code (contract existence oracle)
+//   - eth_getStorageAt: accesses contract-internal state
+//   - eth_getProof: returns balance + storage hash
+func isBasicAddressQuery(method string) bool {
+	switch method {
+	case "eth_getBalance", "eth_getTransactionCount":
+		return true
+	}
+	return false
 }
 
 // isValueTransferParams checks if eth_sendTransaction params represent a simple
