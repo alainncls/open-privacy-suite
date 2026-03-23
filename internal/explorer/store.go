@@ -208,6 +208,58 @@ func (s *Store) GetBlocks(ctx context.Context, limit int, beforeBlock *uint64) (
 	return blocks, rows.Err()
 }
 
+// GetBlocksFiltered returns blocks with their transaction counts filtered by visibility.
+func (s *Store) GetBlocksFiltered(ctx context.Context, limit int, beforeBlock *uint64, filter *VisibilityFilter) ([]Block, error) {
+	blocks, err := s.GetBlocks(ctx, limit, beforeBlock)
+	if err != nil || len(blocks) == 0 || filter == nil || len(filter.HiddenAddresses) == 0 {
+		return blocks, err
+	}
+
+	var blockNums []int64
+	for _, b := range blocks {
+		// Only evaluate if the block has > 0 transactions initially
+		if b.TransactionCount > 0 {
+			blockNums = append(blockNums, int64(b.Number))
+		}
+	}
+
+	if len(blockNums) == 0 {
+		return blocks, nil
+	}
+
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+	query := fmt.Sprintf(`
+		SELECT t.block_number, COUNT(*) 
+		FROM transactions t 
+		WHERE t.block_number = ANY($%d)%s 
+		GROUP BY t.block_number`, nextArg, visClause)
+	
+	args := append(visArgs, pq.Array(blockNums))
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	visibleCounts := make(map[uint64]int)
+	for rows.Next() {
+		var num uint64
+		var count int
+		if err := rows.Scan(&num, &count); err != nil {
+			return nil, err
+		}
+		visibleCounts[num] = count
+	}
+
+	for i := range blocks {
+		if blocks[i].TransactionCount > 0 {
+			blocks[i].TransactionCount = visibleCounts[blocks[i].Number]
+		}
+	}
+
+	return blocks, rows.Err()
+}
+
 // Transaction operations
 
 func (s *Store) GetTransaction(ctx context.Context, hash string) (*Transaction, error) {

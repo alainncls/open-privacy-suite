@@ -561,7 +561,11 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 			beforeBlock = &val
 		}
 	}
-	blocks, err := s.explorerStore.GetBlocks(c.Request.Context(), limit, beforeBlock)
+
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+
+	blocks, err := s.explorerStore.GetBlocksFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return

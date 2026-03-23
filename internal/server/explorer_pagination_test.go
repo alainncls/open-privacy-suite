@@ -181,3 +181,97 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		assert.Len(t, txs, 0, "page 2 should be empty when all visible txs fit in page 1")
 	})
 }
+
+// parseBlocksResponse parses a json array of blocks
+func parseBlocksResponse(t *testing.T, body []byte) []explorer.Block {
+	t.Helper()
+	var resp []explorer.Block
+	require.NoError(t, json.Unmarshal(body, &resp))
+	return resp
+}
+
+func setupExplorerBlocksRouter(srv *Server) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	explorerGroup := router.Group("/api/v1/explorer")
+	explorerGroup.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
+	explorerGroup.GET("/blocks", srv.getExplorerBlocks)
+	return router
+}
+
+func TestExplorerBlocks_VisibilityFiltering(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupExplorerBlocksRouter(srv)
+	ctx := context.Background()
+
+	// --- RBAC setup ---
+	privateAddr := "0xaaaa000000000000000000000000000000000001"
+	groupID := registerOrgContract(t, database, privateAddr)
+
+	aliceDID := "did:test:alice"
+	aliceUserID := createTestUserForExplorer(t, database, aliceDID)
+	addUserToGroup(t, database, aliceUserID, groupID)
+
+	// --- Explorer data setup ---
+	publicFrom := "0xbbbb000000000000000000000000000000000001"
+	publicTo := "0xbbbb000000000000000000000000000000000002"
+
+	// Block 10: 2 private txs, 2 public txs. Total stored in block = 4.
+	_, err := conn.ExecContext(ctx,
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (10, '0xblock10', '0x0', 1000, 21000, 30000000, 4, '0xminer', '0x', '0x', '0x', '0x')`)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ('0xtx1', 10, 0, $1, NULL, 0, 21000, 1000, 1, '0x')`, privateAddr)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ('0xtx2', 10, 1, $1, NULL, 0, 21000, 1000, 1, '0x')`, privateAddr)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ('0xtx3', 10, 2, $1, $2, 0, 21000, 1000, 1, '0x')`, publicFrom, publicTo)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ('0xtx4', 10, 3, $1, $2, 0, 21000, 1000, 1, '0x')`, publicFrom, publicTo)
+	require.NoError(t, err)
+
+	// Block 11: 1 private tx, 0 public txs. Total stored = 1.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (11, '0xblock11', '0xblock10', 1005, 21000, 30000000, 1, '0xminer', '0x', '0x', '0x', '0x')`)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ('0xtx5', 11, 0, $1, NULL, 0, 21000, 1000, 1, '0x')`, privateAddr)
+	require.NoError(t, err)
+
+	t.Run("anonymous viewer sees filtered block transaction counts", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/blocks", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			require.FailNowf(t, "expected status OK", "Got status %d, body: %s", w.Code, w.Body.String())
+		}
+		
+		blocks := parseBlocksResponse(t, w.Body.Bytes())
+		require.Len(t, blocks, 2)
+		
+		// Expected order is descending (Block 11 then Block 10)
+		assert.Equal(t, uint64(11), blocks[0].Number)
+		assert.Equal(t, 0, blocks[0].TransactionCount, "anonymous should see 0 txs in block 11")
+
+		assert.Equal(t, uint64(10), blocks[1].Number)
+		assert.Equal(t, 2, blocks[1].TransactionCount, "anonymous should see 2 public txs out of 4 in block 10")
+	})
+
+	t.Run("authenticated org member sees all transaction counts", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/blocks", nil)
+		addBearerToken(t, req, srv, aliceDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		
+		blocks := parseBlocksResponse(t, w.Body.Bytes())
+		require.Len(t, blocks, 2)
+		
+		assert.Equal(t, uint64(11), blocks[0].Number)
+		assert.Equal(t, 1, blocks[0].TransactionCount)
+
+		assert.Equal(t, uint64(10), blocks[1].Number)
+		assert.Equal(t, 4, blocks[1].TransactionCount)
+	})
+}
