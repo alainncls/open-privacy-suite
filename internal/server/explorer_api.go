@@ -649,15 +649,28 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 }
 
 // buildVisibilityFilter resolves which addresses should be excluded from
-// transaction queries at the SQL level. Only org-registered addresses can be
-// hidden — unregistered addresses default to VisibilityFull (public).
+// transaction queries at the SQL level. Only org-registered addresses and
+// user EOAs can be hidden — unregistered addresses default to VisibilityFull (public).
 func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *explorer.VisibilityFilter {
+	// 1. Get all registered org contracts
 	orgAddrs, err := s.db.GetAllRegisteredAddresses(ctx)
-	if err != nil || len(orgAddrs) == 0 {
+	if err != nil {
+		orgAddrs = []string{}
+	}
+
+	// 2. Get all linked user EOAs
+	userAddrs, err := s.db.GetAllLinkedEOAAddresses(ctx)
+	if err != nil {
+		userAddrs = []string{}
+	}
+
+	// Combine to get all addresses that could potentially be hidden
+	allAddrs := append(orgAddrs, userAddrs...)
+	if len(allAddrs) == 0 {
 		return nil
 	}
 
-	visMap, err := s.db.GetBatchVisibility(ctx, viewerDID, orgAddrs)
+	visMap, err := s.db.GetBatchVisibility(ctx, viewerDID, allAddrs)
 	if err != nil {
 		return nil
 	}
