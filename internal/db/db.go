@@ -183,20 +183,22 @@ func (d *DB) LogAccess(ctx context.Context, externalID, method string, statusCod
 }
 
 type AccessLog struct {
-	ID            int              `json:"id"`
-	ExternalID    string           `json:"external_id"`
-	Method        string           `json:"method"`
-	StatusCode    int              `json:"status_code"`
-	IPAddress     string           `json:"ip_address"`
-	CorrelationID *string          `json:"correlation_id,omitempty"`
-	RequestParams *json.RawMessage `json:"request_params,omitempty"`
-	EntryHash     *string          `json:"entry_hash,omitempty"`
-	CreatedAt     string           `json:"created_at"`
+	ID               int              `json:"id"`
+	ExternalID       string           `json:"external_id"`
+	Method           string           `json:"method"`
+	StatusCode       int              `json:"status_code"`
+	ResponseStatus   *int             `json:"response_status,omitempty"`
+	IPAddress        string           `json:"ip_address"`
+	CorrelationID    *string          `json:"correlation_id,omitempty"`
+	RequestParams    *json.RawMessage `json:"request_params,omitempty"`
+	EntryHash        *string          `json:"entry_hash,omitempty"`
+	HashFormatVersion int             `json:"hash_format_version"`
+	CreatedAt        string           `json:"created_at"`
 }
 
 func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error) {
-	query := `SELECT id, external_id, method, status_code, ip_address,
-	          correlation_id, request_params, entry_hash, created_at
+	query := `SELECT id, external_id, method, status_code, response_status, ip_address,
+	          correlation_id, request_params, entry_hash, hash_format_version, created_at
 	          FROM access_logs
 	          ORDER BY created_at DESC
 	          LIMIT $1`
@@ -212,6 +214,7 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 	for rows.Next() {
 		var log AccessLog
 		var correlationID, entryHash sql.NullString
+		var responseStatus sql.NullInt32
 		var requestParams []byte
 
 		if err := rows.Scan(
@@ -219,10 +222,12 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 			&log.ExternalID,
 			&log.Method,
 			&log.StatusCode,
+			&responseStatus,
 			&log.IPAddress,
 			&correlationID,
 			&requestParams,
 			&entryHash,
+			&log.HashFormatVersion,
 			&log.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan log: %w", err)
@@ -230,6 +235,10 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 
 		if correlationID.Valid {
 			log.CorrelationID = &correlationID.String
+		}
+		if responseStatus.Valid {
+			rs := int(responseStatus.Int32)
+			log.ResponseStatus = &rs
 		}
 		if len(requestParams) > 0 {
 			raw := json.RawMessage(requestParams)
@@ -251,8 +260,8 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 // LogAccessEnhanced inserts an access log entry with correlation ID, optional request params, and returns the ID and created_at for hash chain computation.
 // responseStatus is the HTTP status returned to the client (may differ from statusCode for opaque denials).
 func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error) {
-	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params, response_status)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	query := `INSERT INTO access_logs (external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, 2)
 	          RETURNING id, created_at`
 
 	var id int64

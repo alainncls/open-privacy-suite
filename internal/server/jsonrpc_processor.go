@@ -144,13 +144,13 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			return
 		}
 
-		// Compute and store hash chain entry
-		// Both decision status and response status are committed to the chain
+		// Compute and store hash chain entry (format version 2)
+		// All fields are stored in DB and can be independently verified
 		paramsDigest := ""
 		if len(params) > 0 {
 			paramsDigest = string(params)
 		}
-		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%d|%s|%s|%s",
+		entryContent := fmt.Sprintf("v2|%d|%s|%s|%s|%d|%d|%s|%s|%s",
 			id, req.UserID, req.Method, req.ClientIP, statusCode, respStatus,
 			createdAt.Format(time.RFC3339Nano),
 			req.CorrelationID,
