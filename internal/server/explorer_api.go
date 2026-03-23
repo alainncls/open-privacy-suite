@@ -628,6 +628,32 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 	return ""
 }
 
+// buildVisibilityFilter resolves which addresses should be excluded from
+// transaction queries at the SQL level. Only org-registered addresses can be
+// hidden — unregistered addresses default to VisibilityFull (public).
+func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *explorer.VisibilityFilter {
+	orgAddrs, err := s.db.GetAllRegisteredAddresses(ctx)
+	if err != nil || len(orgAddrs) == 0 {
+		return nil
+	}
+
+	visMap, err := s.db.GetBatchVisibility(ctx, viewerDID, orgAddrs)
+	if err != nil {
+		return nil
+	}
+
+	var hidden []string
+	for addr, level := range visMap {
+		if level == explorer.VisibilityHidden || level == explorer.VisibilityRedacted {
+			hidden = append(hidden, addr)
+		}
+	}
+	if len(hidden) == 0 {
+		return nil
+	}
+	return &explorer.VisibilityFilter{HiddenAddresses: hidden}
+}
+
 func (s *Server) getExplorerTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
@@ -649,58 +675,32 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	withCategories := c.Query("with_categories") == "true"
 	viewerDID := s.getViewerDIDFromRequest(c)
 
-	// Fetch-redact-loop: redaction may drop transactions (e.g., contract
-	// creations from hidden deployers), so we over-fetch and keep looping
-	// until we have enough visible results or exhaust the data.
-	var result []explorer.Transaction
-	cursor := beforeBlock
-	const maxRounds = 5
+	// Build SQL-level visibility filter to exclude transactions where both
+	// participants (or the deployer for contract creations) are hidden.
+	// This replaces the previous fetch-redact loop with a single query.
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 
-	for round := 0; round < maxRounds && len(result) < limit; round++ {
-		batchSize := (limit - len(result)) * 2 // over-fetch 2x to reduce rounds
-		if batchSize < limit {
-			batchSize = limit
-		}
-
-		var txs []explorer.Transaction
-		var err error
-		if withCategories {
-			txs, err = s.explorerStore.GetTransactionsWithCategories(c.Request.Context(), batchSize, cursor)
-		} else {
-			txs, err = s.explorerStore.GetTransactions(c.Request.Context(), batchSize, cursor)
-		}
-		if err != nil {
-			respondInternalError(c, err.Error())
-			return
-		}
-		if len(txs) == 0 {
-			break // no more data
-		}
-
-		redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
-		if err != nil {
-			respondInternalError(c, "redaction failed: "+err.Error())
-			return
-		}
-
-		result = append(result, redacted...)
-
-		// Advance cursor to the last fetched block for next round
-		lastBlock := txs[len(txs)-1].BlockNumber
-		cursor = &lastBlock
-
-		// If we got fewer raw txs than requested, we've exhausted the data
-		if len(txs) < batchSize {
-			break
-		}
+	var txs []explorer.Transaction
+	var err error
+	if withCategories {
+		txs, err = s.explorerStore.GetTransactionsWithCategoriesFiltered(c.Request.Context(), limit, beforeBlock, filter)
+	} else {
+		txs, err = s.explorerStore.GetTransactionsFiltered(c.Request.Context(), limit, beforeBlock, filter)
+	}
+	if err != nil {
+		respondInternalError(c, err.Error())
+		return
 	}
 
-	// Trim to requested limit
-	if len(result) > limit {
-		result = result[:limit]
+	// Field-level redaction still needed (replacing addresses with [PRIVATE],
+	// stripping values, etc.) — the SQL filter only drops entire rows.
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	if err != nil {
+		respondInternalError(c, "redaction failed: "+err.Error())
+		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerTransaction(c *gin.Context) {
@@ -915,13 +915,18 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	}
 
 	withCategories := c.Query("with_categories") == "true"
+	viewerDID := s.getViewerDIDFromRequest(c)
+
+	// Build SQL-level visibility filter
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 
 	var txs []explorer.Transaction
+	var total int64
 	var err error
 	if withCategories {
-		txs, _, err = s.explorerStore.GetTransactionsPaginatedWithCategories(c.Request.Context(), page, pageSize)
+		txs, total, err = s.explorerStore.GetTransactionsPaginatedWithCategoriesFiltered(c.Request.Context(), page, pageSize, filter)
 	} else {
-		txs, _, err = s.explorerStore.GetTransactionsPaginated(c.Request.Context(), page, pageSize)
+		txs, total, err = s.explorerStore.GetTransactionsPaginatedFiltered(c.Request.Context(), page, pageSize, filter)
 	}
 	if err != nil {
 		respondInternalError(c, err.Error())
@@ -930,7 +935,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if txs == nil {
 		txs = []explorer.Transaction{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
+
+	// Field-level redaction still needed for address masking and value stripping.
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -939,10 +945,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
-	// Return only the count of visible transactions — never expose the
-	// unfiltered DB total, as the difference reveals how many private
-	// transactions were redacted.
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
+
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {

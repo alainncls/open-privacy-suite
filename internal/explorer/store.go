@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -407,6 +408,171 @@ func (s *Store) GetTransactionsPaginatedWithCategories(ctx context.Context, page
 		JOIN blocks b ON t.block_number = b.number
 		ORDER BY t.block_number DESC, t.tx_index DESC
 		LIMIT $1 OFFSET $2`, pageSize, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	txs, err := s.scanTransactionsWithCategories(rows)
+	return txs, total, err
+}
+
+// VisibilityFilter contains addresses that should be excluded from transaction queries.
+// Transactions are excluded when:
+//   - Both from AND to are in HiddenAddresses
+//   - Contract creation (to IS NULL) AND from is in HiddenAddresses
+type VisibilityFilter struct {
+	HiddenAddresses []string // lowercase addresses with VisibilityHidden or VisibilityRedacted
+}
+
+// visibilityWhereClause builds the SQL WHERE clause for visibility filtering.
+// Returns the clause fragment and args starting from argIdx.
+// If filter is nil or has no hidden addresses, returns empty string and no args.
+func visibilityWhereClause(filter *VisibilityFilter, argIdx int) (string, []any, int) {
+	if filter == nil || len(filter.HiddenAddresses) == 0 {
+		return "", nil, argIdx
+	}
+	// Exclude txs where:
+	// 1. Contract creation from hidden deployer: to_address IS NULL AND from_address in hidden
+	// 2. Both sides hidden: from_address in hidden AND to_address in hidden
+	clause := fmt.Sprintf(` AND NOT (
+		(t.to_address IS NULL AND LOWER(t.from_address) = ANY($%d))
+		OR (LOWER(t.from_address) = ANY($%d) AND LOWER(t.to_address) = ANY($%d))
+	)`, argIdx, argIdx, argIdx)
+	// We reuse the same $N parameter for all three references to the hidden list
+	return clause, []any{pq.Array(filter.HiddenAddresses)}, argIdx + 1
+}
+
+// GetTransactionsFiltered returns transactions with visibility filtering applied at SQL level.
+func (s *Store) GetTransactionsFiltered(ctx context.Context, limit int, beforeBlock *uint64, filter *VisibilityFilter) ([]Transaction, error) {
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+
+	var rows *sql.Rows
+	var err error
+
+	if beforeBlock != nil {
+		query := fmt.Sprintf(`
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE t.block_number < $%d%s
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $%d`, nextArg, visClause, nextArg+1)
+		args := append(visArgs, *beforeBlock, limit)
+		rows, err = s.db.QueryContext(ctx, query, args...)
+	} else {
+		query := fmt.Sprintf(`
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE 1=1%s
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $%d`, visClause, nextArg)
+		args := append(visArgs, limit)
+		rows, err = s.db.QueryContext(ctx, query, args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanTransactions(rows)
+}
+
+// GetTransactionsPaginatedFiltered returns paginated transactions with visibility filtering.
+func (s *Store) GetTransactionsPaginatedFiltered(ctx context.Context, page, pageSize int, filter *VisibilityFilter) ([]Transaction, int64, error) {
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+
+	var total int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE 1=1%s", visClause)
+	err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	query := fmt.Sprintf(`
+		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at
+		FROM transactions t
+		JOIN blocks b ON t.block_number = b.number
+		WHERE 1=1%s
+		ORDER BY t.block_number DESC, t.tx_index DESC
+		LIMIT $%d OFFSET $%d`, visClause, nextArg, nextArg+1)
+	args := append(visArgs, pageSize, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	txs, err := s.scanTransactions(rows)
+	return txs, total, err
+}
+
+// GetTransactionsWithCategoriesFiltered returns transactions with categories and visibility filtering.
+func (s *Store) GetTransactionsWithCategoriesFiltered(ctx context.Context, limit int, beforeBlock *uint64, filter *VisibilityFilter) ([]Transaction, error) {
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+
+	var rows *sql.Rows
+	var err error
+
+	if beforeBlock != nil {
+		query := fmt.Sprintf(`
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE t.block_number < $%d%s
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $%d`, nextArg, visClause, nextArg+1)
+		args := append(visArgs, *beforeBlock, limit)
+		rows, err = s.db.QueryContext(ctx, query, args...)
+	} else {
+		query := fmt.Sprintf(`
+			SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+				t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+				t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+			FROM transactions t
+			JOIN blocks b ON t.block_number = b.number
+			WHERE 1=1%s
+			ORDER BY t.block_number DESC, t.tx_index DESC LIMIT $%d`, visClause, nextArg)
+		args := append(visArgs, limit)
+		rows, err = s.db.QueryContext(ctx, query, args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanTransactionsWithCategories(rows)
+}
+
+// GetTransactionsPaginatedWithCategoriesFiltered returns paginated transactions with categories and visibility filtering.
+func (s *Store) GetTransactionsPaginatedWithCategoriesFiltered(ctx context.Context, page, pageSize int, filter *VisibilityFilter) ([]Transaction, int64, error) {
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+
+	var total int64
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM transactions t WHERE 1=1%s", visClause)
+	if err := s.db.QueryRowContext(ctx, countQuery, visArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	query := fmt.Sprintf(`
+		SELECT t.hash, t.block_number, b.timestamp, t.tx_index, t.from_address, t.to_address, t.value::text,
+			t.gas_used, t.gas_price, t.gas_limit, t.max_fee_per_gas, t.max_priority_fee_per_gas, t.nonce,
+			t.tx_type, t.input_data, t.status, t.error, t.revert_reason, t.created_at`+txCategorySelectCols+`
+		FROM transactions t
+		JOIN blocks b ON t.block_number = b.number
+		WHERE 1=1%s
+		ORDER BY t.block_number DESC, t.tx_index DESC
+		LIMIT $%d OFFSET $%d`, visClause, nextArg, nextArg+1)
+	args := append(visArgs, pageSize, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

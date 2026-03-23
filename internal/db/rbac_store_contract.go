@@ -219,6 +219,29 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 	return contracts, total, nil
 }
 
+// GetAllRegisteredAddresses returns all contract addresses registered to any org.
+// This includes both finalized contracts and preregistered (pending) addresses.
+// Used to build visibility filters — only org-registered addresses can be hidden.
+func (d *DB) GetAllRegisteredAddresses(ctx context.Context) ([]string, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT LOWER(address) FROM contracts
+		UNION
+		SELECT LOWER(address) FROM preregistered_addresses`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var addrs []string
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs, rows.Err()
+}
+
 func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
 	return err
