@@ -297,6 +297,341 @@ func TestExplorerTransactions_NoAdminGroups(t *testing.T) {
 	})
 }
 
+func TestExplorerVisibility_TransactionShapes(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupPaginatedTransactionsRouter(srv)
+	ctx := context.Background()
+
+	// --- Org A setup ---
+	orgAID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, 'Org A', '{}')",
+		orgAID, "orgA-"+orgAID[:8])
+	require.NoError(t, err)
+
+	orgAContract := "0xaa01000000000000000000000000000000000001"
+	contractAID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Org A Contract')",
+		contractAID, orgAID, orgAContract)
+	require.NoError(t, err)
+
+	groupAID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members-a', 'Members A', 0, 'members-a')",
+		groupAID, orgAID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractAID, groupAID)
+	require.NoError(t, err)
+
+	adminGroupAID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admins-a', 'Admins A', 0, 'admins-a', true)",
+		adminGroupAID, orgAID)
+	require.NoError(t, err)
+
+	// --- Org B setup ---
+	orgBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, 'Org B', '{}')",
+		orgBID, "orgB-"+orgBID[:8])
+	require.NoError(t, err)
+
+	orgBContract := "0xbb01000000000000000000000000000000000001"
+	contractBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Org B Contract')",
+		contractBID, orgBID, orgBContract)
+	require.NoError(t, err)
+
+	groupBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members-b', 'Members B', 0, 'members-b')",
+		groupBID, orgBID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractBID, groupBID)
+	require.NoError(t, err)
+
+	adminGroupBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admins-b', 'Admins B', 0, 'admins-b', true)",
+		adminGroupBID, orgBID)
+	require.NoError(t, err)
+
+	// --- Users ---
+	aliceDID := "did:test:shapes_alice"
+	aliceUserID := createTestUserForExplorer(t, database, aliceDID)
+	addUserToGroup(t, database, aliceUserID, adminGroupAID)
+
+	bobDID := "did:test:shapes_bob"
+	_ = createTestUserForExplorer(t, database, bobDID)
+	bobEOA := "0xcc01000000000000000000000000000000000001"
+	err = database.SystemLinkEthAddress(ctx, bobDID, bobEOA)
+	require.NoError(t, err)
+
+	noMemberDID := "did:test:shapes_nomember"
+	_ = createTestUserForExplorer(t, database, noMemberDID)
+
+	// --- Public addresses ---
+	pub1 := "0xdd01000000000000000000000000000000000001"
+	pub2 := "0xdd02000000000000000000000000000000000002"
+
+	// --- Block and transactions ---
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (200, '0xblock_shapes', '0x0', 3000, 21000, 30000000, 11, '0x0000000000000000000000000000000000000000', '0x', '0x', '0x', '0x')`)
+	require.NoError(t, err)
+
+	txInsert := `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ($1, 200, $2, $3, $4, 0, 21000, 1000, 1, '0x')`
+
+	// tx1: Contract creation from orgA_contract (hidden deployer)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape01", 0, orgAContract, nil)
+	require.NoError(t, err)
+	// tx2: Contract creation from public address
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape02", 1, pub1, nil)
+	require.NoError(t, err)
+	// tx3: Both sides hidden (orgA → orgB)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape03", 2, orgAContract, orgBContract)
+	require.NoError(t, err)
+	// tx4: Hidden from (orgA), public to
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape04", 3, orgAContract, pub1)
+	require.NoError(t, err)
+	// tx5: Public from, hidden to (orgA)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape05", 4, pub1, orgAContract)
+	require.NoError(t, err)
+	// tx6: Both public
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape06", 5, pub1, pub2)
+	require.NoError(t, err)
+	// tx7: Hidden EOA from (bob), public to
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape07", 6, bobEOA, pub1)
+	require.NoError(t, err)
+	// tx8: Public from, hidden EOA to (bob)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape08", 7, pub1, bobEOA)
+	require.NoError(t, err)
+	// tx9: Hidden EOA from (bob), hidden contract to (orgA)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape09", 8, bobEOA, orgAContract)
+	require.NoError(t, err)
+	// tx10: Hidden contract from (orgA), hidden EOA to (bob)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape10", 9, orgAContract, bobEOA)
+	require.NoError(t, err)
+	// tx11: Contract creation from hidden EOA (bob)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_shape11", 10, bobEOA, nil)
+	require.NoError(t, err)
+
+	// --- Subtests ---
+
+	t.Run("anonymous viewer", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=20", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		// Hidden = [orgAContract, orgBContract, bobEOA]
+		// Dropped: tx1 (rule1), tx3 (rule2), tx9 (rule2), tx10 (rule2), tx11 (rule1)
+		// Visible: tx2, tx4, tx5, tx6, tx7, tx8 = 6
+		assert.Equal(t, int64(6), total, "anonymous should see 6 transactions")
+		assert.Len(t, txs, 6)
+
+		// Verify no transaction has both from and to in the hidden set
+		hiddenSet := map[string]bool{
+			orgAContract: true,
+			orgBContract: true,
+			bobEOA:       true,
+		}
+		for _, tx := range txs {
+			fromHidden := hiddenSet[strings.ToLower(tx.From)]
+			toHidden := tx.To != nil && hiddenSet[strings.ToLower(*tx.To)]
+			assert.False(t, fromHidden && (tx.To == nil || toHidden),
+				"transaction %s should not have hidden from with null/hidden to", tx.Hash)
+		}
+	})
+
+	t.Run("alice (admin of orgA)", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=20", nil)
+		addBearerToken(t, req, srv, aliceDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		// Alice: orgAContract=Full, orgBContract=Redacted(hidden), bobEOA=Hidden
+		// Hidden = [orgBContract, bobEOA]
+		// Dropped: tx11 (rule1: bob hidden, to=NULL)
+		// Visible: tx1-tx10 = 10
+		assert.Equal(t, int64(10), total, "alice should see 10 transactions")
+		assert.Len(t, txs, 10)
+	})
+
+	t.Run("bob (EOA owner)", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=20", nil)
+		addBearerToken(t, req, srv, bobDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		// Bob: bobEOA=Full, orgAContract=Redacted(hidden), orgBContract=Redacted(hidden)
+		// Hidden = [orgAContract, orgBContract]
+		// Dropped: tx1 (rule1: orgA hidden, to=NULL), tx3 (rule2: orgA+orgB both hidden)
+		// Visible: tx2, tx4, tx5, tx6, tx7, tx8, tx9, tx10, tx11 = 9
+		assert.Equal(t, int64(9), total, "bob should see 9 transactions")
+		assert.Len(t, txs, 9)
+	})
+
+	t.Run("authenticated user with no memberships", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=20", nil)
+		addBearerToken(t, req, srv, noMemberDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		// Same as anonymous: no org access, no EOA links
+		// Hidden = [orgAContract, orgBContract, bobEOA]
+		// Expected: 6
+		assert.Equal(t, int64(6), total, "no-membership user should see same 6 as anonymous")
+		assert.Len(t, txs, 6)
+	})
+}
+
+func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
+	router := setupPaginatedTransactionsRouter(srv)
+	ctx := context.Background()
+
+	// --- Org setup ---
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, 'Claims Org', '{}')",
+		orgID, "claims-org-"+orgID[:8])
+	require.NoError(t, err)
+
+	privContract := "0xee01000000000000000000000000000000000001"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Private Contract')",
+		contractID, orgID, privContract)
+	require.NoError(t, err)
+
+	// Admin group (is_org_admin=true)
+	adminGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'claims-admin', 'Admin', 0, 'claims-admin', true)",
+		adminGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{admin}')",
+		uuid.New().String(), contractID, adminGroupID)
+	require.NoError(t, err)
+
+	// Helper to create a non-admin group with specific claims and a contract grant
+	makeClaimsGroup := func(slug, claims string) string {
+		gid := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, $3, $4, 0, $5, false)",
+			gid, orgID, slug, "Group "+slug, slug)
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, $4)",
+			uuid.New().String(), contractID, gid, claims)
+		require.NoError(t, err)
+
+		return gid
+	}
+
+	readGroupID := makeClaimsGroup("claims-read", "{read}")
+	writeGroupID := makeClaimsGroup("claims-write", "{write}")
+	readWriteGroupID := makeClaimsGroup("claims-rw", "{read,write}")
+	deployGroupID := makeClaimsGroup("claims-deploy", "{deploy}")
+	rwdGroupID := makeClaimsGroup("claims-rwd", "{read,write,deploy}")
+	fullClaimsGroupID := makeClaimsGroup("claims-full", "{read,write,deploy,admin}")
+	noClaimsGroupID := makeClaimsGroup("claims-none", "{}")
+
+	// --- Users ---
+	type testUser struct {
+		name          string
+		did           string
+		expectedTotal int64
+	}
+
+	// Create users and assign groups
+	createAndAssign := func(_, did string, groupIDs ...string) {
+		uid := createTestUserForExplorer(t, database, did)
+		for _, gid := range groupIDs {
+			addUserToGroup(t, database, uid, gid)
+		}
+	}
+
+	createAndAssign("readUser", "did:test:claims_read", readGroupID)
+	createAndAssign("writeUser", "did:test:claims_write", writeGroupID)
+	createAndAssign("readWriteUser", "did:test:claims_rw", readWriteGroupID)
+	createAndAssign("deployUser", "did:test:claims_deploy", deployGroupID)
+	createAndAssign("readWriteDeployUser", "did:test:claims_rwd", rwdGroupID)
+	createAndAssign("noClaimsUser", "did:test:claims_none", noClaimsGroupID)
+	createAndAssign("fullClaimsUser", "did:test:claims_full", fullClaimsGroupID)
+	createAndAssign("adminUser", "did:test:claims_admin", adminGroupID)
+	createAndAssign("multiGroupUser", "did:test:claims_multi", readGroupID, adminGroupID)
+
+	// --- Explorer data ---
+	pubAddr := "0xff01000000000000000000000000000000000001"
+	pubAddr2 := "0xff02000000000000000000000000000000000002"
+
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (300, '0xblock_claims', '0x0', 4000, 21000, 30000000, 3, '0x0000000000000000000000000000000000000000', '0x', '0x', '0x', '0x')`)
+	require.NoError(t, err)
+
+	txInsert := `INSERT INTO transactions (hash, block_number, tx_index, from_address, to_address, value, gas_used, gas_price, status, input_data) VALUES ($1, 300, $2, $3, $4, 0, 21000, 1000, 1, '0x')`
+
+	// tx1: Contract creation from private contract (hidden deployer)
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_claims01", 0, privContract, nil)
+	require.NoError(t, err)
+	// tx2: Public to private contract
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_claims02", 1, pubAddr, privContract)
+	require.NoError(t, err)
+	// tx3: Public to public
+	_, err = conn.ExecContext(ctx, txInsert, "0xtx_claims03", 2, pubAddr, pubAddr2)
+	require.NoError(t, err)
+
+	// --- Table-driven subtests ---
+	// Non-admin users: privContract is Redacted (hidden). tx1 dropped (rule1). tx2 survives (only to hidden). tx3 visible.
+	// Admin users: privContract is Full (not hidden). All 3 visible.
+	cases := []testUser{
+		{"readUser", "did:test:claims_read", 2},
+		{"writeUser", "did:test:claims_write", 2},
+		{"readWriteUser", "did:test:claims_rw", 2},
+		{"deployUser", "did:test:claims_deploy", 2},
+		{"readWriteDeployUser", "did:test:claims_rwd", 2},
+		{"noClaimsUser", "did:test:claims_none", 2},
+		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 3},
+		{"adminUser (is_org_admin group)", "did:test:claims_admin", 3},
+		{"multiGroupUser (read + admin groups)", "did:test:claims_multi", 3},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
+			addBearerToken(t, req, srv, tc.did)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+			assert.Equal(t, tc.expectedTotal, total, "%s: unexpected total", tc.name)
+			assert.Len(t, txs, int(tc.expectedTotal), "%s: unexpected tx count", tc.name)
+		})
+	}
+}
+
 // parseBlocksResponse parses a json array of blocks
 func parseBlocksResponse(t *testing.T, body []byte) []explorer.Block {
 	t.Helper()
