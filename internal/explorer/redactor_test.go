@@ -1295,6 +1295,303 @@ func TestRedactLogs_ParticipantOverride_HiddenStillDropped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RedactLogs — comprehensive visibility matrix
+// ---------------------------------------------------------------------------
+
+func TestRedactLogs_VisibilityMatrix(t *testing.T) {
+	// Addresses
+	publicContract := "0x1111111111111111111111111111111111111111"
+	redactedContract := "0x2222222222222222222222222222222222222222"
+	hiddenContract := "0x3333333333333333333333333333333333333333"
+	aliceAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // tx sender
+	bobAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"   // tx receiver
+	malloryAddr := "0xcccccccccccccccccccccccccccccccccccccccc" // not a participant
+
+	topic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	data := "0x00000000000000000000000000000000000000000000000000000000deadbeef"
+
+	// 3 logs from 3 contracts with different visibility
+	makeLogs := func() []Log {
+		return []Log{
+			{ID: 1, Address: publicContract, TxHash: "0xtx1", Topic0: &topic0, Data: data},
+			{ID: 2, Address: redactedContract, TxHash: "0xtx1", Topic0: &topic0, Data: data},
+			{ID: 3, Address: hiddenContract, TxHash: "0xtx1", Topic0: &topic0, Data: data},
+		}
+	}
+
+	visMap := VisibilityMap{
+		publicContract:   VisibilityFull,
+		redactedContract: VisibilityRedacted,
+		hiddenContract:   VisibilityHidden,
+	}
+
+	// parent tx: alice → bob
+	parentFrom := aliceAddr
+	parentTo := bobAddr
+
+	type expect struct {
+		count         int    // number of logs returned
+		publicTopic   bool   // public contract log has topic0
+		redactedTopic bool   // redacted contract log has topic0 (if present)
+		redactedAddr  string // redacted contract address in result
+	}
+
+	cases := []struct {
+		name             string
+		viewerDID        string
+		linkedAddrs      []string
+		participantAddrs []string
+		expect           expect
+	}{
+		{
+			name:             "anonymous, no participant context",
+			viewerDID:        "",
+			linkedAddrs:      nil,
+			participantAddrs: nil,
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// public: visible. redacted: kept but stripped. hidden: dropped.
+		},
+		{
+			name:             "anonymous, with participant addrs (should not help)",
+			viewerDID:        "",
+			linkedAddrs:      nil,
+			participantAddrs: []string{parentFrom, parentTo},
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// anonymous has no linked addrs → can't match participant addrs
+		},
+		{
+			name:             "alice (sender), no participant context",
+			viewerDID:        "did:test:alice",
+			linkedAddrs:      []string{aliceAddr},
+			participantAddrs: nil,
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// without participant addrs, can't know alice is the sender
+		},
+		{
+			name:             "alice (sender), with participant context",
+			viewerDID:        "did:test:alice",
+			linkedAddrs:      []string{aliceAddr},
+			participantAddrs: []string{parentFrom, parentTo},
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: true, redactedAddr: redactedContract},
+			// alice's linked addr matches parentFrom → participant override fires
+			// redacted contract upgraded to Full: topics/data preserved, address shown
+			// hidden still dropped
+		},
+		{
+			name:             "bob (receiver), with participant context",
+			viewerDID:        "did:test:bob",
+			linkedAddrs:      []string{bobAddr},
+			participantAddrs: []string{parentFrom, parentTo},
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: true, redactedAddr: redactedContract},
+			// bob's linked addr matches parentTo → participant override fires
+		},
+		{
+			name:             "mallory (non-participant), with participant context",
+			viewerDID:        "did:test:mallory",
+			linkedAddrs:      []string{malloryAddr},
+			participantAddrs: []string{parentFrom, parentTo},
+			expect:           expect{count: 2, publicTopic: true, redactedTopic: false, redactedAddr: "[PRIVATE]"},
+			// mallory's linked addr doesn't match from or to → no override
+		},
+		{
+			name:        "admin (contract is Full for them)",
+			viewerDID:   "did:test:admin",
+			linkedAddrs: nil,
+			// Admin sees the contract as Full via GetBatchVisibility, not via participant override
+			// We simulate this by using a different visMap below
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "admin (contract is Full for them)" {
+				// Admin has Full on all contracts
+				adminVisMap := VisibilityMap{
+					publicContract:   VisibilityFull,
+					redactedContract: VisibilityFull,
+					hiddenContract:   VisibilityFull,
+				}
+				adminEngine := newEngine(adminVisMap)
+				logs := makeLogs()
+				result, err := adminEngine.RedactLogs(context.Background(), logs, tc.viewerDID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(result) != 3 {
+					t.Fatalf("admin should see all 3 logs, got %d", len(result))
+				}
+				for _, l := range result {
+					if l.Topic0 == nil || *l.Topic0 != topic0 {
+						t.Errorf("admin should see all topics, log %d topic0=%v", l.ID, l.Topic0)
+					}
+					if l.Data != data {
+						t.Errorf("admin should see all data, log %d", l.ID)
+					}
+				}
+				return
+			}
+
+			engine := newEngineWithLinkedAddrs(visMap, tc.linkedAddrs)
+			logs := makeLogs()
+			result, err := engine.RedactLogs(context.Background(), logs, tc.viewerDID, tc.participantAddrs...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(result) != tc.expect.count {
+				t.Fatalf("expected %d logs, got %d", tc.expect.count, len(result))
+			}
+
+			for _, l := range result {
+				switch strings.ToLower(l.Address) {
+				case publicContract:
+					if tc.expect.publicTopic && (l.Topic0 == nil || *l.Topic0 != topic0) {
+						t.Error("public contract log should have topic0 preserved")
+					}
+					if l.Data != data {
+						t.Error("public contract log data should be preserved")
+					}
+				case "[private]":
+					// This is the redacted contract (address replaced)
+					if l.Address != tc.expect.redactedAddr {
+						t.Errorf("redacted contract address: expected %s, got %s", tc.expect.redactedAddr, l.Address)
+					}
+					if tc.expect.redactedTopic {
+						t.Error("redacted log with [PRIVATE] address should not have topics (this case shouldn't happen)")
+					}
+					if l.Topic0 != nil {
+						t.Error("redacted log should have nil topic0")
+					}
+					if l.Data != "" {
+						t.Error("redacted log should have empty data")
+					}
+				case redactedContract:
+					// Participant override: contract address is shown, topics preserved
+					if !tc.expect.redactedTopic {
+						t.Error("unexpected: redacted contract shown with real address without participant override")
+					}
+					if l.Topic0 == nil || *l.Topic0 != topic0 {
+						t.Error("participant override should preserve topic0")
+					}
+					if l.Data != data {
+						t.Error("participant override should preserve data")
+					}
+				case hiddenContract:
+					t.Error("hidden contract log should never appear in results")
+				default:
+					// Could be a pseudonym — check it's not the hidden contract
+					if l.Address == hiddenContract {
+						t.Error("hidden contract should be dropped")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRedactLogs_MultipleContractsMixedVisibility(t *testing.T) {
+	// A tx triggers logs from 4 different contracts.
+	// Viewer is a participant. Tests that override applies per-tx, not per-contract.
+	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fullContract := "0x1111111111111111111111111111111111111111"
+	redactedA := "0x2222222222222222222222222222222222222222"
+	redactedB := "0x3333333333333333333333333333333333333333"
+	hiddenContract := "0x4444444444444444444444444444444444444444"
+
+	topic0 := "0xabcdef"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		fullContract:   VisibilityFull,
+		redactedA:      VisibilityRedacted,
+		redactedB:      VisibilityRedacted,
+		hiddenContract: VisibilityHidden,
+	}, []string{userAddr})
+
+	logs := []Log{
+		{ID: 1, Address: fullContract, Topic0: &topic0, Data: "0xfull"},
+		{ID: 2, Address: redactedA, Topic0: &topic0, Data: "0xredA"},
+		{ID: 3, Address: redactedB, Topic0: &topic0, Data: "0xredB"},
+		{ID: 4, Address: hiddenContract, Topic0: &topic0, Data: "0xhidden"},
+	}
+
+	// With participant context: user is the tx sender
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:user", userAddr, redactedA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected: full(1) + redactedA(2, upgraded) + redactedB(3, upgraded) + hidden(4, dropped) = 3
+	if len(result) != 3 {
+		t.Fatalf("expected 3 logs (hidden dropped), got %d", len(result))
+	}
+
+	for _, l := range result {
+		if l.Topic0 == nil {
+			t.Errorf("log %d: topic0 should be preserved (all non-hidden get participant override)", l.ID)
+		}
+		if l.Data == "" {
+			t.Errorf("log %d: data should be preserved", l.ID)
+		}
+		if l.Address == hiddenContract {
+			t.Error("hidden contract log should not appear")
+		}
+	}
+}
+
+func TestRedactLogs_ParticipantIsReceiver(t *testing.T) {
+	// The viewer is the TO of the parent tx (receiving a transfer).
+	// Contract emits a Transfer log. Viewer should see it.
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	senderAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	receiverAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	topic0 := "0xddf252ad"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		contractAddr: VisibilityRedacted,
+	}, []string{receiverAddr})
+
+	logs := []Log{{ID: 1, Address: contractAddr, Topic0: &topic0, Data: "0xdata"}}
+
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:receiver", senderAddr, receiverAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Topic0 == nil || *result[0].Topic0 != topic0 {
+		t.Error("receiver participant should see topic0")
+	}
+	if result[0].Data != "0xdata" {
+		t.Error("receiver participant should see data")
+	}
+}
+
+func TestRedactLogs_NoLinkedAddresses(t *testing.T) {
+	// Authenticated user with no linked ETH addresses. Even with participant
+	// context, they can't be a participant because they have no addresses.
+	contractAddr := "0x2222222222222222222222222222222222222222"
+	senderAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	topic0 := "0xddf252ad"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		contractAddr: VisibilityRedacted,
+	}, nil) // no linked addresses
+
+	logs := []Log{{ID: 1, Address: contractAddr, Topic0: &topic0, Data: "0xdata"}}
+
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test:noaddr", senderAddr, contractAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1, got %d", len(result))
+	}
+	if result[0].Topic0 != nil {
+		t.Error("user with no linked addresses should not get participant override")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RedactAddress
 // ---------------------------------------------------------------------------
 
