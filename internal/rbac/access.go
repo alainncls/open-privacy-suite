@@ -1513,6 +1513,24 @@ func GetTargetAddress(method string, params []any) string {
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
 		}
+	case "eth_getLogs":
+		// eth_getLogs filter can have "address" as a string or array of strings.
+		// Extract the first address for org resolution. The full multi-address
+		// validation happens later in validateGetLogsWithOrgContext.
+		if len(params) > 0 {
+			if filter, ok := params[0].(map[string]any); ok {
+				switch addr := filter["address"].(type) {
+				case string:
+					return strings.ToLower(addr)
+				case []any:
+					if len(addr) > 0 {
+						if s, ok := addr[0].(string); ok {
+							return strings.ToLower(s)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return ""
