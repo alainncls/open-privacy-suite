@@ -234,7 +234,7 @@ func TestE2E_ParamConstraints_BalanceOfSelf(t *testing.T) {
 
 	// The RBAC check should pass (param constraint satisfied).
 	// The actual eth_call may fail with 502 if no node is running, or return
-	// a JSON-RPC error from the node. Either way, it should NOT be 403.
+	// a JSON-RPC error from the node. Either way, it should NOT be 404 (opaque denial).
 	assert.NotEqual(t, http.StatusNotFound, resp.StatusCode,
 		"balanceOf(ownAddress) should not be denied; got response: %s", string(respBody))
 
@@ -267,6 +267,7 @@ func TestE2E_ParamConstraints_BalanceOfOther(t *testing.T) {
 	// Opaque 404 — no access control info leaked to caller.
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 		"balanceOf(otherAddress) should return opaque 404; got response: %s", string(respBody))
+	assertOpaqueErrorBody(t, respBody, "parameter constraint")
 }
 
 // TestE2E_ParamConstraints_TotalSupplyAllowed tests that a user can call totalSupply()
@@ -325,6 +326,7 @@ func TestE2E_ParamConstraints_UnlistedFunctionDenied(t *testing.T) {
 	// Opaque 404 — no access control info leaked to caller.
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 		"transfer() should return opaque 404; got response: %s", string(respBody))
+	assertOpaqueErrorBody(t, respBody, "function", "transfer", transferSelector)
 }
 
 // TestE2E_ParamConstraints_MultipleLinkedAddresses tests that param constraints work
@@ -416,5 +418,23 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 			"balanceOf(unlinkedAddr) should return opaque 404; got: %s", string(respBody))
+		assertOpaqueErrorBody(t, respBody, "parameter constraint")
 	})
+}
+
+// assertOpaqueErrorBody verifies the response contains the generic "method not found"
+// error and does not leak any of the provided forbidden substrings.
+func assertOpaqueErrorBody(t *testing.T, body []byte, forbiddenSubstrings ...string) {
+	t.Helper()
+	bodyStr := strings.ToLower(string(body))
+	assert.Contains(t, bodyStr, "method not found",
+		"response body should contain generic 'method not found' message")
+	assert.NotContains(t, bodyStr, "access denied",
+		"response body must not leak access denial details")
+	assert.NotContains(t, bodyStr, "forbidden",
+		"response body must not leak forbidden status")
+	for _, s := range forbiddenSubstrings {
+		assert.NotContains(t, bodyStr, strings.ToLower(s),
+			"response body must not leak: %s", s)
+	}
 }

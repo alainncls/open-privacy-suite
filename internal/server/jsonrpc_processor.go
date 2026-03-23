@@ -120,7 +120,12 @@ func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
 // falling back to the basic logger.
-func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, statusCode int) {
+func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, statusCode int, responseStatus ...int) {
+	respStatus := statusCode
+	if len(responseStatus) > 0 {
+		respStatus = responseStatus[0]
+	}
+
 	if p.enhancedLogger != nil && p.hashChain != nil {
 		var params []byte
 		if p.logParams && req.Params != nil {
@@ -135,20 +140,19 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 		}
 
 		// Compute and store hash chain entry
-		// M2 fix: include all audit-relevant fields in hash content
+		// Both decision status and response status are committed to the chain
 		paramsDigest := ""
 		if len(params) > 0 {
 			paramsDigest = string(params)
 		}
-		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%s|%s|%s",
-			id, req.UserID, req.Method, req.ClientIP, statusCode,
+		entryContent := fmt.Sprintf("%d|%s|%s|%s|%d|%d|%s|%s|%s",
+			id, req.UserID, req.Method, req.ClientIP, statusCode, respStatus,
 			createdAt.Format(time.RFC3339Nano),
 			req.CorrelationID,
 			paramsDigest,
 		)
 		hash := p.hashChain.ComputeNext(entryContent)
 		if err := p.enhancedLogger.UpdateAccessLogHash(ctx, id, hash); err != nil {
-			// L1 fix: use slog so this goes to the structured log stream
 			slog.Warn("failed to update access log hash", "id", id, "error", err)
 		}
 
@@ -168,7 +172,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				ActorID:       req.UserID,
 				Action:        req.Method,
 				Outcome:       outcome,
-				Details:       fmt.Sprintf("status=%d", statusCode),
+				Details:       fmt.Sprintf("decision=%d response=%d", statusCode, respStatus),
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
 			})
@@ -267,7 +271,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusInternalServerError)
+		p.logAccess(ctx, req, http.StatusInternalServerError, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -281,10 +285,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
 		}
-		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
+		slog.Info("RBAC access denied", "method", req.Method, "auth_required", result.AuthRequired)
+		slog.Debug("RBAC denial details", "method", req.Method, "reason", result.Reason)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, realStatus)
+		p.logAccess(ctx, req, realStatus, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -922,7 +927,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if err != nil {
 		slog.Error("RBAC access check failed", "method", req.Method, "error", err)
 		p.recordRPCOutcome(req.Method, "error", start)
-		p.logAccess(ctx, req, http.StatusInternalServerError)
+		p.logAccess(ctx, req, http.StatusInternalServerError, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,
@@ -936,10 +941,11 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
 		}
-		slog.Info("RBAC access denied", "method", req.Method, "reason", result.Reason, "auth_required", result.AuthRequired)
+		slog.Info("RBAC access denied", "method", req.Method, "auth_required", result.AuthRequired)
+		slog.Debug("RBAC denial details", "method", req.Method, "reason", result.Reason)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
-		p.logAccess(ctx, req, realStatus)
+		p.logAccess(ctx, req, realStatus, http.StatusNotFound)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusNotFound,

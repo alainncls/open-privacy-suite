@@ -356,9 +356,11 @@ func TestE2E_UnauthorizedRequest_NoToken(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("expected 404 (opaque denial), got %d", resp.StatusCode)
+		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "unauthorized", "token")
 }
 
 func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
@@ -396,10 +398,11 @@ func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "debug", "disallowed")
 }
 
 func TestE2E_BannedUser(t *testing.T) {
@@ -444,10 +447,11 @@ func TestE2E_BannedUser(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "banned")
 }
 
 func TestE2E_NoKYC(t *testing.T) {
@@ -484,8 +488,9 @@ func TestE2E_NoKYC(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "kyc")
 }
