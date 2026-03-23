@@ -623,3 +623,236 @@ func TestCreateDeployerAutoGrants(t *testing.T) {
 	require.Len(t, members, 1)
 	assert.Equal(t, user.ID, members[0].UserID)
 }
+
+func TestContractListSearch(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+	ctx := context.Background()
+
+	org := createTestOrganization(t, server, "contract-search-org")
+	createTestContract(t, server, org.ID, "0xaaaa000000000000000000000000000000000001", "Alpha Token")
+	createTestContract(t, server, org.ID, "0xbbbb000000000000000000000000000000000002", "Beta Token")
+	createTestContract(t, server, org.ID, "0xcccc000000000000000000000000000000000003", "Gamma Contract")
+	_ = ctx
+
+	t.Run("search by name", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?search=Token", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(2), result["total"])
+	})
+
+	t.Run("search by address prefix", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?search=0xaaaa", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(1), result["total"])
+	})
+
+	t.Run("search with no results", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?search=nonexistent", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(0), result["total"])
+	})
+
+	t.Run("search with ILIKE wildcard is escaped", func(t *testing.T) {
+		// Searching for "%" should not match everything
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?search=%%25", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		// "%" is not in any name or address, so should return 0
+		assert.Equal(t, float64(0), result["total"])
+	})
+}
+
+func TestContractListDateFilter(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "contract-date-org")
+	createTestContract(t, server, org.ID, "0xdddd000000000000000000000000000000000001", "Old Contract")
+	createTestContract(t, server, org.ID, "0xeeee000000000000000000000000000000000002", "New Contract")
+
+	t.Run("created_after filters old contracts", func(t *testing.T) {
+		// Use tomorrow's date — should return 0 since all contracts were just created
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?created_after=2099-01-01T00:00:00Z", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(0), result["total"])
+	})
+
+	t.Run("created_before filters future contracts", func(t *testing.T) {
+		// Use a date far in the past — should return 0
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?created_before=2020-01-01T00:00:00Z", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(0), result["total"])
+	})
+
+	t.Run("wide date range returns all", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts?created_after=2020-01-01T00:00:00Z&created_before=2099-12-31T23:59:59Z", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(2), result["total"])
+	})
+
+	t.Run("no date filter returns all", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/contracts", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(2), result["total"])
+	})
+}
+
+func TestBatchSizeCap(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "batch-cap-org")
+
+	t.Run("batch-move rejects over 200 contract_ids", func(t *testing.T) {
+		ids := make([]string, 201)
+		for i := range ids {
+			ids[i] = uuid.New().String()
+		}
+		body := map[string]any{
+			"contract_ids":    ids,
+			"target_group_id": uuid.New().String(),
+		}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts/batch-move", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Contains(t, result["error"], "max 200")
+	})
+
+	t.Run("batch-delete rejects over 200 group_ids", func(t *testing.T) {
+		ids := make([]string, 201)
+		for i := range ids {
+			ids[i] = uuid.New().String()
+		}
+		body := map[string]any{"group_ids": ids}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/groups/batch-delete", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Contains(t, result["error"], "max 200")
+	})
+
+	t.Run("batch-delete-preview rejects over 200 group_ids", func(t *testing.T) {
+		ids := make([]string, 201)
+		for i := range ids {
+			ids[i] = uuid.New().String()
+		}
+		body := map[string]any{"group_ids": ids}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/groups/batch-delete-preview", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Contains(t, result["error"], "max 200")
+	})
+
+	t.Run("batch-move accepts 200 or fewer", func(t *testing.T) {
+		// Just verify it doesn't reject — it'll fail on contract lookup but not on size
+		ids := make([]string, 2)
+		for i := range ids {
+			ids[i] = uuid.New().String()
+		}
+		body := map[string]any{
+			"contract_ids":    ids,
+			"target_group_id": uuid.New().String(),
+		}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts/batch-move", org.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		// Should not contain the "max 200" error — it may fail for other reasons (contract not found)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		if errMsg, ok := result["error"].(string); ok {
+			assert.NotContains(t, errMsg, "max 200", "should not reject for size")
+		}
+	})
+}
+
+func TestGroupListSearch(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+	ctx := context.Background()
+
+	org := createTestOrganization(t, server, "group-search-org")
+	_ = ctx
+
+	// Create groups with distinct names (name = slug + " Group")
+	createTestGroup(t, server, org.ID, "deploy-alpha")
+	createTestGroup(t, server, org.ID, "infra-beta")
+	createTestGroup(t, server, org.ID, "deploy-gamma")
+
+	t.Run("search by slug prefix", func(t *testing.T) {
+		// "deploy-alpha" and "deploy-gamma" slugs match "deploy"
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups?search=deploy", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(2), result["total"])
+	})
+
+	t.Run("search by unique slug", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups?search=infra-beta", org.ID), nil)
+		w := httptest.NewRecorder()
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, float64(1), result["total"])
+	})
+}
