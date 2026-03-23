@@ -15,6 +15,13 @@
 
 set -euo pipefail
 
+# Source .env if present (picks up ADMIN_API_TOKEN, etc.)
+if [[ -f "$(dirname "$0")/../.env" ]]; then
+    set -a
+    source "$(dirname "$0")/../.env"
+    set +a
+fi
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -151,7 +158,7 @@ find_org_by_slug() {
 find_group_by_slug() {
     local org_id="$1"
     local slug="$2"
-    admin_get "/orgs/${org_id}/groups" | jq -r ".data[]? | select(.slug == \"$slug\") | .id // empty"
+    admin_get "/orgs/${org_id}/groups" | jq -r ".data[]? | select(.group.slug == \"$slug\") | .group.id // empty"
 }
 
 # Link ETH address to a user via the challenge/verify flow
