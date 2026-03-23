@@ -1866,6 +1866,46 @@ func TestRedactInternalTransactions_NonParticipantDoesNotSeeHidden(t *testing.T)
 	}
 }
 
+// TestRedactTransactions_AnonymousViewerContractCreationScenario reproduces the
+// exact bug: an anonymous user (Eve) sees 53 transactions including contract
+// creations from org-owned deployers. After the fix, contract creations from
+// hidden deployers are dropped.
+func TestRedactTransactions_AnonymousViewerContractCreationScenario(t *testing.T) {
+	orgDeployerAddr := "0xdeployer000000000000000000000000000000"
+	publicEOA1 := "0xpublic1000000000000000000000000000000000"
+	publicEOA2 := "0xpublic2000000000000000000000000000000000"
+
+	db := &mockDB{
+		visMap: VisibilityMap{
+			orgDeployerAddr: VisibilityHidden, // org-owned, hidden from Eve
+			publicEOA1:      VisibilityFull,    // public address
+			publicEOA2:      VisibilityFull,    // public address
+		},
+	}
+	engine := NewRedactionEngine(nil, db)
+
+	to1 := publicEOA2
+	txs := []Transaction{
+		// Contract creation from org deployer — should be DROPPED
+		{Hash: "0xdeploy1", From: orgDeployerAddr, To: nil},
+		{Hash: "0xdeploy2", From: orgDeployerAddr, To: nil},
+		{Hash: "0xdeploy3", From: orgDeployerAddr, To: nil},
+		// Normal transfer between public addresses — should be KEPT
+		{Hash: "0xtransfer1", From: publicEOA1, To: &to1},
+	}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "") // anonymous viewer
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 visible tx (the public transfer), got %d", len(result))
+	}
+	if len(result) > 0 && result[0].Hash != "0xtransfer1" {
+		t.Errorf("expected the public transfer to survive, got hash=%s", result[0].Hash)
+	}
+}
+
 // TestRedactTransactions_ContractCreationHiddenDeployer verifies that contract
 // creation transactions from a hidden deployer are dropped entirely.
 // This prevents leaking deployment activity, timing, and contract addresses.

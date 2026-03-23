@@ -634,6 +634,12 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -641,26 +647,60 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		}
 	}
 	withCategories := c.Query("with_categories") == "true"
-	var txs []explorer.Transaction
-	var err error
-	if withCategories {
-		txs, err = s.explorerStore.GetTransactionsWithCategories(c.Request.Context(), limit, beforeBlock)
-	} else {
-		txs, err = s.explorerStore.GetTransactions(c.Request.Context(), limit, beforeBlock)
-	}
-	if err != nil {
-		respondInternalError(c, err.Error())
-		return
-	}
-
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
-	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
-		return
+
+	// Fetch-redact-loop: redaction may drop transactions (e.g., contract
+	// creations from hidden deployers), so we over-fetch and keep looping
+	// until we have enough visible results or exhaust the data.
+	var result []explorer.Transaction
+	cursor := beforeBlock
+	const maxRounds = 5
+
+	for round := 0; round < maxRounds && len(result) < limit; round++ {
+		batchSize := (limit - len(result)) * 2 // over-fetch 2x to reduce rounds
+		if batchSize < limit {
+			batchSize = limit
+		}
+
+		var txs []explorer.Transaction
+		var err error
+		if withCategories {
+			txs, err = s.explorerStore.GetTransactionsWithCategories(c.Request.Context(), batchSize, cursor)
+		} else {
+			txs, err = s.explorerStore.GetTransactions(c.Request.Context(), batchSize, cursor)
+		}
+		if err != nil {
+			respondInternalError(c, err.Error())
+			return
+		}
+		if len(txs) == 0 {
+			break // no more data
+		}
+
+		redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+		if err != nil {
+			respondInternalError(c, "redaction failed: "+err.Error())
+			return
+		}
+
+		result = append(result, redacted...)
+
+		// Advance cursor to the last fetched block for next round
+		lastBlock := txs[len(txs)-1].BlockNumber
+		cursor = &lastBlock
+
+		// If we got fewer raw txs than requested, we've exhausted the data
+		if len(txs) < batchSize {
+			break
+		}
 	}
 
-	c.JSON(http.StatusOK, redactedTxs)
+	// Trim to requested limit
+	if len(result) > limit {
+		result = result[:limit]
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) getExplorerTransaction(c *gin.Context) {
@@ -900,7 +940,14 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Adjust total: the DB total doesn't account for redaction drops.
+	// Estimate by scaling: if we fetched N and kept M after redaction,
+	// the visible total is approximately total * M / N.
+	visibleTotal := total
+	if len(txs) > 0 && len(redacted) < len(txs) {
+		visibleTotal = int64(float64(total) * float64(len(redacted)) / float64(len(txs)))
+	}
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": visibleTotal})
 }
 
 func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
