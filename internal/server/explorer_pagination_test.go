@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	
+	"github.com/google/uuid"
 
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/explorer"
@@ -50,16 +52,22 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 	privateAddr := "0xaaaa000000000000000000000000000000000001"
 	groupID := registerOrgContract(t, database, privateAddr)
 
-	// Create user alice as a member of the org's group.
+	// Create user alice as an ADMIN of the org's group so she can see the contract's txs.
 	aliceDID := "did:test:alice"
 	aliceUserID := createTestUserForExplorer(t, database, aliceDID)
-	addUserToGroup(t, database, aliceUserID, groupID)
+	
+	adminGroupID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'admins-pag', 'Admins', 0, 'admins-pag', true)",
+		adminGroupID, groupID)
+	require.NoError(t, err)
+	addUserToGroup(t, database, aliceUserID, adminGroupID)
 
 	// Create user bob and link an EOA to him.
 	bobDID := "did:test:bob"
 	_ = createTestUserForExplorer(t, database, bobDID)
 	privateUserAddr := "0xcccc000000000000000000000000000000000001"
-	err := database.SystemLinkEthAddress(ctx, bobDID, privateUserAddr)
+	err = database.SystemLinkEthAddress(ctx, bobDID, privateUserAddr)
 	require.NoError(t, err)
 
 	// --- Explorer data setup ---
@@ -67,10 +75,9 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 	publicFrom := "0xbbbb000000000000000000000000000000000001"
 	publicTo := "0xbbbb000000000000000000000000000000000002"
 
-	// Insert a block with 7 transactions.
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count)
-		 VALUES (1, '0xblockhash_pag1', '0x0', 1000, 21000, 30000000, 7)`)
+		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
+		 VALUES (1, '0xblockhash_pag1', '0x0', 1000, 21000, 30000000, 7, '0x0000000000000000000000000000000000000000', '0x', '0x', '0x', '0x')`)
 	require.NoError(t, err)
 
 	// tx1: from private contract, contract creation (to = NULL) — hidden from anonymous
@@ -169,6 +176,51 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		}
 	})
 
+	t.Run("non-admin org member sees same as anonymous", func(t *testing.T) {
+		// Eve is a member of a NON-admin group with only 'read' claim on the contract.
+		// Since she is not admin, the org contract is VisibilityRedacted for her,
+		// and none of the test transactions have Eve as from/to, so she should see
+		// exactly the same filtered results as anonymous.
+		eveDID := "did:test:eve"
+		eveUserID := createTestUserForExplorer(t, database, eveDID)
+
+		// Create a non-admin group in the same org as the private contract.
+		readGroupID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'readers-pag', 'Readers', 0, 'readers-pag', false)",
+			readGroupID, groupID)
+		require.NoError(t, err)
+
+		// Grant only 'read' claim on the contract to this group.
+		var contractID string
+		err = conn.QueryRowContext(ctx,
+			"SELECT id FROM contracts WHERE LOWER(address) = $1", privateAddr).Scan(&contractID)
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{read}')",
+			uuid.New().String(), contractID, readGroupID)
+		require.NoError(t, err)
+
+		addUserToGroup(t, database, eveUserID, readGroupID)
+
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
+		addBearerToken(t, req, srv, eveDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
+		assert.Equal(t, int64(3), total, "non-admin org member (Eve) should see only 3 public transactions, same as anonymous")
+		assert.Len(t, txs, 3, "page should contain the same 3 visible transactions as anonymous")
+
+		for _, tx := range txs {
+			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From), "private contract address must not appear for non-admin member")
+			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear for non-admin member")
+		}
+	})
+
 	t.Run("pagination page 2 is empty when all visible txs fit in page 1", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=2&pageSize=10", nil)
 		w := httptest.NewRecorder()
@@ -210,14 +262,22 @@ func TestExplorerBlocks_VisibilityFiltering(t *testing.T) {
 
 	aliceDID := "did:test:alice"
 	aliceUserID := createTestUserForExplorer(t, database, aliceDID)
-	addUserToGroup(t, database, aliceUserID, groupID)
+	
+	// Create an admin group for Alice so she gets VisibilityFull
+	adminGroupID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'admins', 'Admins', 0, 'admins', true)",
+		adminGroupID, groupID)
+	require.NoError(t, err)
+
+	addUserToGroup(t, database, aliceUserID, adminGroupID)
 
 	// --- Explorer data setup ---
 	publicFrom := "0xbbbb000000000000000000000000000000000001"
 	publicTo := "0xbbbb000000000000000000000000000000000002"
 
 	// Block 10: 2 private txs, 2 public txs. Total stored in block = 4.
-	_, err := conn.ExecContext(ctx,
+	_, err = conn.ExecContext(ctx,
 		`INSERT INTO blocks (number, hash, parent_hash, timestamp, gas_used, gas_limit, transaction_count, miner, extra_data, state_root, transactions_root, receipts_root)
 		 VALUES (10, '0xblock10', '0x0', 1000, 21000, 30000000, 4, '0xminer', '0x', '0x', '0x', '0x')`)
 	require.NoError(t, err)

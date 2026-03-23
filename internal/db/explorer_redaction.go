@@ -89,12 +89,15 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 	}
 
 	if len(publicAddrs) > 0 {
-		// Find which of these addresses are org-owned contracts and what groups can access them
+		// Find which of these addresses are org-owned contracts and what Admin groups can access them.
+		// A group has Admin access if it is org_admin OR explicitly granted the 'admin' claim.
 		orgContractQuery := `
-			SELECT LOWER(c.address) AS addr, cg.group_id
+			SELECT LOWER(c.address) AS addr, g.id AS group_id
 			FROM contracts c
-			JOIN contract_grants cg ON cg.contract_id = c.id
-			WHERE LOWER(c.address) = ANY($1)`
+			JOIN groups g ON g.org_id = c.org_id
+			LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+			WHERE LOWER(c.address) = ANY($1)
+			  AND (g.is_org_admin = true OR 'admin' = ANY(cg.claims))`
 
 		orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(publicAddrs))
 		if err != nil {

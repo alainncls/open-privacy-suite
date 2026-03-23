@@ -104,14 +104,62 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr])
 	})
 
-	t.Run("member sees Full", func(t *testing.T) {
+	t.Run("standard member sees Redacted", func(t *testing.T) {
 		const memberDID = "did:privado:batch_member"
 		addMember(t, database, memberDID, groupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{privateAddr})
 		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr],
+			"standard group member must ONLY have VisibilityRedacted for org contract")
+	})
+
+	t.Run("admin member sees Full", func(t *testing.T) {
+		const adminDID = "did:privado:admin_member"
+		
+		// Create an admin group
+		adminGroupID := uuid.New().String()
+		_, err := database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'admins', 'Admins', 0, 'admins', true)",
+			adminGroupID, groupID)
+		require.NoError(t, err)
+		
+		addMember(t, database, adminDID, adminGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, adminDID, []string{privateAddr})
+		require.NoError(t, err)
 		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
-			"group member must have VisibilityFull for their org contract")
+			"admin group member must have VisibilityFull for their org contract")
+	})
+
+	t.Run("contract admin via grant sees Full", func(t *testing.T) {
+		const grantAdminDID = "did:privado:grant_admin_member"
+
+		// Create a NON-org-admin group in the same org.
+		grantGroupID := uuid.New().String()
+		_, err := database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'grant-admins', 'Grant Admins', 0, 'grant-admins', false)",
+			grantGroupID, groupID)
+		require.NoError(t, err)
+
+		// Create a contract_grant linking the non-admin group to the contract with claims = '{admin}'.
+		// First we need the contract ID for privateAddr.
+		var contractID string
+		err = database.Conn().QueryRowContext(ctx,
+			"SELECT id FROM contracts WHERE LOWER(address) = $1", privateAddr).Scan(&contractID)
+		require.NoError(t, err)
+
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{admin}')",
+			uuid.New().String(), contractID, grantGroupID)
+		require.NoError(t, err)
+
+		addMember(t, database, grantAdminDID, grantGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, grantAdminDID, []string{privateAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
+			"member of non-admin group with 'admin' contract_grant claim must have VisibilityFull")
 	})
 
 	t.Run("expired member sees Redacted", func(t *testing.T) {
