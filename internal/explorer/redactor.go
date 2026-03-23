@@ -46,7 +46,7 @@ func extractUniqueAddresses(txs []Transaction) []string {
 		if tx.From != "" {
 			addrMap[strings.ToLower(tx.From)] = true
 		}
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			addrMap[strings.ToLower(*tx.To)] = true
 		}
 	}
@@ -93,7 +93,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	for _, tx := range txs {
 		// Determine whether the viewer is a participant in this transaction.
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
-		viewerIsTo := tx.To != nil && *tx.To != "" && viewerAddrs[strings.ToLower(*tx.To)]
+		viewerIsTo := tx.HasRecipient() && viewerAddrs[strings.ToLower(*tx.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
 		// Resolve base visibility from the shared map.
@@ -102,7 +102,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			baseFromLevel = visibilityMap[strings.ToLower(tx.From)]
 		}
 		baseToLevel := VisibilityFull
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			baseToLevel = visibilityMap[strings.ToLower(*tx.To)]
 		}
 
@@ -128,6 +128,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			continue
 		}
 
+		// Contract creation transactions: if the deployer is non-identifiable,
+		// drop entirely. Showing "[PRIVATE] → Contract" leaks deployment
+		// activity, timing, and the resulting contract address.
+		if tx.IsContractCreation() && isNonIdentifiable(fromLevel) {
+			continue
+		}
+
 		redactedTx := tx
 
 		// If one side is non-identifiable (hidden or redacted) but the other is
@@ -145,7 +152,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
 				redactedTx.To = &p
-			} else if tx.To != nil && *tx.To != "" {
+			} else if tx.HasRecipient() {
 				redacted := r.applyRedaction(*tx.To, toLevel)
 				redactedTx.To = &redacted
 			}
@@ -161,7 +168,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if tx.From != "" {
 			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 		}
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			redacted := r.applyRedaction(*tx.To, toLevel)
 			redactedTx.To = &redacted
 		}

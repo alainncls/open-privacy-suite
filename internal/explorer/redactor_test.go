@@ -1865,3 +1865,91 @@ func TestRedactInternalTransactions_NonParticipantDoesNotSeeHidden(t *testing.T)
 		t.Errorf("Output should be nil for non-participant with hidden side")
 	}
 }
+
+// TestRedactTransactions_ContractCreationHiddenDeployer verifies that contract
+// creation transactions from a hidden deployer are dropped entirely.
+// This prevents leaking deployment activity, timing, and contract addresses.
+func TestRedactTransactions_ContractCreationHiddenDeployer(t *testing.T) {
+	deployerAddr := "0xdeployer000000000000000000000000000000"
+
+	db := &mockDB{
+		visMap: VisibilityMap{
+			deployerAddr: VisibilityHidden,
+		},
+	}
+	engine := NewRedactionEngine(nil, db)
+
+	txs := []Transaction{
+		{
+			Hash: "0xdeploy1",
+			From: deployerAddr,
+			To:   nil, // contract creation
+		},
+	}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:eve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected contract creation from hidden deployer to be dropped, got %d transactions", len(result))
+	}
+}
+
+// TestRedactTransactions_ContractCreationVisibleDeployer verifies that contract
+// creation transactions from a visible deployer are kept.
+func TestRedactTransactions_ContractCreationVisibleDeployer(t *testing.T) {
+	deployerAddr := "0xdeployer000000000000000000000000000000"
+
+	db := &mockDB{
+		visMap: VisibilityMap{
+			deployerAddr: VisibilityFull,
+		},
+	}
+	engine := NewRedactionEngine(nil, db)
+
+	txs := []Transaction{
+		{
+			Hash: "0xdeploy1",
+			From: deployerAddr,
+			To:   nil,
+		},
+	}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected visible deployer's contract creation to be kept, got %d", len(result))
+	}
+}
+
+// TestRedactTransactions_ContractCreationRedactedDeployer verifies that redacted
+// (not just hidden) deployers also get their contract creations dropped.
+func TestRedactTransactions_ContractCreationRedactedDeployer(t *testing.T) {
+	deployerAddr := "0xdeployer000000000000000000000000000000"
+
+	db := &mockDB{
+		visMap: VisibilityMap{
+			deployerAddr: VisibilityRedacted,
+		},
+	}
+	engine := NewRedactionEngine(nil, db)
+
+	txs := []Transaction{
+		{
+			Hash: "0xdeploy1",
+			From: deployerAddr,
+			To:   nil,
+		},
+	}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:eve")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected contract creation from redacted deployer to be dropped, got %d", len(result))
+	}
+}
