@@ -176,6 +176,12 @@ For example, if Alice sends ETH to Bob and Charlie views the global transaction 
 
 Counterparty addresses revealed this way are labeled "Private" in the UI — indicating the address is private but visible because the viewer is a transaction participant.
 
+The participant override also extends to **transaction logs**: when a viewer is the sender or receiver of a transaction, logs emitted by private contracts in that transaction are shown with full topics and data instead of being stripped. This ensures participants can see the results of their own contract calls (e.g., ERC-20 Transfer events from a token contract they interacted with).
+
+### Known Limitation: One-Side-Hidden Metadata Leakage
+
+When only one party in a transaction is hidden and the other is public, the transaction survives the SQL visibility filter. The hidden side is masked as `[PRIVATE]`, but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, and gas used. For example, a non-participant may see "someone private minted tokens to a public address." On a fully private network this metadata may be sensitive. A stricter filter (drop if ANY side is hidden unless viewer is a participant) would eliminate this leak but reduce explorer utility for public addresses. This is tracked as a design tradeoff.
+
 ### Nonce Redaction
 
 The `nonce` field reveals how many transactions a sender has submitted over their lifetime. When the sender is hidden or redacted, the backend sets `nonce` to `null` (omitted from JSON) to prevent leaking this activity count. When only the **receiver** is hidden, nonce is preserved because it belongs to the public sender.

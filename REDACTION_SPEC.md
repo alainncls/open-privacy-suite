@@ -164,7 +164,9 @@ This is implemented as a **per-transaction override** in `RedactTransactions` (`
 | Viewer is not involved | No | No override | Normal rules apply |
 | Same tx, different viewer | — | Independent | Each viewer gets their own override |
 
-**Security invariant:** The override ONLY applies within `RedactTransactions`, which processes a specific transaction list. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
+**Log participant override:** `RedactLogs` accepts optional `participantAddrs` (the parent tx's `from` and `to`). When the viewer's linked address matches a participant address, Redacted emitting contracts are upgraded to Full for that log context — topics and data are preserved instead of stripped. Hidden emitting contracts remain dropped even with participant override. The API handler (`getExplorerTransactionLogs`) fetches the parent transaction and passes its `from`/`to` as participant context.
+
+**Security invariant:** The override ONLY applies within `RedactTransactions`/`RedactLogs`/`RedactTransfers`/`RedactInternalTransactions`, which process a specific transaction's data. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
 
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
@@ -207,6 +209,9 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 
 - **G6: Block.logsBloom not zeroed**
   The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed (not raw) representations of addresses. A viewer who already knows a target address can probe whether that address has activity in a given block in O(1). Zeroing the bloom field for all blocks would require per-block address scanning against the private address registry, which is expensive. Risk is low — probabilistic membership test only, requires knowing the target address. Accepted for now; track as a future hardening item.
+
+- **G10: One-side-hidden transactions leak activity metadata**
+  When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private sent a mint to [public address]" or "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
 
 ---
 
