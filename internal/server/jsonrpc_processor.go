@@ -291,8 +291,8 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
 		}
-		slog.Info("RBAC access denied", "method", req.Method, "auth_required", result.AuthRequired)
-		slog.Debug("RBAC denial details", "method", req.Method, "reason", result.Reason)
+		slog.Info("RBAC access denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "auth_required", result.AuthRequired)
+		slog.Debug("RBAC denial details", "method", req.Method, "user", req.UserID, "reason", result.Reason)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
 		p.logAccess(ctx, req, realStatus, http.StatusNotFound)
@@ -947,8 +947,8 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		if result.AuthRequired {
 			realStatus = http.StatusUnauthorized
 		}
-		slog.Info("RBAC access denied", "method", req.Method, "auth_required", result.AuthRequired)
-		slog.Debug("RBAC denial details", "method", req.Method, "reason", result.Reason)
+		slog.Info("RBAC access denied", "method", req.Method, "user", req.UserID, "ip", req.ClientIP, "auth_required", result.AuthRequired)
+		slog.Debug("RBAC denial details", "method", req.Method, "user", req.UserID, "reason", result.Reason)
 		p.recordRPCOutcome(req.Method, "rbac_denied", start)
 		p.recordRBACDecision("denied")
 		p.logAccess(ctx, req, realStatus, http.StatusNotFound)
