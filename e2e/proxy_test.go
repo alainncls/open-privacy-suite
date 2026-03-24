@@ -377,10 +377,11 @@ func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
 	// Get JWT token
 	accessToken := getJWTToken(t, serverURL, userDID)
 
-	// Try to call a method not in the default allowed list (debug_traceTransaction)
+	// Try to call a blocked debug method (debug_storageRangeAt is blocked by prefix,
+	// unlike debug_traceTransaction which is exempted via prefixBlockExemptions)
 	reqBody := map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "debug_traceTransaction",
+		"method":  "debug_storageRangeAt",
 		"params":  []any{"0x123"},
 		"id":      1,
 	}
