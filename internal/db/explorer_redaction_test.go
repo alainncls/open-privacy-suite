@@ -104,14 +104,62 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr])
 	})
 
-	t.Run("member sees Full", func(t *testing.T) {
+	t.Run("standard member sees Redacted", func(t *testing.T) {
 		const memberDID = "did:privado:batch_member"
 		addMember(t, database, memberDID, groupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{privateAddr})
 		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr],
+			"standard group member must ONLY have VisibilityRedacted for org contract")
+	})
+
+	t.Run("admin member sees Full", func(t *testing.T) {
+		const adminDID = "did:privado:admin_member"
+		
+		// Create an admin group
+		adminGroupID := uuid.New().String()
+		_, err := database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'admins', 'Admins', 0, 'admins', true)",
+			adminGroupID, groupID)
+		require.NoError(t, err)
+		
+		addMember(t, database, adminDID, adminGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, adminDID, []string{privateAddr})
+		require.NoError(t, err)
 		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
-			"group member must have VisibilityFull for their org contract")
+			"admin group member must have VisibilityFull for their org contract")
+	})
+
+	t.Run("contract admin via grant sees Full", func(t *testing.T) {
+		const grantAdminDID = "did:privado:grant_admin_member"
+
+		// Create a NON-org-admin group in the same org.
+		grantGroupID := uuid.New().String()
+		_, err := database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, (SELECT org_id FROM groups WHERE id = $2), 'grant-admins', 'Grant Admins', 0, 'grant-admins', false)",
+			grantGroupID, groupID)
+		require.NoError(t, err)
+
+		// Create a contract_grant linking the non-admin group to the contract with claims = '{admin}'.
+		// First we need the contract ID for privateAddr.
+		var contractID string
+		err = database.Conn().QueryRowContext(ctx,
+			"SELECT id FROM contracts WHERE LOWER(address) = $1", privateAddr).Scan(&contractID)
+		require.NoError(t, err)
+
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{admin}')",
+			uuid.New().String(), contractID, grantGroupID)
+		require.NoError(t, err)
+
+		addMember(t, database, grantAdminDID, grantGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, grantAdminDID, []string{privateAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
+			"member of non-admin group with 'admin' contract_grant claim must have VisibilityFull")
 	})
 
 	t.Run("expired member sees Redacted", func(t *testing.T) {
@@ -138,6 +186,297 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr])
 		assert.Equal(t, explorer.VisibilityFull, visMap[publicAddr])
+	})
+}
+
+// TestGetBatchVisibility_NoAdminGroups verifies that org contracts are
+// VisibilityRedacted even when no admin groups exist at all. Regression test
+// for the bug where org contract detection was coupled with admin group lookup —
+// if no admin groups existed, the contract fell through as VisibilityFull.
+func TestGetBatchVisibility_NoAdminGroups(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "no-admin-org", "No Admin Org")
+	require.NoError(t, err)
+
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'readers', 'Readers', 0, 'readers', false)",
+		groupID, orgID)
+	require.NoError(t, err)
+
+	contractAddr := "0xbbbb000000000000000000000000000000000099"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'No Admin Contract')",
+		contractID, orgID, contractAddr)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{read}')",
+		uuid.New().String(), contractID, groupID)
+	require.NoError(t, err)
+
+	t.Run("anonymous sees Redacted", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"org contract must be Redacted for anonymous even with no admin groups")
+	})
+
+	t.Run("read-only member sees Redacted", func(t *testing.T) {
+		memberDID := "did:test:reader_no_admin"
+		addMember(t, database, memberDID, groupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"read-only member must see Redacted when no admin groups exist")
+	})
+}
+
+func TestGetBatchVisibility_EdgeCases(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	t.Run("cross-org admin cannot see other org contracts as Full", func(t *testing.T) {
+		// Org A: admin group + contract
+		orgAID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgAID, "edge-orgA-"+orgAID[:8], "Edge Org A")
+		require.NoError(t, err)
+
+		adminGroupA := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admins', 'Admins', 0, 'admins', true)",
+			adminGroupA, orgAID)
+		require.NoError(t, err)
+
+		contractAAddr := "0xaa01000000000000000000000000000000000001"
+		contractAID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Contract A')",
+			contractAID, orgAID, contractAAddr)
+		require.NoError(t, err)
+
+		// Org B: contract only (no admin groups needed for this test)
+		orgBID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgBID, "edge-orgB-"+orgBID[:8], "Edge Org B")
+		require.NoError(t, err)
+
+		contractBAddr := "0xbb01000000000000000000000000000000000001"
+		contractBID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Contract B')",
+			contractBID, orgBID, contractBAddr)
+		require.NoError(t, err)
+
+		// User is admin of Org A
+		const crossAdminDID = "did:test:cross_org_admin"
+		addMember(t, database, crossAdminDID, adminGroupA)
+
+		visMap, err := database.GetBatchVisibility(ctx, crossAdminDID, []string{contractAAddr, contractBAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAAddr],
+			"admin of Org A must see own org contract as Full")
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractBAddr],
+			"admin of Org A must NOT see Org B contract as Full — cross-org isolation")
+	})
+
+	t.Run("deploy claim does not grant Full", func(t *testing.T) {
+		orgID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgID, "edge-deploy-"+orgID[:8], "Deploy Org")
+		require.NoError(t, err)
+
+		groupID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'deployers', 'Deployers', 0, 'deployers', false)",
+			groupID, orgID)
+		require.NoError(t, err)
+
+		contractAddr := "0xdd01000000000000000000000000000000000001"
+		contractID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Deploy Contract')",
+			contractID, orgID, contractAddr)
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{deploy}')",
+			uuid.New().String(), contractID, groupID)
+		require.NoError(t, err)
+
+		const deployDID = "did:test:deploy_member"
+		addMember(t, database, deployDID, groupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, deployDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"deploy claim must NOT grant VisibilityFull — only 'admin' claim or is_org_admin does")
+	})
+
+	t.Run("contract with no grants still Redacted", func(t *testing.T) {
+		orgID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgID, "edge-nogrant-"+orgID[:8], "No Grant Org")
+		require.NoError(t, err)
+
+		contractAddr := "0xee01000000000000000000000000000000000001"
+		contractID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'No Grant Contract')",
+			contractID, orgID, contractAddr)
+		require.NoError(t, err)
+
+		// No groups, no contract_grants — just a bare contract
+
+		// Anonymous viewer
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"org contract with no grants must still be Redacted for anonymous viewer")
+
+		// Authenticated but unrelated viewer
+		visMap, err = database.GetBatchVisibility(ctx, "did:test:unrelated_viewer", []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"org contract with no grants must still be Redacted for authenticated viewer")
+	})
+
+	t.Run("user EOA: anonymous sees Hidden", func(t *testing.T) {
+		eoaAddr := "0xff01000000000000000000000000000000000001"
+		eoaDID := "did:test:eoa_owner"
+
+		// Create user and link ETH address
+		userID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+			userID, eoaDID)
+		require.NoError(t, err)
+
+		err = database.SystemLinkEthAddress(ctx, eoaDID, eoaAddr)
+		require.NoError(t, err)
+
+		// Anonymous viewer
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{eoaAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityHidden, visMap[eoaAddr],
+			"anonymous must see owned EOA as Hidden (not Redacted, not Full)")
+	})
+
+	t.Run("user views own EOA as Full", func(t *testing.T) {
+		eoaAddr := "0xff02000000000000000000000000000000000001"
+		eoaDID := "did:test:own_eoa_viewer"
+
+		userID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+			userID, eoaDID)
+		require.NoError(t, err)
+
+		err = database.SystemLinkEthAddress(ctx, eoaDID, eoaAddr)
+		require.NoError(t, err)
+
+		visMap, err := database.GetBatchVisibility(ctx, eoaDID, []string{eoaAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[eoaAddr],
+			"user must see their own EOA as Full (ownerDID == viewerDID)")
+	})
+
+	t.Run("address case insensitivity", func(t *testing.T) {
+		orgID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgID, "edge-case-"+orgID[:8], "Case Org")
+		require.NoError(t, err)
+
+		// Store contract with mixed-case address
+		mixedCaseAddr := "0xAAAA000000000000000000000000000000000099"
+		contractID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Case Contract')",
+			contractID, orgID, mixedCaseAddr)
+		require.NoError(t, err)
+
+		// Query with lowercase
+		lowercaseAddr := "0xaaaa000000000000000000000000000000000099"
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{lowercaseAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[lowercaseAddr],
+			"org contract must be found despite case mismatch between stored and queried address")
+	})
+
+	t.Run("multi-org batch: admin sees own org Full, other Redacted", func(t *testing.T) {
+		// Org X: admin group + contract
+		orgXID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgXID, "edge-orgX-"+orgXID[:8], "Edge Org X")
+		require.NoError(t, err)
+
+		adminGroupX := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admins', 'Admins', 0, 'admins', true)",
+			adminGroupX, orgXID)
+		require.NoError(t, err)
+
+		contractXAddr := "0xcc01000000000000000000000000000000000001"
+		contractXID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Contract X')",
+			contractXID, orgXID, contractXAddr)
+		require.NoError(t, err)
+
+		// Org Y: regular group + contract (user is NOT a member)
+		orgYID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			orgYID, "edge-orgY-"+orgYID[:8], "Edge Org Y")
+		require.NoError(t, err)
+
+		regularGroupY := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'members', 'Members', 0, 'members', false)",
+			regularGroupY, orgYID)
+		require.NoError(t, err)
+
+		contractYAddr := "0xcc02000000000000000000000000000000000001"
+		contractYID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Contract Y')",
+			contractYID, orgYID, contractYAddr)
+		require.NoError(t, err)
+
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+			uuid.New().String(), contractYID, regularGroupY)
+		require.NoError(t, err)
+
+		// User is admin of Org X only
+		const multiOrgDID = "did:test:multi_org_admin"
+		addMember(t, database, multiOrgDID, adminGroupX)
+
+		// Single batch call with both contracts
+		visMap, err := database.GetBatchVisibility(ctx, multiOrgDID, []string{contractXAddr, contractYAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractXAddr],
+			"admin must see own org contract as Full in mixed batch")
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractYAddr],
+			"admin must see other org contract as Redacted in mixed batch")
 	})
 }
 

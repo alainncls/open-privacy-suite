@@ -92,8 +92,9 @@ type Group struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
 	Depth       int       `json:"depth"`
-	Path        string    `json:"path"`         // Materialized path (e.g., "root.engineering.devops")
-	IsOrgAdmin  bool      `json:"is_org_admin"` // If true, members get all claims on all contracts in the org
+	Path        string    `json:"path"`          // Materialized path (e.g., "root.engineering.devops")
+	IsOrgAdmin  bool      `json:"is_org_admin"`  // If true, members get all claims on all contracts in the org
+	AutoCreated bool      `json:"auto_created"`  // True for groups auto-created by deployer auto-grants
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

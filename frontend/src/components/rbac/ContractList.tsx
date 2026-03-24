@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { Contract, ContractSyncCheckResponse, ContractSyncStatus } from '@/types/rbac';
 
@@ -8,8 +8,10 @@ const getContractAddress = (contract: Contract): string => {
 };
 import ContractForm from './ContractForm';
 import ContractGrantsManager from './ContractGrantsManager';
+import MoveToGroupDialog from './MoveToGroupDialog';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -26,7 +28,8 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
-import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -45,6 +48,49 @@ export default function ContractList() {
   const [managingGrants, setManagingGrants] = useState<Contract | null>(null);
   const [grantSummary, setGrantSummary] = useState<Record<string, { count: number; groups: Array<{id: string; name: string}> }>>({});
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Date filter state
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
+
+  const allSelected = useMemo(
+    () => contracts.length > 0 && contracts.every(c => selectedIds.has(c.id)),
+    [contracts, selectedIds]
+  );
+  const someSelected = useMemo(
+    () => contracts.some(c => selectedIds.has(c.id)) && !allSelected,
+    [contracts, selectedIds, allSelected]
+  );
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(contracts.map(c => c.id)));
+    }
+  };
+
   // Sync with chain state
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<ContractSyncCheckResponse | null>(null);
@@ -52,17 +98,26 @@ export default function ContractList() {
   const [deletingStale, setDeletingStale] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Clear selection when org changes
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [orgId]);
+
   useEffect(() => {
     if (orgId) {
       loadContracts(0);
     }
-  }, [orgId]);
+  }, [orgId, debouncedSearch, dateFrom, dateTo]);
 
   const loadContracts = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const response = await rbacApi.contracts.list(orgId, { limit: PAGE_SIZE, offset: newOffset });
+      const params: { limit: number; offset: number; search?: string; created_after?: string; created_before?: string } = { limit: PAGE_SIZE, offset: newOffset };
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (dateFrom) params.created_after = dateFrom + 'T00:00:00Z';
+      if (dateTo) params.created_before = dateTo + 'T23:59:59Z';
+      const response = await rbacApi.contracts.list(orgId, params);
       const page = response.data;
       setContracts(page.data || []);
       setTotal(page.total);
@@ -193,6 +248,75 @@ export default function ContractList() {
         </div>
       </div>
 
+      {/* Search + Date Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 max-w-sm min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+          <Input
+            type="text"
+            placeholder="Search by name or address..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-neutral-500">From</span>
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="w-[140px] text-xs"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-neutral-500">To</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            className="w-[140px] text-xs"
+          />
+        </div>
+        {(searchQuery || dateFrom || dateTo) && (
+          <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setDateFrom(''); setDateTo(''); }} className="text-neutral-500">
+            Clear
+          </Button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
+        </div>
+      ) : selectedIds.size > 0 ? (
+        <div data-testid="selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary/20">
+          <span className="text-sm font-medium text-primary">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            data-testid="move-to-group-btn"
+            size="sm"
+            variant="outline"
+            className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+            onClick={() => setShowMoveDialog(true)}
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            Move to Group
+          </Button>
+          <Button
+            data-testid="clear-selection-btn"
+            size="sm"
+            variant="ghost"
+            className="text-neutral-500"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            <X className="w-3.5 h-3.5" />
+            Clear
+          </Button>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
@@ -216,6 +340,13 @@ export default function ContractList() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox
+                  data-testid="contract-select-all"
+                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                  onCheckedChange={toggleSelectAll}
+                />
+              </TableHead>
               <TableHead>Address</TableHead>
               <TableHead>Name</TableHead>
               <TableHead className="text-center w-16">ABI</TableHead>
@@ -231,6 +362,12 @@ export default function ContractList() {
                 className="animate-fade-in"
                 style={{ animationDelay: `${index * 30}ms` }}
               >
+                <TableCell>
+                  <Checkbox
+                    checked={selectedIds.has(contract.id)}
+                    onCheckedChange={() => toggleSelect(contract.id)}
+                  />
+                </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <FileCode2 className="w-4 h-4 text-primary" />
@@ -418,6 +555,18 @@ export default function ContractList() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Move to Group Dialog */}
+      <MoveToGroupDialog
+        open={showMoveDialog}
+        onOpenChange={setShowMoveDialog}
+        orgId={orgId}
+        selectedContractIds={Array.from(selectedIds)}
+        onSuccess={() => {
+          setSelectedIds(new Set());
+          loadContracts();
+        }}
+      />
 
       {/* Sync Results Dialog */}
       <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>

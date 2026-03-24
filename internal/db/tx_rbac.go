@@ -170,18 +170,18 @@ func (t *Tx) DeleteContractGrantsByContract(ctx context.Context, contractID stri
 // Group operations on transaction
 
 func (t *Tx) CreateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	          RETURNING created_at, updated_at`
 
 	return t.tx.QueryRowContext(ctx, query,
 		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
-		group.Description, group.Depth, group.Path, group.IsOrgAdmin,
+		group.Description, group.Depth, group.Path, group.IsOrgAdmin, group.AutoCreated,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
 func (t *Tx) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
 	group := &rbac.Group{}
@@ -190,7 +190,7 @@ func (t *Tx) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 
 	err := t.tx.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -320,6 +320,126 @@ func (t *Tx) InvalidateCacheForGroup(ctx context.Context, groupID string) error 
 func (t *Tx) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
 	_, err := t.tx.ExecContext(ctx, `DELETE FROM effective_permissions_cache WHERE org_id = $1`, orgID)
 	return err
+}
+
+// CreateContractGrantIfNotExists creates a contract grant, ignoring duplicates.
+func (t *Tx) CreateContractGrantIfNotExists(ctx context.Context, grant *rbac.ContractGrant) error {
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
+	          VALUES ($1, $2, $3, $4)
+	          ON CONFLICT (contract_id, group_id) DO NOTHING`
+
+	var functions any
+	if grant.Functions != nil {
+		b, err := json.Marshal(grant.Functions)
+		if err != nil {
+			return fmt.Errorf("failed to marshal functions: %w", err)
+		}
+		functions = b
+	}
+
+	_, err := t.tx.ExecContext(ctx, query,
+		grant.ID, grant.ContractID, grant.GroupID, functions,
+	)
+	return err
+}
+
+// DeleteContractGrantsByContractAndGroups deletes grants for a contract from specific groups.
+func (t *Tx) DeleteContractGrantsByContractAndGroups(ctx context.Context, contractID string, groupIDs []string) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	query := `DELETE FROM contract_grants WHERE contract_id = $1 AND group_id = ANY($2)`
+	_, err := t.tx.ExecContext(ctx, query, contractID, pq.Array(groupIDs))
+	return err
+}
+
+// CountContractGrantsByGroup returns the number of grants for a group.
+func (t *Tx) CountContractGrantsByGroup(ctx context.Context, groupID string) (int, error) {
+	var count int
+	err := t.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM contract_grants WHERE group_id = $1`, groupID,
+	).Scan(&count)
+	return count, err
+}
+
+// GetGroupsByIDs returns groups matching the given IDs within an org.
+func (t *Tx) GetGroupsByIDs(ctx context.Context, orgID string, ids []string) ([]*rbac.Group, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
+	          FROM groups WHERE org_id = $1 AND id = ANY($2)`
+	rows, err := t.tx.QueryContext(ctx, query, orgID, pq.Array(ids))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get groups by IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []*rbac.Group
+	for rows.Next() {
+		group := &rbac.Group{}
+		var parentID, description sql.NullString
+		if err := rows.Scan(
+			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan group: %w", err)
+		}
+		if parentID.Valid {
+			group.ParentID = &parentID.String
+		}
+		if description.Valid {
+			group.Description = description.String
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+// GetAutoCreatedGroupIDsForContracts returns auto-created group IDs that have grants to any of the given contracts.
+func (t *Tx) GetAutoCreatedGroupIDsForContracts(ctx context.Context, contractIDs []string) ([]string, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	query := `SELECT DISTINCT g.id FROM groups g
+	          JOIN contract_grants cg ON g.id = cg.group_id
+	          WHERE g.auto_created = true AND cg.contract_id = ANY($1)`
+	rows, err := t.tx.QueryContext(ctx, query, pq.Array(contractIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeleteGroupWithDependenciesTx deletes a group and all its dependencies within an existing transaction.
+func (t *Tx) DeleteGroupWithDependenciesTx(ctx context.Context, groupID string) error {
+	if err := t.InvalidateCacheForGroup(ctx, groupID); err != nil {
+		return fmt.Errorf("failed to invalidate cache: %w", err)
+	}
+	if err := t.DeleteMembershipsByGroup(ctx, groupID); err != nil {
+		return fmt.Errorf("failed to delete memberships: %w", err)
+	}
+	if _, err := t.tx.ExecContext(ctx,
+		`DELETE FROM contract_grants WHERE group_id = $1`, groupID); err != nil {
+		return fmt.Errorf("failed to delete contract grants: %w", err)
+	}
+	if err := t.DeleteGroupAccess(ctx, groupID); err != nil {
+		return fmt.Errorf("failed to delete group access: %w", err)
+	}
+	if err := t.DeleteGroup(ctx, groupID); err != nil {
+		return fmt.Errorf("failed to delete group: %w", err)
+	}
+	return nil
 }
 
 // Helper to scan a contract row (shared between DB and Tx)

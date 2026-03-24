@@ -89,42 +89,59 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 	}
 
 	if len(publicAddrs) > 0 {
-		// Find which of these addresses are org-owned contracts and what groups can access them
-		orgContractQuery := `
-			SELECT LOWER(c.address) AS addr, cg.group_id
-			FROM contracts c
-			JOIN contract_grants cg ON cg.contract_id = c.id
+		// Step 1: Find ALL org-owned contracts and default them to VisibilityRedacted.
+		// This is separate from admin group lookup — a contract is private regardless
+		// of whether any admin groups exist.
+		orgContractDetect := `
+			SELECT LOWER(c.address) FROM contracts c
 			WHERE LOWER(c.address) = ANY($1)`
-
-		orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(publicAddrs))
+		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, pq.Array(publicAddrs))
 		if err != nil {
 			return nil, err
 		}
-		defer orgRows.Close()
+		defer orgDetectRows.Close()
 
-		// Map: address -> set of group_ids that have access
-		contractGroupIDs := make(map[string]map[string]bool)
-		for orgRows.Next() {
-			var addr, groupID string
-			if err := orgRows.Scan(&addr, &groupID); err != nil {
+		var orgContractAddrs []string
+		for orgDetectRows.Next() {
+			var addr string
+			if err := orgDetectRows.Scan(&addr); err != nil {
 				return nil, err
 			}
-			if contractGroupIDs[addr] == nil {
-				contractGroupIDs[addr] = make(map[string]bool)
-			}
-			contractGroupIDs[addr][groupID] = true
+			result[addr] = explorer.VisibilityRedacted
+			orgContractAddrs = append(orgContractAddrs, addr)
 		}
 
-		if len(contractGroupIDs) > 0 {
-			// Default org-owned contracts to VisibilityRedacted (address masked, tx visible but stripped)
-			// We use Redacted (not Hidden) so transactions aren't silently dropped from global lists —
-			// the contract's existence is on-chain; only the identity should be protected.
-			for addr := range contractGroupIDs {
-				result[addr] = explorer.VisibilityRedacted
+		// Step 2: For authenticated viewers, check if they have admin-level access
+		// to any of these contracts. Admin = is_org_admin group OR 'admin' claim in contract_grants.
+		if viewerDID != "" && len(orgContractAddrs) > 0 {
+			adminGroupQuery := `
+				SELECT LOWER(c.address) AS addr, g.id AS group_id
+				FROM contracts c
+				JOIN groups g ON g.org_id = c.org_id
+				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+				WHERE LOWER(c.address) = ANY($1)
+				  AND (g.is_org_admin = true OR 'admin' = ANY(cg.claims))`
+
+			orgRows, err := d.conn.QueryContext(ctx, adminGroupQuery, pq.Array(orgContractAddrs))
+			if err != nil {
+				return nil, err
+			}
+			defer orgRows.Close()
+
+			// Map: address -> set of admin group_ids
+			contractGroupIDs := make(map[string]map[string]bool)
+			for orgRows.Next() {
+				var addr, groupID string
+				if err := orgRows.Scan(&addr, &groupID); err != nil {
+					return nil, err
+				}
+				if contractGroupIDs[addr] == nil {
+					contractGroupIDs[addr] = make(map[string]bool)
+				}
+				contractGroupIDs[addr][groupID] = true
 			}
 
-			if viewerDID != "" {
-				// Collect all group IDs that have access to any of these contracts
+			if len(contractGroupIDs) > 0 {
 				allGroupIDs := make(map[string]bool)
 				for _, groups := range contractGroupIDs {
 					for gid := range groups {
@@ -136,7 +153,6 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 					groupIDSlice = append(groupIDSlice, gid)
 				}
 
-				// Check if viewerDID is a member of any of those groups
 				memberQuery := `
 					SELECT DISTINCT m.group_id
 					FROM user_memberships m
@@ -151,7 +167,6 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 				}
 				defer memberRows.Close()
 
-				// Collect group IDs where viewer is a member
 				viewerGroups := make(map[string]bool)
 				for memberRows.Next() {
 					var gid string
@@ -161,7 +176,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 					viewerGroups[gid] = true
 				}
 
-				// Grant VisibilityFull to contracts where viewer has group membership
+				// Upgrade to VisibilityFull only for contracts where viewer is in an admin group
 				for addr, groups := range contractGroupIDs {
 					for gid := range groups {
 						if viewerGroups[gid] {

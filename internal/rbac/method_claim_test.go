@@ -37,7 +37,7 @@ func TestGetClaimForMethod(t *testing.T) {
 
 		// Unknown/uncategorized methods
 		{name: "unknown method returns empty", method: "unknown_method", want: ""},
-		{name: "debug method returns empty", method: "debug_traceCall", want: ""},
+		{name: "debug method returns deploy", method: "debug_traceCall", want: ClaimDeploy},
 		{name: "admin method returns empty", method: "admin_peers", want: ""},
 	}
 

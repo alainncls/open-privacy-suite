@@ -66,9 +66,7 @@ var GlobalBlockedMethods = map[string]bool{
 	"debug_traceblockbyhash":            true,
 	"debug_traceblockbynumber":          true,
 	"debug_traceblockfromfile":          true,
-	"debug_tracecall":                   true,
 	"debug_tracechain":                  true,
-	"debug_tracetransaction":            true,
 	"debug_unsubscribe":                 true,
 	"debug_verbosity":                   true,
 	"debug_vmodule":                     true,
@@ -187,6 +185,13 @@ var blockedMethodPrefixes = []string{
 	"les_",
 }
 
+// prefixBlockExemptions are methods that match a blocked prefix but are explicitly
+// allowed through to the RBAC layer (e.g., debug trace methods gated by deploy claim).
+var prefixBlockExemptions = map[string]bool{
+	"debug_tracetransaction": true,
+	"debug_tracecall":        true,
+}
+
 // IsMethodBlocked checks if a method is globally blocked.
 // Case-insensitive matching is used for security.
 func IsMethodBlocked(method string) bool {
@@ -195,6 +200,11 @@ func IsMethodBlocked(method string) bool {
 	// Check exact match in map (O(1) lookup)
 	if GlobalBlockedMethods[method] {
 		return true
+	}
+
+	// Check exemptions before prefix blocking
+	if prefixBlockExemptions[method] {
+		return false
 	}
 
 	// Check prefix matches for future-proofing
@@ -580,6 +590,38 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					Claims:         allClaims,
 				}, nil
 			}
+		}
+	}
+
+	// Basic state queries (balance, nonce, code) on addresses not registered to any org
+	// are allowed with the read claim. These are needed for:
+	//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
+	//   - eth_getBalance: wallet balance display
+	//   - eth_getCode: EOA vs contract detection
+	// Only eth_getStorageAt and eth_getProof need strict contract-level gating since
+	// they access contract-internal state that could leak sensitive data.
+	if req.TargetAddress != "" && isBasicAddressQuery(req.Method) {
+		addr := strings.ToLower(req.TargetAddress)
+		if !perms.IsContractRegistered(addr) {
+			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check address ownership: %w", err)
+			}
+			if ownerOrgID == "" {
+				// Not owned by any org — allow with read claim (public EOA data)
+				if containsClaim(perms.Claims, ClaimRead) {
+					allClaims := collectAllClaims(perms)
+					return &AccessCheckResult{
+						Allowed:        true,
+						OrgID:          org.ID,
+						UserID:         user.ID,
+						RateLimitRPS:   perms.RateLimitRPS,
+						RateLimitDaily: perms.RateLimitDaily,
+						Claims:         allClaims,
+					}, nil
+				}
+			}
+			// Owned by an org — fall through to contract access check
 		}
 	}
 
@@ -1389,6 +1431,24 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 	return org, nil
 }
 
+// isBasicAddressQuery returns true for state queries that target an address but
+// only return public non-sensitive data. These are safe to allow on unregistered
+// EOAs without contract-level grants:
+//   - eth_getBalance: always returns a value (0 for non-existent) — no existence leak
+//   - eth_getTransactionCount: always returns a value (0 for non-existent) — needed for tx nonce
+//
+// NOT included:
+//   - eth_getCode: reveals whether an address has deployed code (contract existence oracle)
+//   - eth_getStorageAt: accesses contract-internal state
+//   - eth_getProof: returns balance + storage hash
+func isBasicAddressQuery(method string) bool {
+	switch method {
+	case "eth_getBalance", "eth_getTransactionCount":
+		return true
+	}
+	return false
+}
+
 // isValueTransferParams checks if eth_sendTransaction params represent a simple
 // value transfer (no calldata). Returns true if the tx object has no "data"/"input"
 // field or if it's empty/0x.
@@ -1452,6 +1512,24 @@ func GetTargetAddress(method string, params []any) string {
 		// equivalent to eth_getBalance + eth_getStorageAt combined.
 		if addr, ok := params[0].(string); ok {
 			return strings.ToLower(addr)
+		}
+	case "eth_getLogs":
+		// eth_getLogs filter can have "address" as a string or array of strings.
+		// Extract the first address for org resolution. The full multi-address
+		// validation happens later in validateGetLogsWithOrgContext.
+		if len(params) > 0 {
+			if filter, ok := params[0].(map[string]any); ok {
+				switch addr := filter["address"].(type) {
+				case string:
+					return strings.ToLower(addr)
+				case []any:
+					if len(addr) > 0 {
+						if s, ok := addr[0].(string); ok {
+							return strings.ToLower(s)
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -2021,6 +2099,15 @@ func (c *AccessController) NotifyDeploymentMined(
 		if err := c.store.CreateContract(ctx, contract); err != nil {
 			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
 			// Still clean up pre-registration even if contract creation failed.
+		} else if deployment.DeployerUserID != "" {
+			// Create deployer auto-grant group (non-fatal if it fails)
+			deployerDID := ""
+			if user, err := c.store.GetUser(ctx, deployment.DeployerUserID); err == nil && user != nil {
+				deployerDID = user.ExternalID
+			}
+			if err := c.store.CreateDeployerAutoGrants(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID, deployerDID); err != nil {
+				slog.Warn("failed to create deployer auto-grants", "address", contractAddress, "error", err)
+			}
 		}
 		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
 			slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)

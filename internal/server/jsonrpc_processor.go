@@ -239,6 +239,11 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processRawTransaction(ctx, req)
 	}
 
+	// Handle debug traces specially - requires strict deep tree validation
+	if req.Method == "debug_traceTransaction" || req.Method == "debug_traceCall" {
+		return p.processDebugTrace(ctx, req)
+	}
+
 	// Build RBAC access check request
 	var requiredClaims []rbac.Claim
 	if claim := rbac.ClassifyOperation(req.Method, req.Params); claim != "" {
@@ -1103,6 +1108,117 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 }
 
+// processDebugTrace handles debug_traceTransaction and debug_traceCall safely.
+// It uses TraceValidator to guarantee 100% org isolation before returning trace output.
+func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRequest) *ProcessResult {
+	start := time.Now()
+
+	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "runtime tracing is not supported or enabled on this proxy",
+			},
+		}
+	}
+
+	// 1. Must have Deploy or Admin claim globally
+	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
+	if err != nil || user == nil {
+		p.logAccess(ctx, req, http.StatusUnauthorized)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusUnauthorized, Message: "failed to get user"}}
+	}
+
+	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		p.logAccess(ctx, req, http.StatusInternalServerError)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "failed to get memberships"}}
+	}
+
+	if !p.userHasDeployClaim(ctx, memberships) {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "tracing requires deploy or admin claims"}}
+	}
+
+	userOrgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			userOrgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	// 2. Perform the internal trace
+	var traceResult *tracer.TraceResult
+	var traceErr error
+
+	if req.Method == "debug_traceTransaction" {
+		if len(req.Params) == 0 {
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadRequest, Message: "missing transaction hash"}}
+		}
+		txHash, ok := req.Params[0].(string)
+		if !ok {
+			return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadRequest, Message: "invalid transaction hash"}}
+		}
+		traceResult, traceErr = p.runtimeTracer.TraceMinedTransaction(ctx, txHash)
+	} else if req.Method == "debug_traceCall" {
+		from, to, data, value := extractTxParams(req.Params)
+		traceResult, traceErr = p.runtimeTracer.TraceTransaction(ctx, from, to, data, value)
+	}
+
+	if traceErr != nil {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: fmt.Sprintf("trace execution failed: %v", traceErr)}}
+	}
+	if traceResult == nil {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: "trace returned no result"}}
+	}
+
+	// 3. Validate the trace tree strictly
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, true)
+	if err != nil {
+		p.logAccess(ctx, req, http.StatusInternalServerError)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusInternalServerError, Message: "trace validation error"}}
+	}
+
+	// THE GATE: Ensure no cross-org leaks occur.
+	if !validationResult.Allowed {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		// We purposefully do NOT return the trace output here. We return the Access Denied reason.
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusForbidden, Message: fmt.Sprintf("cross-org trace denied: %s", validationResult.Reason)}}
+	}
+
+	// 4. Rate Limit (Tracing is expensive, hard limit to low RPS)
+	rps, daily := 1, 100
+	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, &rps, &daily)
+	if !allowed {
+		p.logAccess(ctx, req, http.StatusTooManyRequests)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusTooManyRequests, Message: rateLimitReason}}
+	}
+
+	// 5. Validated & Safe! Forward the exact request to the upstream node to fetch the raw requested trace format
+	// (Since we used internal tracers like callTracer, but they might want struct logs or memory dumps)
+	forwardStart := time.Now()
+	responseBody, statusCode, err := p.proxy.Forward(req.Body)
+	if p.metrics != nil {
+		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
+	}
+	if err != nil {
+		p.logAccess(ctx, req, http.StatusBadGateway)
+		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusBadGateway, Message: "failed to forward trace request"}}
+	}
+
+	p.recordRPCOutcome(req.Method, "success", start)
+	p.logAccess(ctx, req, statusCode)
+	
+	// Return the raw response exactly as it came from the node
+	return &ProcessResult{
+		StatusCode:   statusCode,
+		ResponseBody: responseBody,
+	}
+}
+
 // validateRawTxWithTracing performs runtime trace validation for raw transactions.
 // Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
 // and a ProcessError if validation fails.
@@ -1628,6 +1744,14 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 				contract.DeployedAt = &now
 				if createErr := p.rbacAccessCtrl.Store().CreateContract(ctx, contract); createErr != nil {
 					slog.Warn("failed to register diverged runtime create", "address", addr, "error", createErr)
+				} else if userID != "" {
+					deployerDID := ""
+					if u, uErr := p.rbacAccessCtrl.Store().GetUser(ctx, userID); uErr == nil && u != nil {
+						deployerDID = u.ExternalID
+					}
+					if gErr := p.rbacAccessCtrl.Store().CreateDeployerAutoGrants(ctx, orgID, contract.ID, userID, deployerDID); gErr != nil {
+						slog.Warn("failed to create deployer auto-grants for runtime create", "address", addr, "error", gErr)
+					}
 				}
 			}
 		}

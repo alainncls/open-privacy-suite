@@ -57,6 +57,36 @@ export const selectors = {
     dialogTitle: '[role="dialog"] h2',
     alertDialog: '[role="alertdialog"]',
   },
+
+  // Batch operations
+  batch: {
+    // Contract list
+    selectAll: '[data-testid="contract-select-all"]',
+    toolbar: '[data-testid="selection-toolbar"]',
+    moveBtn: '[data-testid="move-to-group-btn"]',
+    clearBtn: '[data-testid="clear-selection-btn"]',
+    // Group list
+    filterAll: '[data-testid="group-filter-all"]',
+    filterAuto: '[data-testid="group-filter-auto"]',
+    filterManual: '[data-testid="group-filter-manual"]',
+    // groupToolbar intentionally same as toolbar — only one is visible at a time
+    deleteBtn: '[data-testid="batch-delete-btn"]',
+    autoBadge: '[data-testid="auto-badge"]',
+    // Move dialog
+    moveDialog: '[data-testid="move-dialog"]',
+    moveExistingRadio: '[data-testid="move-existing-radio"]',
+    moveNewRadio: '[data-testid="move-new-radio"]',
+    moveGroupSelect: '[data-testid="move-group-select"]',
+    moveNewName: '[data-testid="move-new-name"]',
+    moveNewSlug: '[data-testid="move-new-slug"]',
+    moveDeleteEmptyCheckbox: '[data-testid="move-delete-empty-checkbox"]',
+    moveConfirmBtn: '[data-testid="move-confirm-btn"]',
+    moveCancelBtn: '[data-testid="move-cancel-btn"]',
+    // Batch delete dialog
+    batchDeleteDialog: '[data-testid="batch-delete-dialog"]',
+    batchDeleteConfirmBtn: '[data-testid="batch-delete-confirm-btn"]',
+    batchDeleteCancelBtn: '[data-testid="batch-delete-cancel-btn"]',
+  },
 } as const;
 
 /**

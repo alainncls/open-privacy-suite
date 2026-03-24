@@ -46,7 +46,7 @@ func extractUniqueAddresses(txs []Transaction) []string {
 		if tx.From != "" {
 			addrMap[strings.ToLower(tx.From)] = true
 		}
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			addrMap[strings.ToLower(*tx.To)] = true
 		}
 	}
@@ -93,7 +93,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	for _, tx := range txs {
 		// Determine whether the viewer is a participant in this transaction.
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
-		viewerIsTo := tx.To != nil && *tx.To != "" && viewerAddrs[strings.ToLower(*tx.To)]
+		viewerIsTo := tx.HasRecipient() && viewerAddrs[strings.ToLower(*tx.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
 		// Resolve base visibility from the shared map.
@@ -102,7 +102,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			baseFromLevel = visibilityMap[strings.ToLower(tx.From)]
 		}
 		baseToLevel := VisibilityFull
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			baseToLevel = visibilityMap[strings.ToLower(*tx.To)]
 		}
 
@@ -128,6 +128,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			continue
 		}
 
+		// Contract creation transactions: if the deployer is non-identifiable,
+		// drop entirely. Showing "[PRIVATE] → Contract" leaks deployment
+		// activity, timing, and the resulting contract address.
+		if tx.IsContractCreation() && isNonIdentifiable(fromLevel) {
+			continue
+		}
+
 		redactedTx := tx
 
 		// If one side is non-identifiable (hidden or redacted) but the other is
@@ -145,7 +152,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
 				redactedTx.To = &p
-			} else if tx.To != nil && *tx.To != "" {
+			} else if tx.HasRecipient() {
 				redacted := r.applyRedaction(*tx.To, toLevel)
 				redactedTx.To = &redacted
 			}
@@ -161,7 +168,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		if tx.From != "" {
 			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
 		}
-		if tx.To != nil && *tx.To != "" {
+		if tx.HasRecipient() {
 			redacted := r.applyRedaction(*tx.To, toLevel)
 			redactedTx.To = &redacted
 		}
@@ -582,9 +589,24 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 // addresses (zero-padded 32-byte form). Any embedded address that is private is zeroed out.
 // When the emitting contract has a registered ABI, the non-indexed Data field is also scanned
 // for address-typed parameters and any private addresses are zeroed.
-func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string) ([]Log, error) {
+// RedactLogs applies privacy rules to transaction logs. If participantAddrs
+// contains the viewer's addresses (e.g. from the parent tx's from/to), logs
+// from Redacted contracts are kept (with topics/data intact) instead of being
+// stripped — the viewer is a direct participant and already knows the contract.
+func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string, participantAddrs ...string) ([]Log, error) {
 	if len(logs) == 0 {
 		return logs, nil
+	}
+
+	// Build set of viewer's own linked addresses.
+	viewerAddrs := make(map[string]bool)
+	if viewerDID != "" {
+		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
+		if err == nil {
+			for _, a := range linked {
+				viewerAddrs[strings.ToLower(a)] = true
+			}
+		}
 	}
 
 	// Phase 1: collect emitting contract addresses and do an initial batch lookup.
@@ -604,13 +626,22 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		return nil, err
 	}
 
-	// Phase 2: for logs that will be kept with full/pseudonymous disclosure,
+	// Check if viewer is actually a participant in the parent tx.
+	isParticipant := false
+	for _, pa := range participantAddrs {
+		if pa != "" && viewerAddrs[strings.ToLower(pa)] {
+			isParticipant = true
+			break
+		}
+	}
+
+	// Phase 2: for logs that will be kept (full/pseudonymous or participant override),
 	// scan topics for embedded addresses not yet in visMap.
 	extraAddrMap := make(map[string]bool)
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
-		// Redacted contracts already have all topics stripped; hidden contracts are dropped.
-		if level == VisibilityHidden || level == VisibilityRedacted {
+		// Redacted/hidden contracts are scanned only if viewer is a participant.
+		if (level == VisibilityHidden || level == VisibilityRedacted) && !isParticipant {
 			continue
 		}
 		for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
@@ -689,6 +720,12 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 	var result []Log
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
+
+		// Participant override: if the viewer is from/to of the parent tx,
+		// upgrade Redacted emitting contracts so they can see their own logs.
+		if level == VisibilityRedacted && isParticipant {
+			level = VisibilityFull
+		}
 
 		if level == VisibilityHidden {
 			continue

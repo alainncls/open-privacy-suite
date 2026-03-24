@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 )
@@ -19,7 +20,14 @@ import (
 func (s *Server) listContracts(c *gin.Context) {
 	orgID := c.Param("org_id")
 	limit, offset := parsePaginationParams(c, 50)
-	contracts, total, err := s.db.ListContractsPaginated(c.Request.Context(), orgID, limit, offset)
+
+	filter := db.ContractListFilter{
+		Search:        c.Query("search"),
+		CreatedAfter:  c.Query("created_after"),
+		CreatedBefore: c.Query("created_before"),
+	}
+
+	contracts, total, err := s.db.ListContractsFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -636,4 +644,170 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "grant deleted"})
+}
+
+// batchMoveContracts moves contracts from auto-created groups to a target group.
+// POST /orgs/:org_id/contracts/batch-move
+func (s *Server) batchMoveContracts(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	var input struct {
+		ContractIDs            []string `json:"contract_ids" binding:"required"`
+		TargetGroupID          string   `json:"target_group_id"`
+		NewGroup               *struct {
+			Slug string `json:"slug" binding:"required"`
+			Name string `json:"name" binding:"required"`
+		} `json:"new_group"`
+		DeleteEmptyAutoGroups bool `json:"delete_empty_auto_groups"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(input.ContractIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contract_ids is required"})
+		return
+	}
+	if len(input.ContractIDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many contract_ids (max 200)"})
+		return
+	}
+	if input.TargetGroupID == "" && input.NewGroup == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "either target_group_id or new_group is required"})
+		return
+	}
+	if input.TargetGroupID != "" && input.NewGroup != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot specify both target_group_id and new_group"})
+		return
+	}
+
+	type moveResult struct {
+		TargetGroupID     string   `json:"target_group_id"`
+		MovedCount        int      `json:"moved_count"`
+		DeletedGroupIDs   []string `json:"deleted_group_ids,omitempty"`
+	}
+
+	var result moveResult
+
+	err := s.db.WithTx(c.Request.Context(), func(tx *db.Tx) error {
+		ctx := c.Request.Context()
+
+		// Resolve target group
+		targetGroupID := input.TargetGroupID
+		if input.NewGroup != nil {
+			// Create new group inline with deploy claims
+			newGroup := &rbac.Group{
+				ID:    uuid.New().String(),
+				OrgID: orgID,
+				Slug:  input.NewGroup.Slug,
+				Name:  input.NewGroup.Name,
+				Depth: 0,
+				Path:  input.NewGroup.Slug,
+			}
+			if err := tx.CreateGroup(ctx, newGroup); err != nil {
+				if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+					return fmt.Errorf("group with slug '%s' already exists", input.NewGroup.Slug)
+				}
+				return fmt.Errorf("failed to create group: %w", err)
+			}
+			// Create group access with deploy claims
+			claims := rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy})
+			if err := tx.CreateGroupAccess(ctx, &rbac.GroupAccess{
+				ID:             uuid.New().String(),
+				GroupID:        newGroup.ID,
+				AllowedMethods: []string{"*"},
+				Claims:         claims,
+			}); err != nil {
+				return fmt.Errorf("failed to create group access: %w", err)
+			}
+			targetGroupID = newGroup.ID
+		} else {
+			// Verify target group exists and belongs to org
+			group, err := tx.GetGroup(ctx, targetGroupID)
+			if err != nil {
+				return fmt.Errorf("failed to get target group: %w", err)
+			}
+			if group == nil || group.OrgID != orgID {
+				return fmt.Errorf("target group not found in this organization")
+			}
+		}
+
+		result.TargetGroupID = targetGroupID
+
+		// Verify all contracts belong to this org
+		contracts, err := tx.GetContractsByIDs(ctx, input.ContractIDs)
+		if err != nil {
+			return fmt.Errorf("failed to get contracts: %w", err)
+		}
+		for _, cid := range input.ContractIDs {
+			contract, ok := contracts[cid]
+			if !ok {
+				return fmt.Errorf("contract %s not found", cid)
+			}
+			if contract.OrgID != orgID {
+				return fmt.Errorf("contract %s does not belong to this organization", cid)
+			}
+		}
+
+		// Collect auto-created source group IDs across selected contracts
+		autoGroupIDs, err := tx.GetAutoCreatedGroupIDsForContracts(ctx, input.ContractIDs)
+		if err != nil {
+			return fmt.Errorf("failed to get auto-created groups: %w", err)
+		}
+
+		// For each contract: create grant to target, remove grants to auto-created groups
+		for _, cid := range input.ContractIDs {
+			// Create grant to target group (ignore if already exists)
+			if err := tx.CreateContractGrantIfNotExists(ctx, &rbac.ContractGrant{
+				ID:         uuid.New().String(),
+				ContractID: cid,
+				GroupID:    targetGroupID,
+			}); err != nil {
+				return fmt.Errorf("failed to create grant for contract %s: %w", cid, err)
+			}
+
+			// Delete only grants to auto-created source groups (preserves manual grants)
+			if err := tx.DeleteContractGrantsByContractAndGroups(ctx, cid, autoGroupIDs); err != nil {
+				return fmt.Errorf("failed to remove auto grants for contract %s: %w", cid, err)
+			}
+
+			result.MovedCount++
+		}
+
+		// Optionally delete empty auto-created groups
+		if input.DeleteEmptyAutoGroups && len(autoGroupIDs) > 0 {
+			for _, gid := range autoGroupIDs {
+				count, err := tx.CountContractGrantsByGroup(ctx, gid)
+				if err != nil {
+					return fmt.Errorf("failed to count grants for group %s: %w", gid, err)
+				}
+				if count == 0 {
+					if err := tx.DeleteGroupWithDependenciesTx(ctx, gid); err != nil {
+						return fmt.Errorf("failed to delete empty group %s: %w", gid, err)
+					}
+					result.DeletedGroupIDs = append(result.DeletedGroupIDs, gid)
+				}
+			}
+		}
+
+		// Invalidate org cache
+		if err := tx.InvalidateCacheForOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("failed to invalidate cache: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		// Distinguish validation errors from internal errors
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "does not belong") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }

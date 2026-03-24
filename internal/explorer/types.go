@@ -57,6 +57,17 @@ type Transaction struct {
 	TokenTransferCount   int        `json:"tokenTransferCount,omitempty"`
 }
 
+// IsContractCreation returns true if this transaction is a contract deployment
+// (no "to" address — the transaction creates a new contract).
+func (tx *Transaction) IsContractCreation() bool {
+	return tx.To == nil || *tx.To == ""
+}
+
+// HasRecipient returns true if the transaction has a non-empty "to" address.
+func (tx *Transaction) HasRecipient() bool {
+	return tx.To != nil && *tx.To != ""
+}
+
 type AddressStats struct {
 	Address            string    `json:"address"`
 	TxCount            int       `json:"txCount"`

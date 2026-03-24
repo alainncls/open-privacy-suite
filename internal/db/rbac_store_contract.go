@@ -166,6 +166,82 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 	return contracts, total, nil
 }
 
+// ContractListFilter contains optional filters for listing contracts.
+type ContractListFilter struct {
+	Search       string // ILIKE filter on name or address
+	CreatedAfter string // ISO8601 date — only contracts created on or after this date
+	CreatedBefore string // ISO8601 date — only contracts created before this date
+}
+
+// ListContractsFiltered lists contracts with optional search filter.
+func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, offset int, filter ContractListFilter) ([]*rbac.Contract, int, error) {
+	where := "org_id = $1"
+	args := []any{orgID}
+	argIdx := 2
+
+	if filter.Search != "" {
+		where += fmt.Sprintf(" AND (name ILIKE $%d OR address ILIKE $%d)", argIdx, argIdx)
+		args = append(args, "%"+escapeILIKE(filter.Search)+"%")
+		argIdx++
+	}
+	if filter.CreatedAfter != "" {
+		where += fmt.Sprintf(" AND created_at >= $%d", argIdx)
+		args = append(args, filter.CreatedAfter)
+		argIdx++
+	}
+	if filter.CreatedBefore != "" {
+		where += fmt.Sprintf(" AND created_at < $%d", argIdx)
+		args = append(args, filter.CreatedBefore)
+		argIdx++
+	}
+
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM contracts WHERE %s", where)
+	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count contracts: %w", err)
+	}
+
+	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	          FROM contracts WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list contracts: %w", err)
+	}
+	defer rows.Close()
+
+	contracts, err := scanContracts(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return contracts, total, nil
+}
+
+// GetAllRegisteredAddresses returns all contract addresses registered to any org.
+// This includes both finalized contracts and preregistered (pending) addresses.
+// Used to build visibility filters — only org-registered addresses can be hidden.
+func (d *DB) GetAllRegisteredAddresses(ctx context.Context) ([]string, error) {
+	rows, err := d.conn.QueryContext(ctx, `
+		SELECT LOWER(address) FROM contracts
+		UNION
+		SELECT LOWER(address) FROM preregistered_addresses`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var addrs []string
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs, rows.Err()
+}
+
 func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
 	return err

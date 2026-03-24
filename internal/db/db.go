@@ -532,6 +532,27 @@ func (d *DB) SystemLinkEthAddress(ctx context.Context, did, ethAddress string) e
 	return err
 }
 
+// GetAllLinkedEOAAddresses returns all active ETH addresses linked to any user DID.
+// Used for bulk visibility filtering to identify which addresses belong to users.
+func (d *DB) GetAllLinkedEOAAddresses(ctx context.Context) ([]string, error) {
+	query := `SELECT DISTINCT LOWER(eth_address) FROM eth_address_links WHERE revoked = false`
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all linked EOAs: %w", err)
+	}
+	defer rows.Close()
+
+	var addrs []string
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs, rows.Err()
+}
+
 // GetEthAddressesByDID retrieves all ETH addresses linked to a DID
 func (d *DB) GetEthAddressesByDID(ctx context.Context, did string) ([]*EthAddressLink, error) {
 	query := `SELECT id, did, eth_address, signature, message_hash, verified_at, revoked, revoked_at, ens_name, ens_resolved_at, link_type

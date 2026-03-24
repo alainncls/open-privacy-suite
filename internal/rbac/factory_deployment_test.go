@@ -727,6 +727,10 @@ func (s *mockAccessControllerStore) DeletePreregisteredAddressByAddress(ctx cont
 	return nil
 }
 
+func (s *mockAccessControllerStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 // Add the SimpleCreate3FactoryHash to the trusted list for testing
 func init() {
 	// Add the test factory to the trusted list using the known hash

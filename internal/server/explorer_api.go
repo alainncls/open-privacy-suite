@@ -539,7 +539,9 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 		respondServiceUnavailable(c, "explorer store not configured")
 		return
 	}
-	stats, err := s.explorerStore.GetChainStats(c.Request.Context())
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	stats, err := s.explorerStore.GetChainStatsFiltered(c.Request.Context(), filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -559,7 +561,11 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 			beforeBlock = &val
 		}
 	}
-	blocks, err := s.explorerStore.GetBlocks(c.Request.Context(), limit, beforeBlock)
+
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+
+	blocks, err := s.explorerStore.GetBlocksFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -586,6 +592,15 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 		respondNotFound(c, "block not found")
 		return
 	}
+	// Adjust TransactionCount to reflect only visible transactions
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	if filter != nil {
+		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), num, filter)
+		if err == nil {
+			block.TransactionCount = filteredCount
+		}
+	}
 	c.JSON(http.StatusOK, block)
 }
 
@@ -603,6 +618,15 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	if block == nil {
 		respondNotFound(c, "block not found")
 		return
+	}
+	// Adjust TransactionCount to reflect only visible transactions
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	if filter != nil {
+		filteredCount, err := s.explorerStore.GetBlockTransactionCountFiltered(c.Request.Context(), block.Number, filter)
+		if err == nil {
+			block.TransactionCount = filteredCount
+		}
 	}
 	c.JSON(http.StatusOK, block)
 }
@@ -628,12 +652,57 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 	return ""
 }
 
+// buildVisibilityFilter resolves which addresses should be excluded from
+// transaction queries at the SQL level. Only org-registered addresses and
+// user EOAs can be hidden — unregistered addresses default to VisibilityFull (public).
+func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *explorer.VisibilityFilter {
+	// 1. Get all registered org contracts
+	orgAddrs, err := s.db.GetAllRegisteredAddresses(ctx)
+	if err != nil {
+		orgAddrs = []string{}
+	}
+
+	// 2. Get all linked user EOAs
+	userAddrs, err := s.db.GetAllLinkedEOAAddresses(ctx)
+	if err != nil {
+		userAddrs = []string{}
+	}
+
+	// Combine to get all addresses that could potentially be hidden
+	allAddrs := append(orgAddrs, userAddrs...)
+	if len(allAddrs) == 0 {
+		return nil
+	}
+
+	visMap, err := s.db.GetBatchVisibility(ctx, viewerDID, allAddrs)
+	if err != nil {
+		return nil
+	}
+
+	var hidden []string
+	for addr, level := range visMap {
+		if level == explorer.VisibilityHidden || level == explorer.VisibilityRedacted {
+			hidden = append(hidden, addr)
+		}
+	}
+	if len(hidden) == 0 {
+		return nil
+	}
+	return &explorer.VisibilityFilter{HiddenAddresses: hidden}
+}
+
 func (s *Server) getExplorerTransactions(c *gin.Context) {
 	if s.explorerStore == nil {
 		respondServiceUnavailable(c, "explorer store not configured")
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	var beforeBlock *uint64
 	if b := c.Query("before"); b != "" {
 		if val, err := strconv.ParseUint(b, 10, 64); err == nil {
@@ -641,26 +710,34 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		}
 	}
 	withCategories := c.Query("with_categories") == "true"
+	viewerDID := s.getViewerDIDFromRequest(c)
+
+	// Build SQL-level visibility filter to exclude transactions where both
+	// participants (or the deployer for contract creations) are hidden.
+	// This replaces the previous fetch-redact loop with a single query.
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+
 	var txs []explorer.Transaction
 	var err error
 	if withCategories {
-		txs, err = s.explorerStore.GetTransactionsWithCategories(c.Request.Context(), limit, beforeBlock)
+		txs, err = s.explorerStore.GetTransactionsWithCategoriesFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	} else {
-		txs, err = s.explorerStore.GetTransactions(c.Request.Context(), limit, beforeBlock)
+		txs, err = s.explorerStore.GetTransactionsFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	}
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
 	}
 
-	viewerDID := s.getViewerDIDFromRequest(c)
-	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	// Field-level redaction still needed (replacing addresses with [PRIVATE],
+	// stripping values, etc.) — the SQL filter only drops entire rows.
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, redactedTxs)
+	c.JSON(http.StatusOK, redacted)
 }
 
 func (s *Server) getExplorerTransaction(c *gin.Context) {
@@ -875,14 +952,18 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	}
 
 	withCategories := c.Query("with_categories") == "true"
+	viewerDID := s.getViewerDIDFromRequest(c)
+
+	// Build SQL-level visibility filter
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 
 	var txs []explorer.Transaction
 	var total int64
 	var err error
 	if withCategories {
-		txs, total, err = s.explorerStore.GetTransactionsPaginatedWithCategories(c.Request.Context(), page, pageSize)
+		txs, total, err = s.explorerStore.GetTransactionsPaginatedWithCategoriesFiltered(c.Request.Context(), page, pageSize, filter)
 	} else {
-		txs, total, err = s.explorerStore.GetTransactionsPaginated(c.Request.Context(), page, pageSize)
+		txs, total, err = s.explorerStore.GetTransactionsPaginatedFiltered(c.Request.Context(), page, pageSize, filter)
 	}
 	if err != nil {
 		respondInternalError(c, err.Error())
@@ -891,7 +972,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if txs == nil {
 		txs = []explorer.Transaction{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
+
+	// Field-level redaction still needed for address masking and value stripping.
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
@@ -900,6 +982,7 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Transaction{}
 	}
+
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
@@ -970,7 +1053,18 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 		logs = []explorer.Log{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
+
+	// Fetch parent tx to get from/to for participant override.
+	// If the viewer is the sender/receiver, they should see the logs.
+	var participantAddrs []string
+	if parentTx, err := s.explorerStore.GetTransaction(c.Request.Context(), hash); err == nil && parentTx != nil {
+		participantAddrs = append(participantAddrs, parentTx.From)
+		if parentTx.To != nil {
+			participantAddrs = append(participantAddrs, *parentTx.To)
+		}
+	}
+
+	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID, participantAddrs...)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1180,7 +1274,7 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	itxs, total, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
+	itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1197,7 +1291,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.InternalTransaction{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerAddressLogs(c *gin.Context) {
@@ -1217,7 +1312,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "25"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	logs, total, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
+	logs, _, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1234,7 +1329,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.Log{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerAddressContract(c *gin.Context) {
@@ -1439,7 +1535,7 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	holders, total, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
+	holders, _, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1456,7 +1552,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenHolder{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
@@ -1474,7 +1571,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	transfers, total, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
+	transfers, _, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1491,7 +1588,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 // --- Transfers ---
@@ -1510,7 +1608,7 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	}
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	transfers, total, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
+	transfers, _, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1527,7 +1625,8 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	if redacted == nil {
 		redacted = []explorer.TokenTransfer{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": len(redacted)})
 }
 
 // --- Accounts ---
@@ -1551,7 +1650,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
+	accounts, _, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1584,14 +1683,11 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
-		total -= int64(len(accounts) - len(filtered))
-		if total < 0 {
-			total = 0
-		}
 		accounts = filtered
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": total})
+	// Never expose raw DB total — it reveals how many rows were redacted (private data)
+	c.JSON(http.StatusOK, gin.H{"data": accounts, "total": len(accounts)})
 }
 
 // --- Search ---
@@ -1685,7 +1781,9 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 		}
 	}
 
-	history, err := s.explorerStore.GetTransactionHistory(c.Request.Context(), interval, limit)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
+	history, err := s.explorerStore.GetTransactionHistoryFiltered(c.Request.Context(), interval, limit, filter)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return

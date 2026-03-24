@@ -20,6 +20,34 @@ Runs on structured data objects before they are serialised and returned by the E
 
 Called by: Explorer API handlers → `RedactionEngine.RedactTransaction(tx, viewerOrgID)` etc.
 
+### Layer 2a — SQL-Level Visibility Filtering (`internal/explorer/visibility_filter.go`)
+
+Runs **before** data is fetched from the explorer database. Where Layer 2 redacts individual fields on already-fetched rows, this layer prevents invisible rows from being fetched at all. This is critical for correct pagination and count totals — without it, a page of 25 items might contain only 3 visible rows after post-fetch redaction.
+
+The filter is built by `buildVisibilityFilter()`:
+
+1. `GetAllRegisteredAddresses()` loads every contract address from the RBAC database.
+2. `GetBatchVisibility(addresses, viewerOrgID)` classifies each address as Full, Redacted, or Hidden for the current viewer.
+3. Addresses classified as Hidden are collected into a set.
+4. A `VisibilityFilter` struct is constructed containing the hidden address set.
+
+The SQL `WHERE NOT(...)` clause excludes:
+
+- **Contract creation transactions from hidden deployers**: `to_address IS NULL AND from_address IN (hidden set)` — deployment activity from other orgs is completely invisible.
+- **Transactions where both from AND to are hidden**: neither party is visible to the viewer, so the transaction is dropped entirely.
+
+**Count/Total Security:** All paginated endpoints return only the count of rows that pass the visibility filter, never the raw database total. This prevents information disclosure about private transaction volume. A viewer cannot determine how many transactions exist that they are not allowed to see.
+
+**Block Transaction Counts:** Per-block transaction counts returned by the explorer API are adjusted per-viewer via `GetBlockTransactionCountFiltered`, which applies the same visibility filter. The `transaction_count` in block list responses reflects only the transactions visible to the current viewer.
+
+**Chain Stats:** `TotalTransactions` and `TotalAddresses` in the `/api/explorer/stats` response are filtered for viewer visibility. The raw database totals are never exposed.
+
+**Transaction History:** Daily and hourly transaction count charts (`/api/explorer/stats/charts/txs`) are filtered to exclude hidden transactions. A viewer's chart data reflects only transaction volume they are permitted to see.
+
+**Contract Creation Redaction:** Contract deployments from non-identifiable deployers (Hidden visibility) are completely dropped at the SQL level, not just field-redacted. This is stronger than Layer 2's field-level redaction: the transaction never appears in any list, and is not counted in any total.
+
+**Interaction with Layer 2:** SQL-level filtering handles row-level drops (entire transactions removed). Layer 2 (`RedactTransactions`) still runs on the surviving rows for field-level redaction: replacing addresses with `[PRIVATE]`, zeroing values, and applying the participant visibility override. The two layers are complementary and both are required.
+
 ---
 
 ## 2. Visibility Levels
@@ -36,6 +64,33 @@ These levels are computed per-address by the redaction engine based on the viewe
 **Drop rule:** A transaction/transfer/log is dropped if **both** sides are Hidden. If one side is Hidden or Redacted and the other is Full, the entry is kept with the private side masked.
 
 **Nonce rule:** Nonce is tied to the sender. Strip nonce when `from` is Hidden or Redacted. Preserve nonce when only `to` is Hidden or Redacted (nonce belongs to the sender, who is visible).
+
+### 2.1 Visibility Resolution by Address Type
+
+`GetBatchVisibility` resolves each address independently based on what kind of address it is and the viewer's relationship to it:
+
+| Address type | How identified | Anonymous viewer | Org admin viewer | Standard org member | Address owner |
+|---|---|---|---|---|---|
+| **Org contract** | In `contracts` table | Redacted | **Full** (if admin of owning org) | Redacted | N/A |
+| **User EOA** | In `eth_address_links` | Hidden | **Hidden** | Hidden | **Full** |
+| **Public address** | Not in contracts or eth_address_links | Full | Full | Full | Full |
+
+**Key implication for org admins:** An org admin has `VisibilityFull` on their org's **contracts** but NOT on individual **user EOAs**. User EOAs are personal wallets — they remain `VisibilityHidden` to everyone except the owner (and recipients of disclosure grants). This means:
+
+- Contract calls (EOA → contract) are **visible** to org admin — the contract side is Full, so the tx survives the SQL filter. The EOA side is redacted as `[PRIVATE]`.
+- Contract-to-contract interactions are **fully visible** to org admin.
+- EOA-to-EOA transfers (e.g., ETH sent between two users) are **dropped** — both sides are Hidden.
+- Contract deployments from user EOAs (`from=EOA, to=NULL`) are **dropped** — the deployer EOA is Hidden.
+
+To see user EOA activity, an org admin would need a **disclosure grant** from each user, or the visibility model would need to be changed to treat user EOAs differently for org admins (design decision, see G11 below).
+
+### 2.2 Admin Access Criteria
+
+`VisibilityFull` for org contracts is granted only to viewers who are members of a group that meets one of:
+1. `is_org_admin = true` on the group (org-wide admin flag)
+2. `'admin' = ANY(contract_grants.claims)` on a contract_grant linking the group to the specific contract
+
+Standard claims (`read`, `write`, `deploy`) do **not** grant `VisibilityFull`. The `admin` claim in `group_access.claims` (RPC method access) is also not checked — only `is_org_admin` and `contract_grants.claims` matter for visibility. See G11 for the alignment TODO.
 
 ---
 
@@ -57,7 +112,7 @@ These levels are computed per-address by the redaction engine based on the viewe
 | `maxFeePerGas` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 | `maxPriorityFeePerGas` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
 | `gasLimit` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted |
-| `contractAddress` | **unchanged** | **unchanged** | **unchanged** | unchanged | **No** | No | **GAP G7** — deploy tx leaks deployed contract address when deployer is hidden |
+| `contractAddress` | — (tx dropped)* | `[PRIVATE]` | pseudonym | unchanged | Yes | Yes | *Dropped by SQL visibility filter when deployer is hidden |
 | `txCategories` | unchanged | unchanged | unchanged | unchanged | N/A | N/A | Accepted: derived labels, not raw addresses |
 
 ### 3.2 InternalTransaction (Explorer API)
@@ -136,7 +191,9 @@ This is implemented as a **per-transaction override** in `RedactTransactions` (`
 | Viewer is not involved | No | No override | Normal rules apply |
 | Same tx, different viewer | — | Independent | Each viewer gets their own override |
 
-**Security invariant:** The override ONLY applies within `RedactTransactions`, which processes a specific transaction list. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
+**Log participant override:** `RedactLogs` accepts optional `participantAddrs` (the parent tx's `from` and `to`). When the viewer's linked address matches a participant address, Redacted emitting contracts are upgraded to Full for that log context — topics and data are preserved instead of stripped. Hidden emitting contracts remain dropped even with participant override. The API handler (`getExplorerTransactionLogs`) fetches the parent transaction and passes its `from`/`to` as participant context.
+
+**Security invariant:** The override ONLY applies within `RedactTransactions`/`RedactLogs`/`RedactTransfers`/`RedactInternalTransactions`, which process a specific transaction's data. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
 
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
@@ -165,6 +222,7 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 - **G1 (resolved):** Nonce not stripped when sender was hidden — now nil when `from` is Hidden/Redacted.
 - **G2 (resolved):** `value` and `inputData` not zeroed for mixed-party txs (one side hidden) — now zeroed when either side is Hidden or Redacted.
 - **G3 (resolved):** Log topics[1..3] not scanned for embedded address parameters — now scanned for all logs where emitter is Full; private addresses zeroed.
+- **G7 (resolved):** Transaction.contractAddress leaks deployed address — contract deployment transactions from hidden deployers are now dropped entirely via SQL-level visibility filtering.
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
 
@@ -179,8 +237,17 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 - **G6: Block.logsBloom not zeroed**
   The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed (not raw) representations of addresses. A viewer who already knows a target address can probe whether that address has activity in a given block in O(1). Zeroing the bloom field for all blocks would require per-block address scanning against the private address registry, which is expensive. Risk is low — probabilistic membership test only, requires knowing the target address. Accepted for now; track as a future hardening item.
 
-- **G7: Transaction.contractAddress leaks deployed address when deployer is hidden**
-  When a deploy transaction (`to == null`, `contractAddress != null`) is made by a Hidden or Redacted address, the resulting `contractAddress` is included in the redacted transaction object. A viewer can learn a new contract address was deployed by the private party. This is meaningful because the deployed contract may itself be discoverable via block explorer and correlatable. The `contractAddress` field should be set to nil when the sender is Hidden or Redacted. Currently not implemented.
+- **G10: One-side-hidden transactions leak activity metadata**
+  When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
+
+- **G11: Visibility admin check not aligned with group_access.claims**
+  `GetBatchVisibility` grants `VisibilityFull` based on `is_org_admin = true` or `'admin' = ANY(contract_grants.claims)`. It does NOT check `group_access.claims`, which is where the admin claim is typically set via the API and admin dashboard. A group with `claims: [admin]` in group_access and contract_grants with `claims: {}` will NOT grant explorer visibility. This is confusing: users expect "admin claim" to mean admin everywhere. **Fix:** either check `group_access.claims` in the visibility query, or auto-set `is_org_admin` when admin claim is granted. **Workaround:** manually set `is_org_admin = true` on admin groups.
+
+- **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
+  Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**
+
+- **G13: Minting from zero address to private recipient visible to non-participants**
+  Token mints (`from=0x0000...0000, to=private_address`) survive the SQL filter because the zero address is public (not in contracts or eth_address_links). Non-participants can see "someone private received a mint from [token contract]" — revealing that a private user received tokens, when they did, and from which contract. This is a specific case of G10 but worth calling out separately because mint events are particularly sensitive (they reveal token distribution to specific parties). **Options:** (a) treat zero address as neutral rather than public for visibility purposes, (b) handled by G10 if the stricter drop rule is adopted. **Decision pending.**
 
 ---
 
@@ -219,7 +286,7 @@ Every redaction method must have unit tests covering the following scenarios. Te
 | Emitter Redacted (logs) | Address → `[PRIVATE]`; all topics → nil; data → nil |
 | Emitter Full, topic address is private | Topic address zeroed; other topics unchanged |
 | Emitter Full, ABI registered, data has private address | Private address slot in data → zeroed |
-| Deploy tx, sender Hidden | `contractAddress` → nil (currently failing — G7) |
+| Deploy tx, sender Hidden | Entry dropped entirely (SQL-level) |
 | Viewer is sender, counterparty Hidden | Counterparty → Full (participant override) |
 | Viewer is receiver, counterparty Hidden | Counterparty → Full (participant override) |
 | Viewer not a participant, both sides Hidden | Entry dropped (no override) |

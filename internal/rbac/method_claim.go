@@ -65,6 +65,13 @@ var WriteMethods = map[string]bool{
 	"eth_signTypedData_v4":   true,
 }
 
+// DeployMethods are highly privileged RPC methods that require the "deploy" or "admin" claim.
+// Checked dynamically by trace validators for cross-org data leaks.
+var DeployMethods = map[string]bool{
+	"debug_traceTransaction": true,
+	"debug_traceCall":        true,
+}
+
 // GetClaimForMethod returns the claim required for a given RPC method.
 // Returns an empty string if the method doesn't require a specific claim
 // (either it's a general method or it's blocked by the global blocklist).
@@ -74,6 +81,9 @@ func GetClaimForMethod(method string) Claim {
 	}
 	if WriteMethods[method] {
 		return ClaimWrite
+	}
+	if DeployMethods[method] {
+		return ClaimDeploy
 	}
 	return ""
 }

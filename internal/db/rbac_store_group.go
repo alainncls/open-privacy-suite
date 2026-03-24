@@ -14,18 +14,18 @@ import (
 // Group operations
 
 func (d *DB) CreateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	query := `INSERT INTO groups (id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	          RETURNING created_at, updated_at`
 
 	return d.conn.QueryRowContext(ctx, query,
 		group.ID, group.OrgID, group.ParentID, group.Slug, group.Name,
-		group.Description, group.Depth, group.Path, group.IsOrgAdmin,
+		group.Description, group.Depth, group.Path, group.IsOrgAdmin, group.AutoCreated,
 	).Scan(&group.CreatedAt, &group.UpdatedAt)
 }
 
 func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE id = $1`
 
 	group := &rbac.Group{}
@@ -34,7 +34,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -54,7 +54,7 @@ func (d *DB) GetGroup(ctx context.Context, id string) (*rbac.Group, error) {
 }
 
 func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug = $2`
 
 	group := &rbac.Group{}
@@ -63,7 +63,7 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 
 	err := d.conn.QueryRowContext(ctx, query, orgID, slug).Scan(
 		&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+		&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -83,15 +83,15 @@ func (d *DB) GetGroupBySlug(ctx context.Context, orgID, slug string) (*rbac.Grou
 }
 
 func (d *DB) UpdateGroup(ctx context.Context, group *rbac.Group) error {
-	query := `UPDATE groups SET slug = $2, name = $3, description = $4, is_org_admin = $5, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE groups SET slug = $2, name = $3, description = $4, is_org_admin = $5, auto_created = $6, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
-	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description, group.IsOrgAdmin)
+	_, err := d.conn.ExecContext(ctx, query, group.ID, group.Slug, group.Name, group.Description, group.IsOrgAdmin, group.AutoCreated)
 	return err
 }
 
 func (d *DB) ListGroups(ctx context.Context, orgID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE org_id = $1 ORDER BY path`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -112,7 +112,7 @@ func (d *DB) ListGroupsPaginated(ctx context.Context, orgID string, limit, offse
 	}
 
 	// Get paginated results
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE org_id = $1 ORDER BY path LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
@@ -135,7 +135,7 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 		return nil, 0, fmt.Errorf("failed to count groups: %w", err)
 	}
 
-	query := `SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at,
+	query := `SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.auto_created, g.created_at, g.updated_at,
 	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.created_at, ga.updated_at
 	          FROM groups g
 	          LEFT JOIN group_access ga ON g.id = ga.group_id
@@ -162,7 +162,7 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
@@ -210,8 +210,122 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 	return results, total, nil
 }
 
+// escapeILIKE escapes PostgreSQL ILIKE metacharacters (%, _, \) in a search string.
+func escapeILIKE(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// GroupListFilter contains optional filters for listing groups.
+type GroupListFilter struct {
+	AutoCreated *bool  // Filter by auto_created status
+	Search      string // ILIKE filter on name or slug
+}
+
+// ListGroupsWithAccessFiltered lists groups with access settings, applying optional filters.
+func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, limit, offset int, filter GroupListFilter) ([]*rbac.GroupWithAccess, int, error) {
+	// Build WHERE clause dynamically
+	where := "g.org_id = $1"
+	args := []any{orgID}
+	argIdx := 2
+
+	if filter.AutoCreated != nil {
+		where += fmt.Sprintf(" AND g.auto_created = $%d", argIdx)
+		args = append(args, *filter.AutoCreated)
+		argIdx++
+	}
+	if filter.Search != "" {
+		where += fmt.Sprintf(" AND (g.name ILIKE $%d OR g.slug ILIKE $%d)", argIdx, argIdx)
+		args = append(args, "%"+escapeILIKE(filter.Search)+"%")
+		argIdx++
+	}
+
+	// Count total
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM groups g WHERE %s", where)
+	if err := d.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count groups: %w", err)
+	}
+
+	// Query with joins
+	query := fmt.Sprintf(`SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.auto_created, g.created_at, g.updated_at,
+	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.created_at, ga.updated_at
+	          FROM groups g
+	          LEFT JOIN group_access ga ON g.id = ga.group_id
+	          WHERE %s
+	          ORDER BY g.path
+	          LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list groups with access: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*rbac.GroupWithAccess
+	for rows.Next() {
+		group := &rbac.Group{}
+		var parentID, description sql.NullString
+		var accessID sql.NullString
+		var allowedMethods, claimsStr pq.StringArray
+		var rateLimitRPS, rateLimitDaily sql.NullInt32
+		var accessCreatedAt, accessUpdatedAt sql.NullTime
+
+		if err := rows.Scan(
+			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
+			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &accessCreatedAt, &accessUpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
+		}
+
+		if parentID.Valid {
+			group.ParentID = &parentID.String
+		}
+		if description.Valid {
+			group.Description = description.String
+		}
+
+		gwa := &rbac.GroupWithAccess{Group: group}
+		if accessID.Valid {
+			access := &rbac.GroupAccess{
+				ID:             accessID.String,
+				GroupID:        group.ID,
+				AllowedMethods: []string(allowedMethods),
+				CreatedAt:      accessCreatedAt.Time,
+				UpdatedAt:      accessUpdatedAt.Time,
+			}
+			access.Claims = make([]rbac.Claim, len(claimsStr))
+			for i, c := range claimsStr {
+				access.Claims[i] = rbac.Claim(c)
+			}
+			if rateLimitRPS.Valid {
+				val := int(rateLimitRPS.Int32)
+				access.RateLimitRPS = &val
+			}
+			if rateLimitDaily.Valid {
+				val := int(rateLimitDaily.Int32)
+				access.RateLimitDaily = &val
+			}
+			gwa.Access = access
+		}
+
+		results = append(results, gwa)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating groups with access: %w", err)
+	}
+
+	return results, total, nil
+}
+
 func (d *DB) ListGroupsByParent(ctx context.Context, parentID string) ([]*rbac.Group, error) {
-	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := `SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE parent_id = $1 ORDER BY name`
 
 	rows, err := d.conn.QueryContext(ctx, query, parentID)
@@ -248,7 +362,7 @@ func (d *DB) GetGroupHierarchy(ctx context.Context, groupID string) ([]*rbac.Gro
 		args[i+1] = part
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, parent_id, slug, name, description, depth, path, is_org_admin, auto_created, created_at, updated_at
 	          FROM groups WHERE org_id = $1 AND slug IN (%s) ORDER BY depth`, strings.Join(placeholders, ", "))
 
 	rows, err := d.conn.QueryContext(ctx, query, args...)
@@ -274,7 +388,7 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
-			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.CreatedAt, &group.UpdatedAt,
+			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}

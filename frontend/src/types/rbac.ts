@@ -25,8 +25,50 @@ export interface Group {
   depth: number;
   path: string; // Materialized path (e.g., "root.engineering.devops")
   is_org_admin?: boolean; // If true, members get all claims on all contracts in the org
+  auto_created?: boolean; // True for groups auto-created by deployer auto-grants
   created_at: string;
   updated_at: string;
+}
+
+// Batch operation types
+
+export interface BatchMoveRequest {
+  contract_ids: string[];
+  target_group_id?: string;
+  new_group?: { slug: string; name: string };
+  delete_empty_auto_groups?: boolean;
+}
+
+export interface BatchMoveResponse {
+  target_group_id: string;
+  moved_count: number;
+  deleted_group_ids?: string[];
+}
+
+export interface BatchDeleteRequest {
+  group_ids: string[];
+}
+
+export interface BatchDeleteResponse {
+  deleted_count: number;
+}
+
+export interface BatchDeletePreviewRequest {
+  group_ids: string[];
+}
+
+export interface BatchDeletePreviewGroup {
+  id: string;
+  name: string;
+  slug: string;
+  auto_created: boolean;
+  contract_count: number;
+  member_count: number;
+  contracts: string[];
+}
+
+export interface BatchDeletePreviewResponse {
+  groups: BatchDeletePreviewGroup[];
 }
 
 // Contract - first-class resource
@@ -288,61 +330,83 @@ export function getImplyingClaim(claim: Claim, selectedClaims: Claim[]): Claim |
   return null;
 }
 
+export const METHOD_CATEGORIES = {
+  read: {
+    'Chain & Network Info': [
+      'eth_chainId',
+      'eth_blockNumber',
+      'net_version',
+      'net_listening',
+      'net_peerCount',
+      'web3_clientVersion',
+      'web3_sha3',
+      'eth_syncing',
+      'eth_accounts',
+    ],
+    'Accounts & Blocks': [
+      'eth_getBalance',
+      'eth_getTransactionCount',
+      'eth_getBlockByHash',
+      'eth_getBlockByNumber',
+      'eth_getBlockTransactionCountByHash',
+      'eth_getBlockTransactionCountByNumber',
+    ],
+    'Past Activity (Explorer & Logs)': [
+      'eth_getTransactionByHash',
+      'eth_getTransactionReceipt',
+      'eth_getTransactionByBlockHashAndIndex',
+      'eth_getTransactionByBlockNumberAndIndex',
+      'eth_getLogs',
+    ],
+    'Contract Execution': [
+      'eth_call',
+      'eth_estimateGas',
+    ],
+    'Deep State Inspection': [
+      'eth_getCode',
+      'eth_getStorageAt',
+    ],
+    'Gas & Fee Data': [
+      'eth_gasPrice',
+      'eth_maxPriorityFeePerGas',
+      'eth_feeHistory',
+    ],
+    'Filters (Deprecated)': [
+      'eth_newFilter',
+      'eth_newBlockFilter',
+      'eth_newPendingTransactionFilter',
+      'eth_getFilterChanges',
+      'eth_getFilterLogs',
+      'eth_uninstallFilter',
+    ],
+  },
+  write: {
+    'State Modifying': [
+      'eth_sendTransaction',
+      'eth_sendRawTransaction',
+    ],
+    'Signing & Wallets': [
+      'eth_sign',
+      'eth_signTransaction',
+      'personal_sign',
+      'eth_signTypedData',
+      'eth_signTypedData_v4',
+    ],
+  },
+  deploy: {
+    'Advanced Tracing': [
+      'debug_traceTransaction',
+      'debug_traceCall',
+    ],
+  },
+} as const;
+
 // RPC methods classified by required claim
 // This must match the backend classification in internal/rbac/method_claim.go
-export const RPC_METHODS_BY_CLAIM: Record<'read' | 'write', readonly string[]> = {
-  read: [
-    // Chain/Network info
-    'eth_chainId',
-    'eth_blockNumber',
-    'net_version',
-    'net_listening',
-    'net_peerCount',
-    'web3_clientVersion',
-    'web3_sha3',
-    'eth_syncing',
-    'eth_accounts',
-    // Account/Balance queries
-    'eth_getBalance',
-    'eth_getCode',
-    'eth_getStorageAt',
-    'eth_getTransactionCount',
-    // Block queries
-    'eth_getBlockByHash',
-    'eth_getBlockByNumber',
-    'eth_getBlockTransactionCountByHash',
-    'eth_getBlockTransactionCountByNumber',
-    // Transaction queries
-    'eth_getTransactionByHash',
-    'eth_getTransactionReceipt',
-    'eth_getTransactionByBlockHashAndIndex',
-    'eth_getTransactionByBlockNumberAndIndex',
-    // Contract calls (read-only)
-    'eth_call',
-    'eth_estimateGas',
-    // Gas price queries
-    'eth_gasPrice',
-    'eth_maxPriorityFeePerGas',
-    'eth_feeHistory',
-    // Logs
-    'eth_getLogs',
-    // Filter methods
-    'eth_newFilter',
-    'eth_newBlockFilter',
-    'eth_newPendingTransactionFilter',
-    'eth_getFilterChanges',
-    'eth_getFilterLogs',
-    'eth_uninstallFilter',
-  ] as const,
-  write: [
-    'eth_sendTransaction',
-    'eth_sendRawTransaction',
-    'eth_sign',
-    'eth_signTransaction',
-    'personal_sign',
-    'eth_signTypedData',
-    'eth_signTypedData_v4',
-  ] as const,
+export const RPC_METHODS_BY_CLAIM: Record<'read' | 'write' | 'deploy', readonly string[]> = {
+  read: Object.values(METHOD_CATEGORIES.read).flat() as unknown as readonly string[],
+  write: Object.values(METHOD_CATEGORIES.write).flat() as unknown as readonly string[],
+  deploy: Object.values(METHOD_CATEGORIES.deploy).flat() as unknown as readonly string[],
 };
 
 // All RPC methods (flattened list)

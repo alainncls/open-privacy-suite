@@ -166,6 +166,10 @@ func (s *deployValidatorTestStore) DeletePreregisteredAddressByAddress(ctx conte
 	return nil
 }
 
+func (s *deployValidatorTestStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+	return nil
+}
+
 // normalizeHexAddress normalizes a hex address for comparison.
 func normalizeHexAddress(addr string) string {
 	addr = strings.ToLower(addr)

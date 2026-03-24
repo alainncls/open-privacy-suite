@@ -3,9 +3,11 @@ import { rbacApi } from '@/api/rbac';
 import type { Group, GroupWithAccess } from '@/types/rbac';
 import GroupForm from './GroupForm';
 import GroupAccessForm from './GroupAccessForm';
+import BatchDeleteConfirmDialog from './BatchDeleteConfirmDialog';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
+import { Input } from '@/components/ui/input';
 import {
   FolderTree,
   FolderOpen,
@@ -24,6 +27,9 @@ import {
   Loader2,
   ChevronRight,
   Shield,
+  Bot,
+  X,
+  Search,
 } from 'lucide-react';
 
 const PAGE_SIZE = 50;
@@ -42,17 +48,49 @@ export default function GroupList() {
   const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
 
+  // Filter state: 'all' | 'auto' | 'manual'
+  const [filterMode, setFilterMode] = useState<'all' | 'auto' | 'manual'>('all');
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Multi-select for batch delete
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBatchDelete, setShowBatchDelete] = useState(false);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (orgId) {
       loadGroups(0);
     }
-  }, [orgId]);
+  }, [orgId, filterMode, debouncedSearch]);
 
   const loadGroups = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const response = await rbacApi.groups.list(orgId, { limit: PAGE_SIZE, offset: newOffset });
+      const params: { limit: number; offset: number; auto_created?: boolean; search?: string } = {
+        limit: PAGE_SIZE,
+        offset: newOffset,
+      };
+      if (filterMode === 'auto') params.auto_created = true;
+      if (filterMode === 'manual') params.auto_created = false;
+      if (debouncedSearch) params.search = debouncedSearch;
+      const response = await rbacApi.groups.list(orgId, params);
       const page = response.data;
       const groupsList = page.data || [];
       // Sort by path for hierarchical display
@@ -112,12 +150,17 @@ export default function GroupList() {
       (gwa.access.allowed_methods?.length || 0) > 0;
 
     return (
-      <div key={gwa.group.id} className="animate-fade-in">
+      <div key={gwa.group.id} data-testid="group-card" className="animate-fade-in">
         <div
           className={`flex items-center gap-3 p-3 rounded-lg bg-neutral-100 hover:bg-primary-50 transition-colors ${
             level > 0 ? 'ml-6 border-l-2 border-neutral-200' : ''
-          }`}
+          } ${selectedIds.has(gwa.group.id) ? 'ring-2 ring-primary/30' : ''}`}
         >
+          <Checkbox
+            checked={selectedIds.has(gwa.group.id)}
+            onCheckedChange={() => toggleSelect(gwa.group.id)}
+            className="flex-shrink-0"
+          />
           <div
             className="flex items-center gap-2 flex-1 min-w-0"
             style={{ paddingLeft: `${level * 8}px` }}
@@ -133,6 +176,12 @@ export default function GroupList() {
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
                   {gwa.group.slug}
                 </Badge>
+                {gwa.group.auto_created && (
+                  <Badge data-testid="auto-badge" variant="warning" className="gap-1 flex-shrink-0">
+                    <Bot className="w-3 h-3" />
+                    Auto
+                  </Badge>
+                )}
                 {gwa.group.is_org_admin && (
                   <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
                     <Shield className="w-3 h-3" />
@@ -215,6 +264,70 @@ export default function GroupList() {
         </Button>
       </div>
 
+      {/* Search + Filter bar */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+          <Input
+            type="text"
+            placeholder="Search by name or slug..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {searchQuery && (
+          <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')} className="text-neutral-500">
+            Clear
+          </Button>
+        )}
+        <div className="flex rounded-lg border border-neutral-200 overflow-hidden">
+          {(['all', 'auto', 'manual'] as const).map(mode => (
+            <button
+              key={mode}
+              data-testid={`group-filter-${mode}`}
+              onClick={() => { setFilterMode(mode); setSelectedIds(new Set()); }}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                filterMode === mode
+                  ? 'bg-primary text-white'
+                  : 'bg-white text-neutral-600 hover:bg-neutral-50'
+              }`}
+            >
+              {mode === 'all' ? 'All' : mode === 'auto' ? 'Auto-created' : 'Manual'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Selection toolbar */}
+      {selectedIds.size > 0 && (
+        <div data-testid="selection-toolbar" className="flex items-center gap-3 px-4 py-2 bg-error-light rounded-lg border border-error/20">
+          <span className="text-sm font-medium text-error-dark">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            data-testid="batch-delete-btn"
+            size="sm"
+            variant="destructive"
+            className="gap-1.5"
+            onClick={() => setShowBatchDelete(true)}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete Selected
+          </Button>
+          <Button
+            data-testid="clear-selection-btn"
+            size="sm"
+            variant="ghost"
+            className="text-neutral-500"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            <X className="w-3.5 h-3.5" />
+            Clear
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 text-neutral-400 animate-spin" />
@@ -224,15 +337,33 @@ export default function GroupList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <FolderTree className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-neutral-500 mb-4">No groups found</p>
-          <Button
-            variant="outline"
-            onClick={() => setShowForm(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Create your first group
-          </Button>
+          {filterMode === 'auto' ? (
+            <p className="text-neutral-500">No auto-created groups. These are generated automatically when deployers deploy contracts.</p>
+          ) : filterMode === 'manual' ? (
+            <>
+              <p className="text-neutral-500 mb-4">No manually created groups</p>
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create a group
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-neutral-500 mb-4">No groups found</p>
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create your first group
+              </Button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-2">{getRootGroups().map(g => renderGroup(g))}</div>
@@ -338,6 +469,18 @@ export default function GroupList() {
         description="Failed to delete group. It may have members or child groups that need to be removed first."
         buttonLabel="OK"
         variant="error"
+      />
+
+      {/* Batch Delete Confirmation Dialog */}
+      <BatchDeleteConfirmDialog
+        open={showBatchDelete}
+        onOpenChange={setShowBatchDelete}
+        orgId={orgId}
+        groupIds={Array.from(selectedIds)}
+        onSuccess={() => {
+          setSelectedIds(new Set());
+          loadGroups();
+        }}
       />
     </div>
   );

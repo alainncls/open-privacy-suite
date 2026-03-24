@@ -402,6 +402,39 @@ func TestGetTargetAddress(t *testing.T) {
 			},
 			expected: "0xabcd1234",
 		},
+		// eth_getLogs: extract address from filter for org resolution
+		{
+			name:   "eth_getLogs with single address string",
+			method: "eth_getLogs",
+			params: []any{
+				map[string]any{"address": "0xABCD1234", "fromBlock": "0x0"},
+			},
+			expected: "0xabcd1234",
+		},
+		{
+			name:   "eth_getLogs with address array",
+			method: "eth_getLogs",
+			params: []any{
+				map[string]any{"address": []any{"0xABCD1234", "0x5678"}, "fromBlock": "0x0"},
+			},
+			expected: "0xabcd1234",
+		},
+		{
+			name:   "eth_getLogs with no address in filter",
+			method: "eth_getLogs",
+			params: []any{
+				map[string]any{"fromBlock": "0x0", "toBlock": "latest"},
+			},
+			expected: "",
+		},
+		{
+			name:   "eth_getLogs with empty address array",
+			method: "eth_getLogs",
+			params: []any{
+				map[string]any{"address": []any{}},
+			},
+			expected: "",
+		},
 		{
 			name:     "Unknown method",
 			method:   "eth_blockNumber",
@@ -474,10 +507,14 @@ func TestIsMethodBlocked(t *testing.T) {
 		method   string
 		expected bool
 	}{
-		// Should be blocked - debug namespace
-		{"debug_traceTransaction", "debug_traceTransaction", true},
+		// Should be blocked - debug namespace (except exempted trace methods)
 		{"debug_setHead", "debug_setHead", true},
 		{"debug_unknown", "debug_unknown", true}, // prefix match
+
+		// Should NOT be blocked - exempted debug trace methods (gated by deploy claim instead)
+		{"debug_traceTransaction", "debug_traceTransaction", false},
+		{"debug_traceCall", "debug_traceCall", false},
+		{"debug_traceCall_case", "DEBUG_TRACECALL", false}, // case-insensitive exemption
 
 		// Should be blocked - admin namespace
 		{"admin_addPeer", "admin_addPeer", true},
