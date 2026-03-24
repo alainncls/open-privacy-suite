@@ -65,6 +65,33 @@ These levels are computed per-address by the redaction engine based on the viewe
 
 **Nonce rule:** Nonce is tied to the sender. Strip nonce when `from` is Hidden or Redacted. Preserve nonce when only `to` is Hidden or Redacted (nonce belongs to the sender, who is visible).
 
+### 2.1 Visibility Resolution by Address Type
+
+`GetBatchVisibility` resolves each address independently based on what kind of address it is and the viewer's relationship to it:
+
+| Address type | How identified | Anonymous viewer | Org admin viewer | Standard org member | Address owner |
+|---|---|---|---|---|---|
+| **Org contract** | In `contracts` table | Redacted | **Full** (if admin of owning org) | Redacted | N/A |
+| **User EOA** | In `eth_address_links` | Hidden | **Hidden** | Hidden | **Full** |
+| **Public address** | Not in contracts or eth_address_links | Full | Full | Full | Full |
+
+**Key implication for org admins:** An org admin has `VisibilityFull` on their org's **contracts** but NOT on individual **user EOAs**. User EOAs are personal wallets — they remain `VisibilityHidden` to everyone except the owner (and recipients of disclosure grants). This means:
+
+- Contract calls (EOA → contract) are **visible** to org admin — the contract side is Full, so the tx survives the SQL filter. The EOA side is redacted as `[PRIVATE]`.
+- Contract-to-contract interactions are **fully visible** to org admin.
+- EOA-to-EOA transfers (e.g., ETH sent between two users) are **dropped** — both sides are Hidden.
+- Contract deployments from user EOAs (`from=EOA, to=NULL`) are **dropped** — the deployer EOA is Hidden.
+
+To see user EOA activity, an org admin would need a **disclosure grant** from each user, or the visibility model would need to be changed to treat user EOAs differently for org admins (design decision, see G11 below).
+
+### 2.2 Admin Access Criteria
+
+`VisibilityFull` for org contracts is granted only to viewers who are members of a group that meets one of:
+1. `is_org_admin = true` on the group (org-wide admin flag)
+2. `'admin' = ANY(contract_grants.claims)` on a contract_grant linking the group to the specific contract
+
+Standard claims (`read`, `write`, `deploy`) do **not** grant `VisibilityFull`. The `admin` claim in `group_access.claims` (RPC method access) is also not checked — only `is_org_admin` and `contract_grants.claims` matter for visibility. See G11 for the alignment TODO.
+
 ---
 
 ## 3. Entity Field Matrix
@@ -211,7 +238,16 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
   The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed (not raw) representations of addresses. A viewer who already knows a target address can probe whether that address has activity in a given block in O(1). Zeroing the bloom field for all blocks would require per-block address scanning against the private address registry, which is expensive. Risk is low — probabilistic membership test only, requires knowing the target address. Accepted for now; track as a future hardening item.
 
 - **G10: One-side-hidden transactions leak activity metadata**
-  When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private sent a mint to [public address]" or "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
+  When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
+
+- **G11: Visibility admin check not aligned with group_access.claims**
+  `GetBatchVisibility` grants `VisibilityFull` based on `is_org_admin = true` or `'admin' = ANY(contract_grants.claims)`. It does NOT check `group_access.claims`, which is where the admin claim is typically set via the API and admin dashboard. A group with `claims: [admin]` in group_access and contract_grants with `claims: {}` will NOT grant explorer visibility. This is confusing: users expect "admin claim" to mean admin everywhere. **Fix:** either check `group_access.claims` in the visibility query, or auto-set `is_org_admin` when admin claim is granted. **Workaround:** manually set `is_org_admin = true` on admin groups.
+
+- **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
+  Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**
+
+- **G13: Minting from zero address to private recipient visible to non-participants**
+  Token mints (`from=0x0000...0000, to=private_address`) survive the SQL filter because the zero address is public (not in contracts or eth_address_links). Non-participants can see "someone private received a mint from [token contract]" — revealing that a private user received tokens, when they did, and from which contract. This is a specific case of G10 but worth calling out separately because mint events are particularly sensitive (they reveal token distribution to specific parties). **Options:** (a) treat zero address as neutral rather than public for visibility purposes, (b) handled by G10 if the stricter drop rule is adopted. **Decision pending.**
 
 ---
 
