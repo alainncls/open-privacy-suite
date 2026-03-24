@@ -26,7 +26,7 @@ function renderLoginPage(initialRoute = '/login') {
 
 describe('LoginPage', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     resetSessionState();
     vi.clearAllMocks();
   });
@@ -261,7 +261,7 @@ describe('LoginPage', () => {
         refreshToken: 'test-refresh',
         expiresAt: Date.now() + 3600000,
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       // Use BrowserRouter for this test to check navigation
       render(

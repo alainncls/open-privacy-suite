@@ -73,6 +73,14 @@ export default function GroupList() {
     });
   };
 
+  const toggleSelectAll = () => {
+    if (selectedIds.size === groups.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(groups.map(g => g.group.id)));
+    }
+  };
+
   useEffect(() => {
     if (orgId) {
       loadGroups(0);
@@ -325,6 +333,20 @@ export default function GroupList() {
             <X className="w-3.5 h-3.5" />
             Clear
           </Button>
+        </div>
+      )}
+
+      {/* Select all header */}
+      {!loading && groups.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-neutral-200">
+          <Checkbox
+            data-testid="group-select-all"
+            checked={selectedIds.size > 0 && selectedIds.size < groups.length ? "indeterminate" : selectedIds.size === groups.length}
+            onCheckedChange={toggleSelectAll}
+          />
+          <span className="text-xs text-neutral-500">
+            {selectedIds.size === 0 ? 'Select all' : `${selectedIds.size} of ${groups.length} selected`}
+          </span>
         </div>
       )}
 

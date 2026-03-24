@@ -51,10 +51,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load auth state from localStorage on mount
+  // Load auth state from sessionStorage on mount (per-tab isolation)
   useEffect(() => {
     const loadAuth = async () => {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = sessionStorage.getItem(STORAGE_KEY);
       if (stored) {
         try {
           const auth: StoredAuth = JSON.parse(stored);
@@ -74,10 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Token expired but we have refresh token - try to refresh
             await refreshWithToken(auth.refreshToken);
           } else {
-            localStorage.removeItem(STORAGE_KEY);
+            sessionStorage.removeItem(STORAGE_KEY);
           }
         } catch {
-          localStorage.removeItem(STORAGE_KEY);
+          sessionStorage.removeItem(STORAGE_KEY);
         }
       }
       setIsLoading(false);
@@ -107,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshToken: data.refresh_token,
         expiresAt,
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newAuth));
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(newAuth));
 
       setState({
         isAuthenticated: true,
@@ -119,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return true;
     } catch {
-      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_KEY);
       setState({
         isAuthenticated: false,
         accessToken: null,
@@ -140,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshToken,
       expiresAt,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
 
     setState({
       isAuthenticated: true,
@@ -169,7 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
     setState({
       isAuthenticated: false,
       accessToken: null,

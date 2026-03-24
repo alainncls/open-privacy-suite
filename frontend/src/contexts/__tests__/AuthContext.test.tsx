@@ -24,7 +24,7 @@ function TestComponent() {
 
 describe('AuthContext', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
   });
 
@@ -45,7 +45,7 @@ describe('AuthContext', () => {
       expect(screen.getByTestId('user-did').textContent).toBe('null');
     });
 
-    it('should load auth state from localStorage on mount', async () => {
+    it('should load auth state from sessionStorage on mount', async () => {
       // Create a valid JWT token with future expiry
       const payload = {
         sub: 'did:polygonid:polygon:main:user123',
@@ -59,7 +59,7 @@ describe('AuthContext', () => {
         refreshToken: 'test-refresh-token',
         expiresAt: Date.now() + 3600000, // 1 hour from now
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -76,13 +76,13 @@ describe('AuthContext', () => {
       );
     });
 
-    it('should clear expired tokens from localStorage', async () => {
+    it('should clear expired tokens from sessionStorage', async () => {
       const authData = {
         accessToken: 'expired-token',
         refreshToken: '',
         expiresAt: Date.now() - 1000, // Already expired, no refresh token
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -95,12 +95,12 @@ describe('AuthContext', () => {
       });
 
       expect(screen.getByTestId('authenticated').textContent).toBe('false');
-      expect(localStorage.getItem('privacy_proxy_auth')).toBeNull();
+      expect(sessionStorage.getItem('privacy_proxy_auth')).toBeNull();
     });
   });
 
   describe('Login', () => {
-    it('should update state and localStorage on login', async () => {
+    it('should update state and sessionStorage on login', async () => {
       render(
         <AuthProvider>
           <TestComponent />
@@ -126,8 +126,8 @@ describe('AuthContext', () => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
 
-      // Verify localStorage was updated
-      const stored = localStorage.getItem('privacy_proxy_auth');
+      // Verify sessionStorage was updated
+      const stored = sessionStorage.getItem('privacy_proxy_auth');
       expect(stored).not.toBeNull();
       const parsed = JSON.parse(stored!);
       expect(parsed.accessToken).toBe('test-token');
@@ -136,7 +136,7 @@ describe('AuthContext', () => {
   });
 
   describe('Logout', () => {
-    it('should clear state and localStorage on logout', async () => {
+    it('should clear state and sessionStorage on logout', async () => {
       // Setup initial authenticated state
       const payload = {
         sub: 'did:test:user',
@@ -150,7 +150,7 @@ describe('AuthContext', () => {
         refreshToken: 'test-refresh',
         expiresAt: Date.now() + 3600000,
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -172,7 +172,7 @@ describe('AuthContext', () => {
       });
 
       expect(screen.getByTestId('user-did').textContent).toBe('null');
-      expect(localStorage.getItem('privacy_proxy_auth')).toBeNull();
+      expect(sessionStorage.getItem('privacy_proxy_auth')).toBeNull();
     });
   });
 
@@ -191,7 +191,7 @@ describe('AuthContext', () => {
         refreshToken: 'valid-refresh-token',
         expiresAt: Date.now() + 30000, // 30 seconds from now
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -211,7 +211,7 @@ describe('AuthContext', () => {
       // The MSW handler will return new tokens
       await waitFor(
         () => {
-          const stored = localStorage.getItem('privacy_proxy_auth');
+          const stored = sessionStorage.getItem('privacy_proxy_auth');
           if (stored) {
             const parsed = JSON.parse(stored);
             // Check if token was refreshed (new token from MSW)
@@ -242,7 +242,7 @@ describe('AuthContext', () => {
         refreshToken: 'test-refresh',
         expiresAt: Date.now() + 3600000,
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -261,7 +261,7 @@ describe('AuthContext', () => {
         refreshToken: 'test-refresh',
         expiresAt: Date.now() + 3600000,
       };
-      localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+      sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
 
       render(
         <AuthProvider>
@@ -291,8 +291,8 @@ describe('AuthContext', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should handle corrupted localStorage data', async () => {
-      localStorage.setItem('privacy_proxy_auth', 'not-valid-json');
+    it('should handle corrupted sessionStorage data', async () => {
+      sessionStorage.setItem('privacy_proxy_auth', 'not-valid-json');
 
       render(
         <AuthProvider>
@@ -305,7 +305,7 @@ describe('AuthContext', () => {
       });
 
       expect(screen.getByTestId('authenticated').textContent).toBe('false');
-      expect(localStorage.getItem('privacy_proxy_auth')).toBeNull();
+      expect(sessionStorage.getItem('privacy_proxy_auth')).toBeNull();
     });
   });
 });
