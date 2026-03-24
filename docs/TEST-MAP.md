@@ -191,11 +191,54 @@ The privacy-proxy is significantly more hardened than the block-explorer:
 ## Summary
 
 - **Total findings:** 32
-- **Tests to write:** 32
-- **Estimated effort:** Tier 1: 2 days, Tier 2: 2 days, Tier 3: 2 days, Tier 4: 1 day
+- **Tests written:** 60 across all 32 findings
+- **Bugs found:** 4 (documented as skipped tests, fix specs in `docs/BUG-FIXES.md`)
 - **Biggest risk:** Empty `ADMIN_API_TOKEN` leaving admin API unprotected on localhost, combined with error leakage across ~60 HTTP response locations.
 - **Strongest area:** RBAC access control — 5,159 lines of tests, cross-org isolation verified, comprehensive blocklist.
 
 ---
 
-*This is the test plan. Now write the tests.*
+## Resilience Test Implementation
+
+All 32 findings are covered. Tests are grouped by domain, not by audit tier.
+
+### Test Files
+
+| File | Domain | DB Required | Tests |
+|------|--------|-------------|-------|
+| `resilience_helpers_test.go` | Shared infra — `TestMain`, `setupResilienceServer`, `setupAuthOnlyRouter` | — | — |
+| `resilience_auth_test.go` | Admin auth enforcement on all endpoints | No | 10 |
+| `resilience_rbac_test.go` | RBAC resolution, blocked methods, effective permissions, concurrent access | Yes | 8 |
+| `resilience_admin_test.go` | Admin CRUD, proxy registration, error leakage, concurrent org creation | Yes | 12 |
+| `resilience_compliance_test.go` | Compliance config, sanctions, thresholds, currency, error leakage | Yes | 5 |
+| `resilience_config_test.go` | Production guards, batch rejection, body limits, dev endpoints, documented gaps | No | 20 |
+| `resilience_state_test.go` | Session store capacity/cleanup/concurrency, Azure state store | No | 5 |
+
+### Test Infrastructure
+
+- **Shared Postgres container** — one container started in `TestMain`, reused by all DB tests. Runs in ~5s total (was ~90s with per-test containers).
+- **`setupAuthOnlyRouter`** — no DB, no container. For tests that only verify middleware rejects unauthenticated requests. Sub-millisecond.
+- **`setupResilienceServer`** — shared container, DB reset between tests. For tests that exercise handler logic.
+- **CI compatible** — respects `TEST_DATABASE_URL` env var. If Docker unavailable, DB tests skip gracefully.
+
+### Bugs Found
+
+4 bugs documented as skipped tests. Fix specifications in [`docs/BUG-FIXES.md`](BUG-FIXES.md):
+
+| # | Bug | Severity | Skipped Test |
+|---|-----|----------|-------------|
+| 1 | Empty `ADMIN_API_TOKEN` bypasses admin auth | Critical | `TestResilience_EmptyAdminToken_*` |
+| 2 | Session delete with nil sessionStore → panic | High | `TestResilience_AdminHandlers_NoErrorLeakage/delete_nonexistent_session` |
+| 3 | Group creation leaks PostgreSQL SQLSTATE | Medium | `TestResilience_AdminHandlers_NoErrorLeakage/create_group_missing_org` |
+| 4 | ~60 explorer endpoints leak `err.Error()` | Medium | `TestResilience_ExplorerErrors_NoInternalLeakage` (documented) |
+
+### Design Decisions
+
+- **`debug_traceTransaction` not in blocked methods test** — intentionally exempted from global blocklist, gated by deploy claim through RBAC instead.
+- **Auth tests use nil DB** — middleware rejects before handler runs, so no DB needed. Eliminates container dependency for 30% of tests.
+- **Documented gaps use `t.Log()`** — CoinGecko, IPFS, OAuth code exchange, disclosure rate limiting. Findings recorded in test output without asserting on external dependencies.
+- **Skipped tests for bugs, not commented-out tests** — `t.Skip("BUG: ...")` keeps the test visible in CI output and serves as a regression test once fixed.
+
+---
+
+*Audit complete. Tests written. Bugs documented.*

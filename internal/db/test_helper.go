@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,41 @@ func ResetTestDatabase(database *DB) error {
 	}
 
 	return nil
+}
+
+// StartTestContainer starts a PostgreSQL testcontainer without requiring *testing.T.
+// Suitable for TestMain. Returns ("", nil) if Docker is unavailable.
+func StartTestContainer() (string, func()) {
+	ctx := context.Background()
+
+	postgresContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15-alpine"),
+		postgres.WithDatabase("testdb"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testcontainers unavailable: %v\n", err)
+		return "", nil
+	}
+
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		postgresContainer.Terminate(ctx)
+		fmt.Fprintf(os.Stderr, "failed to get connection string: %v\n", err)
+		return "", nil
+	}
+
+	cleanup := func() {
+		postgresContainer.Terminate(ctx)
+	}
+
+	return connStr, cleanup
 }
 
 // SetupTestContainer starts a PostgreSQL testcontainer and returns the connection string
