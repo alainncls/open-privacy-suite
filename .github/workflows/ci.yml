@@ -11,7 +11,7 @@ on:
       - main
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.25'
   NODE_VERSION: '20'
   # Minimum coverage threshold (percentage).
   # Set to 44 because explorer/store.go (954 lines of SQL queries against the
