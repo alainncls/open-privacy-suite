@@ -14,7 +14,10 @@ import (
 
 func newTestServer(handler http.HandlerFunc) (*httpClient, func()) {
 	ts := httptest.NewServer(handler)
-	client := newHTTPClient(ts.URL, "test-admin-token")
+	client, err := newHTTPClient(ts.URL, "test-admin-token")
+	if err != nil {
+		panic("test server URL invalid: " + err.Error())
+	}
 	return client, ts.Close
 }
 
@@ -94,8 +97,32 @@ func TestHealth_OK(t *testing.T) {
 	}
 }
 
+func TestNewHTTPClient_ValidURL(t *testing.T) {
+	c, err := newHTTPClient("http://localhost:8080", "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.baseURL.Host != "localhost:8080" {
+		t.Fatalf("expected localhost:8080, got %s", c.baseURL.Host)
+	}
+}
+
+func TestNewHTTPClient_InvalidScheme(t *testing.T) {
+	_, err := newHTTPClient("ftp://localhost:8080", "")
+	if err == nil {
+		t.Fatal("expected error for ftp scheme")
+	}
+}
+
+func TestNewHTTPClient_InvalidURL(t *testing.T) {
+	_, err := newHTTPClient("://bad", "")
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
 func TestHealth_Unreachable(t *testing.T) {
-	client := newHTTPClient("http://localhost:1", "")
+	client, _ := newHTTPClient("http://localhost:1", "")
 
 	env := setupMCP(t, func(s *mcp.Server) {
 		registerSystemTools(s, client)

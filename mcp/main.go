@@ -13,7 +13,11 @@ func main() {
 	adminToken := os.Getenv("PRIVACY_ADMIN_TOKEN")
 
 	auth := NewStaticAdminAuth(adminToken)
-	client := newHTTPClient(baseURL, adminToken)
+	client, err := newHTTPClient(baseURL, adminToken)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid PRIVACY_URL: %v\n", err)
+		os.Exit(1)
+	}
 	confirms := NewConfirmationEngine()
 
 	_ = auth // used in Phase 2+ for tool authorization
