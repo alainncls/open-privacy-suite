@@ -58,7 +58,7 @@ function setupAuthenticated() {
     refreshToken: 'test-refresh',
     expiresAt: Date.now() + 3600000,
   };
-  localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+  sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
   return mockToken;
 }
 
@@ -79,7 +79,7 @@ function renderLinkWalletPage(initialRoute = '/link-wallet') {
 
 describe('LinkWalletPage', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
 
     // Default mock implementations
@@ -466,7 +466,7 @@ describe('LinkWalletPage', () => {
         expect(screen.getByTestId('login-page')).toBeInTheDocument();
       });
 
-      expect(localStorage.getItem('privacy_proxy_auth')).toBeNull();
+      expect(sessionStorage.getItem('privacy_proxy_auth')).toBeNull();
     });
   });
 

@@ -33,7 +33,7 @@ export function getAdminToken(): string {
   return getStoredAdminToken();
 }
 
-/** Read the user's JWT access token from AuthContext's localStorage entry. */
+/** Read the user's JWT access token from AuthContext's sessionStorage entry. */
 function getStoredAccessToken(): string {
   try {
     const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);

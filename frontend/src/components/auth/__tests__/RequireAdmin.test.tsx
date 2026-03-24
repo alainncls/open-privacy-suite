@@ -18,9 +18,9 @@ function makeFakeJWT(sub: string, expiresInMs = 3_600_000): string {
   return `header.${encoded}.signature`;
 }
 
-/** Seed AuthContext's localStorage so the user appears authenticated. */
+/** Seed AuthContext's sessionStorage so the user appears authenticated. */
 function seedAuth(token: string) {
-  localStorage.setItem(
+  sessionStorage.setItem(
     'privacy_proxy_auth',
     JSON.stringify({
       accessToken: token,
@@ -44,7 +44,7 @@ function renderWithAuth(children: React.ReactNode) {
 
 describe('RequireAdmin', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
   });
 
   it('shows spinner while checking admin status', async () => {

@@ -53,7 +53,7 @@ describe('adminClient header selection', () => {
   it('prefers X-Admin-Token over JWT', async () => {
     // Both admin token and JWT are present
     localStorage.setItem('privacy_proxy_admin_api_token', 'admin-tok');
-    localStorage.setItem(AUTH_STORAGE_KEY, fakeAuth('jwt-tok', 300_000));
+    sessionStorage.setItem(AUTH_STORAGE_KEY, fakeAuth('jwt-tok', 300_000));
 
     const mod = await import('../adminClient');
     // Admin token takes priority

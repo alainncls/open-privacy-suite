@@ -37,7 +37,7 @@ function setupAuthenticated() {
     refreshToken: 'test-refresh',
     expiresAt: Date.now() + 3600000,
   };
-  localStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
+  sessionStorage.setItem('privacy_proxy_auth', JSON.stringify(authData));
   return mockToken;
 }
 
@@ -58,7 +58,7 @@ function renderSuccessPage(initialRoute = '/success') {
 
 describe('SuccessPage', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     vi.clearAllMocks();
   });
 
@@ -305,7 +305,7 @@ describe('SuccessPage', () => {
       });
 
       // Auth should be cleared
-      expect(localStorage.getItem('privacy_proxy_auth')).toBeNull();
+      expect(sessionStorage.getItem('privacy_proxy_auth')).toBeNull();
     });
   });
 

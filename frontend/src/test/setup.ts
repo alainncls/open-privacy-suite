@@ -43,9 +43,10 @@ afterAll(() => {
   server.close();
 });
 
-// jsdom provides localStorage by default - just clear it between tests
+// jsdom provides localStorage/sessionStorage by default - just clear them between tests
 afterEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   vi.clearAllMocks();
 });
 
