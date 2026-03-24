@@ -72,6 +72,7 @@ func setupResilienceServer(t *testing.T, adminToken string) (*Server, *gin.Engin
 	admin := router.Group("/api/v1/admin")
 	admin.Use(srv.adminAuthMiddleware())
 	srv.registerRBACRoutes(admin)
+	srv.registerComplianceRoutes(admin)
 
 	t.Cleanup(func() { srv.db.Close() })
 

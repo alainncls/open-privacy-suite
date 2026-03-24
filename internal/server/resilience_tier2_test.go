@@ -395,7 +395,7 @@ func TestResilience_AdminHandlers_NoErrorLeakage(t *testing.T) {
 		{"get nonexistent org", "GET", "/api/v1/admin/orgs/" + uuid.New().String(), "", ""},
 		{"get nonexistent user", "GET", "/api/v1/admin/users/" + uuid.New().String(), "", ""},
 		{"delete nonexistent session", "DELETE", "/api/v1/admin/sessions/" + uuid.New().String(), "",
-			"BUG: nil pointer panic — session delete handler does not check for nonexistent session"},
+			"BUG: nil pointer panic — sessionStore is nil when not initialised, handler does not nil-check"},
 		{"get nonexistent tenant", "GET", "/api/v1/admin/azure-tenants/" + uuid.New().String(), "", ""},
 		{"create org missing fields", "POST", "/api/v1/admin/orgs", `{}`, ""},
 		{"create group missing org", "POST", "/api/v1/admin/orgs/" + uuid.New().String() + "/groups", `{"slug":"test","name":"test"}`,
