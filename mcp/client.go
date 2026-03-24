@@ -10,10 +10,9 @@ import (
 )
 
 type httpClient struct {
-	baseURL     string
-	adminToken  string
-	perspective *Perspective
-	http        *http.Client
+	baseURL    string
+	adminToken string
+	http       *http.Client
 }
 
 func newHTTPClient(baseURL, adminToken string) *httpClient {
@@ -63,10 +62,6 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 
 	if c.adminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.adminToken)
-	}
-
-	if c.perspective != nil && c.perspective.Active && c.perspective.Level == 2 {
-		req.Header.Set("X-Impersonate-User", c.perspective.UserID)
 	}
 
 	resp, err := c.http.Do(req)

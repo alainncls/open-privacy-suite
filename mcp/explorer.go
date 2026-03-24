@@ -68,9 +68,7 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 				getFloat(block, "transaction_count"),
 			)
 		}
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
-		}
+
 		return textResult(lines)
 	})
 }
@@ -127,9 +125,7 @@ func registerExplorerTransactions(s *mcp.Server, client *httpClient) {
 				getFloat(tx, "value"),
 			)
 		}
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
-		}
+
 		return textResult(lines)
 	})
 }
@@ -196,9 +192,6 @@ func registerExplorerAddressTxs(s *mcp.Server, client *httpClient) {
 		if err != nil {
 			return errorResult("getting address transactions: %v", err)
 		}
-		if label := client.perspective.Label(); label != "" {
-			return textResult(label+"\n", section("Transactions for "+args.Address), prettyJSON(json.RawMessage(raw)))
-		}
 		return textResult(section("Transactions for "+args.Address), prettyJSON(json.RawMessage(raw)))
 	})
 }
@@ -246,24 +239,8 @@ func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 		Description: "Get all addresses a wallet can see (own + disclosed via grants). Pass a wallet address, or use perspective mode to auto-resolve.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args viewableAddressesArgs) (*mcp.CallToolResult, any, error) {
 		wallet := args.Wallet
-
-		// In perspective mode, resolve the user's first linked address
-		if wallet == "" && client.perspective != nil && client.perspective.Active {
-			raw, err := client.get("/api/v1/admin/users/" + client.perspective.UserID + "/linked-addresses")
-			if err == nil {
-				var resp map[string]any
-				json.Unmarshal(raw, &resp)
-				addrs := getSlice(resp, "addresses")
-				if len(addrs) > 0 {
-					if a, ok := addrs[0].(map[string]any); ok {
-						wallet = getString(a, "address")
-					}
-				}
-			}
-		}
-
 		if wallet == "" {
-			return errorResult("wallet address required — provide wallet param or set_perspective first")
+			return errorResult("wallet address required")
 		}
 
 		raw, err := client.get("/api/v1/explorer/viewable-addresses?wallet=" + wallet)
@@ -271,9 +248,7 @@ func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 			return errorResult("getting viewable addresses: %v", err)
 		}
 		lines := section("Viewable Addresses for " + wallet)
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
-		}
+
 		return textResult(lines, prettyJSON(json.RawMessage(raw)))
 	})
 }
@@ -295,9 +270,7 @@ func registerCheckAddressVisibility(s *mcp.Server, client *httpClient) {
 			return errorResult("checking address visibility: %v", err)
 		}
 		lines := section("Address Visibility: " + args.Address)
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
-		}
+
 		return textResult(lines, prettyJSON(json.RawMessage(raw)))
 	})
 }

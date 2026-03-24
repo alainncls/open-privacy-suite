@@ -32,7 +32,6 @@ func main() {
 	registerDisclosureTools(s, client, confirms)
 	registerComplianceTools(s, client, confirms)
 	registerExplorerTools(s, client)
-	registerPerspectiveTools(s, client)
 	registerAccessLogs(s, client)
 	registerAuditLogs(s, client)
 	registerCacheStats(s, client)

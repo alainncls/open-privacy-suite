@@ -403,11 +403,8 @@ func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 		Name:        "effective_permissions",
 		Description: "Get a user's computed effective permissions: claims, allowed methods, contract access, and rate limits. Perspective-aware: omit user_id to use the current perspective user.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args effectivePermsArgs) (*mcp.CallToolResult, any, error) {
-		if args.UserID == "" && client.perspective != nil && client.perspective.Active {
-			args.UserID = client.perspective.UserID
-		}
 		if args.UserID == "" {
-			return errorResult("user_id is required (or set a perspective first)")
+			return errorResult("user_id is required")
 		}
 		path := "/api/v1/admin/users/" + args.UserID + "/effective-permissions"
 		if args.Org != "" {
@@ -443,10 +440,6 @@ func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 					kvf("  Claims", fmt.Sprintf("%v", getSlice(ca, "claims"))),
 				) + "\n"
 			}
-		}
-
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
 		}
 
 		return textResult(lines)

@@ -66,10 +66,6 @@ func registerStatus(s *mcp.Server, client *httpClient) {
 			lines += kvf("Runtime Tracing", boolYesNo(getBool(sec, "runtime_tracing_enabled")))
 		}
 
-		if label := client.perspective.Label(); label != "" {
-			lines = label + "\n\n" + lines
-		}
-
 		return textResult(lines)
 	})
 }

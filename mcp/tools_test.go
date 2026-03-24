@@ -333,46 +333,6 @@ func TestListContracts(t *testing.T) {
 	}
 }
 
-func TestImpersonationHeader(t *testing.T) {
-	var gotHeader string
-	client, cleanup := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("X-Impersonate-User")
-		fmt.Fprint(w, `{"status":"ok"}`)
-	})
-	defer cleanup()
-
-	client.perspective = &Perspective{Active: true, UserID: "user-bob", UserName: "Bob", Level: 2}
-
-	env := setupMCP(t, func(s *mcp.Server) {
-		registerSystemTools(s, client)
-	})
-
-	callTool(t, env, "health", struct{}{})
-	if gotHeader != "user-bob" {
-		t.Fatalf("expected X-Impersonate-User: user-bob, got: %q", gotHeader)
-	}
-}
-
-func TestNoImpersonationHeaderLevel1(t *testing.T) {
-	var gotHeader string
-	client, cleanup := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("X-Impersonate-User")
-		fmt.Fprint(w, `{"status":"ok"}`)
-	})
-	defer cleanup()
-
-	client.perspective = &Perspective{Active: true, UserID: "user-bob", UserName: "Bob", Level: 1}
-
-	env := setupMCP(t, func(s *mcp.Server) {
-		registerSystemTools(s, client)
-	})
-
-	callTool(t, env, "health", struct{}{})
-	if gotHeader != "" {
-		t.Fatalf("Level 1 should NOT send impersonation header, got: %q", gotHeader)
-	}
-}
-
 func extractToken(t *testing.T, text string) string {
 	t.Helper()
 	for _, line := range strings.Split(text, "\n") {
