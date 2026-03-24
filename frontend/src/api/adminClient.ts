@@ -36,7 +36,7 @@ export function getAdminToken(): string {
 /** Read the user's JWT access token from AuthContext's localStorage entry. */
 function getStoredAccessToken(): string {
   try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return '';
     const parsed = JSON.parse(raw) as { accessToken?: string; expiresAt?: number };
     // Only use the token if it has not expired (with 1 minute buffer).
