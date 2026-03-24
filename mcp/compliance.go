@@ -99,7 +99,7 @@ type setTokenPriceArgs struct {
 	OrgID       string             `json:"org_id" jsonschema:"organization ID (UUID, required)"`
 	Address     string             `json:"address" jsonschema:"token contract address (0x-prefixed, required)"`
 	Symbol      string             `json:"symbol" jsonschema:"token symbol e.g. ETH, USDT (required)"`
-	Decimals    int                `json:"decimals,omitempty" jsonschema:"token decimals (default 18)"`
+	Decimals    *int               `json:"decimals,omitempty" jsonschema:"token decimals (default 18)"`
 	Prices      map[string]float64 `json:"prices" jsonschema:"price map by currency e.g. {usd: 3500, eur: 3200} (required unless coingecko_id set)"`
 	CoingeckoID string             `json:"coingecko_id,omitempty" jsonschema:"CoinGecko ID for auto-pricing: ethereum, tether, or usd-coin"`
 }
@@ -112,9 +112,16 @@ func registerSetTokenPrice(s *mcp.Server, client *httpClient) {
 		if args.OrgID == "" || args.Address == "" || args.Symbol == "" {
 			return errorResult("org_id, address, and symbol are required")
 		}
+		if len(args.Prices) == 0 && args.CoingeckoID == "" {
+			return errorResult("either prices or coingecko_id is required")
+		}
+		decimals := 18
+		if args.Decimals != nil {
+			decimals = *args.Decimals
+		}
 		body := map[string]any{
 			"symbol":   args.Symbol,
-			"decimals": args.Decimals,
+			"decimals": decimals,
 		}
 		if args.Prices != nil {
 			body["prices"] = args.Prices
@@ -152,7 +159,7 @@ func registerDeleteTokenPrice(s *mcp.Server, client *httpClient, confirms *Confi
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/tokens/%s", params["org_id"], params["address"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/tokens/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting token price: %v", err)
 		}
@@ -236,7 +243,7 @@ func registerDeleteSanction(s *mcp.Server, client *httpClient, confirms *Confirm
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/compliance/sanctions/" + params["id"].(string))
+		_, err = client.del("/api/v1/admin/compliance/sanctions/" + confirmParam(params, "id"))
 		if err != nil {
 			return errorResult("deleting sanction: %v", err)
 		}
@@ -311,7 +318,7 @@ func registerDeleteAddressThreshold(s *mcp.Server, client *httpClient, confirms 
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", params["org_id"], params["address"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/address-thresholds/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting address threshold: %v", err)
 		}
@@ -437,7 +444,7 @@ func registerDeleteTravelRuleRecord(s *mcp.Server, client *httpClient, confirms 
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/travel-rule-records/%s", params["org_id"], params["id"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/compliance/travel-rule-records/%s", confirmParam(params, "org_id"), confirmParam(params, "id")))
 		if err != nil {
 			return errorResult("deleting travel rule record: %v", err)
 		}

@@ -12,15 +12,12 @@ func main() {
 	baseURL := env("PRIVACY_URL", "http://localhost:18300")
 	adminToken := os.Getenv("PRIVACY_ADMIN_TOKEN")
 
-	auth := NewStaticAdminAuth(adminToken)
 	client, err := newHTTPClient(baseURL, adminToken)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid PRIVACY_URL: %v\n", err)
 		os.Exit(1)
 	}
 	confirms := NewConfirmationEngine()
-
-	_ = auth // used in Phase 2+ for tool authorization
 
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "privacy-proxy",

@@ -35,7 +35,9 @@ func registerListOrgs(s *mcp.Server, client *httpClient) {
 			return errorResult("listing orgs: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		orgs := getSlice(resp, "data")
 		lines := section("Organizations") + "\n"
@@ -78,7 +80,9 @@ func registerGetOrg(s *mcp.Server, client *httpClient) {
 			return errorResult("getting org: %v", err)
 		}
 		var org map[string]any
-		json.Unmarshal(raw, &org)
+		if err := json.Unmarshal(raw, &org); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Organization: "+getString(org, "name")),
@@ -111,7 +115,9 @@ func registerCreateOrg(s *mcp.Server, client *httpClient) {
 			return errorResult("creating org: %v", err)
 		}
 		var org map[string]any
-		json.Unmarshal(raw, &org)
+		if err := json.Unmarshal(raw, &org); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Organization Created"),
@@ -152,7 +158,9 @@ func registerUpdateOrg(s *mcp.Server, client *httpClient) {
 			return errorResult("updating org: %v", err)
 		}
 		var org map[string]any
-		json.Unmarshal(raw, &org)
+		if err := json.Unmarshal(raw, &org); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Organization Updated"),
@@ -195,7 +203,7 @@ func registerDeleteOrg(s *mcp.Server, client *httpClient, confirms *Confirmation
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		orgID := params["org_id"].(string)
+		orgID := confirmParam(params, "org_id")
 
 		_, err = client.del("/api/v1/admin/orgs/" + orgID)
 		if err != nil {

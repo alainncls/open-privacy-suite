@@ -34,11 +34,15 @@ func (e *ConfirmationEngine) Request(toolName string, params map[string]any) str
 
 	e.gc()
 
+	paramsCopy := make(map[string]any, len(params))
+	for k, v := range params {
+		paramsCopy[k] = v
+	}
 	token := uuid.New().String()
 	e.tokens[token] = &confirmationToken{
 		Token:     token,
 		ToolName:  toolName,
-		Params:    params,
+		Params:    paramsCopy,
 		CreatedAt: time.Now(),
 	}
 	return token
@@ -61,6 +65,13 @@ func (e *ConfirmationEngine) Validate(token, toolName string) (map[string]any, e
 	params := ct.Params
 	delete(e.tokens, token)
 	return params, nil
+}
+
+func confirmParam(params map[string]any, key string) string {
+	if v, ok := params[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func (e *ConfirmationEngine) gc() {

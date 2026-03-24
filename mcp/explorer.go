@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -54,7 +55,9 @@ func registerExplorerBlocks(s *mcp.Server, client *httpClient) {
 			return errorResult("listing blocks: %v", err)
 		}
 		var blocks []any
-		json.Unmarshal(raw, &blocks)
+		if err := json.Unmarshal(raw, &blocks); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Blocks") + "\n"
 		for _, b := range blocks {
@@ -107,7 +110,9 @@ func registerExplorerTransactions(s *mcp.Server, client *httpClient) {
 			return errorResult("listing transactions: %v", err)
 		}
 		var txs []any
-		json.Unmarshal(raw, &txs)
+		if err := json.Unmarshal(raw, &txs); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Transactions") + "\n"
 		for i, t := range txs {
@@ -230,20 +235,20 @@ func registerExplorerTokens(s *mcp.Server, client *httpClient) {
 }
 
 type viewableAddressesArgs struct {
-	Wallet string `json:"wallet,omitempty" jsonschema:"ETH wallet address to check visibility for. If in perspective mode and omitted, uses the perspective user's first linked address."`
+	Wallet string `json:"wallet" jsonschema:"ETH wallet address to check visibility for (required)"`
 }
 
 func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "viewable_addresses",
-		Description: "Get all addresses a wallet can see (own + disclosed via grants). Pass a wallet address, or use perspective mode to auto-resolve.",
+		Description: "Get all addresses a wallet can see (own + disclosed via grants). Wallet address is required.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args viewableAddressesArgs) (*mcp.CallToolResult, any, error) {
 		wallet := args.Wallet
 		if wallet == "" {
 			return errorResult("wallet address required")
 		}
 
-		raw, err := client.get("/api/v1/explorer/viewable-addresses?wallet=" + wallet)
+		raw, err := client.get("/api/v1/explorer/viewable-addresses?wallet=" + url.QueryEscape(wallet))
 		if err != nil {
 			return errorResult("getting viewable addresses: %v", err)
 		}
@@ -260,7 +265,7 @@ type checkVisibilityArgs struct {
 func registerCheckAddressVisibility(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "check_address_visibility",
-		Description: "Check if a specific address is visible to the current viewer. Perspective-aware.",
+		Description: "Check if a specific address is visible to a viewer (requires wallet query param or JWT on the API side).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args checkVisibilityArgs) (*mcp.CallToolResult, any, error) {
 		if args.Address == "" {
 			return errorResult("address is required")

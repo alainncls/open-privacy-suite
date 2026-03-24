@@ -44,7 +44,9 @@ func registerListContracts(s *mcp.Server, client *httpClient) {
 			return errorResult("listing contracts: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		contracts := getSlice(resp, "data")
 		lines := section("Contracts") + "\n"
@@ -84,7 +86,9 @@ func registerGetContract(s *mcp.Server, client *httpClient) {
 			return errorResult("getting contract: %v", err)
 		}
 		var contract map[string]any
-		json.Unmarshal(raw, &contract)
+		if err := json.Unmarshal(raw, &contract); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Contract: "+getString(contract, "name")),
@@ -126,7 +130,9 @@ func registerCreateContract(s *mcp.Server, client *httpClient) {
 			return errorResult("creating contract: %v", err)
 		}
 		var contract map[string]any
-		json.Unmarshal(raw, &contract)
+		if err := json.Unmarshal(raw, &contract); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Contract Registered"),
@@ -165,7 +171,9 @@ func registerUpdateContract(s *mcp.Server, client *httpClient) {
 			return errorResult("updating contract: %v", err)
 		}
 		var contract map[string]any
-		json.Unmarshal(raw, &contract)
+		if err := json.Unmarshal(raw, &contract); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Contract Updated"),
@@ -208,7 +216,7 @@ func registerDeleteContract(s *mcp.Server, client *httpClient, confirms *Confirm
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s", params["org_id"], params["address"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s", confirmParam(params, "org_id"), confirmParam(params, "address")))
 		if err != nil {
 			return errorResult("deleting contract: %v", err)
 		}
@@ -229,7 +237,9 @@ func registerListGrants(s *mcp.Server, client *httpClient) {
 			return errorResult("listing grants: %v", err)
 		}
 		var grants []any
-		json.Unmarshal(raw, &grants)
+		if err := json.Unmarshal(raw, &grants); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Contract Grants for " + args.Address) + "\n"
 
@@ -280,7 +290,9 @@ func registerCreateGrant(s *mcp.Server, client *httpClient) {
 			return errorResult("creating grant: %v", err)
 		}
 		var grant map[string]any
-		json.Unmarshal(raw, &grant)
+		if err := json.Unmarshal(raw, &grant); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Grant Created"),
@@ -327,7 +339,7 @@ func registerDeleteGrant(s *mcp.Server, client *httpClient, confirms *Confirmati
 		}
 
 		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
-			params["org_id"], params["address"], params["group_id"]))
+			confirmParam(params, "org_id"), confirmParam(params, "address"), confirmParam(params, "group_id")))
 		if err != nil {
 			return errorResult("revoking grant: %v", err)
 		}
@@ -352,7 +364,9 @@ func registerLookupContract(s *mcp.Server, client *httpClient) {
 			return errorResult("looking up contract: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		contract := getMap(resp, "contract")
 		org := getMap(resp, "organization")

@@ -23,7 +23,9 @@ func registerHealth(s *mcp.Server, client *httpClient) {
 			return errorResult("Privacy proxy unreachable: %v\n\nIs it running? Try: docker-compose up -d", err)
 		}
 		var m map[string]any
-		json.Unmarshal(raw, &m)
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 		return textResult(
 			section("Privacy Proxy Health: OK"),
 			kvf("Status", getString(m, "status")),

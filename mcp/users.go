@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -40,10 +41,10 @@ func registerListUsers(s *mcp.Server, client *httpClient) {
 		}
 		path := fmt.Sprintf("/api/v1/admin/users?limit=%d&offset=%d", limit, args.Offset)
 		if args.OrgID != "" {
-			path += "&org_id=" + args.OrgID
+			path += "&org_id=" + url.QueryEscape(args.OrgID)
 		}
 		if args.Search != "" {
-			path += "&search=" + args.Search
+			path += "&search=" + url.QueryEscape(args.Search)
 		}
 
 		raw, err := client.get(path)
@@ -51,7 +52,9 @@ func registerListUsers(s *mcp.Server, client *httpClient) {
 			return errorResult("listing users: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		users := getSlice(resp, "data")
 		lines := section("Users") + "\n"
@@ -91,7 +94,9 @@ func registerGetUser(s *mcp.Server, client *httpClient) {
 			return errorResult("getting user: %v", err)
 		}
 		var user map[string]any
-		json.Unmarshal(raw, &user)
+		if err := json.Unmarshal(raw, &user); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("User"),
@@ -118,12 +123,14 @@ func registerResolveUser(s *mcp.Server, client *httpClient) {
 		if args.Query == "" {
 			return errorResult("query is required")
 		}
-		raw, err := client.get("/api/v1/admin/users?search=" + args.Query + "&limit=10")
+		raw, err := client.get("/api/v1/admin/users?search=" + url.QueryEscape(args.Query) + "&limit=10")
 		if err != nil {
 			return errorResult("searching users: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		users := getSlice(resp, "data")
 		total := getFloat(resp, "total")
@@ -180,7 +187,9 @@ func registerUpdateUser(s *mcp.Server, client *httpClient) {
 			return errorResult("updating user: %v", err)
 		}
 		var user map[string]any
-		json.Unmarshal(raw, &user)
+		if err := json.Unmarshal(raw, &user); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("User Updated"),
@@ -223,7 +232,7 @@ func registerDeleteUser(s *mcp.Server, client *httpClient, confirms *Confirmatio
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del("/api/v1/admin/users/" + params["user_id"].(string))
+		_, err = client.del("/api/v1/admin/users/" + confirmParam(params, "user_id"))
 		if err != nil {
 			return errorResult("deleting user: %v", err)
 		}
@@ -244,7 +253,9 @@ func registerUserAddresses(s *mcp.Server, client *httpClient) {
 			return errorResult("getting addresses: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		addrs := getSlice(resp, "addresses")
 		lines := section("Linked Addresses") + "\n"
@@ -286,7 +297,9 @@ func registerUserMemberships(s *mcp.Server, client *httpClient) {
 			return errorResult("getting memberships: %v", err)
 		}
 		var items []any
-		json.Unmarshal(raw, &items)
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Memberships") + "\n"
 
@@ -338,7 +351,9 @@ func registerAddMembership(s *mcp.Server, client *httpClient) {
 			return errorResult("adding membership: %v", err)
 		}
 		var m map[string]any
-		json.Unmarshal(raw, &m)
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Membership Created"),
@@ -385,7 +400,7 @@ func registerRemoveMembership(s *mcp.Server, client *httpClient, confirms *Confi
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/users/%s/memberships/%s", params["user_id"], params["membership_id"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/users/%s/memberships/%s", confirmParam(params, "user_id"), confirmParam(params, "membership_id")))
 		if err != nil {
 			return errorResult("removing membership: %v", err)
 		}
@@ -401,14 +416,14 @@ type effectivePermsArgs struct {
 func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "effective_permissions",
-		Description: "Get a user's computed effective permissions: claims, allowed methods, contract access, and rate limits. Perspective-aware: omit user_id to use the current perspective user.",
+		Description: "Get a user's computed effective permissions: claims, allowed methods, contract access, and rate limits.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args effectivePermsArgs) (*mcp.CallToolResult, any, error) {
 		if args.UserID == "" {
 			return errorResult("user_id is required")
 		}
 		path := "/api/v1/admin/users/" + args.UserID + "/effective-permissions"
 		if args.Org != "" {
-			path += "?org=" + args.Org
+			path += "?org=" + url.QueryEscape(args.Org)
 		}
 
 		raw, err := client.get(path)
@@ -416,7 +431,9 @@ func registerEffectivePermissions(s *mcp.Server, client *httpClient) {
 			return errorResult("getting permissions: %v", err)
 		}
 		var perms map[string]any
-		json.Unmarshal(raw, &perms)
+		if err := json.Unmarshal(raw, &perms); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Effective Permissions") + "\n"
 		lines += joinLines(
@@ -485,7 +502,9 @@ func registerCheckAccess(s *mcp.Server, client *httpClient) {
 			return errorResult("checking access: %v", err)
 		}
 		var result map[string]any
-		json.Unmarshal(raw, &result)
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		allowed := getBool(result, "allowed")
 		status := "DENIED"

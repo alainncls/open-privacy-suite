@@ -41,7 +41,9 @@ func registerListGroups(s *mcp.Server, client *httpClient) {
 			return errorResult("listing groups: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		items := getSlice(resp, "data")
 		lines := section("Groups") + "\n"
@@ -100,7 +102,9 @@ func registerGetGroup(s *mcp.Server, client *httpClient) {
 			return errorResult("getting group: %v", err)
 		}
 		var group map[string]any
-		json.Unmarshal(raw, &group)
+		if err := json.Unmarshal(raw, &group); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Group: "+getString(group, "name")),
@@ -152,7 +156,9 @@ func registerCreateGroup(s *mcp.Server, client *httpClient) {
 			return errorResult("creating group: %v", err)
 		}
 		var group map[string]any
-		json.Unmarshal(raw, &group)
+		if err := json.Unmarshal(raw, &group); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Group Created"),
@@ -196,7 +202,9 @@ func registerUpdateGroup(s *mcp.Server, client *httpClient) {
 			return errorResult("updating group: %v", err)
 		}
 		var group map[string]any
-		json.Unmarshal(raw, &group)
+		if err := json.Unmarshal(raw, &group); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Group Updated"),
@@ -239,7 +247,7 @@ func registerDeleteGroup(s *mcp.Server, client *httpClient, confirms *Confirmati
 			return errorResult("confirmation failed: %v", err)
 		}
 
-		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s", params["org_id"], params["group_id"]))
+		_, err = client.del(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/%s", confirmParam(params, "org_id"), confirmParam(params, "group_id")))
 		if err != nil {
 			return errorResult("deleting group: %v", err)
 		}
@@ -260,7 +268,9 @@ func registerGetGroupAccess(s *mcp.Server, client *httpClient) {
 			return errorResult("getting group access: %v", err)
 		}
 		var access map[string]any
-		json.Unmarshal(raw, &access)
+		if err := json.Unmarshal(raw, &access); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Group Access"),
@@ -307,7 +317,9 @@ func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 			return errorResult("setting group access: %v", err)
 		}
 		var access map[string]any
-		json.Unmarshal(raw, &access)
+		if err := json.Unmarshal(raw, &access); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Group Access Updated"),

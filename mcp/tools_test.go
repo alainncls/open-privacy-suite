@@ -322,9 +322,9 @@ func TestCheckAccess(t *testing.T) {
 }
 
 func TestAdminTokenSent(t *testing.T) {
-	var gotAuth string
+	var gotToken string
 	client, cleanup := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		gotToken = r.Header.Get("X-Admin-Token")
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 	defer cleanup()
@@ -334,8 +334,8 @@ func TestAdminTokenSent(t *testing.T) {
 	})
 
 	callTool(t, env, "health", struct{}{})
-	if gotAuth != "Bearer test-admin-token" {
-		t.Fatalf("expected admin token in header, got: %q", gotAuth)
+	if gotToken != "test-admin-token" {
+		t.Fatalf("expected admin token in header, got: %q", gotToken)
 	}
 }
 

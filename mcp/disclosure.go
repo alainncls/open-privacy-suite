@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -73,13 +74,15 @@ func registerCreateDisclosureRequest(s *mcp.Server, client *httpClient) {
 			return errorResult("creating disclosure request: %v", err)
 		}
 		var r map[string]any
-		json.Unmarshal(raw, &r)
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Disclosure Request Created"),
 			kvf("ID", getString(r, "id")),
 			kvf("Status", getString(r, "status")),
-			kvf("Scope", getString(r, "scope")),
+			kvf("Scope", prettyJSON(r["scope"])),
 		)
 	})
 }
@@ -101,7 +104,7 @@ func registerListDisclosureRequests(s *mcp.Server, client *httpClient) {
 		}
 		path := fmt.Sprintf("/api/v1/admin/disclosure/requests?limit=%d&offset=%d", limit, args.Offset)
 		if args.Status != "" {
-			path += "&status=" + args.Status
+			path += "&status=" + url.QueryEscape(args.Status)
 		}
 
 		raw, err := client.get(path)
@@ -159,7 +162,7 @@ func registerDeleteDisclosureRequest(s *mcp.Server, client *httpClient, confirms
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/disclosure/requests/" + params["request_id"].(string))
+		_, err = client.del("/api/v1/admin/disclosure/requests/" + confirmParam(params, "request_id"))
 		if err != nil {
 			return errorResult("deleting disclosure request: %v", err)
 		}
@@ -207,7 +210,7 @@ func registerRevokeDisclosureGrant(s *mcp.Server, client *httpClient, confirms *
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.post("/api/v1/admin/disclosure/grants/"+params["grant_id"].(string)+"/revoke", nil)
+		_, err = client.post("/api/v1/admin/disclosure/grants/"+confirmParam(params, "grant_id")+"/revoke", nil)
 		if err != nil {
 			return errorResult("revoking disclosure grant: %v", err)
 		}
@@ -228,7 +231,7 @@ func registerDisclosureCheckAccess(s *mcp.Server, client *httpClient) {
 		if args.DID == "" || args.UserID == "" {
 			return errorResult("did and user_id are required")
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/disclosure/check-access?did=%s&user_id=%s", args.DID, args.UserID))
+		raw, err := client.get(fmt.Sprintf("/api/v1/admin/disclosure/check-access?did=%s&user_id=%s", url.QueryEscape(args.DID), url.QueryEscape(args.UserID)))
 		if err != nil {
 			return errorResult("checking disclosure access: %v", err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,7 +28,9 @@ func registerListSessions(s *mcp.Server, client *httpClient) {
 			return errorResult("listing sessions: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		sessions := getSlice(resp, "sessions")
 		lines := section("Sessions") + "\n"
@@ -77,7 +80,7 @@ func registerDeleteSession(s *mcp.Server, client *httpClient, confirms *Confirma
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/sessions/" + params["session_id"].(string))
+		_, err = client.del("/api/v1/admin/sessions/" + confirmParam(params, "session_id"))
 		if err != nil {
 			return errorResult("revoking session: %v", err)
 		}
@@ -108,7 +111,9 @@ func registerListAzureTenants(s *mcp.Server, client *httpClient) {
 			return errorResult("listing azure tenants: %v", err)
 		}
 		var resp map[string]any
-		json.Unmarshal(raw, &resp)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		tenants := getSlice(resp, "data")
 		lines := section("Azure AD Tenants") + "\n"
@@ -166,7 +171,9 @@ func registerCreateAzureTenant(s *mcp.Server, client *httpClient) {
 			return errorResult("creating azure tenant: %v", err)
 		}
 		var tenant map[string]any
-		json.Unmarshal(raw, &tenant)
+		if err := json.Unmarshal(raw, &tenant); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		return textResult(
 			section("Azure Tenant Added"),
@@ -204,7 +211,7 @@ func registerDeleteAzureTenant(s *mcp.Server, client *httpClient, confirms *Conf
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		_, err = client.del("/api/v1/admin/azure-tenants/" + params["id"].(string))
+		_, err = client.del("/api/v1/admin/azure-tenants/" + confirmParam(params, "id"))
 		if err != nil {
 			return errorResult("deleting azure tenant: %v", err)
 		}
@@ -229,7 +236,9 @@ func registerAccessLogs(s *mcp.Server, client *httpClient) {
 			return errorResult("getting logs: %v", err)
 		}
 		var logs []any
-		json.Unmarshal(raw, &logs)
+		if err := json.Unmarshal(raw, &logs); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Access Logs") + "\n"
 		lines += kvf("Count", len(logs)) + "\n"
@@ -273,10 +282,10 @@ func registerAuditLogs(s *mcp.Server, client *httpClient) {
 		}
 		path := fmt.Sprintf("/api/v1/admin/audit-logs?limit=%d", limit)
 		if a.ResourceType != "" {
-			path += "&resource_type=" + a.ResourceType
+			path += "&resource_type=" + url.QueryEscape(a.ResourceType)
 		}
 		if a.ActorID != "" {
-			path += "&actor_id=" + a.ActorID
+			path += "&actor_id=" + url.QueryEscape(a.ActorID)
 		}
 
 		raw, err := client.get(path)
@@ -284,7 +293,9 @@ func registerAuditLogs(s *mcp.Server, client *httpClient) {
 			return errorResult("getting audit logs: %v", err)
 		}
 		var logs []any
-		json.Unmarshal(raw, &logs)
+		if err := json.Unmarshal(raw, &logs); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
 
 		lines := section("Audit Logs") + "\n"
 		lines += kvf("Count", len(logs)) + "\n"

@@ -76,7 +76,7 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 	}
 
 	if c.adminToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.adminToken)
+		req.Header.Set("X-Admin-Token", c.adminToken)
 	}
 
 	resp, err := c.http.Do(req)
@@ -85,7 +85,7 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
