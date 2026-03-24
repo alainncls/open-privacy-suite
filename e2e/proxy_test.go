@@ -356,9 +356,11 @@ func TestE2E_UnauthorizedRequest_NoToken(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "unauthorized", "token")
 }
 
 func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
@@ -375,10 +377,11 @@ func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
 	// Get JWT token
 	accessToken := getJWTToken(t, serverURL, userDID)
 
-	// Try to call a method not in the default allowed list (debug_traceTransaction)
+	// Try to call a blocked debug method (debug_storageRangeAt is blocked by prefix,
+	// unlike debug_traceTransaction which is exempted via prefixBlockExemptions)
 	reqBody := map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "debug_traceTransaction",
+		"method":  "debug_storageRangeAt",
 		"params":  []any{"0x123"},
 		"id":      1,
 	}
@@ -396,10 +399,11 @@ func TestE2E_ForbiddenRequest_DisallowedMethod(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusForbidden {
-		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("expected 403, got %d: %s", resp.StatusCode, string(body))
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "debug", "disallowed")
 }
 
 func TestE2E_BannedUser(t *testing.T) {
@@ -444,10 +448,11 @@ func TestE2E_BannedUser(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusForbidden {
-		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("expected 403, got %d: %s", resp.StatusCode, string(body))
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "banned")
 }
 
 func TestE2E_NoKYC(t *testing.T) {
@@ -484,8 +489,9 @@ func TestE2E_NoKYC(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusForbidden {
-		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("expected 403 (KYC required), got %d: %s", resp.StatusCode, string(body))
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 (opaque denial), got %d: %s", resp.StatusCode, string(body))
 	}
+	assertOpaqueErrorBody(t, body, "kyc")
 }
