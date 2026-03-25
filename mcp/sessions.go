@@ -14,7 +14,9 @@ func registerSessionTools(s *mcp.Server, client *httpClient, confirms *Confirmat
 	registerDeleteSession(s, client, confirms)
 	registerListProviders(s, client)
 	registerListAzureTenants(s, client)
+	registerGetAzureTenant(s, client)
 	registerCreateAzureTenant(s, client)
+	registerUpdateAzureTenant(s, client)
 	registerDeleteAzureTenant(s, client, confirms)
 }
 
@@ -133,6 +135,83 @@ func registerListAzureTenants(s *mcp.Server, client *httpClient) {
 			) + "\n"
 		}
 		return textResult(lines)
+	})
+}
+
+type getAzureTenantArgs struct {
+	ID string `json:"id" jsonschema:"tenant record ID (UUID, required)"`
+}
+
+func registerGetAzureTenant(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_azure_tenant",
+		Description: "Get details of a specific Azure AD tenant.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args getAzureTenantArgs) (*mcp.CallToolResult, any, error) {
+		if args.ID == "" {
+			return errorResult("id is required")
+		}
+		raw, err := client.get("/api/v1/admin/azure-tenants/" + url.QueryEscape(args.ID))
+		if err != nil {
+			return errorResult("getting azure tenant: %v", err)
+		}
+		var tenant map[string]any
+		if err := json.Unmarshal(raw, &tenant); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
+		return textResult(
+			section("Azure Tenant"),
+			kvf("ID", getString(tenant, "id")),
+			kvf("Tenant ID", getString(tenant, "tenant_id")),
+			kvf("Label", getString(tenant, "label")),
+			kvf("Auto Provision", boolYesNo(getBool(tenant, "auto_provision"))),
+			kvf("Default Org", getString(tenant, "default_org_id")),
+			kvf("Default Group", getString(tenant, "default_group_id")),
+		)
+	})
+}
+
+type updateAzureTenantArgs struct {
+	ID             string `json:"id" jsonschema:"tenant record ID (UUID, required)"`
+	Label          string `json:"label,omitempty" jsonschema:"display label"`
+	DefaultOrgID   string `json:"default_org_id,omitempty" jsonschema:"default org for new users"`
+	DefaultGroupID string `json:"default_group_id,omitempty" jsonschema:"default group for new users"`
+	AutoProvision  *bool  `json:"auto_provision,omitempty" jsonschema:"auto-create users on first login"`
+}
+
+func registerUpdateAzureTenant(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "update_azure_tenant",
+		Description: "Update an Azure AD tenant's settings.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args updateAzureTenantArgs) (*mcp.CallToolResult, any, error) {
+		if args.ID == "" {
+			return errorResult("id is required")
+		}
+		body := map[string]any{}
+		if args.Label != "" {
+			body["label"] = args.Label
+		}
+		if args.DefaultOrgID != "" {
+			body["default_org_id"] = args.DefaultOrgID
+		}
+		if args.DefaultGroupID != "" {
+			body["default_group_id"] = args.DefaultGroupID
+		}
+		if args.AutoProvision != nil {
+			body["auto_provision"] = *args.AutoProvision
+		}
+		raw, err := client.put("/api/v1/admin/azure-tenants/"+url.QueryEscape(args.ID), body)
+		if err != nil {
+			return errorResult("updating azure tenant: %v", err)
+		}
+		var tenant map[string]any
+		if err := json.Unmarshal(raw, &tenant); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
+		return textResult(
+			section("Azure Tenant Updated"),
+			kvf("ID", getString(tenant, "id")),
+			kvf("Label", getString(tenant, "label")),
+		)
 	})
 }
 

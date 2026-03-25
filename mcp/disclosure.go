@@ -19,6 +19,8 @@ func registerDisclosureTools(s *mcp.Server, client *httpClient, confirms *Confir
 	registerDisclosureCheckAccess(s, client)
 	registerDisclosureGrantLogs(s, client)
 	registerDisclosureGrantReport(s, client)
+	registerDisclosureGrantSummary(s, client)
+	registerDisclosureGrantEvents(s, client)
 }
 
 type createDisclosureReqArgs struct {
@@ -277,5 +279,45 @@ func registerDisclosureGrantReport(s *mcp.Server, client *httpClient) {
 			return errorResult("getting report: %v", err)
 		}
 		return textResult(section("Disclosure Report ("+args.ReportType+")"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type disclosureGrantSummaryArgs struct {
+	GrantID string `json:"grant_id" jsonschema:"disclosure grant ID (UUID, required)"`
+}
+
+func registerDisclosureGrantSummary(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "disclosure_grant_summary",
+		Description: "Get a summary of a disclosure grant including scope and usage.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args disclosureGrantSummaryArgs) (*mcp.CallToolResult, any, error) {
+		if args.GrantID == "" {
+			return errorResult("grant_id is required")
+		}
+		raw, err := client.get("/api/v1/admin/disclosure/grants/" + url.QueryEscape(args.GrantID) + "/summary")
+		if err != nil {
+			return errorResult("getting grant summary: %v", err)
+		}
+		return textResult(section("Disclosure Grant Summary"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type disclosureGrantEventsArgs struct {
+	GrantID string `json:"grant_id" jsonschema:"disclosure grant ID (UUID, required)"`
+}
+
+func registerDisclosureGrantEvents(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "disclosure_grant_events",
+		Description: "Get events for a disclosure grant (approvals, revocations, access).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args disclosureGrantEventsArgs) (*mcp.CallToolResult, any, error) {
+		if args.GrantID == "" {
+			return errorResult("grant_id is required")
+		}
+		raw, err := client.get("/api/v1/admin/disclosure/grants/" + url.QueryEscape(args.GrantID) + "/events")
+		if err != nil {
+			return errorResult("getting grant events: %v", err)
+		}
+		return textResult(section("Disclosure Grant Events"), prettyJSON(json.RawMessage(raw)))
 	})
 }

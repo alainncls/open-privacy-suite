@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -16,6 +17,8 @@ func registerGroupTools(s *mcp.Server, client *httpClient, confirms *Confirmatio
 	registerDeleteGroup(s, client, confirms)
 	registerGetGroupAccess(s, client)
 	registerSetGroupAccess(s, client)
+	registerBatchDeleteGroupsPreview(s, client)
+	registerBatchDeleteGroups(s, client, confirms)
 }
 
 type listGroupsArgs struct {
@@ -328,5 +331,77 @@ func registerSetGroupAccess(s *mcp.Server, client *httpClient) {
 			kvf("Allowed Methods", fmt.Sprintf("%v", getSlice(access, "allowed_methods"))),
 			kvf("Rate Limit RPS", access["rate_limit_rps"]),
 		)
+	})
+}
+
+type batchDeleteGroupsPreviewArgs struct {
+	OrgID    string   `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	GroupIDs []string `json:"group_ids" jsonschema:"list of group IDs to delete (required)"`
+}
+
+func registerBatchDeleteGroupsPreview(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "batch_delete_groups_preview",
+		Description: "Preview impact of batch deleting groups (affected users, grants, etc.).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args batchDeleteGroupsPreviewArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || len(args.GroupIDs) == 0 {
+			return errorResult("org_id and group_ids are required")
+		}
+		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/batch-delete-preview", url.QueryEscape(args.OrgID)), map[string]any{
+			"group_ids": args.GroupIDs,
+		})
+		if err != nil {
+			return errorResult("previewing batch delete: %v", err)
+		}
+		return textResult(section("Batch Delete Preview"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type batchDeleteGroupsArgs struct {
+	OrgID        string   `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	GroupIDs     []string `json:"group_ids" jsonschema:"list of group IDs to delete (required)"`
+	ConfirmToken string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from dry-run"`
+}
+
+func registerBatchDeleteGroups(s *mcp.Server, client *httpClient, confirms *ConfirmationEngine) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "batch_delete_groups",
+		Description: "Delete multiple groups at once. Requires two-step confirmation.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args batchDeleteGroupsArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || len(args.GroupIDs) == 0 {
+			return errorResult("org_id and group_ids are required")
+		}
+		if args.ConfirmToken == "" {
+			token := confirms.Request("batch_delete_groups", map[string]any{
+				"org_id":    args.OrgID,
+				"group_ids": args.GroupIDs,
+			})
+			return textResult(
+				section("Confirm Batch Delete Groups"),
+				kvf("Org ID", args.OrgID),
+				kvf("Groups", fmt.Sprintf("%d groups", len(args.GroupIDs))),
+				"",
+				"This will permanently delete the listed groups and remove all memberships.",
+				"",
+				kvf("Confirmation Token", token),
+				"Call batch_delete_groups again with this confirm_token to execute.",
+			)
+		}
+		params, err := confirms.Validate(args.ConfirmToken, "batch_delete_groups")
+		if err != nil {
+			return errorResult("confirmation failed: %v", err)
+		}
+		gids, _ := params["group_ids"].([]any)
+		gidStrings := make([]string, len(gids))
+		for i, g := range gids {
+			gidStrings[i], _ = g.(string)
+		}
+		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/batch-delete", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
+			"group_ids": gidStrings,
+		})
+		if err != nil {
+			return errorResult("batch deleting groups: %v", err)
+		}
+		return textResult(section("Groups Deleted"), prettyJSON(json.RawMessage(raw)))
 	})
 }

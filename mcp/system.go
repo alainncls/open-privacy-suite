@@ -11,6 +11,8 @@ import (
 func registerSystemTools(s *mcp.Server, client *httpClient) {
 	registerHealth(s, client)
 	registerStatus(s, client)
+	registerTestRequest(s, client)
+	registerEthAddressCollisions(s, client)
 }
 
 func registerHealth(s *mcp.Server, client *httpClient) {
@@ -69,5 +71,47 @@ func registerStatus(s *mcp.Server, client *httpClient) {
 		}
 
 		return textResult(lines)
+	})
+}
+
+type testRequestArgs struct {
+	Method         string `json:"method" jsonschema:"JSON-RPC method to test (e.g. eth_call, required)"`
+	Params         any    `json:"params,omitempty" jsonschema:"JSON-RPC params (array or object)"`
+	UserExternalID string `json:"user_external_id,omitempty" jsonschema:"user DID to test as"`
+}
+
+func registerTestRequest(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "test_request",
+		Description: "Send a test JSON-RPC request through the proxy pipeline to verify RBAC, compliance, and filtering.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args testRequestArgs) (*mcp.CallToolResult, any, error) {
+		if args.Method == "" {
+			return errorResult("method is required")
+		}
+		body := map[string]any{"method": args.Method}
+		if args.Params != nil {
+			body["params"] = args.Params
+		}
+		if args.UserExternalID != "" {
+			body["user_external_id"] = args.UserExternalID
+		}
+		raw, err := client.post("/api/v1/admin/test-request", body)
+		if err != nil {
+			return errorResult("test request failed: %v", err)
+		}
+		return textResult(section("Test Request Result"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+func registerEthAddressCollisions(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "eth_address_collisions",
+		Description: "Check for ETH address collisions across users.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		raw, err := client.get("/api/v1/admin/eth-addresses/collisions")
+		if err != nil {
+			return errorResult("checking address collisions: %v", err)
+		}
+		return textResult(section("ETH Address Collisions"), prettyJSON(json.RawMessage(raw)))
 	})
 }

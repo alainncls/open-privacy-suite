@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -13,12 +14,19 @@ func registerContractTools(s *mcp.Server, client *httpClient, confirms *Confirma
 	registerGetContract(s, client)
 	registerCreateContract(s, client)
 	registerUpdateContract(s, client)
+	registerUpdateContractABI(s, client)
 	registerDeleteContract(s, client, confirms)
+	registerCheckContractsOnChain(s, client)
+	registerDeleteStaleContracts(s, client, confirms)
 	registerListGrants(s, client)
 	registerCreateGrant(s, client)
+	registerUpdateGrant(s, client)
 	registerDeleteGrant(s, client, confirms)
+	registerBatchMoveContracts(s, client, confirms)
 	registerLookupContract(s, client)
 	registerGrantSummary(s, client)
+	registerGetCreate3Config(s, client)
+	registerSetCreate3Config(s, client)
 }
 
 type listContractsArgs struct {
@@ -344,6 +352,223 @@ func registerDeleteGrant(s *mcp.Server, client *httpClient, confirms *Confirmati
 			return errorResult("revoking grant: %v", err)
 		}
 		return textResult(section("Grant Revoked"))
+	})
+}
+
+type updateContractABIArgs struct {
+	OrgID   string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	Address string `json:"address" jsonschema:"contract address (0x-prefixed, required)"`
+	ABI     string `json:"abi" jsonschema:"JSON ABI string (required)"`
+}
+
+func registerUpdateContractABI(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "update_contract_abi",
+		Description: "Update a contract's ABI.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args updateContractABIArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || args.Address == "" || args.ABI == "" {
+			return errorResult("org_id, address, and abi are required")
+		}
+		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/abi",
+			url.QueryEscape(args.OrgID), url.QueryEscape(args.Address)), map[string]any{
+			"abi": args.ABI,
+		})
+		if err != nil {
+			return errorResult("updating contract ABI: %v", err)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
+		return textResult(section("Contract ABI Updated"), kvf("Address", args.Address))
+	})
+}
+
+func registerCheckContractsOnChain(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "check_contracts_on_chain",
+		Description: "Check which registered contracts still exist on-chain.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args orgIDArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" {
+			return errorResult("org_id is required")
+		}
+		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/sync-check", url.QueryEscape(args.OrgID)), nil)
+		if err != nil {
+			return errorResult("checking contracts on chain: %v", err)
+		}
+		return textResult(section("On-Chain Contract Check"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type deleteStaleContractsArgs struct {
+	OrgID        string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	ConfirmToken string `json:"confirm_token,omitempty" jsonschema:"confirmation token from dry-run"`
+}
+
+func registerDeleteStaleContracts(s *mcp.Server, client *httpClient, confirms *ConfirmationEngine) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "delete_stale_contracts",
+		Description: "Delete contracts that no longer exist on-chain. Requires two-step confirmation.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args deleteStaleContractsArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" {
+			return errorResult("org_id is required")
+		}
+		if args.ConfirmToken == "" {
+			token := confirms.Request("delete_stale_contracts", map[string]any{"org_id": args.OrgID})
+			return textResult(
+				section("Confirm Delete Stale Contracts"),
+				kvf("Org ID", args.OrgID),
+				"",
+				"This will delete all contracts that no longer exist on-chain.",
+				"",
+				kvf("Confirmation Token", token),
+				"Call delete_stale_contracts again with this confirm_token to execute.",
+			)
+		}
+		params, err := confirms.Validate(args.ConfirmToken, "delete_stale_contracts")
+		if err != nil {
+			return errorResult("confirmation failed: %v", err)
+		}
+		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/sync-delete", url.QueryEscape(confirmParam(params, "org_id"))), nil)
+		if err != nil {
+			return errorResult("deleting stale contracts: %v", err)
+		}
+		return textResult(section("Stale Contracts Deleted"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type updateGrantArgs struct {
+	OrgID     string   `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	Address   string   `json:"address" jsonschema:"contract address (0x-prefixed, required)"`
+	GroupID   string   `json:"group_id" jsonschema:"group ID (UUID, required)"`
+	Claims    []string `json:"claims" jsonschema:"permission claims (required)"`
+	Functions []string `json:"functions,omitempty" jsonschema:"allowed function selectors"`
+}
+
+func registerUpdateGrant(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "update_grant",
+		Description: "Update a contract grant's claims and optional function restrictions.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args updateGrantArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || args.Address == "" || args.GroupID == "" || len(args.Claims) == 0 {
+			return errorResult("org_id, address, group_id, and claims are required")
+		}
+		body := map[string]any{"claims": args.Claims}
+		if len(args.Functions) > 0 {
+			body["functions"] = args.Functions
+		}
+		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/%s/grants/%s",
+			url.QueryEscape(args.OrgID), url.QueryEscape(args.Address), url.QueryEscape(args.GroupID)), body)
+		if err != nil {
+			return errorResult("updating grant: %v", err)
+		}
+		var grant map[string]any
+		if err := json.Unmarshal(raw, &grant); err != nil {
+			return errorResult("parsing response: %v", err)
+		}
+		return textResult(
+			section("Grant Updated"),
+			kvf("Group ID", args.GroupID),
+			kvf("Contract", args.Address),
+			kvf("Claims", fmt.Sprintf("%v", args.Claims)),
+		)
+	})
+}
+
+type batchMoveContractsArgs struct {
+	OrgID        string   `json:"org_id" jsonschema:"source organization ID (UUID, required)"`
+	Addresses    []string `json:"addresses" jsonschema:"contract addresses to move (required)"`
+	TargetOrgID  string   `json:"target_org_id" jsonschema:"destination organization ID (UUID, required)"`
+	ConfirmToken string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from dry-run"`
+}
+
+func registerBatchMoveContracts(s *mcp.Server, client *httpClient, confirms *ConfirmationEngine) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "batch_move_contracts",
+		Description: "Move contracts from one organization to another. Requires two-step confirmation.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args batchMoveContractsArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || len(args.Addresses) == 0 || args.TargetOrgID == "" {
+			return errorResult("org_id, addresses, and target_org_id are required")
+		}
+		if args.ConfirmToken == "" {
+			token := confirms.Request("batch_move_contracts", map[string]any{
+				"org_id":        args.OrgID,
+				"addresses":     args.Addresses,
+				"target_org_id": args.TargetOrgID,
+			})
+			return textResult(
+				section("Confirm Batch Move Contracts"),
+				kvf("Source Org", args.OrgID),
+				kvf("Target Org", args.TargetOrgID),
+				kvf("Contracts", fmt.Sprintf("%d addresses", len(args.Addresses))),
+				"",
+				kvf("Confirmation Token", token),
+				"Call batch_move_contracts again with this confirm_token to execute.",
+			)
+		}
+		params, err := confirms.Validate(args.ConfirmToken, "batch_move_contracts")
+		if err != nil {
+			return errorResult("confirmation failed: %v", err)
+		}
+		addrs, _ := params["addresses"].([]any)
+		addrStrings := make([]string, len(addrs))
+		for i, a := range addrs {
+			addrStrings[i], _ = a.(string)
+		}
+		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/batch-move", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
+			"addresses":     addrStrings,
+			"target_org_id": confirmParam(params, "target_org_id"),
+		})
+		if err != nil {
+			return errorResult("moving contracts: %v", err)
+		}
+		return textResult(section("Contracts Moved"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type getCreate3ConfigArgs struct {
+	OrgID string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+}
+
+func registerGetCreate3Config(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_create3_config",
+		Description: "Get CREATE3 factory configuration for an organization.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args getCreate3ConfigArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" {
+			return errorResult("org_id is required")
+		}
+		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/config/create3", url.QueryEscape(args.OrgID)))
+		if err != nil {
+			return errorResult("getting CREATE3 config: %v", err)
+		}
+		return textResult(section("CREATE3 Config"), prettyJSON(json.RawMessage(raw)))
+	})
+}
+
+type setCreate3ConfigArgs struct {
+	OrgID          string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
+	FactoryAddress string `json:"factory_address" jsonschema:"CREATE3 factory contract address (required)"`
+	Enabled        *bool  `json:"enabled,omitempty" jsonschema:"enable/disable CREATE3 detection"`
+}
+
+func registerSetCreate3Config(s *mcp.Server, client *httpClient) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_create3_config",
+		Description: "Set CREATE3 factory configuration for an organization.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args setCreate3ConfigArgs) (*mcp.CallToolResult, any, error) {
+		if args.OrgID == "" || args.FactoryAddress == "" {
+			return errorResult("org_id and factory_address are required")
+		}
+		body := map[string]any{"factory_address": args.FactoryAddress}
+		if args.Enabled != nil {
+			body["enabled"] = *args.Enabled
+		}
+		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/config/create3", url.QueryEscape(args.OrgID)), body)
+		if err != nil {
+			return errorResult("setting CREATE3 config: %v", err)
+		}
+		return textResult(section("CREATE3 Config Updated"), prettyJSON(json.RawMessage(raw)))
 	})
 }
 
