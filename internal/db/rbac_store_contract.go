@@ -438,8 +438,8 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 // Contract Grant operations
 
 func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
-	          VALUES ($1, $2, $3, $4)
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions, event_rules)
+	          VALUES ($1, $2, $3, $4, $5)
 	          RETURNING created_at, updated_at`
 
 	var functions any
@@ -451,27 +451,36 @@ func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
+	var eventRules any
+	if grant.EventRules != nil {
+		b, err := json.Marshal(grant.EventRules)
+		if err != nil {
+			return fmt.Errorf("failed to marshal event_rules: %w", err)
+		}
+		eventRules = b
+	}
+
 	return d.conn.QueryRowContext(ctx, query,
-		grant.ID, grant.ContractID, grant.GroupID, functions,
+		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
 	).Scan(&grant.CreatedAt, &grant.UpdatedAt)
 }
 
 func (d *DB) GetContractGrant(ctx context.Context, id string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE id = $1`
 
 	return scanContractGrant(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
 
 	return scanContractGrant(d.conn.QueryRowContext(ctx, query, contractID, groupID))
 }
 
 func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `UPDATE contract_grants SET functions = $2, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE contract_grants SET functions = $2, event_rules = $3, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	var functions any
@@ -483,12 +492,21 @@ func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
-	_, err := d.conn.ExecContext(ctx, query, grant.ID, functions)
+	var eventRules any
+	if grant.EventRules != nil {
+		b, err := json.Marshal(grant.EventRules)
+		if err != nil {
+			return fmt.Errorf("failed to marshal event_rules: %w", err)
+		}
+		eventRules = b
+	}
+
+	_, err := d.conn.ExecContext(ctx, query, grant.ID, functions, eventRules)
 	return err
 }
 
 func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, contractID)
@@ -501,7 +519,7 @@ func (d *DB) ListContractGrantsByContract(ctx context.Context, contractID string
 }
 
 func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE group_id = $1 ORDER BY created_at`
 
 	rows, err := d.conn.QueryContext(ctx, query, groupID)
@@ -514,7 +532,7 @@ func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*
 }
 
 func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
-	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.functions, cg.created_at, cg.updated_at,
+	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.functions, cg.event_rules, cg.created_at, cg.updated_at,
 	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at
 	          FROM contract_grants cg
 	          JOIN groups g ON cg.group_id = g.id
@@ -533,12 +551,12 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 			Group: &rbac.Group{},
 		}
 
-		var functionsJSON []byte
+		var functionsJSON, eventRulesJSON []byte
 		var parentID, description sql.NullString
 
 		if err := rows.Scan(
 			&result.Grant.ID, &result.Grant.ContractID, &result.Grant.GroupID,
-			&functionsJSON, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
+			&functionsJSON, &eventRulesJSON, &result.Grant.CreatedAt, &result.Grant.UpdatedAt,
 			&result.Group.ID, &result.Group.OrgID, &parentID, &result.Group.Slug,
 			&result.Group.Name, &description, &result.Group.Depth, &result.Group.Path, &result.Group.IsOrgAdmin,
 			&result.Group.CreatedAt, &result.Group.UpdatedAt,
@@ -549,6 +567,11 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 		if len(functionsJSON) > 0 {
 			if err := json.Unmarshal(functionsJSON, &result.Grant.Functions); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+			}
+		}
+		if len(eventRulesJSON) > 0 {
+			if err := json.Unmarshal(eventRulesJSON, &result.Grant.EventRules); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
 			}
 		}
 		if parentID.Valid {
@@ -575,11 +598,11 @@ func (d *DB) DeleteContractGrant(ctx context.Context, id string) error {
 
 func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var functionsJSON []byte
+	var functionsJSON, eventRulesJSON []byte
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
+		&functionsJSON, &eventRulesJSON, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -593,6 +616,11 @@ func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
 		}
 	}
+	if len(eventRulesJSON) > 0 {
+		if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
+		}
+	}
 
 	return grant, nil
 }
@@ -601,11 +629,11 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 	var grants []*rbac.ContractGrant
 	for rows.Next() {
 		grant := &rbac.ContractGrant{}
-		var functionsJSON []byte
+		var functionsJSON, eventRulesJSON []byte
 
 		if err := rows.Scan(
 			&grant.ID, &grant.ContractID, &grant.GroupID,
-			&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
+			&functionsJSON, &eventRulesJSON, &grant.CreatedAt, &grant.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
 		}
@@ -613,6 +641,11 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 		if len(functionsJSON) > 0 {
 			if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+			}
+		}
+		if len(eventRulesJSON) > 0 {
+			if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
 			}
 		}
 

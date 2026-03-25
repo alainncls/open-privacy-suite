@@ -119,8 +119,8 @@ func (t *Tx) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 // Contract Grant operations on transaction
 
 func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
-	          VALUES ($1, $2, $3, $4)
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions, event_rules)
+	          VALUES ($1, $2, $3, $4, $5)
 	          RETURNING created_at, updated_at`
 
 	var functions any
@@ -132,20 +132,29 @@ func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
+	var eventRules any
+	if grant.EventRules != nil {
+		b, err := json.Marshal(grant.EventRules)
+		if err != nil {
+			return fmt.Errorf("failed to marshal event_rules: %w", err)
+		}
+		eventRules = b
+	}
+
 	return t.tx.QueryRowContext(ctx, query,
-		grant.ID, grant.ContractID, grant.GroupID, functions,
+		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
 	).Scan(&grant.CreatedAt, &grant.UpdatedAt)
 }
 
 func (t *Tx) GetContractGrantByContractAndGroup(ctx context.Context, contractID, groupID string) (*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 AND group_id = $2`
 
 	return scanContractGrantRow(t.tx.QueryRowContext(ctx, query, contractID, groupID))
 }
 
 func (t *Tx) ListContractGrantsByContract(ctx context.Context, contractID string) ([]*rbac.ContractGrant, error) {
-	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	query := `SELECT id, contract_id, group_id, functions, event_rules, created_at, updated_at
 	          FROM contract_grants WHERE contract_id = $1 ORDER BY created_at`
 
 	rows, err := t.tx.QueryContext(ctx, query, contractID)
@@ -324,8 +333,8 @@ func (t *Tx) InvalidateCacheForOrg(ctx context.Context, orgID string) error {
 
 // CreateContractGrantIfNotExists creates a contract grant, ignoring duplicates.
 func (t *Tx) CreateContractGrantIfNotExists(ctx context.Context, grant *rbac.ContractGrant) error {
-	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions)
-	          VALUES ($1, $2, $3, $4)
+	query := `INSERT INTO contract_grants (id, contract_id, group_id, functions, event_rules)
+	          VALUES ($1, $2, $3, $4, $5)
 	          ON CONFLICT (contract_id, group_id) DO NOTHING`
 
 	var functions any
@@ -337,8 +346,17 @@ func (t *Tx) CreateContractGrantIfNotExists(ctx context.Context, grant *rbac.Con
 		functions = b
 	}
 
+	var eventRules any
+	if grant.EventRules != nil {
+		b, err := json.Marshal(grant.EventRules)
+		if err != nil {
+			return fmt.Errorf("failed to marshal event_rules: %w", err)
+		}
+		eventRules = b
+	}
+
 	_, err := t.tx.ExecContext(ctx, query,
-		grant.ID, grant.ContractID, grant.GroupID, functions,
+		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
 	)
 	return err
 }
@@ -482,11 +500,11 @@ func scanContractRow(row *sql.Row) (*rbac.Contract, error) {
 // Helper to scan a contract grant row (shared between DB and Tx)
 func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 	grant := &rbac.ContractGrant{}
-	var functionsJSON []byte
+	var functionsJSON, eventRulesJSON []byte
 
 	err := row.Scan(
 		&grant.ID, &grant.ContractID, &grant.GroupID,
-		&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
+		&functionsJSON, &eventRulesJSON, &grant.CreatedAt, &grant.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -498,6 +516,11 @@ func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 	if len(functionsJSON) > 0 {
 		if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+		}
+	}
+	if len(eventRulesJSON) > 0 {
+		if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
 		}
 	}
 

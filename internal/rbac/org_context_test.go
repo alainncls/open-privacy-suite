@@ -81,6 +81,7 @@ func (m *MockOrgContextStore) CreateContract(ctx context.Context, contract *Cont
 func (m *MockOrgContextStore) GetContract(ctx context.Context, id string) (*Contract, error) { return nil, nil }
 func (m *MockOrgContextStore) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error) { return nil, nil }
 func (m *MockOrgContextStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) { return nil, nil }
+func (m *MockOrgContextStore) GetContractByAddressGlobal(ctx context.Context, address string) (*Contract, error) { return nil, nil }
 func (m *MockOrgContextStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
 func (m *MockOrgContextStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) { return nil, 0, nil }

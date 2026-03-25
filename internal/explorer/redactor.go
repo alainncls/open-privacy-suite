@@ -19,10 +19,25 @@ type ContractStore interface {
 	GetContract(ctx context.Context, address string) (*Contract, error)
 }
 
+// EventRuleChecker resolves event-level access rules for a viewer on a
+// given contract address. Returns the list of allowed event rules (by topic0)
+// or nil if no event rules are configured (all events allowed).
+type EventRuleChecker interface {
+	// GetEventRulesForContract returns the viewer's event rules for a contract address.
+	// Returns nil if no event rules are configured (all events visible, backward compat).
+	GetEventRulesForContract(ctx context.Context, viewerDID string, contractAddress string) []EventRuleInfo
+}
+
+// EventRuleInfo is a lightweight event rule representation used by the redactor.
+type EventRuleInfo struct {
+	Topic0 string // event signature hash (0x-prefixed, lowercase)
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
-	store ContractStore
-	db    Database // The main privacy proxy DB for RBAC checks
+	store            ContractStore
+	db               Database // The main privacy proxy DB for RBAC checks
+	eventRuleChecker EventRuleChecker
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -37,6 +52,11 @@ func NewRedactionEngine(store *Store, db Database) *RedactionEngine {
 		store: store,
 		db:    db,
 	}
+}
+
+// SetEventRuleChecker sets an optional event rule checker for log-level filtering.
+func (r *RedactionEngine) SetEventRuleChecker(checker EventRuleChecker) {
+	r.eventRuleChecker = checker
 }
 
 // extractUniqueAddresses gets all unique from/to addresses from a list of transactions
@@ -716,6 +736,17 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		}
 	}
 
+	// Phase 3b: resolve event rules for each unique emitting contract (if checker is set).
+	eventRulesMap := make(map[string][]EventRuleInfo) // address -> rules (nil = all allowed)
+	eventRulesResolved := make(map[string]bool)       // tracks whether we've resolved for an address
+	if r.eventRuleChecker != nil && viewerDID != "" {
+		for addr := range addrMap {
+			rules := r.eventRuleChecker.GetEventRulesForContract(ctx, viewerDID, addr)
+			eventRulesMap[addr] = rules
+			eventRulesResolved[addr] = true
+		}
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
@@ -729,6 +760,31 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 
 		if level == VisibilityHidden {
 			continue
+		}
+
+		// Event rule check: if the contract has event rules configured and
+		// this event's topic0 is not in the allowlist, hide the log.
+		contractAddr := strings.ToLower(l.Address)
+		if eventRulesResolved[contractAddr] {
+			rules := eventRulesMap[contractAddr]
+			if rules != nil && l.Topic0 != nil {
+				// Allowlist mode: only listed topic0s pass.
+				topic0Lower := strings.ToLower(*l.Topic0)
+				allowed := false
+				for _, rule := range rules {
+					if rule.Topic0 == topic0Lower {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					continue
+				}
+			}
+			// If rules != nil but topic0 is nil (anonymous event), block it.
+			if rules != nil && l.Topic0 == nil {
+				continue
+			}
 		}
 
 		redacted := l
