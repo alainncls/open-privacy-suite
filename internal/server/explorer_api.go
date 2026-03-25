@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,12 +81,35 @@ type BatchCheckAddressesResponse struct {
 	Results map[string]AddressVisibility `json:"results"`
 }
 
-// ResolveAddressResponse is returned when resolving an address_id
+// ResolveAddressResponse is returned when resolving an address_id.
+// SECURITY: RealAddress is only populated for "full" disclosure level.
 type ResolveAddressResponse struct {
-	RealAddress     string `json:"real_address"`
-	DisclosureLevel string `json:"disclosure_level"`
-	GrantID         string `json:"grant_id"`
-	Pseudonym       string `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	RealAddress     *string `json:"real_address,omitempty"`
+	DisclosureLevel string  `json:"disclosure_level"`
+	GrantID         string  `json:"grant_id"`
+	Pseudonym       string  `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+}
+
+// GrantTransactionsResponse is the response for GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
+type GrantTransactionsResponse struct {
+	Transactions    []GrantTransaction `json:"transactions"`
+	DisclosureLevel string             `json:"disclosure_level"`
+	AddressLabels   map[string]string  `json:"address_labels"`
+	HasMore         bool               `json:"has_more"`
+}
+
+// GrantTransaction represents a transaction in the context of a disclosure grant.
+// For pseudonymous grants, addresses are replaced with pseudonyms and financial data is hidden.
+type GrantTransaction struct {
+	TxHash         *string `json:"tx_hash,omitempty"` // only for full disclosure
+	BlockNumber    uint64  `json:"block_number"`
+	BlockTimestamp uint64  `json:"block_timestamp,omitempty"`
+	Direction      string  `json:"direction"` // "in", "out", "self"
+	From           string  `json:"from"`
+	To             string  `json:"to,omitempty"`
+	Value          string  `json:"value"`
+	GasUsed        uint64  `json:"gas_used"`
+	Status         int     `json:"status"`
 }
 
 // registerExplorerRoutes registers the explorer API endpoints
@@ -101,6 +126,8 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		explorer.POST("/check-addresses", s.batchCheckAddresses)
 		// Resolve address_id to real address (for explorer backend internal use)
 		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
+		// Grant-scoped transactions for a disclosed address
+		explorer.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
 
 		// Data Retrieval Endpoints
 		explorer.GET("/chain-id", s.getExplorerChainID)
@@ -453,9 +480,15 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	response := ResolveAddressResponse{
-		RealAddress:     realAddress,
 		DisclosureLevel: disclosureLevel,
 		GrantID:         grantID,
+	}
+
+	// SECURITY: Only include real address for full disclosure.
+	// The explorer backend is an untrusted client and must not see real addresses
+	// for pseudonymous or redacted grants.
+	if disclosureLevel == "full" {
+		response.RealAddress = &realAddress
 	}
 
 	// Include pseudonym for pseudonymous disclosures
@@ -464,6 +497,211 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// generateExternalPseudonym creates a deterministic pseudonym for an external address
+// in the context of a specific grant. The pseudonym is derived from the address and grant ID
+// so it is consistent within a grant but cannot be correlated across grants.
+func generateExternalPseudonym(address, grantID string) string {
+	h := sha256.New()
+	h.Write([]byte(strings.ToLower(address)))
+	h.Write([]byte(":"))
+	h.Write([]byte(grantID))
+	sum := h.Sum(nil)
+	return fmt.Sprintf("External-%X", sum[:2])
+}
+
+// getGrantTransactions returns transactions for a disclosed address, pseudonymized
+// according to the grant's disclosure level.
+// GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
+// SECURITY: This endpoint never exposes real addresses for non-full grants.
+// The explorer backend receives pre-pseudonymized data and cannot reverse it.
+func (s *Server) getGrantTransactions(c *gin.Context) {
+	if s.explorerStore == nil {
+		respondInternalError(c, "explorer store not configured")
+		return
+	}
+
+	grantID := c.Param("grant_id")
+	addressID := c.Param("address_id")
+
+	if grantID == "" || addressID == "" {
+		respondBadRequest(c, "grant_id and address_id are required")
+		return
+	}
+
+	// Look up the grant with its request
+	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
+	if err != nil || grantWithRequest == nil {
+		respondNotFound(c, "grant not found")
+		return
+	}
+
+	grant := grantWithRequest.Grant
+
+	// Check grant is still valid
+	if grant.RevokedAt != nil {
+		respondForbidden(c, "grant has been revoked")
+		return
+	}
+	if grant.ExpiresAt.Before(time.Now()) {
+		respondForbidden(c, "grant has expired")
+		return
+	}
+
+	// Get disclosure level
+	disclosureLevel := "full"
+	if grant.Scope.DisclosureLevel != "" {
+		disclosureLevel = string(grant.Scope.DisclosureLevel)
+	}
+
+	// For redacted grants, return empty transactions
+	if disclosureLevel == "redacted" {
+		c.JSON(http.StatusOK, GrantTransactionsResponse{
+			Transactions:    []GrantTransaction{},
+			DisclosureLevel: disclosureLevel,
+			AddressLabels:   map[string]string{},
+			HasMore:         false,
+		})
+		return
+	}
+
+	// Get target user and their addresses
+	request := grantWithRequest.Request
+	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
+	if err != nil || targetUser == nil {
+		respondInternalError(c, "failed to get target user")
+		return
+	}
+	targetDID := targetUser.ExternalID
+
+	addresses, err := s.db.GetEthAddressesByDID(c.Request.Context(), targetDID)
+	if err != nil {
+		respondInternalError(c, "failed to get addresses")
+		return
+	}
+
+	// Find the real address by matching address_id
+	var realAddress string
+	for _, addr := range addresses {
+		computedID := explorer.GenerateAddressID(addr.EthAddress, grantID)
+		if computedID == addressID {
+			realAddress = addr.EthAddress
+			break
+		}
+	}
+
+	if realAddress == "" {
+		respondNotFound(c, "address not found for this grant")
+		return
+	}
+
+	// Parse pagination params
+	limit := 25
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	var beforeBlock *uint64
+	if beforeStr := c.Query("before"); beforeStr != "" {
+		if parsed, err := strconv.ParseUint(beforeStr, 10, 64); err == nil {
+			beforeBlock = &parsed
+		}
+	}
+
+	// Fetch one extra to detect has_more
+	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), realAddress, limit+1, beforeBlock)
+	if err != nil {
+		respondInternalError(c, "failed to get transactions")
+		return
+	}
+
+	hasMore := len(txs) > limit
+	if hasMore {
+		txs = txs[:limit]
+	}
+
+	realAddrLower := strings.ToLower(realAddress)
+	labels := make(map[string]string)
+
+	var grantTxs []GrantTransaction
+	for _, tx := range txs {
+		gt := GrantTransaction{
+			BlockNumber:    tx.BlockNumber,
+			BlockTimestamp: tx.BlockTimestamp,
+			GasUsed:        tx.GasUsed,
+			Status:         tx.Status,
+		}
+
+		fromLower := strings.ToLower(tx.From)
+		var toLower string
+		if tx.HasRecipient() {
+			toLower = strings.ToLower(*tx.To)
+		}
+
+		// Determine direction
+		fromIsDisclosed := fromLower == realAddrLower
+		toIsDisclosed := toLower == realAddrLower
+		if fromIsDisclosed && toIsDisclosed {
+			gt.Direction = "self"
+		} else if fromIsDisclosed {
+			gt.Direction = "out"
+		} else {
+			gt.Direction = "in"
+		}
+
+		switch disclosureLevel {
+		case "full":
+			hash := tx.Hash
+			gt.TxHash = &hash
+			gt.From = tx.From
+			if tx.HasRecipient() {
+				gt.To = *tx.To
+			}
+			gt.Value = string(tx.Value)
+
+		case "pseudonymous":
+			disclosedPseudonym := explorer.GeneratePseudonym(realAddress)
+			labels[disclosedPseudonym] = "disclosed"
+
+			if fromIsDisclosed {
+				gt.From = disclosedPseudonym
+			} else {
+				ext := generateExternalPseudonym(tx.From, grantID)
+				gt.From = ext
+				labels[ext] = "external"
+			}
+
+			if tx.HasRecipient() {
+				if toIsDisclosed {
+					gt.To = disclosedPseudonym
+				} else {
+					ext := generateExternalPseudonym(*tx.To, grantID)
+					gt.To = ext
+					labels[ext] = "external"
+				}
+			}
+
+			gt.Value = "hidden"
+			// tx hash intentionally omitted for pseudonymous
+		}
+
+		grantTxs = append(grantTxs, gt)
+	}
+
+	// Ensure non-nil slices in JSON
+	if grantTxs == nil {
+		grantTxs = []GrantTransaction{}
+	}
+
+	c.JSON(http.StatusOK, GrantTransactionsResponse{
+		Transactions:    grantTxs,
+		DisclosureLevel: disclosureLevel,
+		AddressLabels:   labels,
+		HasMore:         hasMore,
+	})
 }
 
 // getViewerIdentity extracts the viewer's DID and wallet from a gin context.
