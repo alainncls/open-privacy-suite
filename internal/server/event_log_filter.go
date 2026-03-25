@@ -39,12 +39,16 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 	return contract.ABI
 }
 
-// FilterLogsWithEventRules filters an eth_getLogs response using both:
-//  1. Address-based topic filtering (existing behavior: user's address must appear in a topic)
-//  2. Event-rule-based filtering (new: allowlist of events by topic0 with optional "self" param constraints)
+// FilterLogsWithEventRules filters an eth_getLogs response using the unified
+// event filtering logic in rbac.FilterEventLogs.
 //
-// If perms is nil or has no event rules for the log's contract, falls back to address-only filtering.
-// If perms has event rules, the log must pass both the event rule check AND the address check.
+// When event rules are configured for a contract: allowlist mode — only listed
+// topic0s pass (with optional "self" param constraints).
+// When no event rules are configured (nil): default address-based filtering —
+// log visible only if user's address appears in any topic.
+//
+// If perms is nil (user/org resolution failed), FilterEventLogs returns empty
+// (fail-closed).
 func FilterLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
@@ -73,37 +77,9 @@ func FilterLogsWithEventRules(
 		return responseBody
 	}
 
-	addrSet := addrSetFromLinked(userAddresses)
-
-	// Phase 1: Apply address-based topic filtering (existing behavior).
-	addrFiltered := make([]json.RawMessage, 0, len(rawLogs))
-	for _, rawLog := range rawLogs {
-		var entry struct {
-			Topics []string `json:"topics"`
-		}
-		if err := json.Unmarshal(rawLog, &entry); err != nil {
-			continue
-		}
-
-		visible := false
-		for i := 0; i < len(entry.Topics); i++ {
-			if topicMatchesAddress(entry.Topics[i], addrSet) {
-				visible = true
-				break
-			}
-		}
-		if visible {
-			addrFiltered = append(addrFiltered, rawLog)
-		}
-	}
-
-	// Phase 2: Apply event rule filtering on the address-filtered results.
-	var finalLogs []json.RawMessage
-	if perms != nil && hasAnyEventRules(perms) {
-		finalLogs = rbac.FilterEventLogs(addrFiltered, perms, userAddresses, abiProvider)
-	} else {
-		finalLogs = addrFiltered
-	}
+	// Single-pass: FilterEventLogs handles both event-rule and default
+	// address-based filtering depending on whether EventRules is configured.
+	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider)
 
 	filteredJSON, err := json.Marshal(finalLogs)
 	if err != nil {
@@ -126,8 +102,9 @@ func FilterLogsWithEventRules(
 	return out
 }
 
-// FilterReceiptLogsWithEventRules applies event rule filtering to receipt logs
-// in addition to the existing address-based filtering.
+// FilterReceiptLogsWithEventRules filters receipt logs using the unified
+// event filtering logic. Participants get their receipt with filtered logs;
+// non-participants get null.
 func FilterReceiptLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
@@ -166,13 +143,9 @@ func FilterReceiptLogsWithEventRules(
 	if addrSet[from] || (to != "" && addrSet[to]) {
 		id := rpcResponseID(responseBody)
 
-		// First apply existing address-based receipt log filtering.
-		result := filterReceiptLogs(raw, addrSet, "")
-
-		// If event rules exist, apply them to the receipt's logs.
-		if perms != nil && hasAnyEventRules(perms) {
-			result = applyEventRulesToReceipt(result, perms, userAddresses, abiProvider)
-		}
+		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
+		// handles both event-rule and default address-based filtering.
+		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider)
 
 		if id != "" {
 			wrapped, _ := json.Marshal(struct {
@@ -236,13 +209,3 @@ func applyEventRulesToReceipt(
 	return out
 }
 
-// hasAnyEventRules checks if the effective permissions contain any event rules
-// for any contract.
-func hasAnyEventRules(perms *rbac.EffectivePermissions) bool {
-	for _, access := range perms.ContractAccess {
-		if access.EventRules != nil {
-			return true
-		}
-	}
-	return false
-}

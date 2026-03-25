@@ -67,10 +67,13 @@ func FilterEventLogs(
 			continue
 		}
 
-		// If no event rules configured on this contract access, allow all events
-		// (backward compat).
+		// If no event rules configured on this contract access, apply default
+		// address-based filtering: log visible only if user's address appears
+		// in any topic (backward compat with pre-event-rules behavior).
 		if access.EventRules == nil {
-			filtered = append(filtered, rawLog)
+			if logHasUserAddress(entry, addrSet) {
+				filtered = append(filtered, rawLog)
+			}
 			continue
 		}
 
@@ -87,6 +90,18 @@ func FilterEventLogs(
 	}
 
 	return filtered
+}
+
+// logHasUserAddress checks if any topic in the log entry encodes one of the
+// user's linked addresses. This is the default filtering when no event rules
+// are configured (backward compat).
+func logHasUserAddress(entry logEntry, addrSet map[string]bool) bool {
+	for _, topic := range entry.Topics {
+		if topicMatchesAddr(topic, addrSet) {
+			return true
+		}
+	}
+	return false
 }
 
 // eventAllowed checks if a log with the given topic0 is allowed by any of the

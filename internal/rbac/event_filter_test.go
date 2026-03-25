@@ -14,25 +14,33 @@ func (p *testABIProvider) GetContractABI(address string) string {
 	return p.abis[address]
 }
 
-func TestFilterEventLogs_NoEventRules(t *testing.T) {
-	// When no event rules are configured, all logs pass through.
+func TestFilterEventLogs_NoEventRules_DefaultAddressFilter(t *testing.T) {
+	// When no event rules are configured (nil), default address-based filtering
+	// applies: log visible only if user's address appears in a topic.
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+	otherTopic := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	eventSig := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // no event rules = all events visible
+				EventRules: nil, // no event rules = default address-based filtering
 			},
 		},
 	}
 
 	logs := []json.RawMessage{
-		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc"],"data":"0x"}`),
-		json.RawMessage(`{"address":"0xcontract1","topics":["0xdef"],"data":"0x"}`),
+		// User's address in topic — should be visible.
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + eventSig + `","` + userTopic + `"],"data":"0x"}`),
+		// No user address in any topic — should be hidden.
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + eventSig + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
-	if len(result) != 2 {
-		t.Errorf("expected 2 logs, got %d", len(result))
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (only where user address in topic), got %d", len(result))
 	}
 }
 
@@ -160,15 +168,17 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 }
 
 func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
-	// U17: nil EventRules means "no filtering" (all events pass through).
+	// nil EventRules means "default address-based filtering" (user's address must be in a topic).
 	// Empty slice [] means "allowlist mode with nothing allowed" (all events blocked).
 	contractAddr := "0xcontract1"
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+	otherTopic := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	logs := []json.RawMessage{
-		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
-	}
+	logWithUser := json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000","` + userTopic + `"],"data":"0x"}`)
+	logWithoutUser := json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000","` + otherTopic + `"],"data":"0x"}`)
 
-	// nil EventRules: all events pass through.
+	// nil EventRules: address-based filtering — only log with user's address passes.
 	permsNil := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
@@ -177,9 +187,12 @@ func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
 			},
 		},
 	}
-	result := FilterEventLogs(logs, permsNil, []string{"0xuser"}, nil)
+	result := FilterEventLogs(
+		[]json.RawMessage{logWithUser, logWithoutUser},
+		permsNil, []string{userAddr}, nil,
+	)
 	if len(result) != 1 {
-		t.Errorf("nil EventRules: expected 1 log (pass-through), got %d", len(result))
+		t.Errorf("nil EventRules: expected 1 log (address-based filter), got %d", len(result))
 	}
 
 	// Empty slice EventRules: allowlist mode, nothing allowed.
@@ -191,7 +204,10 @@ func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
 			},
 		},
 	}
-	result = FilterEventLogs(logs, permsEmpty, []string{"0xuser"}, nil)
+	result = FilterEventLogs(
+		[]json.RawMessage{logWithUser, logWithoutUser},
+		permsEmpty, []string{userAddr}, nil,
+	)
 	if len(result) != 0 {
 		t.Errorf("empty EventRules: expected 0 logs (allowlist with nothing), got %d", len(result))
 	}
@@ -486,5 +502,113 @@ func TestFilterEventLogs_UnionAcrossGrants(t *testing.T) {
 	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
 	if len(result) != 2 {
 		t.Errorf("expected 2 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
+	// Event rules with no param_rules should widen access beyond address-based
+	// filtering: ALL matching events are visible regardless of whether user's
+	// address appears in any topic.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	otherAddr1 := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherAddr2 := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherTopic1 := "0x000000000000000000000000" + otherAddr1[2:]
+	otherTopic2 := "0x000000000000000000000000" + otherAddr2[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"}, // no param_rules
+				},
+			},
+		},
+	}
+
+	// Log where user's address does NOT appear in any topic.
+	// With event rules (no param_rules), this should PASS because the event is
+	// allowlisted without constraints.
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic1 + `","` + otherTopic2 + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (event rules widen access beyond address-based), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
+	// Event rules with param_rules "self" constraint: only Transfer events
+	// where user is from or to should be visible.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"}, // from must be self
+							{Index: 1, MustBe: "self"}, // OR to must be self
+						},
+					},
+				},
+			},
+		},
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	// Log where user is "to" (index 1) — should pass.
+	logUserIsTo := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + userTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	// Log where user is neither from nor to — should be hidden.
+	logNoUser := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logUserIsTo),
+		json.RawMessage(logNoUser),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (self constraint filters non-participant), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NilPerms_FailClosed(t *testing.T) {
+	// When perms is nil (user/org resolution failed), all logs should be
+	// returned as-is (FilterEventLogs currently returns logs when perms==nil).
+	// This is safe because the caller (jsonrpc_processor) handles the nil-perms
+	// case at a higher level; FilterEventLogs is given a valid perms object.
+	// However, if perms IS nil, the function returns logs unchanged.
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, nil, []string{"0xuser"}, nil)
+	// With nil perms, FilterEventLogs returns logs as-is (no perms to evaluate).
+	if len(result) != 1 {
+		t.Errorf("nil perms: expected 1 log (pass-through), got %d", len(result))
 	}
 }

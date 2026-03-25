@@ -510,10 +510,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			return FilterTransactionReceipt(responseBody, nil)
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		if perms != nil && hasAnyEventRules(perms) {
-			return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
-		}
-		return FilterTransactionReceipt(responseBody, addrs)
+		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -523,10 +520,7 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		if perms != nil && hasAnyEventRules(perms) {
-			return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
-		}
-		return FilterLogs(responseBody, addrs)
+		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
