@@ -48,6 +48,11 @@ func (e *ConfirmationEngine) Request(toolName string, params map[string]any) str
 	return token
 }
 
+// Validate checks and consumes a confirmation token. Returns the params that
+// were captured when the token was issued — callers MUST use these returned
+// params (via confirmParam) for the actual operation, not the args from the
+// second tool call. This prevents parameter-swap attacks where a token issued
+// for "delete org A" is replayed with args pointing to "org B".
 func (e *ConfirmationEngine) Validate(token, toolName string) (map[string]any, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

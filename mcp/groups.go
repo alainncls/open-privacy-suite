@@ -391,10 +391,19 @@ func registerBatchDeleteGroups(s *mcp.Server, client *httpClient, confirms *Conf
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		gids, _ := params["group_ids"].([]any)
-		gidStrings := make([]string, len(gids))
-		for i, g := range gids {
-			gidStrings[i], _ = g.(string)
+		var gidStrings []string
+		switch gids := params["group_ids"].(type) {
+		case []string:
+			gidStrings = gids
+		case []any:
+			for _, g := range gids {
+				if s, ok := g.(string); ok {
+					gidStrings = append(gidStrings, s)
+				}
+			}
+		}
+		if len(gidStrings) == 0 {
+			return errorResult("confirmation token missing group_ids")
 		}
 		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/groups/batch-delete", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
 			"group_ids": gidStrings,

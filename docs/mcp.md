@@ -560,6 +560,22 @@ All delete/revoke operations use two-step confirmation:
 
 Tokens are single-use and cannot be replayed across different operations.
 
+## Data Privacy
+
+When using this MCP server with a cloud-hosted AI (Claude Code with Anthropic's API), tool responses become part of the conversation context sent to Anthropic's servers. This means admin data — org names, user DIDs, contract addresses, compliance configuration — transits through Anthropic's infrastructure.
+
+**What is NOT sent:** The admin API token (`PRIVACY_ADMIN_TOKEN`) is never included in tool responses or conversation context. It exists only in the MCP server process memory and HTTP headers between the MCP server and the privacy-proxy API.
+
+**What IS sent:** The content of every tool response — the same data you'd see from a `curl` call to the admin API. This includes org structure, user identities (DIDs), group memberships, contract addresses, compliance config, and disclosure metadata.
+
+**This is inherent to how MCP works** — it applies equally to GitHub MCP (sends your code), Slack MCP (sends your messages), and database MCPs (send your query results).
+
+**Mitigations:**
+- Anthropic's API data is not used for model training (see Anthropic's data usage policy)
+- Use a self-hosted LLM backend to keep all data on-premises
+- Register only the tool domains you need (e.g. explorer-only, compliance-only)
+- For maximum sensitivity, use the REST API directly instead of MCP
+
 ## Example Usage
 
 With Claude Code, you can manage the full privacy proxy conversationally:

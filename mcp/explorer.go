@@ -88,7 +88,7 @@ func registerExplorerBlock(s *mcp.Server, client *httpClient) {
 		if args.Number == "" {
 			return errorResult("number is required")
 		}
-		raw, err := client.get("/api/v1/explorer/blocks/" + args.Number)
+		raw, err := client.get("/api/v1/explorer/blocks/" + url.PathEscape(args.Number))
 		if err != nil {
 			return errorResult("getting block: %v", err)
 		}
@@ -147,7 +147,7 @@ func registerExplorerTransaction(s *mcp.Server, client *httpClient) {
 		if args.Hash == "" {
 			return errorResult("hash is required")
 		}
-		raw, err := client.get("/api/v1/explorer/transactions/" + args.Hash)
+		raw, err := client.get("/api/v1/explorer/transactions/" + url.PathEscape(args.Hash))
 		if err != nil {
 			return errorResult("getting transaction: %v", err)
 		}
@@ -167,7 +167,7 @@ func registerExplorerAddress(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/addresses/" + args.Address + "/stats")
+		raw, err := client.get("/api/v1/explorer/addresses/" + url.PathEscape(args.Address) + "/stats")
 		if err != nil {
 			return errorResult("getting address stats: %v", err)
 		}
@@ -193,7 +193,7 @@ func registerExplorerAddressTxs(s *mcp.Server, client *httpClient) {
 		if limit == 0 {
 			limit = 20
 		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/addresses/%s/transactions?limit=%d&offset=%d", args.Address, limit, args.Offset))
+		raw, err := client.get(fmt.Sprintf("/api/v1/explorer/addresses/%s/transactions?limit=%d&offset=%d", url.PathEscape(args.Address), limit, args.Offset))
 		if err != nil {
 			return errorResult("getting address transactions: %v", err)
 		}
@@ -209,7 +209,7 @@ func registerExplorerAddressBalance(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/addresses/" + args.Address + "/balance")
+		raw, err := client.get("/api/v1/explorer/addresses/" + url.PathEscape(args.Address) + "/balance")
 		if err != nil {
 			return errorResult("getting balance: %v", err)
 		}
@@ -270,7 +270,7 @@ func registerCheckAddressVisibility(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/check-address/" + args.Address)
+		raw, err := client.get("/api/v1/explorer/check-address/" + url.PathEscape(args.Address))
 		if err != nil {
 			return errorResult("checking address visibility: %v", err)
 		}
