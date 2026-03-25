@@ -43,8 +43,13 @@ func FilterEventLogs(
 	userAddresses []string,
 	abiProvider ABIProvider,
 ) []json.RawMessage {
-	if len(logs) == 0 || perms == nil {
+	if len(logs) == 0 {
 		return logs
+	}
+
+	// Fail-closed: if permissions couldn't be resolved, deny all logs.
+	if perms == nil {
+		return []json.RawMessage{}
 	}
 
 	// Build lowercase address set for O(1) lookup.

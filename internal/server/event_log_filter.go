@@ -62,10 +62,11 @@ func FilterLogsWithEventRules(
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
+		// Fail-closed: unparseable response → return empty logs
+		return emptyLogsResponse(responseBody)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return responseBody // RPC error or null result — pass through as-is
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
@@ -74,7 +75,8 @@ func FilterLogsWithEventRules(
 
 	var rawLogs []json.RawMessage
 	if err := json.Unmarshal(raw, &rawLogs); err != nil {
-		return responseBody
+		// Fail-closed: result isn't a JSON array → return empty logs
+		return emptyLogsResponse(responseBody)
 	}
 
 	// Single-pass: FilterEventLogs handles both event-rule and default
@@ -118,10 +120,12 @@ func FilterReceiptLogsWithEventRules(
 		Error   *json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(responseBody, &resp); err != nil {
-		return responseBody
+		// Fail-closed: unparseable response → return null result
+		id := rpcResponseID(responseBody)
+		return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 	}
 	if resp.Error != nil || resp.Result == nil {
-		return responseBody
+		return responseBody // RPC error or null result — pass through as-is
 	}
 	raw := []byte(*resp.Result)
 	if string(raw) == "null" {
@@ -133,7 +137,9 @@ func FilterReceiptLogsWithEventRules(
 		To   string `json:"to"`
 	}
 	if err := json.Unmarshal(raw, &receipt); err != nil {
-		return responseBody
+		// Fail-closed: unparseable receipt → return null
+		id := rpcResponseID(responseBody)
+		return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 	}
 
 	addrSet := addrSetFromLinked(userAddresses)
@@ -177,17 +183,17 @@ func applyEventRulesToReceipt(
 ) json.RawMessage {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
-		return rawReceipt
+		return receiptWithEmptyLogs(rawReceipt) // fail-closed
 	}
 
 	rawLogs, ok := m["logs"]
 	if !ok {
-		return rawReceipt
+		return rawReceipt // no logs field — nothing to filter
 	}
 
 	var arr []json.RawMessage
 	if err := json.Unmarshal(rawLogs, &arr); err != nil {
-		return rawReceipt
+		return receiptWithEmptyLogs(rawReceipt) // fail-closed
 	}
 
 	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider)
@@ -202,6 +208,31 @@ func applyEventRulesToReceipt(
 	zeroBloom := `"0x` + strings.Repeat("0", 512) + `"`
 	m["logsBloom"] = json.RawMessage(zeroBloom)
 
+	out, err := json.Marshal(m)
+	if err != nil {
+		return receiptWithEmptyLogs(rawReceipt) // fail-closed
+	}
+	return out
+}
+
+// emptyLogsResponse returns a JSON-RPC response with an empty logs array,
+// preserving the original response's ID. Used for fail-closed behavior.
+func emptyLogsResponse(responseBody []byte) []byte {
+	id := rpcResponseID(responseBody)
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
+}
+
+// receiptWithEmptyLogs returns a receipt JSON with logs set to [] and
+// logsBloom zeroed. Used for fail-closed behavior when log parsing fails.
+func receiptWithEmptyLogs(rawReceipt json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(rawReceipt, &m); err != nil {
+		// Can't even parse the receipt — return as-is (already a failure path)
+		return rawReceipt
+	}
+	m["logs"] = json.RawMessage("[]")
+	zeroBloom := `"0x` + strings.Repeat("0", 512) + `"`
+	m["logsBloom"] = json.RawMessage(zeroBloom)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return rawReceipt

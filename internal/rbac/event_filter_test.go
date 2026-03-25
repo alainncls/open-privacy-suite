@@ -597,18 +597,13 @@ func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 }
 
 func TestFilterEventLogs_NilPerms_FailClosed(t *testing.T) {
-	// When perms is nil (user/org resolution failed), all logs should be
-	// returned as-is (FilterEventLogs currently returns logs when perms==nil).
-	// This is safe because the caller (jsonrpc_processor) handles the nil-perms
-	// case at a higher level; FilterEventLogs is given a valid perms object.
-	// However, if perms IS nil, the function returns logs unchanged.
+	// When perms is nil (user/org resolution failed), all logs must be denied.
 	logs := []json.RawMessage{
 		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc"],"data":"0x"}`),
 	}
 
 	result := FilterEventLogs(logs, nil, []string{"0xuser"}, nil)
-	// With nil perms, FilterEventLogs returns logs as-is (no perms to evaluate).
-	if len(result) != 1 {
-		t.Errorf("nil perms: expected 1 log (pass-through), got %d", len(result))
+	if len(result) != 0 {
+		t.Errorf("nil perms: expected 0 logs (fail-closed), got %d", len(result))
 	}
 }
