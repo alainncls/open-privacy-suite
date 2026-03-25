@@ -34,8 +34,11 @@ API_URL="${PROXY_URL}/api/v1"
 
 # Anvil pre-funded accounts
 # Account #0 - used as deployer (deploys the ERC20, holds the minted tokens)
-DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-DEPLOYER_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+# NOTE: This is the well-known Anvil/Hardhat Account #0 default key — NOT a real secret.
+# It is publicly documented at https://book.getfoundry.sh/reference/anvil/
+# Override via environment variable for non-default setups.
+DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+DEPLOYER_ADDR="${DEPLOYER_ADDR:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}"
 
 # User's linked address - generated fresh each run to avoid "already linked" errors
 USER_ETH_ADDR="0x$(openssl rand -hex 20)"
