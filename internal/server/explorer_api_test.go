@@ -1526,7 +1526,8 @@ func TestResolveAddressID_Success(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, testTargetAddress, resp.RealAddress)
+	require.NotNil(t, resp.RealAddress, "full disclosure should include real address")
+	assert.Equal(t, testTargetAddress, *resp.RealAddress)
 	assert.Equal(t, "full", resp.DisclosureLevel)
 	assert.Equal(t, grantID, resp.GrantID)
 }
@@ -1558,7 +1559,7 @@ func TestResolveAddressID_PseudonymousIncludesPseudonym(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, testTargetAddress, resp.RealAddress)
+	assert.Nil(t, resp.RealAddress, "SECURITY: pseudonymous should NOT include real address")
 	assert.Equal(t, "pseudonymous", resp.DisclosureLevel)
 	assert.NotEmpty(t, resp.Pseudonym, "Pseudonymous should include pseudonym")
 	assert.True(t, strings.HasPrefix(resp.Pseudonym, "Address-"))
