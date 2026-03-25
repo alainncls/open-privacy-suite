@@ -270,7 +270,7 @@ func registerCheckAddressVisibility(s *mcp.Server, client *httpClient) {
 		if args.Address == "" {
 			return errorResult("address is required")
 		}
-		raw, err := client.get("/api/v1/explorer/check-address/" + args.Address)
+		raw, err := client.get("/api/v1/explorer/check-address/" + url.PathEscape(args.Address))
 		if err != nil {
 			return errorResult("checking address visibility: %v", err)
 		}

@@ -80,10 +80,12 @@ func (c *httpClient) do(method, path string, payload any) (json.RawMessage, erro
 	}
 
 	resp, err := c.http.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {

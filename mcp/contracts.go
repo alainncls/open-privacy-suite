@@ -510,10 +510,15 @@ func registerBatchMoveContracts(s *mcp.Server, client *httpClient, confirms *Con
 		if err != nil {
 			return errorResult("confirmation failed: %v", err)
 		}
-		addrs, _ := params["addresses"].([]any)
-		addrStrings := make([]string, len(addrs))
-		for i, a := range addrs {
-			addrStrings[i], _ = a.(string)
+		addrs, ok := params["addresses"].([]any)
+		if !ok || len(addrs) == 0 {
+			return errorResult("confirmation token missing addresses")
+		}
+		addrStrings := make([]string, 0, len(addrs))
+		for _, a := range addrs {
+			if s, ok := a.(string); ok {
+				addrStrings = append(addrStrings, s)
+			}
 		}
 		raw, err := client.post(fmt.Sprintf("/api/v1/admin/orgs/%s/contracts/batch-move", url.QueryEscape(confirmParam(params, "org_id"))), map[string]any{
 			"addresses":     addrStrings,
