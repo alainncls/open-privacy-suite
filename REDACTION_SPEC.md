@@ -211,11 +211,37 @@ At the RPC layer, visibility is binary: the caller either is or is not a partici
 | `eth_getBlockReceipts` | All receipts in block | Non-participant receipts removed | Yes | Yes |
 | `logsBloom` in blocks | **Not zeroed** | — | **No** | No | **GAP G6** |
 
+### 3.9 Token (Explorer API)
+
+Token visibility is determined by the token's contract address. If the address is registered as an org contract in the RBAC database, the token inherits that contract's visibility. Unregistered addresses default to `VisibilityFull`.
+
+| Field | Hidden | Redacted | Full | Implemented | Tested | Notes |
+|-------|--------|----------|------|-------------|--------|-------|
+| Entry | Dropped from list | Kept | Kept | Yes | Yes | Hidden tokens never appear in `/tokens` list |
+| `address` | — (dropped) | `[PRIVATE]` | unchanged | Yes | Yes | |
+| `symbol` | — | empty string | unchanged | Yes | Yes | |
+| `name` | — | nil | unchanged | Yes | Yes | |
+| `decimals` | — | unchanged | unchanged | Yes | Yes | Non-identifying metadata |
+| `tokenType` | — | unchanged | unchanged | Yes | Yes | Non-identifying metadata |
+| `totalSupply` | — | nil | unchanged | Yes | Yes | |
+| `holderCount` | — | 0 | unchanged | Yes | Yes | |
+| `transferCount` | — | 0 | unchanged | Yes | Yes | |
+| `creationTx` | — | nil | unchanged | Yes | Yes | |
+| `l1Address` | — | nil | unchanged | Yes | Yes | |
+| `usdPrice` | — | nil | unchanged | Yes | Yes | |
+| `iconUrl` | — | nil | unchanged | Yes | Yes | |
+
+**Single token endpoint** (`/tokens/:address`): Hidden returns 404. Redacted returns masked fields. Full returns as-is.
+
+**Sub-endpoints** (`/tokens/:address/holders`, `/tokens/:address/transfers`): Hidden or Redacted returns 404. Full proceeds normally (holder/transfer redaction still applies to individual entries).
+
+**List total:** The `total` field in `/tokens` reflects the count after filtering, never the raw database count.
+
 ---
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are outstanding.
+The following gaps are numbered. G1, G2, G3, G8, G9, G14 are resolved. G4–G7, G15–G16 are outstanding.
 
 ### Resolved
 
@@ -225,6 +251,7 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 - **G7 (resolved):** Transaction.contractAddress leaks deployed address — contract deployment transactions from hidden deployers are now dropped entirely via SQL-level visibility filtering.
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
+- **G14 (resolved):** Token endpoints (`/tokens`, `/tokens/:address`, `/tokens/:address/holders`, `/tokens/:address/transfers`) returned raw unredacted token data without any visibility checks. Now: Hidden tokens are dropped from lists and return 404 from single-token endpoints. Redacted tokens have sensitive fields masked (`[PRIVATE]`, nil names/symbols, zeroed counts). Sub-endpoints (holders, transfers) return 404 for Hidden or Redacted token addresses. List total reflects filtered count only.
 
 ### Outstanding
 
@@ -248,6 +275,12 @@ The following gaps are numbered. G1, G2, G3, G8, G9 are resolved. G4–G7 are ou
 
 - **G13: Minting from zero address to private recipient visible to non-participants**
   Token mints (`from=0x0000...0000, to=private_address`) survive the SQL filter because the zero address is public (not in contracts or eth_address_links). Non-participants can see "someone private received a mint from [token contract]" — revealing that a private user received tokens, when they did, and from which contract. This is a specific case of G10 but worth calling out separately because mint events are particularly sensitive (they reveal token distribution to specific parties). **Options:** (a) treat zero address as neutral rather than public for visibility purposes, (b) handled by G10 if the stricter drop rule is adopted. **Decision pending.**
+
+- **G15: Address parameters in URL paths leak real addresses**
+  All `/addresses/:address/...` endpoints embed real addresses in URLs visible in server logs, network intermediaries, and browser history. An untrusted block explorer client that knows a private address can confirm its existence by requesting its sub-endpoints (even if the response is 404, the address appears in access logs). This is a design-level issue requiring API redesign (e.g., opaque address IDs instead of raw hex addresses in URL paths).
+
+- **G16: `checkAddressVisibility` enables address enumeration**
+  The `/check-address/:address` endpoint allows an untrusted client to probe arbitrary addresses to discover which are private (returns different visibility levels). An attacker can enumerate addresses to build a map of private contracts and user EOAs. Rate limiting mitigates but does not prevent this. A redesign (e.g., returning only the visibility for addresses the viewer already knows about) would close this gap.
 
 ---
 

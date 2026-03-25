@@ -1491,7 +1491,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	tokenType := c.Query("type")
 
-	tokens, total, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
+	tokens, _, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
 	if err != nil {
 		respondInternalError(c, err.Error())
 		return
@@ -1499,7 +1499,64 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 	if tokens == nil {
 		tokens = []explorer.Token{}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": tokens, "total": total})
+
+	// Apply visibility filtering: collect token addresses, check visibility,
+	// then drop Hidden tokens and redact Redacted/Pseudonymous tokens.
+	if len(tokens) > 0 {
+		viewerDID := s.getViewerDIDFromRequest(c)
+		tokenAddrs := make([]string, len(tokens))
+		for i, t := range tokens {
+			tokenAddrs[i] = strings.ToLower(t.Address)
+		}
+		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, tokenAddrs)
+		if err != nil {
+			respondInternalError(c, "visibility check failed: "+err.Error())
+			return
+		}
+
+		var filtered []explorer.Token
+		for _, t := range tokens {
+			level := visMap[strings.ToLower(t.Address)]
+			switch level {
+			case explorer.VisibilityHidden:
+				// Drop entirely — token must not appear in the list.
+				continue
+			case explorer.VisibilityRedacted:
+				t.Address = "[PRIVATE]"
+				t.Name = nil
+				t.Symbol = ""
+				t.TotalSupply = nil
+				t.HolderCount = 0
+				t.TransferCount = 0
+				t.CreationTx = nil
+				t.L1Address = nil
+				t.USDPrice = nil
+				t.IconURL = nil
+			case explorer.VisibilityPseudonymous:
+				pseudonym := explorer.GeneratePseudonym(t.Address)
+				t.Address = pseudonym
+				t.Name = nil
+				t.Symbol = ""
+				t.TotalSupply = nil
+				t.HolderCount = 0
+				t.TransferCount = 0
+				t.CreationTx = nil
+				t.L1Address = nil
+				t.USDPrice = nil
+				t.IconURL = nil
+			// VisibilityFull or unrecognized: return as-is
+			}
+			filtered = append(filtered, t)
+		}
+		if filtered == nil {
+			filtered = []explorer.Token{}
+		}
+		// Never expose raw DB total — return filtered count only.
+		c.JSON(http.StatusOK, gin.H{"data": filtered, "total": len(filtered)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": tokens, "total": len(tokens)})
 }
 
 func (s *Server) getExplorerToken(c *gin.Context) {
@@ -1508,6 +1565,15 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 		return
 	}
 	address := strings.ToLower(c.Param("address"))
+
+	// Visibility pre-check: if the token address is Hidden, pretend it doesn't exist.
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	if visibility.Level == VisibilityHidden {
+		respondNotFound(c, "token not found")
+		return
+	}
+
 	token, err := s.explorerStore.GetToken(c.Request.Context(), address)
 	if err != nil {
 		respondInternalError(c, err.Error())
@@ -1517,6 +1583,33 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 		respondNotFound(c, "token not found")
 		return
 	}
+
+	// Redact sensitive fields for non-full visibility.
+	if visibility.Level == VisibilityRedacted {
+		token.Address = "[PRIVATE]"
+		token.Name = nil
+		token.Symbol = ""
+		token.TotalSupply = nil
+		token.HolderCount = 0
+		token.TransferCount = 0
+		token.CreationTx = nil
+		token.L1Address = nil
+		token.USDPrice = nil
+		token.IconURL = nil
+	} else if visibility.Level == VisibilityPseudonymous {
+		pseudonym := explorer.GeneratePseudonym(token.Address)
+		token.Address = pseudonym
+		token.Name = nil
+		token.Symbol = ""
+		token.TotalSupply = nil
+		token.HolderCount = 0
+		token.TransferCount = 0
+		token.CreationTx = nil
+		token.L1Address = nil
+		token.USDPrice = nil
+		token.IconURL = nil
+	}
+
 	c.JSON(http.StatusOK, token)
 }
 
@@ -1526,6 +1619,14 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 		return
 	}
 	address := strings.ToLower(c.Param("address"))
+
+	// Visibility pre-check on the token address itself.
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+		respondNotFound(c, "token not found")
+		return
+	}
 
 	limit := 25
 	if l := c.Query("limit"); l != "" {
@@ -1543,8 +1644,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	if holders == nil {
 		holders = []explorer.TokenHolder{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTokenHolders(c.Request.Context(), holders, viewerDID)
+	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTokenHolders(c.Request.Context(), holders, resolvedDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1563,6 +1664,14 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
+	// Visibility pre-check on the token address itself.
+	viewerWallet, viewerDID := getViewerIdentity(c)
+	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
+	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+		respondNotFound(c, "token not found")
+		return
+	}
+
 	limit := 25
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
@@ -1579,8 +1688,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	if transfers == nil {
 		transfers = []explorer.TokenTransfer{}
 	}
-	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
