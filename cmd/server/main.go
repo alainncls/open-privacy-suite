@@ -57,7 +57,8 @@ func main() {
 
 	// Create HTTP server for graceful shutdown
 	httpServer := &http.Server{
-		Addr: ":" + port,
+		Addr:              ":" + port,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	// Channel to listen for errors from ListenAndServe
