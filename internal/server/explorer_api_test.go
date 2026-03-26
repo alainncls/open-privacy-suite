@@ -2355,11 +2355,12 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
 }
 
-// TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty verifies that
-// when viewer A has a disclosure grant on user B, a transaction from B to C
-// (where C is private) is shown with B's address visible and C masked as
-// [PRIVATE]. The transaction is kept because one side (B) is identifiable.
-func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) {
+// TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer verifies that
+// disclosure grants do NOT affect regular explorer views. Even when viewer A
+// has a full disclosure grant on user B, transactions involving B should remain
+// hidden in the global tx list (both B and C are hidden EOAs → tx dropped).
+// Grants only affect the dedicated /grant/{id}/{addr_id}/transactions endpoint.
+func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
 
@@ -2374,7 +2375,7 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	createTestUserForExplorer(t, database, didA)
 	linkEthAddressToUser(t, database, didA, addrA)
 
-	// Create target B (whose addresses A can see via grant).
+	// Create target B (whose addresses A can see via grant page only).
 	targetUserID := createTestUserForExplorer(t, database, didB)
 	linkEthAddressToUser(t, database, didB, addrB)
 
@@ -2385,12 +2386,12 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	// Grant A full disclosure on B.
 	createDisclosureGrant(t, database, didA, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Seed a transaction from B to C.
+	// Seed a transaction from B to C (both are hidden EOAs).
 	blockNum := seedExplorerBlock(t, conn)
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A.
+	// Request as viewer A — the grant should NOT make B visible here.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -2399,12 +2400,7 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 1, "transaction should be kept: B is identifiable via grant")
-	assert.Equal(t, txHash, txs[0].Hash)
-	// B's address is visible (grant), C is masked.
-	assert.Equal(t, addrB, strings.ToLower(txs[0].From))
-	require.NotNil(t, txs[0].To)
-	assert.Equal(t, "[PRIVATE]", *txs[0].To)
+	assert.Len(t, txs, 0, "grant must NOT leak into regular explorer — both sides hidden, tx should be dropped")
 }
 
 // TestExplorerTransactions_PublicAddresses_VisibleToAll verifies that

@@ -282,6 +282,21 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G14 are resolved. G4–G7, 
 - **G16: `checkAddressVisibility` enables address enumeration**
   The `/check-address/:address` endpoint allows an untrusted client to probe arbitrary addresses to discover which are private (returns different visibility levels). An attacker can enumerate addresses to build a map of private contracts and user EOAs. Rate limiting mitigates but does not prevent this. A redesign (e.g., returning only the visibility for addresses the viewer already knows about) would close this gap.
 
+- **G17 (resolved): Disclosure grants leaked into regular explorer views (RD-774)**
+  `GetBatchVisibility` checked disclosure grants and upgraded address visibility for the grant recipient across all explorer views. Fixed: grants removed from `GetBatchVisibility`. `GetBatchVisibilityDetailed` retains grant metadata (for privacy dashboard) but no longer upgrades visibility level.
+
+- **G18: Disclosure grant label/visibility consistency across explorer views**
+  When a viewer has a disclosure grant AND is a participant in a transaction, the participant override reveals the real address. The "Disclosed" label should NOT appear on regular explorer pages (tx detail, block page) — only on the grant page and privacy dashboard. Current `check-addresses` API returns `reason: disclosure_grant` which causes the explorer to show "Disclosed" label everywhere. **Fix:** the explorer frontend should only show "Disclosed" label on the grant page. On regular pages, participant-revealed addresses show with no label. See visibility matrix in this section.
+
+- **G19: Grant page should show viewer's own address as "Mine" not External-XXXX**
+  On the pseudonymous grant page, the viewer's own address is pseudonymized as `External-XXXX` like any other external address. The proxy should detect when an external address in a grant transaction matches the viewer's linked address and label it as "You" or "Mine" instead of generating a pseudonym.
+
+- **G20: Redacted disclosure level — use case undefined**
+  `DisclosureRedacted` is documented as "hides all addresses — for minimal disclosure" but the business use case is not specified. Currently shows an empty transaction list on the grant page. **Decision needed from product/team lead:** What scenario requires a grant that reveals no data? Is it a placeholder, a compliance checkbox ("yes this user exists"), or something else? Implementation should wait for clarification.
+
+- **G21: Inbound transaction visibility — should recipient see sender?**
+  When someone sends a transaction TO a user, the participant override reveals the sender's address to the recipient. This is currently correct (the recipient knows who sent them funds). However, the reverse case needs consideration: if someone receives an unsolicited transaction, should the sender's identity be revealed? On a public chain this is a non-issue, but on a private network where identity is protected, receiving a tx could be used to probe someone's explorer view. **Decision needed:** Is the current behavior (always reveal counterparty to participants) correct, or should inbound-only participants have restricted visibility?
+
 ---
 
 ## 5. Adding a New Entity Type

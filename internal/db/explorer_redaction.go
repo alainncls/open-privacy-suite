@@ -189,60 +189,11 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		}
 	}
 
-	if len(targetDIDs) == 0 || viewerDID == "" {
-		// Nothing more to check (or viewer is anonymous and can only see public addresses)
-		return result, nil
-	}
-
-	// 5. Check active disclosure grants in bulk
-	queryGrants := `
-		SELECT u.external_id, g.scope
-		FROM disclosure_grants g
-		JOIN disclosure_requests r ON g.request_id = r.id
-		JOIN users u ON r.target_user_id = u.id
-		WHERE r.requester_did = $1
-		  AND u.external_id = ANY($2)
-		  AND g.revoked_at IS NULL 
-		  AND g.expires_at > NOW()`
-
-	grantRows, err := d.conn.QueryContext(ctx, queryGrants, viewerDID, pq.Array(targetDIDs))
-	if err != nil {
-		return nil, err
-	}
-	defer grantRows.Close()
-
-	for grantRows.Next() {
-		var targetDID string
-		var scopeBytes []byte
-		if err := grantRows.Scan(&targetDID, &scopeBytes); err != nil {
-			return nil, err
-		}
-
-		// Use the greatest disclosure level if there are multiple grants (though query shouldn't usually yield dupes with same target)
-		var scope disclosure.Scope
-		if err := json.Unmarshal(scopeBytes, &scope); err != nil {
-			continue // skip invalid scope
-		}
-
-		level := explorer.VisibilityFull
-		switch scope.DisclosureLevel {
-		case disclosure.DisclosurePseudonymous:
-			level = explorer.VisibilityPseudonymous
-		case disclosure.DisclosureRedacted:
-			level = explorer.VisibilityRedacted
-		case disclosure.DisclosureFull, "":
-			level = explorer.VisibilityFull
-		default:
-			level = explorer.VisibilityRedacted // Fail-safe
-		}
-
-		// Apply the resolved level to all addresses owned by this DID
-		for _, addr := range didToAddresses[targetDID] {
-			// Only update if it's better than currently hiding it (which is the default)
-			// (Or more precisely, just blindly set it since we know it was hidden before this block)
-			result[addr] = level
-		}
-	}
+	// NOTE: Disclosure grants are intentionally NOT checked here.
+	// Grants only affect the dedicated grant endpoint (/grant/{id}/{addr_id}/transactions),
+	// not the general explorer views. This prevents grants from leaking disclosed address
+	// visibility into block pages, tx lists, and other explorer views.
+	// See GetBatchVisibilityDetailed for the grant-aware version (used by privacy dashboard).
 
 	return result, nil
 }
@@ -474,20 +425,20 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		}
 
 		for _, addr := range didToAddresses[targetDID] {
-			vis := explorer.AddressVisibility{
-				Address: addr,
-				Visible: true,
-				Level:   level,
-				Reason:  explorer.ReasonDisclosureGrant,
-				GrantID: &grantID,
-			}
-			exp := expiresAt // copy to avoid pointer aliasing
-			vis.ExpiresAt = &exp
+			// Grant metadata is attached but does NOT upgrade visibility.
+			// The address stays at its current level (Hidden for other users' EOAs).
+			// This prevents grants from leaking into regular explorer views.
+			// The privacy dashboard uses GrantID/Reason to show "Disclosed" links.
+			existing := result[addr]
+			existing.Reason = explorer.ReasonDisclosureGrant
+			existing.GrantID = &grantID
+			exp := expiresAt
+			existing.ExpiresAt = &exp
 			if level == explorer.VisibilityPseudonymous {
 				p := explorer.GeneratePseudonym(addr)
-				vis.Pseudonym = &p
+				existing.Pseudonym = &p
 			}
-			result[addr] = vis
+			result[addr] = existing
 		}
 	}
 
