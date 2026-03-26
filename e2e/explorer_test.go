@@ -186,11 +186,12 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		var result server.CheckAddressResponse
 		json.Unmarshal(body, &result)
 
-		assert.True(t, result.Visible)
-		assert.Equal(t, server.ReasonDisclosureGrant, result.Reason)
-		assert.Equal(t, server.VisibilityFull, result.Level)
-		assert.NotNil(t, result.GrantID)
-		assert.Equal(t, grantID, *result.GrantID)
+		// Disclosure grants do NOT upgrade visibility in check-addresses.
+		// The address stays hidden — grants only affect the dedicated grant page.
+		assert.False(t, result.Visible, "disclosed address must not be visible in check-addresses")
+		assert.Equal(t, server.ReasonNoAccess, result.Reason, "reason must be no_access, not disclosure_grant")
+		assert.Equal(t, server.VisibilityHidden, result.Level)
+		assert.Nil(t, result.GrantID, "grant metadata must not leak via check-addresses")
 	})
 
 	// Step 4: Revoke grant
@@ -347,9 +348,9 @@ func TestE2E_Explorer_BatchCheck(t *testing.T) {
 	assert.True(t, result.Results[e2eViewerWallet].Visible)
 	assert.Equal(t, server.ReasonOwnAddress, result.Results[e2eViewerWallet].Reason)
 
-	// Granted address
-	assert.True(t, result.Results[e2eTargetAddress].Visible)
-	assert.Equal(t, server.ReasonDisclosureGrant, result.Results[e2eTargetAddress].Reason)
+	// Granted address — G17: check-address does not reveal disclosure grants
+	assert.False(t, result.Results[e2eTargetAddress].Visible)
+	assert.Equal(t, server.ReasonNoAccess, result.Results[e2eTargetAddress].Reason)
 
 	// Public address
 	assert.True(t, result.Results[e2ePublicAddress].Visible)
@@ -508,10 +509,10 @@ func TestE2E_Explorer_FullIntegrationWithDisclosureService(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
-		assert.True(t, result.Visible)
-		assert.Equal(t, server.ReasonDisclosureGrant, result.Reason)
-		assert.NotNil(t, result.GrantID)
-		assert.Equal(t, grant.ID, *result.GrantID)
+		// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md).
+		// Grant access is verified via grant-specific endpoints, not check-address.
+		assert.False(t, result.Visible)
+		assert.Equal(t, server.ReasonNoAccess, result.Reason)
 	})
 
 	// Step 5: Revoke using disclosure service

@@ -383,12 +383,13 @@ func TestExplorerAPI_CheckAddressVisibility_DisclosedAddress(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Equal(t, VisibilityFull, resp.Level)
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
-	assert.NotNil(t, resp.ExpiresAt)
+	// Disclosure grants do NOT upgrade visibility in check-addresses.
+	// The address stays hidden — grants only affect the dedicated grant page.
+	assert.False(t, resp.Visible, "disclosed address must not be 'visible' in check-addresses")
+	assert.Equal(t, ReasonNoAccess, resp.Reason, "reason must be no_access, not disclosure_grant")
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Nil(t, resp.GrantID, "grant metadata must not leak via check-addresses")
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestExplorerAPI_CheckAddressVisibility_NoAccess(t *testing.T) {
@@ -640,8 +641,9 @@ func TestExplorerAPI_BatchCheckAddresses_WithGrant(t *testing.T) {
 	var resp BatchCheckAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Results[testTargetAddress].Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Results[testTargetAddress].Reason)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Results[testTargetAddress].Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Results[testTargetAddress].Reason)
 }
 
 // ============================================================================
@@ -737,13 +739,13 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 
 	// Test with grant separately (needs setup)
 	t.Run("disclosed address with grant", func(t *testing.T) {
-		grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
+		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
+		// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
 		result := srv.calculateAddressVisibility(ctx, testViewerWallet, testTargetAddress)
-		assert.True(t, result.Visible)
-		assert.Equal(t, VisibilityFull, result.Level)
-		assert.Equal(t, ReasonDisclosureGrant, result.Reason)
-		assert.NotNil(t, result.GrantID)
-		assert.Equal(t, grantID, *result.GrantID)
+		assert.False(t, result.Visible)
+		assert.Equal(t, VisibilityHidden, result.Level)
+		assert.Equal(t, ReasonNoAccess, result.Reason)
+		assert.Nil(t, result.GrantID)
 	})
 }
 
@@ -824,7 +826,8 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 	// Create disclosure grant
 	grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Verify grant works
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	// Even before revocation, the grant should not be visible via check-address.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?wallet="+testViewerWallet, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -832,8 +835,8 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 
 	var resp CheckAddressResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
 
 	// Revoke the grant
 	_, err := database.Conn().ExecContext(ctx,
@@ -968,11 +971,12 @@ func TestExplorerAPI_CheckAddressVisibility_DIDWithGrant(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Equal(t, VisibilityFull, resp.Level)
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestExplorerAPI_BatchCheckAddresses_WithDIDInQueryString(t *testing.T) {
@@ -1437,13 +1441,13 @@ func TestCheckAddressVisibility_PseudonymousGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.True(t, resp.Visible)
-	assert.Equal(t, VisibilityPseudonymous, resp.Level)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.NotNil(t, resp.Pseudonym)
-	assert.True(t, strings.HasPrefix(*resp.Pseudonym, "Address-"))
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Nil(t, resp.Pseudonym)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
@@ -1471,12 +1475,13 @@ func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.True(t, resp.Visible)
-	assert.Equal(t, VisibilityRedacted, resp.Level)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Nil(t, resp.Pseudonym, "Redacted should not have pseudonym")
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Nil(t, resp.Pseudonym)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 // ============================================================================
@@ -2355,11 +2360,12 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
 }
 
-// TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty verifies that
-// when viewer A has a disclosure grant on user B, a transaction from B to C
-// (where C is private) is shown with B's address visible and C masked as
-// [PRIVATE]. The transaction is kept because one side (B) is identifiable.
-func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) {
+// TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer verifies that
+// disclosure grants do NOT affect regular explorer views. Even when viewer A
+// has a full disclosure grant on user B, transactions involving B should remain
+// hidden in the global tx list (both B and C are hidden EOAs → tx dropped).
+// Grants only affect the dedicated /grant/{id}/{addr_id}/transactions endpoint.
+func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
 
@@ -2374,7 +2380,7 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	createTestUserForExplorer(t, database, didA)
 	linkEthAddressToUser(t, database, didA, addrA)
 
-	// Create target B (whose addresses A can see via grant).
+	// Create target B (whose addresses A can see via grant page only).
 	targetUserID := createTestUserForExplorer(t, database, didB)
 	linkEthAddressToUser(t, database, didB, addrB)
 
@@ -2385,12 +2391,12 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	// Grant A full disclosure on B.
 	createDisclosureGrant(t, database, didA, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Seed a transaction from B to C.
+	// Seed a transaction from B to C (both are hidden EOAs).
 	blockNum := seedExplorerBlock(t, conn)
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A.
+	// Request as viewer A — the grant should NOT make B visible here.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -2399,12 +2405,7 @@ func TestExplorerTransactions_ThirdPartyWithGrantSeesGrantedParty(t *testing.T) 
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 1, "transaction should be kept: B is identifiable via grant")
-	assert.Equal(t, txHash, txs[0].Hash)
-	// B's address is visible (grant), C is masked.
-	assert.Equal(t, addrB, strings.ToLower(txs[0].From))
-	require.NotNil(t, txs[0].To)
-	assert.Equal(t, "[PRIVATE]", *txs[0].To)
+	assert.Len(t, txs, 0, "grant must NOT leak into regular explorer — both sides hidden, tx should be dropped")
 }
 
 // TestExplorerTransactions_PublicAddresses_VisibleToAll verifies that
