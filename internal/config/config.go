@@ -66,6 +66,9 @@ type Config struct {
 	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
 	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
 
+	// Hide the auto-created dev-admin org from the admin dashboard (for demos)
+	HideDevAdminOrg bool
+
 	// Tunnel URL file path — cloudflared writes the public URL here (auto-detected)
 	TunnelURLFile string
 
@@ -251,6 +254,7 @@ func Load() *Config {
 		SIEMFallbackLogPath:      getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		ExplorerDatabaseURL:      getEnv("EXPLORER_DATABASE_URL", ""),
 		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
+		HideDevAdminOrg:          getEnv("HIDE_DEV_ADMIN_ORG", "false") == "true",
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
 		FrontendURL:              getEnv("FRONTEND_URL", ""),
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
