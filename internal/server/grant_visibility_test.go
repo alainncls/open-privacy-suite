@@ -85,11 +85,12 @@ func TestGrantVisibility(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			vis := resp.Results[addrDave]
+			// G16: oracle masking — non-visible masked as public
 			// Alice has a pseudonymous grant, but check-addresses must NOT reveal grant existence.
-			// The address is hidden with no_access — same as for any non-owner viewer.
-			assert.False(t, vis.Visible, "grant target should not be 'visible' in check-addresses")
-			assert.Equal(t, VisibilityHidden, vis.Level)
-			assert.Equal(t, ReasonNoAccess, vis.Reason, "reason must be no_access, not disclosure_grant")
+			// The address appears public to prevent address enumeration.
+			assert.True(t, vis.Visible, "grant target should appear public in check-addresses (G16 oracle masking)")
+			assert.Equal(t, VisibilityFull, vis.Level)
+			assert.Equal(t, ReasonPublicAddress, vis.Reason, "reason must be public_address, not disclosure_grant")
 
 			// Grant metadata must NOT be present — check-addresses must not leak grant existence
 			assert.Nil(t, vis.GrantID, "grant_id must NOT be returned in check-addresses")
@@ -110,9 +111,10 @@ func TestGrantVisibility(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			vis := resp.Results[addrDave]
-			assert.False(t, vis.Visible)
-			assert.Equal(t, VisibilityHidden, vis.Level)
-			assert.Equal(t, ReasonNoAccess, vis.Reason)
+			// G16: oracle masking — non-visible masked as public
+			assert.True(t, vis.Visible)
+			assert.Equal(t, VisibilityFull, vis.Level)
+			assert.Equal(t, ReasonPublicAddress, vis.Reason)
 			// Bob has no grant — no metadata
 			assert.Nil(t, vis.GrantID, "outsider should not see grant_id")
 			assert.Nil(t, vis.Pseudonym, "outsider should not see pseudonym")
@@ -170,9 +172,10 @@ func TestGrantVisibility(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			vis := resp.Results[addrAlice]
-			assert.False(t, vis.Visible)
-			assert.Equal(t, VisibilityHidden, vis.Level)
-			assert.Equal(t, ReasonNoAccess, vis.Reason)
+			// G16: oracle masking — non-visible masked as public
+			assert.True(t, vis.Visible)
+			assert.Equal(t, VisibilityFull, vis.Level)
+			assert.Equal(t, ReasonPublicAddress, vis.Reason)
 		})
 	})
 
@@ -375,9 +378,10 @@ func TestGrantVisibility(t *testing.T) {
 			}
 		})
 
-		t.Run("CheckAddresses_GrantHolder_ReasonIsNoAccess", func(t *testing.T) {
+		t.Run("CheckAddresses_GrantHolder_ReasonIsPublicAddress", func(t *testing.T) {
+			// G16: oracle masking — non-visible masked as public
 			// Even though Alice has a grant on Dave, the check-addresses API should
-			// report reason=no_access (NOT disclosure_grant) for the address visibility.
+			// report reason=public_address (NOT disclosure_grant) for the address visibility.
 			body := BatchCheckAddressesRequest{Addresses: []string{addrDave}}
 			jsonBody, _ := json.Marshal(body)
 			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
@@ -391,10 +395,10 @@ func TestGrantVisibility(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			vis := resp.Results[addrDave]
-			assert.Equal(t, ReasonNoAccess, vis.Reason,
-				"grant holder should see reason=no_access in check-addresses, not disclosure_grant")
-			assert.False(t, vis.Visible,
-				"grant target should not be 'visible' in regular check-addresses")
+			assert.Equal(t, ReasonPublicAddress, vis.Reason,
+				"grant holder should see reason=public_address in check-addresses, not disclosure_grant")
+			assert.True(t, vis.Visible,
+				"grant target should appear public in check-addresses (G16 oracle masking)")
 		})
 	})
 }

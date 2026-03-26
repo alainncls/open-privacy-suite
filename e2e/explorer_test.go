@@ -147,7 +147,8 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Step 1: Initially no access
+	// Step 1: Initially no access — G16 oracle masking makes non-visible
+	// addresses indistinguishable from genuinely public (unregistered) ones.
 	t.Run("initially no access", func(t *testing.T) {
 		checkURL := serverURL + "/api/v1/explorer/check-address/" + e2eTargetAddress + "?wallet=" + e2eViewerWallet
 		req, _ := http.NewRequest("GET", checkURL, nil)
@@ -163,8 +164,8 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		var result server.CheckAddressResponse
 		json.Unmarshal(body, &result)
 
-		assert.False(t, result.Visible)
-		assert.Equal(t, server.ReasonNoAccess, result.Reason)
+		assert.True(t, result.Visible)
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason)
 	})
 
 	// Step 2: Create disclosure grant
@@ -186,11 +187,11 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		var result server.CheckAddressResponse
 		json.Unmarshal(body, &result)
 
-		// Disclosure grants do NOT upgrade visibility in check-addresses.
-		// The address stays hidden — grants only affect the dedicated grant page.
-		assert.False(t, result.Visible, "disclosed address must not be visible in check-addresses")
-		assert.Equal(t, server.ReasonNoAccess, result.Reason, "reason must be no_access, not disclosure_grant")
-		assert.Equal(t, server.VisibilityHidden, result.Level)
+		// G17: Disclosure grants do NOT upgrade visibility in check-addresses.
+		// G16: Non-visible addresses are then masked as public (oracle prevention).
+		assert.True(t, result.Visible, "G16: non-visible masked as public")
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason, "G16: reason masked as public_address")
+		assert.Equal(t, server.VisibilityFull, result.Level)
 		assert.Nil(t, result.GrantID, "grant metadata must not leak via check-addresses")
 	})
 
@@ -201,7 +202,7 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		grantID)
 	require.NoError(t, err)
 
-	// Step 5: Access revoked
+	// Step 5: Access revoked — G16 oracle masking: looks like public_address again.
 	t.Run("access revoked", func(t *testing.T) {
 		checkURL := serverURL + "/api/v1/explorer/check-address/" + e2eTargetAddress + "?wallet=" + e2eViewerWallet
 		req, _ := http.NewRequest("GET", checkURL, nil)
@@ -217,8 +218,8 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		var result server.CheckAddressResponse
 		json.Unmarshal(body, &result)
 
-		assert.False(t, result.Visible)
-		assert.Equal(t, server.ReasonNoAccess, result.Reason)
+		assert.True(t, result.Visible)
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason)
 	})
 }
 
@@ -295,9 +296,10 @@ func TestE2E_Explorer_NoAccessWithoutGrant(t *testing.T) {
 	err = json.Unmarshal(body, &result)
 	require.NoError(t, err)
 
-	assert.False(t, result.Visible)
-	assert.Equal(t, server.ReasonNoAccess, result.Reason)
-	assert.Equal(t, server.VisibilityHidden, result.Level)
+	// G16 oracle masking: non-visible addresses are indistinguishable from public ones.
+	assert.True(t, result.Visible)
+	assert.Equal(t, server.ReasonPublicAddress, result.Reason)
+	assert.Equal(t, server.VisibilityFull, result.Level)
 }
 
 // ============================================================================
@@ -319,6 +321,9 @@ func TestE2E_Explorer_BatchCheck(t *testing.T) {
 	// Create grant for target address
 	createDisclosureGrantForE2E(t, database, e2eViewerDID, setup.targetUserID, time.Now().Add(24*time.Hour))
 
+	// G16: Batch endpoint now requires JWT auth.
+	accessToken := getJWTToken(t, serverURL, e2eViewerDID)
+
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Batch check: own address, granted address, public address
@@ -330,6 +335,7 @@ func TestE2E_Explorer_BatchCheck(t *testing.T) {
 	req, _ := http.NewRequest("POST", serverURL+"/api/v1/explorer/check-addresses?wallet="+e2eViewerWallet, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -348,9 +354,10 @@ func TestE2E_Explorer_BatchCheck(t *testing.T) {
 	assert.True(t, result.Results[e2eViewerWallet].Visible)
 	assert.Equal(t, server.ReasonOwnAddress, result.Results[e2eViewerWallet].Reason)
 
-	// Granted address — G17: check-address does not reveal disclosure grants
-	assert.False(t, result.Results[e2eTargetAddress].Visible)
-	assert.Equal(t, server.ReasonNoAccess, result.Results[e2eTargetAddress].Reason)
+	// Granted address — G17: check-address does not reveal disclosure grants.
+	// G16 oracle masking then makes this look like a public address.
+	assert.True(t, result.Results[e2eTargetAddress].Visible)
+	assert.Equal(t, server.ReasonPublicAddress, result.Results[e2eTargetAddress].Reason)
 
 	// Public address
 	assert.True(t, result.Results[e2ePublicAddress].Visible)
@@ -450,7 +457,7 @@ func TestE2E_Explorer_FullIntegrationWithDisclosureService(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Step 1: Verify no access initially
+	// Step 1: Verify no access initially — G16 oracle masking makes this look public.
 	t.Run("no access initially", func(t *testing.T) {
 		checkURL := serverURL + "/api/v1/explorer/check-address/" + e2eTargetAddress + "?wallet=" + e2eViewerWallet
 		req, _ := http.NewRequest("GET", checkURL, nil)
@@ -464,7 +471,8 @@ func TestE2E_Explorer_FullIntegrationWithDisclosureService(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
-		assert.False(t, result.Visible)
+		assert.True(t, result.Visible)
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason)
 	})
 
 	// Step 2: Create disclosure request using the disclosure service
@@ -509,17 +517,17 @@ func TestE2E_Explorer_FullIntegrationWithDisclosureService(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
-		// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md).
-		// Grant access is verified via grant-specific endpoints, not check-address.
-		assert.False(t, result.Visible)
-		assert.Equal(t, server.ReasonNoAccess, result.Reason)
+		// G17: check-address does not reveal disclosure grants.
+		// G16: non-visible addresses masked as public (oracle prevention).
+		assert.True(t, result.Visible)
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason)
 	})
 
 	// Step 5: Revoke using disclosure service
 	err = disclosureService.RevokeGrant(ctx, grant.ID, "E2E test revocation")
 	require.NoError(t, err)
 
-	// Step 6: Verify access is revoked
+	// Step 6: Verify access is revoked — G16 oracle masking: looks like public_address again.
 	t.Run("access revoked after revocation", func(t *testing.T) {
 		checkURL := serverURL + "/api/v1/explorer/check-address/" + e2eTargetAddress + "?wallet=" + e2eViewerWallet
 		req, _ := http.NewRequest("GET", checkURL, nil)
@@ -533,8 +541,8 @@ func TestE2E_Explorer_FullIntegrationWithDisclosureService(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
-		assert.False(t, result.Visible)
-		assert.Equal(t, server.ReasonNoAccess, result.Reason)
+		assert.True(t, result.Visible)
+		assert.Equal(t, server.ReasonPublicAddress, result.Reason)
 	})
 }
 

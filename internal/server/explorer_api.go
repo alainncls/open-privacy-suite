@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -116,14 +117,32 @@ type GrantTransaction struct {
 // These endpoints are designed to be called by the explorer backend (internal).
 // Network boundary: localhost-only. JWT: optional — if present it is validated and the
 // viewer DID is extracted from it; if absent the request is treated as anonymous.
+//
+// Security measures:
+// - G15: explorerLogRedactionMiddleware strips Ethereum addresses from logged request paths.
+// - G16: Rate limiting on visibility check endpoints to prevent address enumeration.
+// - G16: Batch visibility check requires JWT authentication (no anonymous access).
+// - G16: Reason field stripped from visibility responses for anonymous viewers.
 func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 	explorer := router.Group("/api/v1/explorer")
 	explorer.Use(s.localhostOnlyMiddleware())
 	explorer.Use(auth.OptionalJWTAuthMiddleware(s.jwtService, s.db))
+	// G15: Redact Ethereum addresses from access log paths
+	explorer.Use(explorerLogRedactionMiddleware())
 	{
 		explorer.GET("/viewable-addresses", s.getViewableAddresses)
-		explorer.GET("/check-address/:address", s.checkAddressVisibility)
-		explorer.POST("/check-addresses", s.batchCheckAddresses)
+
+		// Visibility check endpoints — rate-limited to prevent address enumeration (G16)
+		singleRL := s.visibilityRateLimitSingleMiddleware()
+		explorer.GET("/check-address/:address", singleRL, s.checkAddressVisibility)
+		// Batch endpoint requires JWT auth (G16) + stricter rate limit
+		batchRL := s.visibilityRateLimitBatchMiddleware()
+		explorer.POST("/check-addresses",
+			auth.JWTAuthMiddleware(s.jwtService, s.db),
+			batchRL,
+			s.batchCheckAddresses,
+		)
+
 		// Resolve address_id to real address (for explorer backend internal use)
 		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
 		// Grant-scoped transactions for a disclosed address
@@ -190,6 +209,26 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		// Indexing
 		explorer.POST("/index/block/:number", s.indexExplorerBlock)
 	}
+}
+
+// visibilityRateLimitSingleMiddleware returns the rate limiter middleware for
+// single address visibility checks, or a no-op if the limiter is nil.
+func (s *Server) visibilityRateLimitSingleMiddleware() gin.HandlerFunc {
+	if s.explorerVisibilityRateLimiter == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	cfg := DefaultExplorerVisibilityRateLimiterConfig()
+	return s.explorerVisibilityRateLimiter.SingleCheckMiddleware(cfg.SingleMaxRequests)
+}
+
+// visibilityRateLimitBatchMiddleware returns the rate limiter middleware for
+// batch address visibility checks, or a no-op if the limiter is nil.
+func (s *Server) visibilityRateLimitBatchMiddleware() gin.HandlerFunc {
+	if s.explorerVisibilityRateLimiter == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	cfg := DefaultExplorerVisibilityRateLimiterConfig()
+	return s.explorerVisibilityRateLimiter.BatchCheckMiddleware(cfg.BatchMaxRequests)
 }
 
 // getViewableAddresses returns all addresses the wallet owner can view
@@ -377,6 +416,20 @@ func (s *Server) checkAddressVisibility(c *gin.Context) {
 	}
 
 	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), wallet, viewerDID, targetAddress)
+
+	// G16: Eliminate 1-bit oracle — make "registered but hidden" look identical
+	// to "not registered" (public). Without this, an attacker can probe arbitrary
+	// addresses and learn which are private org contracts vs truly public.
+	if !visibility.Visible {
+		slog.Warn("visibility probe on non-visible address",
+			"viewer_did", viewerDID,
+			"target_address", targetAddress,
+			"actual_level", string(visibility.Level),
+			"actual_reason", string(visibility.Reason),
+		)
+		visibility = maskAsPublic(targetAddress)
+	}
+
 	c.JSON(http.StatusOK, CheckAddressResponse{AddressVisibility: visibility})
 }
 
@@ -404,6 +457,20 @@ func (s *Server) batchCheckAddresses(c *gin.Context) {
 	if err != nil {
 		respondInternalError(c, "failed to check address visibility")
 		return
+	}
+
+	// G16: Eliminate 1-bit oracle — mask non-visible addresses as public.
+	// Log each probe for security monitoring.
+	for addr, vis := range results {
+		if !vis.Visible {
+			slog.Warn("visibility probe on non-visible address",
+				"viewer_did", viewerDID,
+				"target_address", addr,
+				"actual_level", string(vis.Level),
+				"actual_reason", string(vis.Reason),
+			)
+			results[addr] = maskAsPublic(addr)
+		}
 	}
 
 	c.JSON(http.StatusOK, BatchCheckAddressesResponse{Results: results})
@@ -763,6 +830,27 @@ func (s *Server) calculateAddressVisibility(ctx context.Context, viewerWallet, t
 // calculateAddressVisibilityWithDID determines the visibility of a single address.
 // It delegates to GetBatchVisibilityDetailed (single-element batch) so that the
 // visibility level decision matches the RedactionEngine's GetBatchVisibility.
+// maskAsPublic returns a visibility response identical to a genuinely public
+// (unregistered) address. This eliminates the 1-bit oracle: an attacker cannot
+// distinguish "registered but hidden" from "not registered at all."
+//
+// The real visibility is logged via slog before this is called, so security
+// teams can detect enumeration attempts.
+//
+// TODO(G16-followup): Remove the public-facing check-address endpoints entirely.
+// Instead, return visibility inline with data responses (transactions, blocks, etc.)
+// so the frontend never needs to probe arbitrary addresses. The explorer backend's
+// internal addressPrivacyMiddleware can still call the localhost-only endpoint.
+// See: https://linear.app/gateway-fm/issue/RD-772
+func maskAsPublic(address string) AddressVisibility {
+	return AddressVisibility{
+		Address: strings.ToLower(address),
+		Visible: true,
+		Level:   VisibilityFull,
+		Reason:  ReasonPublicAddress,
+	}
+}
+
 func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWallet, did, targetAddress string) AddressVisibility {
 	viewerDID := s.resolveViewerDID(ctx, viewerWallet, did)
 	results, err := s.db.GetBatchVisibilityDetailed(ctx, viewerDID, []string{targetAddress})

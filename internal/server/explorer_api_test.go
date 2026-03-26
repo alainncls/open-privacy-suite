@@ -96,16 +96,21 @@ func setupTestServerForExplorer(t *testing.T) (*Server, *db.DB) {
 
 // setupExplorerRouter creates a router with explorer routes for testing.
 // Includes OptionalJWTAuthMiddleware so tests can authenticate via Bearer token.
-// Note: We skip the localhost middleware for unit tests.
+// Note: We skip the localhost middleware and rate limiters for unit tests.
+// G16: Batch check-addresses now requires JWT auth (JWTAuthMiddleware).
 func setupExplorerRouter(srv *Server) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	explorer := router.Group("/api/v1/explorer")
-	explorer.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
-	explorer.GET("/viewable-addresses", srv.getViewableAddresses)
-	explorer.GET("/check-address/:address", srv.checkAddressVisibility)
-	explorer.POST("/check-addresses", srv.batchCheckAddresses)
+	explorerGrp := router.Group("/api/v1/explorer")
+	explorerGrp.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
+	explorerGrp.GET("/viewable-addresses", srv.getViewableAddresses)
+	explorerGrp.GET("/check-address/:address", srv.checkAddressVisibility)
+	// G16: Batch endpoint requires JWT authentication
+	explorerGrp.POST("/check-addresses",
+		auth.JWTAuthMiddleware(srv.jwtService, srv.db),
+		srv.batchCheckAddresses,
+	)
 
 	return router
 }
@@ -383,11 +388,12 @@ func TestExplorerAPI_CheckAddressVisibility_DisclosedAddress(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
+	// G16: oracle masking — non-visible masked as public
 	// Disclosure grants do NOT upgrade visibility in check-addresses.
-	// The address stays hidden — grants only affect the dedicated grant page.
-	assert.False(t, resp.Visible, "disclosed address must not be 'visible' in check-addresses")
-	assert.Equal(t, ReasonNoAccess, resp.Reason, "reason must be no_access, not disclosure_grant")
-	assert.Equal(t, VisibilityHidden, resp.Level)
+	// The address appears public to prevent address enumeration.
+	assert.True(t, resp.Visible, "disclosed address must appear public in check-addresses (G16 oracle masking)")
+	assert.Equal(t, ReasonPublicAddress, resp.Reason, "reason must be public_address, not disclosure_grant")
+	assert.Equal(t, VisibilityFull, resp.Level)
 	assert.Nil(t, resp.GrantID, "grant metadata must not leak via check-addresses")
 	_ = grantID // grant was created but should not appear in response
 }
@@ -413,9 +419,10 @@ func TestExplorerAPI_CheckAddressVisibility_NoAccess(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
-	assert.Equal(t, VisibilityHidden, resp.Level)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
 }
 
 func TestExplorerAPI_CheckAddressVisibility_AnonymousViewer(t *testing.T) {
@@ -436,8 +443,10 @@ func TestExplorerAPI_CheckAddressVisibility_AnonymousViewer(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
 }
 
 func TestExplorerAPI_CheckAddressVisibility_CaseInsensitive(t *testing.T) {
@@ -488,19 +497,21 @@ func TestExplorerAPI_CheckAddressVisibility_ExpiredGrant(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
 }
 
 // ============================================================================
 // Test: POST /api/v1/explorer/check-addresses
 // ============================================================================
 
-func TestExplorerAPI_BatchCheckAddresses_AnonymousViewerAllowed(t *testing.T) {
+func TestExplorerAPI_BatchCheckAddresses_AnonymousViewerRejected(t *testing.T) {
 	srv, _ := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
 
-	// Anonymous batch check should succeed — viewer treated as anonymous
+	// G16: Anonymous batch check should now be rejected — JWT required
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testTargetAddress},
 	}
@@ -511,15 +522,18 @@ func TestExplorerAPI_BatchCheckAddresses_AnonymousViewerAllowed(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestExplorerAPI_BatchCheckAddresses_InvalidBody(t *testing.T) {
-	srv, _ := setupTestServerForExplorer(t)
+	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
+
+	createTestUserForExplorer(t, database, testViewerDID)
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?wallet="+testViewerWallet, bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -528,8 +542,10 @@ func TestExplorerAPI_BatchCheckAddresses_InvalidBody(t *testing.T) {
 }
 
 func TestExplorerAPI_BatchCheckAddresses_EmptyAddresses(t *testing.T) {
-	srv, _ := setupTestServerForExplorer(t)
+	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
+
+	createTestUserForExplorer(t, database, testViewerDID)
 
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{},
@@ -538,6 +554,7 @@ func TestExplorerAPI_BatchCheckAddresses_EmptyAddresses(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?wallet="+testViewerWallet, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -564,6 +581,7 @@ func TestExplorerAPI_BatchCheckAddresses_ValidBatch(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?wallet="+testViewerWallet, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -582,14 +600,16 @@ func TestExplorerAPI_BatchCheckAddresses_ValidBatch(t *testing.T) {
 	assert.True(t, resp.Results[testPublicAddress].Visible)
 	assert.Equal(t, ReasonPublicAddress, resp.Results[testPublicAddress].Reason)
 
-	// No-access address
-	assert.False(t, resp.Results[testTargetAddress].Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Results[testTargetAddress].Reason)
+	// No-access address — G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Results[testTargetAddress].Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Results[testTargetAddress].Reason)
 }
 
 func TestExplorerAPI_BatchCheckAddresses_MaxLimit(t *testing.T) {
-	srv, _ := setupTestServerForExplorer(t)
+	srv, database := setupTestServerForExplorer(t)
 	router := setupExplorerRouter(srv)
+
+	createTestUserForExplorer(t, database, testViewerDID)
 
 	// Create 101 addresses (exceeds max of 100)
 	addresses := make([]string, 101)
@@ -605,6 +625,7 @@ func TestExplorerAPI_BatchCheckAddresses_MaxLimit(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?wallet="+testViewerWallet, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -633,6 +654,7 @@ func TestExplorerAPI_BatchCheckAddresses_WithGrant(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses?wallet="+testViewerWallet, bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	addBearerToken(t, req, srv, testViewerDID)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -641,9 +663,9 @@ func TestExplorerAPI_BatchCheckAddresses_WithGrant(t *testing.T) {
 	var resp BatchCheckAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
-	assert.False(t, resp.Results[testTargetAddress].Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Results[testTargetAddress].Reason)
+	// G16: oracle masking — non-visible masked as public
+	assert.True(t, resp.Results[testTargetAddress].Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Results[testTargetAddress].Reason)
 }
 
 // ============================================================================
@@ -693,6 +715,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
+			// Internal function returns hidden (G16 oracle masking is in the HTTP handler, not here)
 			name:          "no access without grant",
 			viewerWallet:  testViewerWallet,
 			targetAddress: testTargetAddress,
@@ -716,6 +739,7 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
+			// Internal function returns hidden (G16 oracle masking is in the HTTP handler, not here)
 			name:          "anonymous viewer no access",
 			viewerWallet:  testUnknownWallet,
 			targetAddress: testTargetAddress,
@@ -740,7 +764,8 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 	// Test with grant separately (needs setup)
 	t.Run("disclosed address with grant", func(t *testing.T) {
 		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
-		// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+		// Internal function: G17 means grants don't upgrade visibility, so still hidden.
+		// G16 oracle masking is only in the HTTP handler, not here.
 		result := srv.calculateAddressVisibility(ctx, testViewerWallet, testTargetAddress)
 		assert.False(t, result.Visible)
 		assert.Equal(t, VisibilityHidden, result.Level)
@@ -826,7 +851,7 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 	// Create disclosure grant
 	grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 
-	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	// G16: oracle masking — non-visible masked as public
 	// Even before revocation, the grant should not be visible via check-address.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?wallet="+testViewerWallet, nil)
 	w := httptest.NewRecorder()
@@ -835,8 +860,8 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 
 	var resp CheckAddressResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
 
 	// Revoke the grant
 	_, err := database.Conn().ExecContext(ctx,
@@ -852,8 +877,10 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 
 	var resp2 CheckAddressResponse
 	json.Unmarshal(w2.Body.Bytes(), &resp2)
-	assert.False(t, resp2.Visible)
-	assert.Equal(t, ReasonNoAccess, resp2.Reason)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp2.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp2.Reason)
+	assert.Equal(t, VisibilityFull, resp2.Level)
 }
 
 // ============================================================================
@@ -971,10 +998,10 @@ func TestExplorerAPI_CheckAddressVisibility_DIDWithGrant(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
-	assert.Equal(t, VisibilityHidden, resp.Level)
+	// G16: oracle masking — non-visible masked as public
+	assert.True(t, resp.Visible)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
+	assert.Equal(t, VisibilityFull, resp.Level)
 	assert.Nil(t, resp.GrantID)
 	_ = grantID // grant was created but should not appear in response
 }
@@ -1058,7 +1085,7 @@ func TestExplorerAPI_BatchCheckAddresses_DIDQueryParamIgnored(t *testing.T) {
 	createTestUserForExplorer(t, database, testTargetDID)
 	linkEthAddressToUser(t, database, testTargetDID, testTargetAddress)
 
-	// Pass ?did=targetDID in query string WITHOUT JWT — should be treated as anonymous
+	// G16: Without JWT, batch endpoint now returns 401 (JWT required)
 	body := BatchCheckAddressesRequest{
 		Addresses: []string{testTargetAddress},
 	}
@@ -1069,14 +1096,8 @@ func TestExplorerAPI_BatchCheckAddresses_DIDQueryParamIgnored(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp BatchCheckAddressesResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-
-	// Without JWT, ?did= is ignored — viewer is anonymous, target address is not "own"
-	assert.False(t, resp.Results[testTargetAddress].Visible)
+	// G16: Anonymous access no longer allowed on batch endpoint
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // ============================================================================
@@ -1441,10 +1462,10 @@ func TestCheckAddressVisibility_PseudonymousGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, VisibilityHidden, resp.Level)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	// G16: oracle masking — non-visible masked as public
+	assert.True(t, resp.Visible)
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
 	assert.Nil(t, resp.Pseudonym)
 	assert.Nil(t, resp.GrantID)
 	_ = grantID // grant was created but should not appear in response
@@ -1475,10 +1496,10 @@ func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
-	assert.False(t, resp.Visible)
-	assert.Equal(t, VisibilityHidden, resp.Level)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	// G16: oracle masking — non-visible masked as public
+	assert.True(t, resp.Visible)
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
 	assert.Nil(t, resp.Pseudonym)
 	assert.Nil(t, resp.GrantID)
 	_ = grantID // grant was created but should not appear in response
@@ -1941,12 +1962,10 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_NonMember(t *testing.T) 
 	var resp CheckAddressResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	assert.False(t, resp.Visible, "non-member must not see org contract")
-	// Org contracts use VisibilityRedacted (not Hidden) so transactions aren't silently
-	// dropped from global lists — the contract's on-chain existence is visible, only the
-	// identity is protected. This matches the RedactionEngine's GetBatchVisibility behavior.
-	assert.Equal(t, VisibilityRedacted, resp.Level)
-	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Visible, "non-member sees org contract as public (G16 masking)")
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
 }
 
 func TestExplorerAPI_CheckAddressVisibility_OrgContract_Member(t *testing.T) {
@@ -1990,8 +2009,10 @@ func TestExplorerAPI_CheckAddressVisibility_OrgContract_Anonymous(t *testing.T) 
 	var resp CheckAddressResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	assert.False(t, resp.Visible, "anonymous viewer must not see org contract")
-	assert.Equal(t, VisibilityRedacted, resp.Level)
+	// G16: non-visible addresses are masked as public to prevent enumeration
+	assert.True(t, resp.Visible, "anonymous viewer sees org contract as public (G16 masking)")
+	assert.Equal(t, VisibilityFull, resp.Level)
+	assert.Equal(t, ReasonPublicAddress, resp.Reason)
 }
 
 // TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck verifies that a batch-check
@@ -2032,8 +2053,9 @@ func TestExplorerAPI_OrgContract_DoesNotLeakInBatchCheck(t *testing.T) {
 
 		orgVis, ok := resp.Results[orgAddr]
 		require.True(t, ok)
-		assert.False(t, orgVis.Visible, "outsider must not see org contract")
-		assert.Equal(t, VisibilityRedacted, orgVis.Level)
+		// G16: non-visible addresses are masked as public to prevent enumeration
+		assert.True(t, orgVis.Visible, "outsider sees org contract as public (G16 masking)")
+		assert.Equal(t, VisibilityFull, orgVis.Level)
 
 		pubVis, ok := resp.Results[publicAddr]
 		require.True(t, ok)
