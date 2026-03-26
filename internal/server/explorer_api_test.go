@@ -641,8 +641,9 @@ func TestExplorerAPI_BatchCheckAddresses_WithGrant(t *testing.T) {
 	var resp BatchCheckAddressesResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Results[testTargetAddress].Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Results[testTargetAddress].Reason)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Results[testTargetAddress].Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Results[testTargetAddress].Reason)
 }
 
 // ============================================================================
@@ -738,13 +739,13 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 
 	// Test with grant separately (needs setup)
 	t.Run("disclosed address with grant", func(t *testing.T) {
-		grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
+		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
+		// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
 		result := srv.calculateAddressVisibility(ctx, testViewerWallet, testTargetAddress)
-		assert.True(t, result.Visible)
-		assert.Equal(t, VisibilityFull, result.Level)
-		assert.Equal(t, ReasonDisclosureGrant, result.Reason)
-		assert.NotNil(t, result.GrantID)
-		assert.Equal(t, grantID, *result.GrantID)
+		assert.False(t, result.Visible)
+		assert.Equal(t, VisibilityHidden, result.Level)
+		assert.Equal(t, ReasonNoAccess, result.Reason)
+		assert.Nil(t, result.GrantID)
 	})
 }
 
@@ -825,7 +826,8 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 	// Create disclosure grant
 	grantID := createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Verify grant works
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	// Even before revocation, the grant should not be visible via check-address.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+testTargetAddress+"?wallet="+testViewerWallet, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -833,8 +835,8 @@ func TestExplorerAPI_CheckAddressVisibility_RevokedGrant(t *testing.T) {
 
 	var resp CheckAddressResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
 
 	// Revoke the grant
 	_, err := database.Conn().ExecContext(ctx,
@@ -969,11 +971,12 @@ func TestExplorerAPI_CheckAddressVisibility_DIDWithGrant(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Equal(t, VisibilityFull, resp.Level)
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestExplorerAPI_BatchCheckAddresses_WithDIDInQueryString(t *testing.T) {
@@ -1438,13 +1441,13 @@ func TestCheckAddressVisibility_PseudonymousGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.True(t, resp.Visible)
-	assert.Equal(t, VisibilityPseudonymous, resp.Level)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.NotNil(t, resp.Pseudonym)
-	assert.True(t, strings.HasPrefix(*resp.Pseudonym, "Address-"))
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Nil(t, resp.Pseudonym)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
@@ -1472,12 +1475,13 @@ func TestCheckAddressVisibility_RedactedGrant(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.True(t, resp.Visible)
-	assert.Equal(t, VisibilityRedacted, resp.Level)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Nil(t, resp.Pseudonym, "Redacted should not have pseudonym")
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
+	// G17: check-address does not reveal disclosure grants (per REDACTION_SPEC.md)
+	assert.False(t, resp.Visible)
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Equal(t, ReasonNoAccess, resp.Reason)
+	assert.Nil(t, resp.Pseudonym)
+	assert.Nil(t, resp.GrantID)
+	_ = grantID // grant was created but should not appear in response
 }
 
 // ============================================================================
