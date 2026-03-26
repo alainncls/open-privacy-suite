@@ -465,7 +465,8 @@ func TestAzureAD_Integration_CheckAddressVisibility(t *testing.T) {
 	// Create a "non-owner" wallet for anonymous lookup.
 	anonWallet := "0xdddd000000000000000000000000000000000501"
 
-	t.Run("anonymous with wallet: private contract address is redacted", func(t *testing.T) {
+	t.Run("anonymous with wallet: private contract address is masked as public", func(t *testing.T) {
+		// G16: non-visible addresses are masked as public to prevent enumeration.
 		// checkAddressVisibility requires either wallet or JWT.
 		req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+contractAddr+"?wallet="+anonWallet, nil)
 		w := httptest.NewRecorder()
@@ -475,8 +476,11 @@ func TestAzureAD_Integration_CheckAddressVisibility(t *testing.T) {
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		level := resp["level"].(string)
-		assert.Contains(t, []string{"hidden", "redacted"}, strings.ToLower(level),
-			"anonymous should see contract as hidden or redacted")
+		assert.Equal(t, "full", strings.ToLower(level),
+			"G16: anonymous should see contract masked as public (oracle prevention)")
+		reason := resp["reason"].(string)
+		assert.Equal(t, "public_address", reason,
+			"G16: reason must be public_address to prevent enumeration")
 	})
 
 	t.Run("Azure AD user: granted contract address is visible", func(t *testing.T) {

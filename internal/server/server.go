@@ -86,8 +86,9 @@ type Server struct {
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
-	explorerStore      *explorer.Store
-	explorerRedactor   *explorer.RedactionEngine
+	explorerStore                *explorer.Store
+	explorerRedactor             *explorer.RedactionEngine
+	explorerVisibilityRateLimiter *ExplorerVisibilityRateLimiter
 }
 
 // DB returns the database instance (for testing)
@@ -130,6 +131,9 @@ func (s *Server) Stop() {
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
+	}
+	if s.explorerVisibilityRateLimiter != nil {
+		s.explorerVisibilityRateLimiter.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -234,6 +238,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 	authRateLimiter := NewAuthRateLimiter(authRateLimiterCfg)
 
+	// Initialize explorer visibility rate limiter (anti-enumeration for check-address endpoints)
+	var explorerVisRLCfg ExplorerVisibilityRateLimiterConfig
+	if cfg.IsProduction() {
+		explorerVisRLCfg = DefaultExplorerVisibilityRateLimiterConfig()
+	} else {
+		explorerVisRLCfg = DevExplorerVisibilityRateLimiterConfig()
+	}
+	explorerVisibilityRL := NewExplorerVisibilityRateLimiter(explorerVisRLCfg)
+
 	// Initialize ENS resolver (optional - may fail if no mainnet RPC available)
 	var ensResolver *ens.Resolver
 	if cfg.ENSResolverURL != "" {
@@ -305,8 +318,9 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
-		explorerStore:      explorerStore,
-		explorerRedactor:   explorer.NewRedactionEngine(explorerStore, database),
+		explorerStore:                 explorerStore,
+		explorerRedactor:              explorer.NewRedactionEngine(explorerStore, database),
+		explorerVisibilityRateLimiter: explorerVisibilityRL,
 	}
 
 	// Initialize JSON-RPC processor with dependencies
