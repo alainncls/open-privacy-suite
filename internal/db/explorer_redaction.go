@@ -2,11 +2,8 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
-	"time"
 
-	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/explorer"
 
 	"github.com/lib/pq"
@@ -377,70 +374,11 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		}
 	}
 
-	if len(targetDIDs) == 0 || viewerDID == "" {
-		return result, nil
-	}
-
-	// 5. Check active disclosure grants in bulk (includes grant metadata for API responses)
-	queryGrants := `
-		SELECT u.external_id, g.scope, g.id, g.expires_at
-		FROM disclosure_grants g
-		JOIN disclosure_requests r ON g.request_id = r.id
-		JOIN users u ON r.target_user_id = u.id
-		WHERE r.requester_did = $1
-		  AND u.external_id = ANY($2)
-		  AND g.revoked_at IS NULL
-		  AND g.expires_at > NOW()`
-
-	grantRows, err := d.conn.QueryContext(ctx, queryGrants, viewerDID, pq.Array(targetDIDs))
-	if err != nil {
-		return nil, err
-	}
-	defer grantRows.Close()
-
-	for grantRows.Next() {
-		var targetDID string
-		var scopeBytes []byte
-		var grantID string
-		var expiresAt time.Time
-		if err := grantRows.Scan(&targetDID, &scopeBytes, &grantID, &expiresAt); err != nil {
-			return nil, err
-		}
-
-		var scope disclosure.Scope
-		if err := json.Unmarshal(scopeBytes, &scope); err != nil {
-			continue // skip invalid scope
-		}
-
-		level := explorer.VisibilityFull
-		switch scope.DisclosureLevel {
-		case disclosure.DisclosurePseudonymous:
-			level = explorer.VisibilityPseudonymous
-		case disclosure.DisclosureRedacted:
-			level = explorer.VisibilityRedacted
-		case disclosure.DisclosureFull, "":
-			level = explorer.VisibilityFull
-		default:
-			level = explorer.VisibilityRedacted // Fail-safe
-		}
-
-		for _, addr := range didToAddresses[targetDID] {
-			// Grant metadata is attached but does NOT upgrade visibility.
-			// The address stays at its current level (Hidden for other users' EOAs).
-			// This prevents grants from leaking into regular explorer views.
-			// The privacy dashboard uses GrantID/Reason to show "Disclosed" links.
-			existing := result[addr]
-			existing.Reason = explorer.ReasonDisclosureGrant
-			existing.GrantID = &grantID
-			exp := expiresAt
-			existing.ExpiresAt = &exp
-			if level == explorer.VisibilityPseudonymous {
-				p := explorer.GeneratePseudonym(addr)
-				existing.Pseudonym = &p
-			}
-			result[addr] = existing
-		}
-	}
+	// NOTE: Disclosure grants are intentionally NOT checked here.
+	// The check-addresses endpoint is used by the explorer for address labels —
+	// it must not reveal grant existence or upgrade visibility.
+	// The privacy dashboard discovers grants via the viewable-addresses endpoint.
+	// The grant transactions endpoint handles pseudonymization independently.
 
 	return result, nil
 }

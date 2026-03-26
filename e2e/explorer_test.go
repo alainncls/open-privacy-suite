@@ -186,11 +186,12 @@ func TestE2E_Explorer_DisclosureGrantFlow(t *testing.T) {
 		var result server.CheckAddressResponse
 		json.Unmarshal(body, &result)
 
-		assert.True(t, result.Visible)
-		assert.Equal(t, server.ReasonDisclosureGrant, result.Reason)
-		assert.Equal(t, server.VisibilityFull, result.Level)
-		assert.NotNil(t, result.GrantID)
-		assert.Equal(t, grantID, *result.GrantID)
+		// Disclosure grants do NOT upgrade visibility in check-addresses.
+		// The address stays hidden — grants only affect the dedicated grant page.
+		assert.False(t, result.Visible, "disclosed address must not be visible in check-addresses")
+		assert.Equal(t, server.ReasonNoAccess, result.Reason, "reason must be no_access, not disclosure_grant")
+		assert.Equal(t, server.VisibilityHidden, result.Level)
+		assert.Nil(t, result.GrantID, "grant metadata must not leak via check-addresses")
 	})
 
 	// Step 4: Revoke grant

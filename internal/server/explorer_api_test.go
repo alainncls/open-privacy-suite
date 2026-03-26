@@ -383,12 +383,13 @@ func TestExplorerAPI_CheckAddressVisibility_DisclosedAddress(t *testing.T) {
 	var resp CheckAddressResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.True(t, resp.Visible)
-	assert.Equal(t, ReasonDisclosureGrant, resp.Reason)
-	assert.Equal(t, VisibilityFull, resp.Level)
-	assert.NotNil(t, resp.GrantID)
-	assert.Equal(t, grantID, *resp.GrantID)
-	assert.NotNil(t, resp.ExpiresAt)
+	// Disclosure grants do NOT upgrade visibility in check-addresses.
+	// The address stays hidden — grants only affect the dedicated grant page.
+	assert.False(t, resp.Visible, "disclosed address must not be 'visible' in check-addresses")
+	assert.Equal(t, ReasonNoAccess, resp.Reason, "reason must be no_access, not disclosure_grant")
+	assert.Equal(t, VisibilityHidden, resp.Level)
+	assert.Nil(t, resp.GrantID, "grant metadata must not leak via check-addresses")
+	_ = grantID // grant was created but should not appear in response
 }
 
 func TestExplorerAPI_CheckAddressVisibility_NoAccess(t *testing.T) {

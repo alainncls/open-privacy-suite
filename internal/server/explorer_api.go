@@ -626,6 +626,18 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 	realAddrLower := strings.ToLower(realAddress)
 	labels := make(map[string]string)
 
+	// Resolve viewer's own addresses so we can label them "mine" on the grant page
+	viewerAddrs := make(map[string]bool)
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID != "" {
+		linked, err := s.db.GetLinkedAddresses(c.Request.Context(), viewerDID)
+		if err == nil {
+			for _, a := range linked {
+				viewerAddrs[strings.ToLower(a)] = true
+			}
+		}
+	}
+
 	var grantTxs []GrantTransaction
 	for _, tx := range txs {
 		gt := GrantTransaction{
@@ -668,6 +680,9 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 
 			if fromIsDisclosed {
 				gt.From = disclosedPseudonym
+			} else if viewerAddrs[fromLower] {
+				gt.From = "Mine"
+				labels["Mine"] = "mine"
 			} else {
 				ext := generateExternalPseudonym(tx.From, grantID)
 				gt.From = ext
@@ -677,6 +692,9 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 			if tx.HasRecipient() {
 				if toIsDisclosed {
 					gt.To = disclosedPseudonym
+				} else if viewerAddrs[toLower] {
+					gt.To = "Mine"
+					labels["Mine"] = "mine"
 				} else {
 					ext := generateExternalPseudonym(*tx.To, grantID)
 					gt.To = ext
