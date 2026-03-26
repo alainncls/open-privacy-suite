@@ -509,7 +509,8 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			// No linked addresses -- return null (cannot verify participation)
 			return FilterTransactionReceipt(responseBody, nil)
 		}
-		return FilterTransactionReceipt(responseBody, addrs)
+		perms := p.resolvePermsForFilter(ctx, result)
+		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -518,7 +519,8 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
 		}
-		return FilterLogs(responseBody, addrs)
+		perms := p.resolvePermsForFilter(ctx, result)
+		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):

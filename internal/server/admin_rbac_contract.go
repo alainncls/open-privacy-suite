@@ -204,6 +204,38 @@ func (s *Server) updateContractABI(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// listContractEvents parses the stored ABI and returns the list of events with
+// their topic0 hashes and parameter info. Used by the UI to show a human-readable
+// event picker for configuring event rules.
+// GET /orgs/:org_id/contracts/:address/events
+func (s *Server) listContractEvents(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	if contract.ABI == "" {
+		c.JSON(http.StatusOK, gin.H{"events": []rbac.EventSignature{}, "message": "no ABI registered"})
+		return
+	}
+
+	events, err := rbac.ExtractEventSignatures(contract.ABI)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse ABI: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"events": events})
+}
+
 // ContractSyncStatus represents the on-chain status of a contract
 type ContractSyncStatus struct {
 	ID      string `json:"id"`
@@ -443,12 +475,23 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID   string              `json:"group_id" binding:"required"`
-		Functions []rbac.FunctionRule `json:"functions"` // nil = all functions
+		GroupID    string              `json:"group_id" binding:"required"`
+		Functions  []rbac.FunctionRule `json:"functions"`   // nil = all functions
+		EventRules []rbac.EventRule   `json:"event_rules"` // nil = all events visible
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Validate event rules if provided
+	if input.EventRules != nil {
+		for _, rule := range input.EventRules {
+			if !rbac.IsValidTopic0(rule.Topic0) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid topic0 hash: %s", rule.Topic0)})
+				return
+			}
+		}
 	}
 
 	// Verify group exists and belongs to the same org
@@ -467,6 +510,7 @@ func (s *Server) createContractGrant(c *gin.Context) {
 		ContractID: contract.ID,
 		GroupID:    input.GroupID,
 		Functions:  input.Functions,
+		EventRules: input.EventRules,
 	}
 
 	if err := s.db.CreateContractGrant(c.Request.Context(), grant); err != nil {
@@ -506,7 +550,8 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		Functions json.RawMessage `json:"functions"`
+		Functions  json.RawMessage `json:"functions"`
+		EventRules json.RawMessage `json:"event_rules"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -526,6 +571,27 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				return
 			}
 			grant.Functions = rules
+		}
+	}
+
+	// Same pattern for event_rules.
+	if input.EventRules != nil {
+		if string(input.EventRules) == "null" {
+			grant.EventRules = nil
+		} else {
+			var rules []rbac.EventRule
+			if err := json.Unmarshal(input.EventRules, &rules); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_rules format"})
+				return
+			}
+			// Validate topic0 hashes
+			for _, rule := range rules {
+				if !rbac.IsValidTopic0(rule.Topic0) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid topic0 hash: %s", rule.Topic0)})
+					return
+				}
+			}
+			grant.EventRules = rules
 		}
 	}
 

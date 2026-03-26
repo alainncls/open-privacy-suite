@@ -396,14 +396,16 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 				// Child narrows parent - intersect claims and functions
 				// Claims are intersected with group's claims (inherited from GroupAccess)
 				result.ContractAccess[address] = ContractAccess{
-					Claims:    IntersectClaims(existing.Claims, groupClaims),
-					Functions: intersectFunctions(existing.Functions, grant.Functions),
+					Claims:     IntersectClaims(existing.Claims, groupClaims),
+					Functions:  intersectFunctions(existing.Functions, grant.Functions),
+					EventRules: unionEventRules(existing.EventRules, grant.EventRules),
 				}
 			} else {
 				// First time seeing this contract in hierarchy - use group's claims
 				result.ContractAccess[address] = ContractAccess{
-					Claims:    groupClaims,
-					Functions: grant.Functions,
+					Claims:     groupClaims,
+					Functions:  grant.Functions,
+					EventRules: grant.EventRules,
 				}
 			}
 		}
@@ -596,6 +598,41 @@ func unionFunctions(a, b []FunctionRule) []FunctionRule {
 	return result
 }
 
+// unionEventRules returns the union of two EventRule slices by topic0.
+// If either is nil, it means "all events visible" - return nil.
+// If both have values, return the union (user can see events from any grant).
+func unionEventRules(a, b []EventRule) []EventRule {
+	// nil means "all events allowed" - if either is unrestricted, result is unrestricted
+	if a == nil || b == nil {
+		return nil
+	}
+
+	// Both have restrictions - union them
+	seen := make(map[string]EventRule, len(a))
+	for _, rule := range a {
+		seen[strings.ToLower(rule.Topic0)] = rule
+	}
+	for _, rule := range b {
+		key := strings.ToLower(rule.Topic0)
+		if existing, ok := seen[key]; ok {
+			// Both sides allow this event. If either side has no param rules,
+			// the union is the less restrictive one (no param rules).
+			if len(existing.ParamRules) == 0 || len(rule.ParamRules) == 0 {
+				seen[key] = EventRule{Topic0: rule.Topic0, Name: rule.Name}
+			}
+			// else: both have param rules, keep existing (arbitrary but consistent)
+		} else {
+			seen[key] = rule
+		}
+	}
+
+	result := make([]EventRule, 0, len(seen))
+	for _, rule := range seen {
+		result = append(result, rule)
+	}
+	return result
+}
+
 // unionContractAccess merges two ContractAccess maps, taking the UNION of claims and functions.
 // Used when merging permissions across multiple memberships - user benefits from all groups.
 func unionContractAccess(a, b map[string]ContractAccess) map[string]ContractAccess {
@@ -630,10 +667,11 @@ func unionContractAccess(a, b map[string]ContractAccess) map[string]ContractAcce
 	for addr, access := range b {
 		lc := strings.ToLower(addr)
 		if existing, has := result[lc]; has {
-			// Union the claims and functions for this contract
+			// Union the claims, functions, and event rules for this contract
 			result[lc] = ContractAccess{
-				Claims:    unionClaims(existing.Claims, access.Claims),
-				Functions: unionFunctions(existing.Functions, access.Functions),
+				Claims:     unionClaims(existing.Claims, access.Claims),
+				Functions:  unionFunctions(existing.Functions, access.Functions),
+				EventRules: unionEventRules(existing.EventRules, access.EventRules),
 			}
 		} else {
 			result[lc] = access

@@ -163,6 +163,9 @@ func (m *MockCrossOrgStore) GetContractsByIDs(ctx context.Context, ids []string)
 func (m *MockCrossOrgStore) GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error) {
 	return nil, nil
 }
+func (m *MockCrossOrgStore) GetContractByAddressGlobal(ctx context.Context, address string) (*Contract, error) {
+	return nil, nil
+}
 func (m *MockCrossOrgStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
 func (m *MockCrossOrgStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
 	return nil, nil

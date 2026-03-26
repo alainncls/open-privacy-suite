@@ -1963,6 +1963,13 @@ func (c *AccessController) InvalidateGroup(ctx context.Context, groupID string) 
 	return c.resolver.InvalidateGroupPermissions(ctx, groupID)
 }
 
+// GetEffectivePermissionsByIDs returns the effective permissions for a user by
+// internal user ID and org ID. Used by response filters that already have the
+// resolved IDs from the access check.
+func (c *AccessController) GetEffectivePermissionsByIDs(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
+	return c.resolver.ResolvePermissions(ctx, userID, orgID)
+}
+
 // GetEffectivePermissions returns the effective permissions for a user in an organization.
 func (c *AccessController) GetEffectivePermissions(ctx context.Context, userExternalID, orgSlug string) (*EffectivePermissions, error) {
 	user, err := c.store.GetUserByExternalID(ctx, userExternalID)

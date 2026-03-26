@@ -127,15 +127,25 @@ type ParamRule struct {
 	MustBe string `json:"must_be"` // constraint type: "self" for now
 }
 
+// EventRule describes access to a single event (identified by topic0 hash),
+// with optional parameter-level constraints for "self" filtering.
+type EventRule struct {
+	Topic0     string      `json:"topic0"`                // keccak256(EventName(paramTypes)) — 32-byte hex with 0x prefix
+	Name       string      `json:"name"`                  // human-readable event name, from ABI
+	ParamRules []ParamRule `json:"param_rules,omitempty"` // optional "self" constraints (reuse existing ParamRule)
+}
+
 // ContractGrant links a group to a contract, enabling access.
 // The group's claims (from GroupAccess) apply to this contract.
 // Functions can optionally restrict which contract functions are accessible.
+// EventRules can optionally restrict which event logs are visible.
 // Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
 	ID         string         `json:"id"`
 	ContractID string         `json:"contract_id"`
 	GroupID    string         `json:"group_id"`
-	Functions  []FunctionRule `json:"functions,omitempty"` // nil = all functions, or structured rules with optional param constraints
+	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions, or structured rules with optional param constraints
+	EventRules []EventRule   `json:"event_rules,omitempty"` // nil = all events visible, or allowlist of events with optional param constraints
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
@@ -186,8 +196,9 @@ type UserMembership struct {
 
 // ContractAccess represents access permissions for a specific contract.
 type ContractAccess struct {
-	Claims    []Claim        `json:"claims"`
-	Functions []FunctionRule `json:"functions,omitempty"` // nil = all functions allowed
+	Claims     []Claim        `json:"claims"`
+	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions allowed
+	EventRules []EventRule   `json:"event_rules,omitempty"` // nil = all events visible, or allowlist
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
@@ -394,6 +405,16 @@ func (e *EffectivePermissions) GetFunctionRule(address, selector string) *Functi
 		}
 	}
 	return nil
+}
+
+// GetEventRules returns the event rules for a specific contract address.
+// Returns nil if no event rules are configured (all events allowed).
+func (e *EffectivePermissions) GetEventRules(address string) []EventRule {
+	access := e.GetContractAccess(address)
+	if access == nil {
+		return nil
+	}
+	return access.EventRules
 }
 
 // IsContractRegistered checks if a contract is explicitly registered in RBAC.

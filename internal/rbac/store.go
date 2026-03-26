@@ -38,6 +38,9 @@ type Store interface {
 	GetContract(ctx context.Context, id string) (*Contract, error)
 	GetContractsByIDs(ctx context.Context, ids []string) (map[string]*Contract, error)
 	GetContractByAddress(ctx context.Context, orgID, address string) (*Contract, error)
+	// GetContractByAddressGlobal looks up a contract by address across all organizations.
+	// Used for ABI lookups during event log filtering where the org context is not always known.
+	GetContractByAddressGlobal(ctx context.Context, address string) (*Contract, error)
 	UpdateContract(ctx context.Context, contract *Contract) error
 	ListContracts(ctx context.Context, orgID string) ([]*Contract, error)
 	ListContractsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Contract, int, error) // Returns contracts, total count

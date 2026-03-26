@@ -228,6 +228,15 @@ func (m *MockStore) GetContractByAddress(ctx context.Context, orgID, address str
 	}
 	return nil, nil
 }
+func (m *MockStore) GetContractByAddressGlobal(ctx context.Context, address string) (*Contract, error) {
+	addr := strings.ToLower(address)
+	for _, c := range m.contracts {
+		if strings.ToLower(c.Address) == addr {
+			return c, nil
+		}
+	}
+	return nil, nil
+}
 func (m *MockStore) UpdateContract(ctx context.Context, contract *Contract) error { return nil }
 func (m *MockStore) ListContracts(ctx context.Context, orgID string) ([]*Contract, error) {
 	return nil, nil
