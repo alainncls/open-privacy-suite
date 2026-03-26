@@ -56,6 +56,16 @@ func (s *Server) listOrganizations(c *gin.Context) {
 		respondInternalError(c, err.Error())
 		return
 	}
+	if s.config.HideDevAdminOrg {
+		filtered := make([]*rbac.Organization, 0, len(orgs))
+		for _, org := range orgs {
+			if org.Slug != "dev-admin-org" {
+				filtered = append(filtered, org)
+			}
+		}
+		total -= len(orgs) - len(filtered)
+		orgs = filtered
+	}
 	respondOK(c, gin.H{"data": orgs, "total": total, "limit": limit, "offset": offset})
 }
 
