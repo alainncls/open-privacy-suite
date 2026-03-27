@@ -1,4 +1,4 @@
-.PHONY: build build-prod test test-unit test-e2e run run-binary dev clean clean-build e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build build-prod test test-unit test-e2e run dev-stack run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -28,6 +28,15 @@ authproxy: ensure-hooks
 
 # Run full Docker stack (postgres, anvil, backend, frontend)
 run: ensure-hooks
+	docker-compose up --build -d
+	@./scripts/print-urls.sh
+
+# Start an isolated dev stack — auto-assigns offset ports so parallel stacks don't conflict
+dev-stack: ensure-hooks
+	@if [ ! -f .env ] && [ "$$(basename "$$(pwd)")" != "privacy-proxy" ]; then \
+		./scripts/stack-ports.sh auto > .env; \
+		echo "Generated .env with offset ports (worktree detected)"; \
+	fi
 	docker-compose up --build -d
 	@./scripts/print-urls.sh
 
@@ -233,13 +242,15 @@ contracts-build:
 	@echo "Done!"
 
 # Deploy Counter contract to local Anvil
-# Requires: Anvil running on localhost:8545 (use 'make run' to start all services)
+# Requires: Anvil running (use 'make run' to start all services)
 # Uses Anvil's default account 0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+RPC_URL ?= http://localhost:$(or $(HOST_PORT_RPC),8545)
+
 contracts-deploy:
 	@echo "Deploying Counter contract to local Anvil..."
 	@echo "Make sure Anvil is running (docker-compose up anvil)"
 	cd contracts && forge script script/Deploy.s.sol:DeployCounter \
-		--rpc-url http://localhost:8545 \
+		--rpc-url $(RPC_URL) \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast
 	@echo ""
@@ -248,7 +259,7 @@ contracts-deploy:
 # Deploy and show contract address (quieter output)
 contracts-deploy-quiet:
 	@cd contracts && forge script script/Deploy.s.sol:DeployCounter \
-		--rpc-url http://localhost:8545 \
+		--rpc-url $(RPC_URL) \
 		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 		--broadcast 2>&1 | grep -E "(Counter deployed to:|deployed)"
 
