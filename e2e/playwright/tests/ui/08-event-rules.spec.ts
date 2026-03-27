@@ -743,3 +743,199 @@ test.describe('Event rules — contract without ABI', () => {
     await expect(grantDialog.getByText(/no abi uploaded/i)).toBeVisible({ timeout: 5000 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Group F: Persistence and Validation (P13, P14, P16)
+// ---------------------------------------------------------------------------
+
+test.describe('Event rules — persistence and validation', () => {
+  let fixture: RBACTestFixture;
+
+  test.beforeEach(async ({ page }) => {
+    await mockLoginViaAPI(page);
+  });
+
+  test.afterEach(async () => {
+    if (fixture) {
+      await fixture.cleanup();
+    }
+  });
+
+  test('P13: save rules, navigate away, return — rules still displayed', async ({ page, request }) => {
+    fixture = new RBACTestFixture(request);
+    const org = await fixture.createOrg('ev-p13');
+    const group = await fixture.createGroup(org.id, 'grp-p13', { name: 'Group P13' });
+    await fixture.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['*'],
+      claims: ['read'],
+    });
+    const contract = await fixture.createContractWithABI(org.id, {
+      name: 'Token P13',
+      abi: ERC20_ABI,
+    });
+    const address = contract.address || contract.contract_address || '';
+
+    // Fetch events from API to get real topic0 values
+    const events = await fixture.rbac.listContractEvents(org.id, address);
+    const transferEvent = events.find(e => e.name === 'Transfer');
+    expect(transferEvent).toBeTruthy();
+
+    // Create grant with Transfer event rule via API
+    await fixture.rbac.createContractGrant(org.id, address, {
+      group_id: group.id,
+      event_rules: [{
+        topic0: transferEvent!.topic0,
+        name: 'Transfer',
+      }],
+    });
+
+    // Navigate to contracts page
+    await page.goto('/admin/rbac/contracts');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    await page.locator(selectors.rbac.orgSelector).click();
+    await page.getByText(org.name).click();
+
+    // Open permissions dialog — grant card should show Transfer event pill
+    const rows = page.locator('table tbody tr');
+    await expect(rows).toHaveCount(1, { timeout: 10000 });
+    const shieldBtn = rows.first().getByTitle('Manage permissions');
+    await shieldBtn.click();
+
+    const permDialog = page.locator(selectors.common.dialog);
+    await expect(permDialog).toBeVisible({ timeout: 5000 });
+    await expect(permDialog.getByText('Events:')).toBeVisible();
+    await expect(permDialog.locator('.bg-violet-100').filter({ hasText: 'Transfer' })).toBeVisible();
+
+    // Close the dialog
+    await permDialog.getByRole('button', { name: /close/i }).first().click();
+
+    // Navigate away to a different page
+    await page.goto('/admin');
+    await page.waitForTimeout(500);
+
+    // Navigate back to contracts
+    await page.goto('/admin/rbac/contracts');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    await page.locator(selectors.rbac.orgSelector).click();
+    await page.getByText(org.name).click();
+
+    // Re-open permissions dialog — Transfer rule should still be there
+    const rows2 = page.locator('table tbody tr');
+    await expect(rows2).toHaveCount(1, { timeout: 10000 });
+    const shieldBtn2 = rows2.first().getByTitle('Manage permissions');
+    await shieldBtn2.click();
+
+    const permDialog2 = page.locator(selectors.common.dialog);
+    await expect(permDialog2).toBeVisible({ timeout: 5000 });
+    await expect(permDialog2.getByText('Events:')).toBeVisible();
+    await expect(permDialog2.locator('.bg-violet-100').filter({ hasText: 'Transfer' })).toBeVisible();
+  });
+
+  test('P14: enter invalid topic0 manually — validation error', async ({ page, request }) => {
+    fixture = new RBACTestFixture(request);
+    const org = await fixture.createOrg('ev-p14');
+    const group = await fixture.createGroup(org.id, 'grp-p14', { name: 'Group P14' });
+    await fixture.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['*'],
+      claims: ['read'],
+    });
+    const contract = await fixture.createContractWithABI(org.id, {
+      name: 'Token P14',
+      abi: ERC20_ABI,
+    });
+    const address = contract.address || contract.contract_address || '';
+
+    // Try creating a grant with invalid topic0 directly via API — should fail
+    const response = await request.post(
+      `http://localhost:8080/api/v1/admin/orgs/${org.id}/contracts/${address}/grants`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': 'test-admin-token',
+        },
+        data: {
+          group_id: group.id,
+          event_rules: [{
+            topic0: '0xZZZZ',
+            name: 'Bad',
+          }],
+        },
+      }
+    );
+
+    // API should reject invalid topic0 with 400
+    expect(response.status()).toBe(400);
+    const body = await response.text();
+    expect(body.toLowerCase()).toContain('invalid topic0');
+  });
+
+  test('P16: delete 1 of 2 rules, save — only 1 remains', async ({ page, request }) => {
+    fixture = new RBACTestFixture(request);
+    const org = await fixture.createOrg('ev-p16');
+    const group = await fixture.createGroup(org.id, 'grp-p16', { name: 'Group P16' });
+    await fixture.rbac.setGroupAccess(org.id, group.id, {
+      allowed_methods: ['*'],
+      claims: ['read'],
+    });
+    const contract = await fixture.createContractWithABI(org.id, {
+      name: 'Token P16',
+      abi: ERC20_ABI,
+    });
+    const address = contract.address || contract.contract_address || '';
+
+    // Fetch events from API to get real topic0 values
+    const events = await fixture.rbac.listContractEvents(org.id, address);
+    const transferEvent = events.find(e => e.name === 'Transfer');
+    const approvalEvent = events.find(e => e.name === 'Approval');
+    expect(transferEvent).toBeTruthy();
+    expect(approvalEvent).toBeTruthy();
+
+    // Create grant with both Transfer and Approval event rules
+    await fixture.rbac.createContractGrant(org.id, address, {
+      group_id: group.id,
+      event_rules: [
+        { topic0: transferEvent!.topic0, name: 'Transfer' },
+        { topic0: approvalEvent!.topic0, name: 'Approval' },
+      ],
+    });
+
+    await page.goto('/admin/rbac/contracts');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+
+    await page.locator(selectors.rbac.orgSelector).click();
+    await page.getByText(org.name).click();
+
+    // Open the edit form for the existing grant
+    const editDialog = await openEditGrantForm(page);
+
+    // Both Transfer and Approval should appear in the "Visible events:" section
+    const visibleSection = editDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' });
+    await expect(visibleSection.getByText('Transfer')).toBeVisible();
+    await expect(visibleSection.getByText('Approval')).toBeVisible();
+
+    // Remove Transfer by clicking the X button on its pill
+    const transferPill = editDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' });
+    await transferPill.locator('button').click();
+
+    // Only Approval should remain
+    await expect(visibleSection.getByText('Approval')).toBeVisible();
+    // Transfer should no longer be in the visible section as a pill
+    const remainingPills = editDialog.locator('.border.border-primary-50');
+    // There should be exactly 1 pill remaining (Approval)
+    await expect(remainingPills).toHaveCount(1);
+
+    // Save
+    await editDialog.getByRole('button', { name: /save changes/i }).click();
+    await expect(editDialog).not.toBeVisible({ timeout: 10000 });
+
+    // Verify via API: only 1 event rule remains
+    const grants = await fixture.rbac.listContractGrants(org.id, address);
+    const savedGrant = grants.find(g => g.group_id === group.id);
+    expect(savedGrant).toBeTruthy();
+    expect(savedGrant!.event_rules).toBeTruthy();
+    expect(savedGrant!.event_rules!.length).toBe(1);
+    expect(savedGrant!.event_rules![0].name).toBe('Approval');
+  });
+});

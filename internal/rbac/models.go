@@ -203,7 +203,7 @@ type ContractGrant struct {
 	ContractID string         `json:"contract_id"`
 	GroupID    string         `json:"group_id"`
 	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions, or structured rules with optional param constraints
-	EventRules []EventRule   `json:"event_rules,omitempty"` // nil = all events visible, or allowlist of events with optional param constraints
+	EventRules []EventRule   `json:"event_rules"` // null = all events visible, [] = none visible, [...] = allowlist
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
@@ -256,7 +256,7 @@ type UserMembership struct {
 type ContractAccess struct {
 	Claims     []Claim        `json:"claims"`
 	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions allowed
-	EventRules []EventRule   `json:"event_rules,omitempty"` // nil = all events visible, or allowlist
+	EventRules []EventRule   `json:"event_rules"` // null = all events visible, [] = none visible, [...] = allowlist
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.

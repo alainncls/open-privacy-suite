@@ -80,9 +80,11 @@ export default function ContractGrantForm({
   );
   const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
-  const [eventMode, setEventMode] = useState<'all' | 'specific'>(
-    grant?.event_rules && grant.event_rules.length > 0 ? 'specific' : 'all'
-  );
+  const [eventMode, setEventMode] = useState<'all' | 'specific' | 'none'>(() => {
+    if (grant?.event_rules === undefined || grant?.event_rules === null) return 'all';
+    if (grant.event_rules.length === 0) return 'none';
+    return 'specific';
+  });
   const [eventRules, setEventRules] = useState<EventRule[]>(grant?.event_rules || []);
   const [availableEvents, setAvailableEvents] = useState<EventSignature[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -254,14 +256,14 @@ export default function ContractGrantForm({
     }
 
     if (eventMode === 'specific' && eventRules.length === 0) {
-      setError('Please add at least one event, or select "All events visible"');
+      setError('Please add at least one event, or select "All events visible" or "No events visible"');
       return;
     }
 
     setSaving(true);
 
     try {
-      const resolvedEventRules = eventMode === 'all' ? null : eventRules;
+      const resolvedEventRules = eventMode === 'all' ? null : eventMode === 'none' ? [] : eventRules;
       const input: CreateContractGrantInput = {
         group_id: selectedGroupId,
         // claims field is deprecated - permissions come from the group's GroupAccess.claims
@@ -429,25 +431,27 @@ export default function ContractGrantForm({
                         key={rule.selector}
                         className="p-2 rounded-lg border border-primary-50 bg-neutral-50"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
-                            <code className="font-mono">{rule.selector}</code>
-                            {hasLabel && (
-                              <span className="text-primary-300">({label})</span>
-                            )}
-                          </span>
-                          {(rule.param_rules || []).map(pr => (
-                            <span
-                              key={pr.index}
-                              className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium"
-                            >
-                              param[{pr.index}]={pr.must_be}
+                        <div className="flex items-start gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
+                              <code className="font-mono truncate max-w-[180px]">{rule.selector}</code>
+                              {hasLabel && (
+                                <span className="text-primary-300 truncate max-w-[120px]">({label})</span>
+                              )}
                             </span>
-                          ))}
+                            {(rule.param_rules || []).map(pr => (
+                              <span
+                                key={pr.index}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap"
+                              >
+                                param[{pr.index}]={pr.must_be}
+                              </span>
+                            ))}
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleRemoveSelector(rule.selector)}
-                            className="ml-auto hover:text-primary-700 text-primary-300"
+                            className="shrink-0 hover:text-primary-700 text-primary-300 mt-1"
                           >
                             <X className="w-3 h-3" />
                           </button>
@@ -610,6 +614,21 @@ export default function ContractGrantForm({
               <p className="text-xs text-neutral-500">Restrict to selected events (allowlist)</p>
             </div>
           </label>
+
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
+            <input
+              type="radio"
+              name="eventMode"
+              value="none"
+              checked={eventMode === 'none'}
+              onChange={() => setEventMode('none')}
+              className="w-4 h-4 text-primary focus:ring-primary"
+            />
+            <div>
+              <p className="text-sm font-medium text-neutral-900">No events visible</p>
+              <p className="text-xs text-neutral-500">Block all event logs from this contract</p>
+            </div>
+          </label>
         </div>
 
         {/* Event picker (shown when specific mode) */}
@@ -636,26 +655,28 @@ export default function ContractGrantForm({
                         key={rule.topic0}
                         className="p-2 rounded-lg border border-primary-50 bg-neutral-50"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
-                            <Radio className="w-3 h-3" />
-                            {rule.name}
-                            {eventSig && (
-                              <span className="text-primary-300">({eventSig.signature})</span>
-                            )}
-                          </span>
-                          {(rule.param_rules || []).map(pr => (
-                            <span
-                              key={pr.index}
-                              className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium"
-                            >
-                              param[{pr.index}]={pr.must_be}
+                        <div className="flex items-start gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
+                              <Radio className="w-3 h-3 shrink-0" />
+                              <span className="truncate max-w-[200px]">{rule.name}</span>
                             </span>
-                          ))}
+                            {eventSig && (
+                              <span className="text-[10px] text-primary-300 truncate max-w-[180px]">({eventSig.signature})</span>
+                            )}
+                            {(rule.param_rules || []).map(pr => (
+                              <span
+                                key={pr.index}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap"
+                              >
+                                param[{pr.index}]={pr.must_be}
+                              </span>
+                            ))}
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleRemoveEvent(rule.topic0)}
-                            className="ml-auto hover:text-primary-700 text-primary-300"
+                            className="shrink-0 hover:text-primary-700 text-primary-300 mt-1"
                           >
                             <X className="w-3 h-3" />
                           </button>

@@ -124,7 +124,7 @@ describe('ContractGrantsManager — event rules display', () => {
     expect(screen.getByText('All events visible')).toBeInTheDocument();
   });
 
-  it('shows "All events visible" when event_rules is an empty array', async () => {
+  it('shows "No events visible" when event_rules is an empty array', async () => {
     const grant: ContractGrant = {
       id: 'grant-1',
       contract_id: 'contract-1',
@@ -141,7 +141,8 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(screen.getByText('Auditors')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('All events visible')).toBeInTheDocument();
+    expect(screen.getByText('No events visible')).toBeInTheDocument();
+    expect(screen.queryByText('All events visible')).not.toBeInTheDocument();
   });
 
   it('displays event rule names as violet pills', async () => {

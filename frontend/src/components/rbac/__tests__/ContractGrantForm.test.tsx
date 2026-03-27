@@ -354,7 +354,7 @@ describe('ContractGrantForm', () => {
       await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
       expect(
-        screen.getByText('Please add at least one event, or select "All events visible"')
+        screen.getByText('Please add at least one event, or select "All events visible" or "No events visible"')
       ).toBeInTheDocument();
     });
 
@@ -475,6 +475,82 @@ describe('ContractGrantForm', () => {
       // Transfer should appear in the visible events list
       expect(screen.getByText('Visible events:')).toBeInTheDocument();
       expect(screen.getByText('Transfer')).toBeInTheDocument();
+    });
+
+    it('"No events visible" radio appears and is selectable', async () => {
+      const user = userEvent.setup();
+      stubListEvents();
+      renderForm();
+
+      const noneRadio = screen.getByRole('radio', { name: /No events visible/i });
+      expect(noneRadio).toBeInTheDocument();
+      expect(noneRadio).not.toBeChecked();
+
+      await user.click(noneRadio);
+      expect(noneRadio).toBeChecked();
+    });
+
+    it('selecting "No events visible" hides the event picker', async () => {
+      const user = userEvent.setup();
+      stubListEvents(mockEvents);
+      renderForm();
+
+      // Switch to specific first to see the picker
+      await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
+      await waitFor(() => {
+        expect(screen.getByText(/Contract events/)).toBeInTheDocument();
+      });
+
+      // Switch to "No events visible" — picker should disappear
+      await user.click(screen.getByRole('radio', { name: /No events visible/i }));
+      expect(screen.queryByText(/Contract events/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Visible events:')).not.toBeInTheDocument();
+    });
+
+    it('submits event_rules as empty array when "No events visible" is selected', async () => {
+      const user = userEvent.setup();
+      stubListEvents(mockEvents);
+      const createGrantSpy = vi
+        .spyOn(rbacApi.contracts, 'createGrant')
+        .mockResolvedValue(mockGrantResponse());
+      renderForm();
+
+      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await user.click(screen.getByRole('radio', { name: /No events visible/i }));
+      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+
+      await waitFor(() => {
+        expect(createGrantSpy).toHaveBeenCalledWith(
+          'org-1',
+          '0x1111111111111111111111111111111111111111',
+          expect.objectContaining({
+            event_rules: [],
+          })
+        );
+      });
+    });
+
+    it('pre-selects "No events visible" in edit mode when event_rules is empty array', async () => {
+      stubListEvents(mockEvents);
+      renderForm({
+        grant: {
+          id: 'grant-none',
+          contract_id: 'contract-1',
+          group_id: 'group-1',
+          functions: null,
+          event_rules: [],
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-01-01T00:00:00Z',
+        },
+      });
+
+      expect(screen.getByRole('radio', { name: /No events visible/i })).toBeChecked();
+      expect(screen.getByRole('radio', { name: /All events visible/i })).not.toBeChecked();
+      expect(screen.getByRole('radio', { name: /Specific events only/i })).not.toBeChecked();
+
+      // The event picker should not be visible
+      expect(screen.queryByText(/Contract events/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Visible events:')).not.toBeInTheDocument();
     });
 
     it('updates event_rules in edit mode', async () => {
