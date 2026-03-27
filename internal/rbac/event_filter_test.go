@@ -607,3 +607,64 @@ func TestFilterEventLogs_NilPerms_FailClosed(t *testing.T) {
 		t.Errorf("nil perms: expected 0 logs (fail-closed), got %d", len(result))
 	}
 }
+
+// TestContractGrant_JSON_EmptyEventRules verifies that empty event_rules []
+// is preserved in JSON serialization (not omitted). This is critical: null means
+// "all events visible" while [] means "no events visible" — omitempty would
+// silently convert [] to null in API responses.
+func TestContractGrant_JSON_EmptyEventRules(t *testing.T) {
+	grant := ContractGrant{
+		ID:         "test-id",
+		ContractID: "contract-id",
+		GroupID:    "group-id",
+		EventRules: []EventRule{}, // explicitly empty = block all events
+	}
+
+	b, err := json.Marshal(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Must contain "event_rules":[] — NOT omit the field
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := m["event_rules"]
+	if !ok {
+		t.Fatal("event_rules field missing from JSON — omitempty bug")
+	}
+	if string(raw) != "[]" {
+		t.Fatalf("expected event_rules to be [], got %s", string(raw))
+	}
+}
+
+// TestContractGrant_JSON_NilEventRules verifies that nil event_rules
+// serializes as null (all events visible).
+func TestContractGrant_JSON_NilEventRules(t *testing.T) {
+	grant := ContractGrant{
+		ID:         "test-id",
+		ContractID: "contract-id",
+		GroupID:    "group-id",
+		EventRules: nil, // nil = all events visible
+	}
+
+	b, err := json.Marshal(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := m["event_rules"]
+	if !ok {
+		t.Fatal("event_rules field missing from JSON")
+	}
+	if string(raw) != "null" {
+		t.Fatalf("expected event_rules to be null, got %s", string(raw))
+	}
+}

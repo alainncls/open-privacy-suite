@@ -338,6 +338,121 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 	}
 }
 
+// TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped verifies
+// that when event_rules is an empty slice (not nil), ALL logs from that
+// contract are stripped. This is the "No events visible" mode.
+func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	contractAddr := "0xcontract0000000000000000000000000000001"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {
+				Claims:     []rbac.Claim{rbac.ClaimRead},
+				EventRules: []rbac.EventRule{}, // empty = block all events
+			},
+		},
+	}
+
+	receipt := map[string]any{
+		"from":      userAddr,
+		"to":        contractAddr,
+		"status":    "0x1",
+		"gasUsed":   "0x5208",
+		"logsBloom": "0x1234",
+		"logs": []map[string]any{
+			{
+				"address": contractAddr,
+				"topics":  []string{"0xaaa0000000000000000000000000000000000000000000000000000000000000"},
+				"data":    "0x",
+			},
+			{
+				"address": contractAddr,
+				"topics":  []string{"0xbbb0000000000000000000000000000000000000000000000000000000000000"},
+				"data":    "0x",
+			},
+		},
+	}
+	receiptJSON, _ := json.Marshal(receipt)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(receiptJSON) + `}`
+
+	got := FilterReceiptLogsWithEventRules(
+		[]byte(rpcResponse),
+		[]string{userAddr},
+		perms,
+		&testABIProviderServer{},
+	)
+
+	var resp struct {
+		Result *struct {
+			Logs []json.RawMessage `json:"logs"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\nraw: %s", err, got)
+	}
+	if resp.Result == nil {
+		t.Fatalf("participant should still get a receipt (with empty logs), not null")
+	}
+	if len(resp.Result.Logs) != 0 {
+		t.Errorf("empty EventRules: expected 0 logs (all events blocked), got %d\nraw: %s",
+			len(resp.Result.Logs), got)
+	}
+}
+
+// TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped verifies the
+// eth_getLogs response filtering: when event_rules is an empty slice, ALL logs
+// from the contract are stripped.
+func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	paddedUser := "0x000000000000000000000000" + userAddr[2:]
+	contractAddr := "0xcontract0000000000000000000000000000001"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {
+				Claims:     []rbac.Claim{rbac.ClaimRead},
+				EventRules: []rbac.EventRule{}, // empty = block all events
+			},
+		},
+	}
+
+	// Two logs: one with user address in topic, one without.
+	// Both should be blocked because empty event rules means "no events visible".
+	logs := []map[string]any{
+		{
+			"address": contractAddr,
+			"topics":  []string{"0xaaa0000000000000000000000000000000000000000000000000000000000000", paddedUser},
+			"data":    "0x",
+		},
+		{
+			"address": contractAddr,
+			"topics":  []string{"0xbbb0000000000000000000000000000000000000000000000000000000000000"},
+			"data":    "0x",
+		},
+	}
+	logsJSON, _ := json.Marshal(logs)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(logsJSON) + `}`
+
+	got := FilterLogsWithEventRules(
+		[]byte(rpcResponse),
+		[]string{userAddr},
+		perms,
+		&testABIProviderServer{},
+	)
+
+	var resp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\nraw: %s", err, got)
+	}
+	if len(resp.Result) != 0 {
+		t.Errorf("empty EventRules: expected 0 logs (all events blocked), got %d\nraw: %s",
+			len(resp.Result), got)
+	}
+}
+
 // TestFilterReceiptLogsWithEventRules_LogsBloomZeroed verifies that logsBloom
 // is zeroed when logs are filtered.
 func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {

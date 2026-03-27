@@ -359,8 +359,10 @@ export default function ContractGrantsManager({
                 {/* Event visibility */}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-neutral-500">Events:</span>
-                  {!grant.event_rules || grant.event_rules.length === 0 ? (
+                  {grant.event_rules === null || grant.event_rules === undefined ? (
                     <span className="text-xs text-success font-medium">All events visible</span>
+                  ) : grant.event_rules.length === 0 ? (
+                    <span className="text-xs text-error-dark font-medium">No events visible</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
                       {grant.event_rules.map((rule: EventRule) => {
