@@ -10,8 +10,35 @@ export interface Organization {
   slug: string;
   name: string;
   settings: Record<string, unknown>;
+  governance_enabled?: boolean;
+  approval_threshold?: number;
+  governance_webhook_url?: string;
   created_at: string;
   updated_at: string;
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'failed' | 'applied';
+
+export interface ApprovalRequest {
+  id: string;
+  org_id: string;
+  requester_id: string;
+  change_type: string;
+  target_resource_type: string;
+  payload: Record<string, any>;
+  status: ApprovalStatus;
+  approvals_needed: number;
+  created_at: string;
+  resolved_at?: string;
+}
+
+export interface ApprovalDecision {
+  id: string;
+  request_id: string;
+  approver_id: string;
+  decision: 'approve' | 'reject';
+  reason?: string;
+  created_at: string;
 }
 
 // Group - no more role_id (permissions come from GroupAccess and ContractGrants)

@@ -22,11 +22,12 @@ import {
   ChevronDown,
   ChevronUp,
   Hash,
+  Scale,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'preregistered' | 'azure-tenants';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'governance' | 'preregistered' | 'azure-tenants';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -64,6 +65,7 @@ export default function RBACManager() {
     if (path.includes('/users')) return 'users';
     if (path.includes('/preregistered')) return 'preregistered';
     if (path.includes('/contracts')) return 'contracts';
+    if (path.includes('/governance')) return 'governance';
     return 'organizations';
   };
 
@@ -153,7 +155,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
+    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance', 'preregistered'];
     const needsOrg = orgTabs.includes(tab);
 
     const path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -165,10 +167,10 @@ export default function RBACManager() {
   };
 
   // Tabs that show org selector (users shows it but doesn't block without one)
-  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'preregistered'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance', 'preregistered'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
   // Tabs that are completely blocked without org selection
-  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'preregistered'];
+  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'governance', 'preregistered'];
   const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
   return (
@@ -337,6 +339,10 @@ export default function RBACManager() {
               <TabsTrigger value="contracts" className="gap-2" data-testid="tab-contracts">
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
+              </TabsTrigger>
+              <TabsTrigger value="governance" className="gap-2" data-testid="tab-governance">
+                <Scale className="w-4 h-4" />
+                <span>Governance</span>
               </TabsTrigger>
               {/* Pre-registered tab is hidden when runtime tracing is enabled */}
               {!runtimeTracingEnabled && (

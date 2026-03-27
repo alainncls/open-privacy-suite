@@ -68,14 +68,14 @@ export async function mockLoginViaAPI(
   // The init script checks for a "cleared" flag so that clearAuth() can
   // prevent re-injection on subsequent page loads/reloads.
   await page.addInitScript((authData) => {
-    if (localStorage.getItem('privacy_proxy_auth_cleared')) return;
+    if (sessionStorage.getItem('privacy_proxy_auth_cleared')) return;
     const storageKey = 'privacy_proxy_auth';
     const auth = {
       accessToken: authData.accessToken,
       refreshToken: authData.refreshToken,
       expiresAt: Date.now() + authData.expiresIn * 1000,
     };
-    localStorage.setItem(storageKey, JSON.stringify(auth));
+    sessionStorage.setItem(storageKey, JSON.stringify(auth));
   }, tokens);
 }
 
@@ -124,14 +124,14 @@ export async function getAuthTokens(userDID: string): Promise<AuthTokens> {
 }
 
 /**
- * Check if the user is currently authenticated by examining localStorage.
+ * Check if the user is currently authenticated by examining sessionStorage.
  *
  * @param page - Playwright page object
  * @returns True if authenticated
  */
 export async function isAuthenticated(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    const stored = localStorage.getItem('privacy_proxy_auth');
+    const stored = sessionStorage.getItem('privacy_proxy_auth');
     if (!stored) return false;
 
     try {
@@ -150,9 +150,9 @@ export async function isAuthenticated(page: Page): Promise<boolean> {
  */
 export async function clearAuth(page: Page): Promise<void> {
   await page.evaluate(() => {
-    localStorage.removeItem('privacy_proxy_auth');
+    sessionStorage.removeItem('privacy_proxy_auth');
     // Set flag so that addInitScript won't re-inject tokens on reload
-    localStorage.setItem('privacy_proxy_auth_cleared', '1');
+    sessionStorage.setItem('privacy_proxy_auth_cleared', '1');
   });
 }
 

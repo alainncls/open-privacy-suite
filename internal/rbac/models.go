@@ -2,6 +2,7 @@
 package rbac
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"time"
@@ -78,8 +79,65 @@ type Organization struct {
 	Slug      string         `json:"slug"`
 	Name      string         `json:"name"`
 	Settings  map[string]any `json:"settings"`
+	
+	GovernanceEnabled                bool    `json:"governance_enabled"`
+	ApprovalThreshold                int     `json:"approval_threshold"`
+	GovernanceWebhookURL             *string `json:"governance_webhook_url,omitempty"`
+	GovernanceEscalationTimeoutHours int     `json:"governance_escalation_timeout_hours"`
+
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+type AuditRecord struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id"`
+	ActorID   string    `json:"actor_id"` // User or API Key ID
+	Action    string    `json:"action"`   // e.g., "create", "update", "delete"
+	Resource  string    `json:"resource"` // The type of resource (e.g., "ContractGrant")
+	TargetID  string    `json:"target_id"` // GroupID, UserID, ContractID depending on resource
+	Details   any       `json:"details"`  // The actual object changes
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type ApprovalRequestStatus string
+
+const (
+	StatusPending  ApprovalRequestStatus = "pending"
+	StatusApproved ApprovalRequestStatus = "approved"
+	StatusRejected ApprovalRequestStatus = "rejected"
+)
+
+type ApprovalRequest struct {
+	ID                 string                `json:"id"`
+	OrgID              string                `json:"org_id"`
+	RequesterID        string                `json:"requester_id"`
+	ChangeType         string                `json:"change_type"`
+	TargetResourceID   *string               `json:"target_resource_id,omitempty"`
+	TargetResourceType *string               `json:"target_resource_type,omitempty"`
+	Payload            json.RawMessage       `json:"payload"`
+	Status             ApprovalRequestStatus `json:"status"`
+	ApprovalsNeeded    int                   `json:"approvals_needed"`
+	CreatedAt          time.Time             `json:"created_at"`
+	ResolvedAt         *time.Time            `json:"resolved_at,omitempty"`
+}
+
+type ApprovalDecision struct {
+	ID         string    `json:"id"`
+	RequestID  string    `json:"request_id"`
+	ApproverID string    `json:"approver_id"`
+	Decision   string    `json:"decision"` // "approve" or "reject"
+	Reason     *string   `json:"reason,omitempty"`
+	DecidedAt  time.Time `json:"decided_at"`
+}
+
+type ApprovalNotification struct {
+	ID             string     `json:"id"`
+	RequestID      string     `json:"request_id"`
+	ApproverID     string     `json:"approver_id"`
+	Channel        string     `json:"channel"`
+	SentAt         time.Time  `json:"sent_at"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 }
 
 // Group represents a hierarchical permission container within an organization.
