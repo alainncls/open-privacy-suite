@@ -149,7 +149,7 @@ When a user accesses a contract:
 ### Isolation Rules
 
 - Users can only access contracts owned by organizations they belong to
-- Unregistered contracts (no registered owner) are accessible only to users with `deploy` or `admin` claims -- the deploy-claim fallback only fires when `ownerOrgID == ""`
+- Unregistered contracts (no registered owner) are treated as public -- any authenticated user can access them using their default claims
 - A contract registered to another org is **always denied**, regardless of the requester's claims
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
 - Regular `read`/`write` users must have an explicit `ContractGrant`

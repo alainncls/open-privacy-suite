@@ -32,7 +32,7 @@ The RBAC system uses a **group-centric claim model**:
 
 2. **ContractGrants link groups to contracts** -- for registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
 
-3. **Unregistered contracts require deploy/admin** -- if a contract is not registered to any organization, only users with `deploy` or `admin` claims can access it. A contract registered to a *different* org is always denied regardless of the user's claims.
+3. **Unregistered contracts use default claims** -- if a contract is not registered to any organization, any authenticated user with matching claims (`read`, `write`, etc.) can access it. A contract registered to a *different* org is always denied regardless of the user's claims.
 
 4. **Deploy/admin users have broad access** -- they can access any registered contract in their own org without needing explicit `ContractGrant` entries.
 
@@ -42,7 +42,7 @@ The RBAC system uses a **group-centric claim model**:
 
 | Contract Type | Deploy/Admin Users | Read/Write Users |
 |--------------|-------------------|-----------------|
-| Unregistered | Allowed (default claims) | Denied |
+| Unregistered | Allowed (default claims) | Allowed (default claims) |
 | Registered (own org) | Allowed (default claims) | ContractGrant required |
 | Registered (other org) | Denied (cross-org) | Denied (cross-org) |
 | Self-deployed | Automatic read+write | Automatic read+write |
@@ -223,9 +223,11 @@ based on the **target contract**:
 |--------|-------------|----------|
 | Contract owned by Org A | Org A | Use Org A memberships |
 | Contract owned by Org B | Org B | Use Org B memberships |
-| Unregistered contract | User's default org | Deploy/admin only (transient -- plain CREATE contracts are pre-registered before the tx is forwarded) |
+| Unregistered contract | User's default org | Allowed (default claims apply — see note below) |
 | Contract in Org C (user not member) | -- | Request denied |
 | No target (deployment) | User's default org | Use default org memberships |
+
+**Note on "unregistered" contracts:** Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node, closing any race window. "Unregistered" only applies to contracts that exist on-chain but were not deployed through the proxy (e.g., system/genesis contracts, or contracts deployed via direct node console access). These are treated as public for any authenticated user with claims.
 
 ---
 

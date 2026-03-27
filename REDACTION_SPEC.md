@@ -65,6 +65,8 @@ These levels are computed per-address by the redaction engine based on the viewe
 
 **Nonce rule:** Nonce is tied to the sender. Strip nonce when `from` is Hidden or Redacted. Preserve nonce when only `to` is Hidden or Redacted (nonce belongs to the sender, who is visible).
 
+**Unregistered addresses:** Addresses not present in the `contracts` or `preregistered_addresses` tables and not linked via `eth_address_links` are treated as **public** (`VisibilityFull`). This includes system/genesis contracts and addresses not deployed through the proxy. Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node.
+
 ### 2.1 Visibility Resolution by Address Type
 
 `GetBatchVisibility` resolves each address independently based on what kind of address it is and the viewer's relationship to it:
