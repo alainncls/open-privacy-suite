@@ -14,8 +14,8 @@ ON CONFLICT (id) DO NOTHING;
 -- Approval requests table
 CREATE TABLE approval_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id UUID NOT NULL REFERENCES organizations(id),
-    requester_id UUID NOT NULL REFERENCES users(id),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     change_type TEXT NOT NULL,
     target_resource_id UUID,          -- for auditability
     target_resource_type TEXT,        -- 'contract', 'group', 'user'
@@ -31,8 +31,8 @@ CREATE INDEX idx_approval_requests_org_status ON approval_requests(org_id, statu
 -- Approval decisions table
 CREATE TABLE approval_decisions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID NOT NULL REFERENCES approval_requests(id),
-    approver_id UUID NOT NULL REFERENCES users(id),
+    request_id UUID NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+    approver_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     decision TEXT NOT NULL,           -- 'approve' or 'reject'
     reason TEXT,
     decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -44,8 +44,8 @@ CREATE INDEX idx_approval_decisions_request ON approval_decisions(request_id);
 -- Approval notifications table
 CREATE TABLE approval_notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID NOT NULL REFERENCES approval_requests(id),
-    approver_id UUID NOT NULL REFERENCES users(id),
+    request_id UUID NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+    approver_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     channel TEXT NOT NULL,            -- 'webhook', 'dashboard'
     sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     acknowledged_at TIMESTAMPTZ
