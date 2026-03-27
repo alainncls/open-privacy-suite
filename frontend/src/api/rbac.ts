@@ -36,6 +36,7 @@ import type {
   BatchDeleteResponse,
   BatchDeletePreviewRequest,
   BatchDeletePreviewResponse,
+  EventSignature,
 } from '../types/rbac';
 
 const api = adminApi;
@@ -122,6 +123,9 @@ export const rbacApi = {
     // ABI management
     updateABI: (orgId: string, address: string, abi: string) =>
       api.put<Contract>(`/orgs/${orgId}/contracts/${address}/abi`, { abi }),
+    // Event signatures from ABI (for event rules UI)
+    listEvents: (orgId: string, address: string) =>
+      api.get<{ events: EventSignature[]; message?: string }>(`/orgs/${orgId}/contracts/${address}/events`),
     // Sync with chain
     syncCheck: (orgId: string) =>
       api.post<ContractSyncCheckResponse>(`/orgs/${orgId}/contracts/sync-check`),

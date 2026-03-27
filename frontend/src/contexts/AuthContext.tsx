@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from 'react';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -203,16 +203,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [state.expiresAt, state.refreshToken, refreshAccessToken]);
 
+  const value = useMemo(() => ({
+    ...state,
+    login,
+    logout,
+    refreshAccessToken,
+    isLoading,
+  }), [state, login, logout, refreshAccessToken, isLoading]);
+
   return (
-    <AuthContext.Provider
-      value={{
-        ...state,
-        login,
-        logout,
-        refreshAccessToken,
-        isLoading,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
