@@ -147,6 +147,35 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "decision recorded", "request": req})
 }
 
+// Get Governance Settings
+// GET /orgs/:org_id/governance/settings
+func (s *Server) getGovernanceSettings(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
+	approverGroups, err := s.db.ListGovernanceApproverGroups(c.Request.Context(), orgID)
+	if err != nil {
+		approverGroups = nil
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"governance_enabled":                  org.GovernanceEnabled,
+		"approval_threshold":                  org.ApprovalThreshold,
+		"governance_webhook_url":              org.GovernanceWebhookURL,
+		"governance_escalation_timeout_hours": org.GovernanceEscalationTimeoutHours,
+		"approver_groups":                     approverGroups,
+	})
+}
+
 // Update Governance Settings
 // PUT /orgs/:org_id/governance/settings
 func (s *Server) updateGovernanceSettings(c *gin.Context) {
@@ -217,10 +246,18 @@ func (s *Server) updateGovernanceSettings(c *gin.Context) {
 		return
 	}
 
+	// Include approver groups in the response for convenience
+	approverGroups, err := s.db.ListGovernanceApproverGroups(c.Request.Context(), orgID)
+	if err != nil {
+		// Non-fatal: return settings without approver groups
+		approverGroups = nil
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"governance_enabled":                  org.GovernanceEnabled,
 		"approval_threshold":                  org.ApprovalThreshold,
 		"governance_webhook_url":              org.GovernanceWebhookURL,
 		"governance_escalation_timeout_hours": org.GovernanceEscalationTimeoutHours,
+		"approver_groups":                     approverGroups,
 	})
 }

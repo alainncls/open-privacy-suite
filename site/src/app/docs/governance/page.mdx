@@ -33,3 +33,70 @@ Users with Admin status will actively observe the actual JSON payloads being req
 You can natively click **Approve** or **Reject** on the line item. Rejecting outright destroys the intercepted payload permanently. Approving increments the decision table bound integrally to your physical User Identity.
 
 Once the `threshold` numeric hits the org bounds, the backend will instantaneously fire the JSON mutation back into the origin proxy systems natively executing the block rules perfectly synchronously!
+
+---
+
+## Approver Groups
+
+By default, any user with `admin` claim in the organization can approve governance requests. For tighter control, you can designate specific **Approver Groups**.
+
+When approver groups are configured, **only members of those groups** can approve or reject requests. Having the `admin` claim alone is no longer sufficient.
+
+<Callout type="info">
+  When no approver groups are configured, the system falls back to the default behavior: any org admin can approve. This ensures backward compatibility with existing setups.
+</Callout>
+
+### Managing Approver Groups
+
+Use the Admin API to manage approver groups:
+
+```bash
+# List approver groups
+curl /api/v1/admin/orgs/:org_id/governance/approvers
+
+# Add a group as designated approver
+curl -X POST /api/v1/admin/orgs/:org_id/governance/approvers \
+  -d '{"group_id": "group-uuid"}'
+
+# Remove a group from designated approvers
+curl -X DELETE /api/v1/admin/orgs/:org_id/governance/approvers/:group_id
+```
+
+The group must belong to the same organization. When the last approver group is removed, the system reverts to the default behavior.
+
+### Governance Settings
+
+The settings endpoint now includes the list of approver groups:
+
+```bash
+# Read current governance settings (includes approver groups)
+curl /api/v1/admin/orgs/:org_id/governance/settings
+```
+
+---
+
+## Webhook Notifications
+
+When a webhook URL is configured, the proxy sends a POST request for governance events.
+
+### Payload Format
+
+```json
+{
+  "event": "new_approval_request",
+  "request": {
+    "id": "uuid",
+    "org_id": "uuid",
+    "requester_id": "uuid",
+    "change_type": "updateGroupAccess",
+    "payload": { ... },
+    "status": "pending",
+    "approvals_needed": 2,
+    "created_at": "2026-03-27T..."
+  }
+}
+```
+
+Supported events: `new_approval_request`, `request_escalated`.
+
+Supported `change_type` values: `createContractGrant`, `updateContractGrant`, `deleteContractGrant`, `updateGroupAccess`.

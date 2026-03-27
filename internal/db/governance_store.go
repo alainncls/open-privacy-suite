@@ -183,3 +183,113 @@ func (d *DB) CreateApprovalNotification(ctx context.Context, notif *rbac.Approva
 		notif.ID, notif.RequestID, notif.ApproverID, notif.Channel,
 	).Scan(&notif.SentAt)
 }
+
+// --- Governance Approver Groups ---
+
+// AddGovernanceApproverGroup designates a group as an approver group for governance requests.
+func (d *DB) AddGovernanceApproverGroup(ctx context.Context, orgID, groupID string) error {
+	query := `INSERT INTO governance_approver_groups (org_id, group_id)
+	          VALUES ($1, $2)
+	          ON CONFLICT (org_id, group_id) DO NOTHING`
+
+	_, err := d.conn.ExecContext(ctx, query, orgID, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to add governance approver group: %w", err)
+	}
+	return nil
+}
+
+// RemoveGovernanceApproverGroup removes a group from the approver groups for an org.
+func (d *DB) RemoveGovernanceApproverGroup(ctx context.Context, orgID, groupID string) error {
+	result, err := d.conn.ExecContext(ctx,
+		`DELETE FROM governance_approver_groups WHERE org_id = $1 AND group_id = $2`,
+		orgID, groupID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to remove governance approver group: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListGovernanceApproverGroups returns all designated approver groups for an org,
+// joined with the group name and slug.
+func (d *DB) ListGovernanceApproverGroups(ctx context.Context, orgID string) ([]*rbac.GovernanceApproverGroup, error) {
+	query := `SELECT gag.id, gag.org_id, gag.group_id, g.name, g.slug, gag.created_at
+	          FROM governance_approver_groups gag
+	          JOIN groups g ON g.id = gag.group_id
+	          WHERE gag.org_id = $1
+	          ORDER BY g.name ASC`
+
+	rows, err := d.conn.QueryContext(ctx, query, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list governance approver groups: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []*rbac.GovernanceApproverGroup
+	for rows.Next() {
+		var g rbac.GovernanceApproverGroup
+		if err := rows.Scan(&g.ID, &g.OrgID, &g.GroupID, &g.GroupName, &g.GroupSlug, &g.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan governance approver group: %w", err)
+		}
+		groups = append(groups, &g)
+	}
+	return groups, rows.Err()
+}
+
+// IsGovernanceApprover checks if a user is eligible to approve governance requests for an org.
+// If no approver groups are configured, returns true for any org admin (backward compatible).
+// If approver groups are configured, returns true only if the user is a member of at least one.
+func (d *DB) IsGovernanceApprover(ctx context.Context, orgID, userID string) (bool, error) {
+	// First check if any approver groups are configured for this org.
+	var count int
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM governance_approver_groups WHERE org_id = $1`,
+		orgID,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to count approver groups: %w", err)
+	}
+
+	if count == 0 {
+		// No approver groups configured: fall back to "any org admin can approve".
+		var isAdmin bool
+		err := d.conn.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1
+				FROM user_memberships m
+				JOIN groups g ON g.id = m.group_id
+				JOIN group_access ga ON ga.group_id = m.group_id
+				WHERE m.user_id = $1
+				  AND g.org_id = $2
+				  AND 'admin' = ANY(ga.claims)
+				  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+			)`, userID, orgID,
+		).Scan(&isAdmin)
+		if err != nil {
+			return false, fmt.Errorf("failed to check admin claim: %w", err)
+		}
+		return isAdmin, nil
+	}
+
+	// Approver groups are configured: check if user is a member of any of them.
+	var isMember bool
+	err = d.conn.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM governance_approver_groups gag
+			JOIN user_memberships m ON m.group_id = gag.group_id
+			WHERE gag.org_id = $1
+			  AND m.user_id = $2
+			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		)`, orgID, userID,
+	).Scan(&isMember)
+	if err != nil {
+		return false, fmt.Errorf("failed to check approver group membership: %w", err)
+	}
+	return isMember, nil
+}
