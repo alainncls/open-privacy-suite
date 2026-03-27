@@ -42,6 +42,20 @@ import type {
 const api = adminApi;
 
 export const rbacApi = {
+  // Governance
+  governance: {
+    listRequests: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) =>
+      api.get<import('../types/rbac').PaginatedResponse<import('../types/rbac').ApprovalRequest>>(`/orgs/${orgId}/governance/requests`, { params }),
+    getRequest: (orgId: string, requestId: string) =>
+      api.get<import('../types/rbac').ApprovalRequest>(`/orgs/${orgId}/governance/requests/${requestId}`),
+    approve: (orgId: string, requestId: string, reason?: string) =>
+      api.post<{ message: string; request: import('../types/rbac').ApprovalRequest }>(`/orgs/${orgId}/governance/requests/${requestId}/approve`, { reason }),
+    reject: (orgId: string, requestId: string, reason?: string) =>
+      api.post<{ message: string; request: import('../types/rbac').ApprovalRequest }>(`/orgs/${orgId}/governance/requests/${requestId}/reject`, { reason }),
+    updateSettings: (orgId: string, input: { governance_enabled: boolean; approval_threshold: number; governance_webhook_url: string }) =>
+      api.put<import('../types/rbac').Organization>(`/orgs/${orgId}/governance/settings`, input),
+  },
+
   // Organizations
   orgs: {
     list: (params?: { limit?: number; offset?: number }) =>

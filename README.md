@@ -53,7 +53,8 @@ In development mode, click the flask icon on the login page for instant mock aut
 | [Security](site/src/app/docs/security/page.mdx) | Request filtering, cross-org isolation |
 | [Compliance](site/src/app/docs/compliance/page.mdx) | Travel rule enforcement |
 | [Selective Disclosure](site/src/app/docs/disclosure/page.mdx) | Privacy-aware data sharing |
-| [Contract Deployment](site/src/app/docs/deployment/page.mdx) | Deploying contracts through the proxy |
+| [Deployment](site/src/app/docs/deployment/page.mdx) | Deploying contracts through the proxy |
+| [Governance](site/src/app/docs/governance/page.mdx) | Multi-party RBAC approvals |
 | [Configuration](site/src/app/docs/configuration/page.mdx) | Environment variables reference |
 | [Testing](site/src/app/docs/testing/page.mdx) | Unit, E2E, and Playwright tests |
 | [Troubleshooting](site/src/app/docs/troubleshooting/page.mdx) | Common issues and fixes |

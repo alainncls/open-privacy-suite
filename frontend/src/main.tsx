@@ -21,6 +21,7 @@ import OrganizationList from './components/rbac/OrganizationList';
 import GroupList from './components/rbac/GroupList';
 import UserList from './components/rbac/UserList';
 import ContractList from './components/rbac/ContractList';
+import GovernanceDashboard from './components/rbac/GovernanceDashboard';
 import PreregisteredAddressList from './components/rbac/PreregisteredAddressList';
 import AzureTenantList from './components/rbac/AzureTenantList';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
@@ -82,6 +83,7 @@ function Root() {
                     <Route path="users" element={<UserList />} />
                     <Route path="users/:userId" element={<UserList />} />
                     <Route path="contracts" element={<ContractList />} />
+                    <Route path="governance" element={<GovernanceDashboard />} />
                     <Route path="preregistered" element={<PreregisteredAddressList />} />
                     <Route path="azure-tenants" element={<AzureTenantList />} />
                   </Route>
