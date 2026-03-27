@@ -54,6 +54,12 @@ export const rbacApi = {
       api.post<{ message: string; request: import('../types/rbac').ApprovalRequest }>(`/orgs/${orgId}/governance/requests/${requestId}/reject`, { reason }),
     updateSettings: (orgId: string, input: { governance_enabled: boolean; approval_threshold: number; governance_webhook_url: string }) =>
       api.put<import('../types/rbac').Organization>(`/orgs/${orgId}/governance/settings`, input),
+    listApproverGroups: (orgId: string) =>
+      api.get<{ data: import('../types/rbac').GovernanceApproverGroup[] }>(`/orgs/${orgId}/governance/approvers`),
+    addApproverGroup: (orgId: string, groupId: string) =>
+      api.post<{ message: string; group_id: string }>(`/orgs/${orgId}/governance/approvers`, { group_id: groupId }),
+    removeApproverGroup: (orgId: string, groupId: string) =>
+      api.delete<{ message: string }>(`/orgs/${orgId}/governance/approvers/${groupId}`),
   },
 
   // Organizations

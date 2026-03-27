@@ -41,6 +41,15 @@ export interface ApprovalDecision {
   created_at: string;
 }
 
+export interface GovernanceApproverGroup {
+  id: string;
+  org_id: string;
+  group_id: string;
+  group_name: string;
+  group_slug: string;
+  created_at: string;
+}
+
 // Group - no more role_id (permissions come from GroupAccess and ContractGrants)
 export interface Group {
   id: string;

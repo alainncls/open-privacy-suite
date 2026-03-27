@@ -278,3 +278,47 @@ func TestEngine_DoubleVotingPrevention(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already voted") // Assuming DB unique constraint catches it! Or we handle it.
 }
+
+func TestEngine_ProcessDecision_ApproverEligibilityReevaluated(t *testing.T) {
+	database := setupTestDB(t)
+	org := createTestOrg(t, database)
+	ctx := context.Background()
+	engine := governance.NewEngine(database, &mockApplier{}, &mockNotifier{})
+
+	requesterID := uuid.New().String()
+	approverUserID := uuid.New().String()
+	createTestUser(t, database, requesterID)
+	createTestUser(t, database, approverUserID)
+
+	// Create approver group and add approverUserID
+	approverGroupID := uuid.New().String()
+	require.NoError(t, database.CreateGroup(ctx, &rbac.Group{
+		ID:        approverGroupID,
+		OrgID:     org.ID,
+		Slug:      "approvers-" + approverGroupID[:8],
+		Name:      "Approvers",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, database.CreateMembership(ctx, &rbac.UserMembership{
+		ID:        uuid.New().String(),
+		UserID:    approverUserID,
+		GroupID:   approverGroupID,
+		Source:    rbac.MembershipSourceAdmin,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, database.AddGovernanceApproverGroup(ctx, org.ID, approverGroupID))
+
+	req, err := engine.SubmitChange(ctx, org.ID, requesterID, "test_change", nil, nil, json.RawMessage(`{}`), 1)
+	require.NoError(t, err)
+
+	// REMOVE the approver group designation BEFORE processing the decision
+	// This tests the explicit race condition fix (re-evaluating inside the transaction lock).
+	require.NoError(t, database.RemoveGovernanceApproverGroup(ctx, org.ID, approverGroupID))
+
+	// Attempt to approve -> Should FAIL because the user is no longer an approver (and isn't an org admin)
+	_, err = engine.ProcessDecision(ctx, org.ID, req.ID, approverUserID, "approve", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a designated approver")
+}

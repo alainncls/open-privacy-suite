@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useOrgContext } from './RBACManager';
 import { rbacApi } from '@/api/rbac';
-import type { ApprovalRequest } from '@/types/rbac';
+import type { ApprovalRequest, GovernanceApproverGroup, GroupWithAccess } from '@/types/rbac';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,12 +24,22 @@ export default function GovernanceDashboard() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Approver Groups State
+  const [approverGroups, setApproverGroups] = useState<GovernanceApproverGroup[]>([]);
+  const [allGroups, setAllGroups] = useState<GroupWithAccess[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [addingApproverGroup, setAddingApproverGroup] = useState(false);
+  const [removingGroupId, setRemovingGroupId] = useState<string | null>(null);
+  const [approverError, setApproverError] = useState<string | null>(null);
+
   useEffect(() => {
     if (selectedOrg) {
       setEnabled(selectedOrg.governance_enabled ?? false);
       setThreshold(selectedOrg.approval_threshold ?? 1);
       setWebhookUrl(selectedOrg.governance_webhook_url ?? '');
       loadRequests(selectedOrg.id);
+      loadApproverGroups(selectedOrg.id);
+      loadAllGroups(selectedOrg.id);
     }
   }, [selectedOrg]);
 
@@ -44,6 +54,57 @@ export default function GovernanceDashboard() {
       console.error('Failed to load governance requests', err);
     } finally {
       setLoadingRequests(false);
+    }
+  };
+
+  const loadApproverGroups = async (orgId: string) => {
+    try {
+      const res = await rbacApi.governance.listApproverGroups(orgId);
+      setApproverGroups(res.data.data || []);
+    } catch (err) {
+      console.error('Failed to load approver groups', err);
+    }
+  };
+
+  const loadAllGroups = async (orgId: string) => {
+    try {
+      const res = await rbacApi.groups.list(orgId, { limit: 100 });
+      setAllGroups(res.data.data || []);
+    } catch (err) {
+      console.error('Failed to load groups', err);
+    }
+  };
+
+  const handleAddApproverGroup = async () => {
+    if (!selectedOrg || !selectedGroupId) return;
+    setAddingApproverGroup(true);
+    setApproverError(null);
+    try {
+      await rbacApi.governance.addApproverGroup(selectedOrg.id, selectedGroupId);
+      setSelectedGroupId('');
+      // In production, adding an approver might trigger a governance request itself.
+      // Reload both tables to be safe (if auto-approved, it appears in Approvers, else in Requests)
+      await loadApproverGroups(selectedOrg.id);
+      await loadRequests(selectedOrg.id);
+    } catch (err: any) {
+      setApproverError(err.response?.data?.error || 'Failed to add approver group');
+    } finally {
+      setAddingApproverGroup(false);
+    }
+  };
+
+  const handleRemoveApproverGroup = async (groupId: string) => {
+    if (!selectedOrg) return;
+    setRemovingGroupId(groupId);
+    setApproverError(null);
+    try {
+      await rbacApi.governance.removeApproverGroup(selectedOrg.id, groupId);
+      await loadApproverGroups(selectedOrg.id);
+      await loadRequests(selectedOrg.id);
+    } catch (err: any) {
+      setApproverError(err.response?.data?.error || 'Failed to remove approver group');
+    } finally {
+      setRemovingGroupId(null);
     }
   };
 
@@ -149,6 +210,75 @@ export default function GovernanceDashboard() {
               Save Settings
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* Approver Groups Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Approver Groups</CardTitle>
+          <CardDescription>
+            Designate which RBAC groups are permitted to approve governance requests. 
+            {approverGroups.length === 0 && " If none are specified, any organization admin can approve."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {approverError && (
+            <div className="mb-4 p-3 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-error-dark" />
+              <span className="text-error-dark text-sm">{approverError}</span>
+            </div>
+          )}
+          
+          <div className="flex gap-2 mb-6">
+            <select
+              className="flex h-10 w-full md:w-64 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              value={selectedGroupId}
+              onChange={(e) => setSelectedGroupId(e.target.value)}
+              disabled={!enabled}
+            >
+              <option value="">Select a group...</option>
+              {allGroups.filter(g => !approverGroups.some(ag => ag.group_id === g.group.id)).map(g => (
+                <option key={g.group.id} value={g.group.id}>
+                  {g.group.name}
+                </option>
+              ))}
+            </select>
+            <Button 
+              onClick={handleAddApproverGroup}
+              disabled={!selectedGroupId || addingApproverGroup || !enabled}
+            >
+              {addingApproverGroup ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Group"}
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            {approverGroups.map(ag => (
+              <div key={ag.id} className="flex items-center justify-between p-3 border rounded-lg bg-neutral-50/50">
+                <div className="flex items-center gap-3">
+                  <span className="font-medium text-neutral-800">{ag.group_name}</span>
+                  <Badge variant="outline" className="text-xs bg-white">
+                    {ag.group_slug}
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-error hover:bg-error-50 hover:text-error-dark h-8 px-2"
+                  onClick={() => handleRemoveApproverGroup(ag.group_id)}
+                  disabled={removingGroupId === ag.group_id || !enabled}
+                >
+                  {removingGroupId === ag.group_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4 mr-1" />}
+                  Remove
+                </Button>
+              </div>
+            ))}
+            {approverGroups.length === 0 && (
+              <div className="text-center py-6 border border-dashed rounded-lg text-neutral-500 text-sm">
+                No dedicated approver groups configured.
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 

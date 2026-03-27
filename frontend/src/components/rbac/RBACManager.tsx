@@ -57,6 +57,9 @@ export default function RBACManager() {
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(true);
 
+  // Feature Flags
+  const isGovernanceUIEnabled = import.meta.env.VITE_FEATURE_GOVERNANCE_UI === 'true';
+
   // Derive active tab from URL
   const getActiveTab = (): RBACTab => {
     const path = location.pathname;
@@ -340,10 +343,12 @@ export default function RBACManager() {
                 <FileCode2 className="w-4 h-4" />
                 <span>Contracts</span>
               </TabsTrigger>
-              <TabsTrigger value="governance" className="gap-2" data-testid="tab-governance">
-                <Scale className="w-4 h-4" />
-                <span>Governance</span>
-              </TabsTrigger>
+              {isGovernanceUIEnabled && (
+                <TabsTrigger value="governance" className="gap-2" data-testid="tab-governance">
+                  <Scale className="w-4 h-4" />
+                  <span>Governance</span>
+                </TabsTrigger>
+              )}
               {/* Pre-registered tab is hidden when runtime tracing is enabled */}
               {!runtimeTracingEnabled && (
                 <TabsTrigger value="preregistered" className="gap-2" data-testid="tab-preregistered">

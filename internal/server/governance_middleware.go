@@ -122,6 +122,27 @@ func (s *Server) governanceMiddleware(changeType string) gin.HandlerFunc {
 			p.GroupID = groupID
 			payload, _ = json.Marshal(p)
 
+		case "addGovernanceApproverGroup":
+			targetTypeStr = "GovernanceApproverGroup"
+			targetType = &targetTypeStr
+			var p ManageGovernanceApproverGroupPayload
+			if len(bodyBytes) > 0 {
+				if err := json.Unmarshal(bodyBytes, &p); err != nil {
+					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid payload: " + err.Error()})
+					return
+				}
+			}
+			payload, _ = json.Marshal(p)
+
+		case "removeGovernanceApproverGroup":
+			targetTypeStr = "GovernanceApproverGroup"
+			targetType = &targetTypeStr
+			groupID := c.Param("group_id")
+			p := ManageGovernanceApproverGroupPayload{
+				GroupID: groupID,
+			}
+			payload, _ = json.Marshal(p)
+
 		default:
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "unsupported governance change type"})
 			return

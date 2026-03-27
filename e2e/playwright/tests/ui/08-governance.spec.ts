@@ -263,5 +263,59 @@ test.describe('Governance Dashboard Lifecycle', () => {
 
     await expect(page.getByText('No pending requests at this time.')).toBeVisible({ timeout: 10000 });
   });
+
+  test('can designate and remove approver groups via UI', async ({ page, request }) => {
+    test.setTimeout(45000);
+    const orgName = generateOrgName();
+    const orgSlug = generateOrgSlug();
+
+    // 1. Create an org
+    await page.goto('/admin/rbac/organizations');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: /add organization/i }).click();
+    const dialog = page.locator(selectors.common.dialog);
+    await dialog.getByLabel(/name/i).fill(orgName);
+    await dialog.getByLabel(/slug/i).fill(orgSlug);
+    await dialog.getByRole('button', { name: /create organization/i }).click();
+    await expect(dialog).not.toBeVisible({ timeout: 10000 });
+
+    const orgRow = page.getByRole('row').filter({ hasText: orgName });
+    await orgRow.click();
+    
+    // 2. Create a Group via UI
+    await page.getByTestId('tab-groups').click();
+    await page.getByRole('button', { name: /add group/i }).click();
+    const visibleDialog = page.locator('[role="dialog"]:visible');
+    await visibleDialog.getByLabel(/name/i).fill('Security Reviewers');
+    await visibleDialog.getByLabel(/slug/i).fill('security-reviewers');
+    await visibleDialog.getByRole('button', { name: /create group/i }).click();
+    await expect(visibleDialog).not.toBeVisible();
+
+    // 3. Navigate to Governance and Enable
+    await page.getByTestId('tab-governance').click();
+    const enableCheckbox = page.getByRole('checkbox', { name: /Enable Governance Approvals/i });
+    await expect(enableCheckbox).toBeVisible();
+    await enableCheckbox.check();
+    await page.getByRole('button', { name: /Save Settings/i }).click();
+
+    await expect(page.getByText('No dedicated approver groups configured.')).toBeVisible();
+
+    // 4. Add Approver Group
+    const select = page.locator('select');
+    await select.selectOption({ label: 'Security Reviewers' });
+    await page.getByRole('button', { name: 'Add Group' }).click();
+
+    // Verify it appears in the list
+    await expect(page.getByText('Security Reviewers', { exact: true })).toBeVisible();
+    await expect(page.getByText('security-reviewers')).toBeVisible();
+    await expect(page.getByText('No dedicated approver groups configured.')).not.toBeVisible();
+
+    // 5. Remove Approver Group
+    await page.getByRole('button', { name: 'Remove' }).click();
+    
+    // Verify it disappears
+    await expect(page.getByText('Security Reviewers', { exact: true })).not.toBeVisible();
+    await expect(page.getByText('No dedicated approver groups configured.')).toBeVisible();
+  });
 });
 

@@ -180,6 +180,24 @@ func TestGovernanceApproverGroups_CRUD(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("RemoveFromWrongOrg", func(t *testing.T) {
+		otherOrgID := uuid.New().String()
+		require.NoError(t, srv.db.CreateOrganization(context.Background(), &rbac.Organization{
+			ID:        otherOrgID,
+			Slug:      "other-org-" + otherOrgID[:8],
+			Name:      "Other Org",
+			Settings:  map[string]any{},
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}))
+
+		req := httptest.NewRequest(http.MethodDelete, "/test-approvers/orgs/"+otherOrgID+"/governance/approvers/"+approverGroupID, nil)
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 func TestGovernanceApproverGroups_ApprovalEligibility(t *testing.T) {

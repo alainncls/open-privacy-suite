@@ -15,7 +15,7 @@ func (s *Server) listGovernanceApproverGroups(c *gin.Context) {
 
 	groups, err := s.db.ListGovernanceApproverGroups(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list approver groups: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list approver groups"})
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *Server) addGovernanceApproverGroup(c *gin.Context) {
 	}
 
 	if err := s.db.AddGovernanceApproverGroup(c.Request.Context(), orgID, input.GroupID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add approver group: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add approver group"})
 		return
 	}
 
@@ -65,7 +65,11 @@ func (s *Server) removeGovernanceApproverGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 
 	if err := s.db.RemoveGovernanceApproverGroup(c.Request.Context(), orgID, groupID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "approver group not found"})
+        if err.Error() == "not found" || err.Error() == "sql: no rows in result set" {
+		    c.JSON(http.StatusNotFound, gin.H{"error": "approver group not found in this organization"})
+        } else {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+        }
 		return
 	}
 

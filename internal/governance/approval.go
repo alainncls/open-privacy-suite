@@ -55,15 +55,7 @@ func (e *Engine) ProcessDecision(ctx context.Context, orgID, requestID, approver
 		return nil, fmt.Errorf("invalid decision type")
 	}
 
-	// Check if the approver is eligible (member of a designated approver group,
-	// or any org admin when no approver groups are configured).
-	isApprover, err := e.db.IsGovernanceApprover(ctx, orgID, approverID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check approver eligibility: %w", err)
-	}
-	if !isApprover {
-		return nil, fmt.Errorf("user is not a designated approver for this organization")
-	}
+    // The check is moved into the transaction below to prevent race conditions.
 
 	var updatedReq *rbac.ApprovalRequest
 	var req *rbac.ApprovalRequest // This 'req' will be used inside the transaction
@@ -77,6 +69,15 @@ func (e *Engine) ProcessDecision(ctx context.Context, orgID, requestID, approver
 
 		if req.Status != rbac.StatusPending {
 			return fmt.Errorf("request is no longer pending (status: %s)", req.Status)
+		}
+
+		// Re-evaluate approver eligibility strictly under the database lock to enforce consistency.
+		isApprover, errCheck := e.db.IsGovernanceApprover(ctx, orgID, approverID)
+		if errCheck != nil {
+			return fmt.Errorf("failed to check approver eligibility: %w", errCheck)
+		}
+		if !isApprover {
+			return fmt.Errorf("user is not a designated approver for this organization")
 		}
 
 		if req.RequesterID == approverID {

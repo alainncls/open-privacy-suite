@@ -34,8 +34,8 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 
 	// Governance Approver Groups
 	api.GET("/orgs/:org_id/governance/approvers", s.listGovernanceApproverGroups)
-	api.POST("/orgs/:org_id/governance/approvers", s.addGovernanceApproverGroup)
-	api.DELETE("/orgs/:org_id/governance/approvers/:group_id", s.removeGovernanceApproverGroup)
+	api.POST("/orgs/:org_id/governance/approvers", s.governanceMiddleware("addGovernanceApproverGroup"), s.addGovernanceApproverGroup)
+	api.DELETE("/orgs/:org_id/governance/approvers/:group_id", s.governanceMiddleware("removeGovernanceApproverGroup"), s.removeGovernanceApproverGroup)
 
 	// Contracts
 	api.GET("/orgs/:org_id/contracts", s.listContracts)

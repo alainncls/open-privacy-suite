@@ -74,9 +74,11 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	var input struct {
 		Reason string `json:"reason"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	approverID := c.GetString("admin_user_id")
@@ -98,6 +100,8 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "approve", reasonPtr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// E2E DEBUG HOOK: Print the exact trace triggering HTTP 400
+		println("[CRITICAL E2E DEBUG] ProcessDecision failed: " + err.Error())
 		return
 	}
 
@@ -118,8 +122,13 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 	var input struct {
 		Reason string `json:"reason" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required to reject"})
 		return
 	}
 
