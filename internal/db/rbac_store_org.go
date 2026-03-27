@@ -12,8 +12,8 @@ import (
 // Organization operations
 
 func (d *DB) CreateOrganization(ctx context.Context, org *rbac.Organization) error {
-	query := `INSERT INTO organizations (id, slug, name, settings)
-	          VALUES ($1, $2, $3, $4)
+	query := `INSERT INTO organizations (id, slug, name, settings, governance_enabled, approval_threshold, governance_webhook_url, governance_escalation_timeout_hours)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	          RETURNING created_at, updated_at`
 
 	settings, err := json.Marshal(org.Settings)
@@ -22,19 +22,19 @@ func (d *DB) CreateOrganization(ctx context.Context, org *rbac.Organization) err
 	}
 
 	return d.conn.QueryRowContext(ctx, query,
-		org.ID, org.Slug, org.Name, settings,
+		org.ID, org.Slug, org.Name, settings, org.GovernanceEnabled, org.ApprovalThreshold, org.GovernanceWebhookURL, org.GovernanceEscalationTimeoutHours,
 	).Scan(&org.CreatedAt, &org.UpdatedAt)
 }
 
 func (d *DB) GetOrganization(ctx context.Context, id string) (*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, governance_enabled, approval_threshold, governance_webhook_url, governance_escalation_timeout_hours, created_at, updated_at
 	          FROM organizations WHERE id = $1`
 
 	org := &rbac.Organization{}
 	var settings []byte
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt,
+		&org.ID, &org.Slug, &org.Name, &settings, &org.GovernanceEnabled, &org.ApprovalThreshold, &org.GovernanceWebhookURL, &org.GovernanceEscalationTimeoutHours, &org.CreatedAt, &org.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -51,14 +51,14 @@ func (d *DB) GetOrganization(ctx context.Context, id string) (*rbac.Organization
 }
 
 func (d *DB) GetOrganizationBySlug(ctx context.Context, slug string) (*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, governance_enabled, approval_threshold, governance_webhook_url, governance_escalation_timeout_hours, created_at, updated_at
 	          FROM organizations WHERE slug = $1`
 
 	org := &rbac.Organization{}
 	var settings []byte
 
 	err := d.conn.QueryRowContext(ctx, query, slug).Scan(
-		&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt,
+		&org.ID, &org.Slug, &org.Name, &settings, &org.GovernanceEnabled, &org.ApprovalThreshold, &org.GovernanceWebhookURL, &org.GovernanceEscalationTimeoutHours, &org.CreatedAt, &org.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -75,7 +75,7 @@ func (d *DB) GetOrganizationBySlug(ctx context.Context, slug string) (*rbac.Orga
 }
 
 func (d *DB) UpdateOrganization(ctx context.Context, org *rbac.Organization) error {
-	query := `UPDATE organizations SET slug = $2, name = $3, settings = $4, updated_at = CURRENT_TIMESTAMP
+	query := `UPDATE organizations SET slug = $2, name = $3, settings = $4, governance_enabled = $5, approval_threshold = $6, governance_webhook_url = $7, governance_escalation_timeout_hours = $8, updated_at = CURRENT_TIMESTAMP
 	          WHERE id = $1`
 
 	settings, err := json.Marshal(org.Settings)
@@ -83,12 +83,12 @@ func (d *DB) UpdateOrganization(ctx context.Context, org *rbac.Organization) err
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	_, err = d.conn.ExecContext(ctx, query, org.ID, org.Slug, org.Name, settings)
+	_, err = d.conn.ExecContext(ctx, query, org.ID, org.Slug, org.Name, settings, org.GovernanceEnabled, org.ApprovalThreshold, org.GovernanceWebhookURL, org.GovernanceEscalationTimeoutHours)
 	return err
 }
 
 func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, governance_enabled, approval_threshold, governance_webhook_url, governance_escalation_timeout_hours, created_at, updated_at
 	          FROM organizations ORDER BY created_at DESC, name ASC`
 
 	rows, err := d.conn.QueryContext(ctx, query)
@@ -102,7 +102,7 @@ func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error
 		org := &rbac.Organization{}
 		var settings []byte
 
-		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.GovernanceEnabled, &org.ApprovalThreshold, &org.GovernanceWebhookURL, &org.GovernanceEscalationTimeoutHours, &org.CreatedAt, &org.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan organization: %w", err)
 		}
 
@@ -126,7 +126,7 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 		return nil, 0, fmt.Errorf("failed to count organizations: %w", err)
 	}
 
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, governance_enabled, approval_threshold, governance_webhook_url, governance_escalation_timeout_hours, created_at, updated_at
 	          FROM organizations ORDER BY created_at DESC, name ASC LIMIT $1 OFFSET $2`
 
 	rows, err := d.conn.QueryContext(ctx, query, limit, offset)
@@ -140,7 +140,7 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 		org := &rbac.Organization{}
 		var settings []byte
 
-		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.GovernanceEnabled, &org.ApprovalThreshold, &org.GovernanceWebhookURL, &org.GovernanceEscalationTimeoutHours, &org.CreatedAt, &org.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan organization: %w", err)
 		}
 

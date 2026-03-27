@@ -18,6 +18,7 @@ import (
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/governance"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
@@ -62,6 +63,8 @@ const (
 	devVerifierDID = "did:pkh:eip155:1:0x0000000000000000000000000000000000000001"
 )
 
+// Server represents the API server
+// Server represents the API server
 type Server struct {
 	db                 *db.DB
 	rbacAccessCtrl     *rbac.AccessController
@@ -81,13 +84,14 @@ type Server struct {
 	jsonrpcProcessor   *JSONRPCProcessor
 	zkRoleExtractor    *auth.ZKRoleExtractor
 	runtimeTracer      *tracer.RuntimeTracer
-	retentionCleaner   *audit.RetentionCleaner
-	siemForwarder      *audit.SIEMForwarder
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
 	explorerStore      *explorer.Store
 	explorerRedactor   *explorer.RedactionEngine
+	siemForwarder      *audit.SIEMForwarder
+	retentionCleaner   *audit.RetentionCleaner
+	governanceEngine   *governance.Engine
 }
 
 // DB returns the database instance (for testing)
@@ -308,6 +312,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		explorerStore:      explorerStore,
 		explorerRedactor:   explorer.NewRedactionEngine(explorerStore, database),
 	}
+
+	// Initialize governance engine
+	webhookNotifier := governance.NewWebhookNotifier(database)
+	s.governanceEngine = governance.NewEngine(database, s, webhookNotifier)
 
 	// Initialize JSON-RPC processor with dependencies
 	if runtimeTracer != nil {
@@ -796,6 +804,7 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 				c.Set("auth_method", "jwt_admin")
 				c.Set("admin_subject", claims.Subject)
+				c.Set("admin_user_id", user.ID) // Internal Postgres UUID
 				c.Next()
 				return
 			}
