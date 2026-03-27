@@ -55,6 +55,8 @@ func (e *Engine) ProcessDecision(ctx context.Context, orgID, requestID, approver
 		return nil, fmt.Errorf("invalid decision type")
 	}
 
+    // The check is moved into the transaction below to prevent race conditions.
+
 	var updatedReq *rbac.ApprovalRequest
 	var req *rbac.ApprovalRequest // This 'req' will be used inside the transaction
 	err = e.db.WithTx(ctx, func(tx *db.Tx) error {
@@ -67,6 +69,15 @@ func (e *Engine) ProcessDecision(ctx context.Context, orgID, requestID, approver
 
 		if req.Status != rbac.StatusPending {
 			return fmt.Errorf("request is no longer pending (status: %s)", req.Status)
+		}
+
+		// Re-evaluate approver eligibility strictly under the database lock to enforce consistency.
+		isApprover, errCheck := e.db.IsGovernanceApprover(ctx, orgID, approverID)
+		if errCheck != nil {
+			return fmt.Errorf("failed to check approver eligibility: %w", errCheck)
+		}
+		if !isApprover {
+			return fmt.Errorf("user is not a designated approver for this organization")
 		}
 
 		if req.RequesterID == approverID {

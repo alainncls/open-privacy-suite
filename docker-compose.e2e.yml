@@ -85,6 +85,7 @@ services:
       args:
         - VITE_ALLOW_MOCK_LOGIN=true
         - VITE_BACKEND_URL=http://proxy-backend:8080
+        - VITE_FEATURE_GOVERNANCE_UI=true
     # No port mapping - only playwright container needs access
     depends_on:
       proxy-backend:

@@ -521,6 +521,17 @@ type PreregisteredAddress struct {
 	UsedAt         *time.Time `json:"used_at,omitempty"` // Timestamp when the address was actually deployed to
 }
 
+// GovernanceApproverGroup designates a group whose members can approve governance requests.
+// When no approver groups are configured for an org, any org admin can approve (backward compatible).
+type GovernanceApproverGroup struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id"`
+	GroupID   string    `json:"group_id"`
+	GroupName string    `json:"group_name"`
+	GroupSlug string    `json:"group_slug"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // ManagedProxy represents a proxy contract that is tracked for upgrade validation.
 // When a transaction targets a managed proxy with an upgrade selector, the upgrade
 // validator ensures the new implementation is owned by the same organization.

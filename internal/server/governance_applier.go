@@ -22,6 +22,10 @@ func (s *Server) ApplyGovernanceMutation(ctx context.Context, req *rbac.Approval
 		return s.applyDeleteContractGrant(ctx, req)
 	case "updateGroupAccess":
 		return s.applyUpdateGroupAccess(ctx, req)
+	case "addGovernanceApproverGroup":
+		return s.applyAddGovernanceApproverGroup(ctx, req)
+	case "removeGovernanceApproverGroup":
+		return s.applyRemoveGovernanceApproverGroup(ctx, req)
 	default:
 		return fmt.Errorf("unknown change type: %s", req.ChangeType)
 	}
@@ -193,5 +197,51 @@ func (s *Server) applyUpdateGroupAccess(ctx context.Context, req *rbac.ApprovalR
 	}
 
 	s.rbacAccessCtrl.InvalidateGroup(ctx, payload.GroupID)
+	return nil
+}
+
+type ManageGovernanceApproverGroupPayload struct {
+	GroupID string `json:"group_id"`
+}
+
+func (s *Server) applyAddGovernanceApproverGroup(ctx context.Context, req *rbac.ApprovalRequest) error {
+	var payload ManageGovernanceApproverGroupPayload
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
+	}
+
+	if err := s.db.AddGovernanceApproverGroup(ctx, req.OrgID, payload.GroupID); err != nil {
+		return err
+	}
+
+	_ = s.db.CreateAuditLog(ctx, &rbac.AuditLogEntry{
+		ActorID:      &req.RequesterID,
+		Action:       "governance.approver_group.add",
+		ResourceType: "organization",
+		ResourceID:   &req.OrgID,
+		NewValue:     map[string]any{"group_id": payload.GroupID},
+	})
+
+	return nil
+}
+
+func (s *Server) applyRemoveGovernanceApproverGroup(ctx context.Context, req *rbac.ApprovalRequest) error {
+	var payload ManageGovernanceApproverGroupPayload
+	if err := json.Unmarshal(req.Payload, &payload); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
+	}
+
+	if err := s.db.RemoveGovernanceApproverGroup(ctx, req.OrgID, payload.GroupID); err != nil {
+		return err
+	}
+
+	_ = s.db.CreateAuditLog(ctx, &rbac.AuditLogEntry{
+		ActorID:      &req.RequesterID,
+		Action:       "governance.approver_group.remove",
+		ResourceType: "organization",
+		ResourceID:   &req.OrgID,
+		OldValue:     map[string]any{"group_id": payload.GroupID},
+	})
+
 	return nil
 }

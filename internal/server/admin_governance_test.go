@@ -18,13 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupE2EGovernanceServer wires up a dummy endpoint into an existing server instance
+// setupE2EGovernanceServer wires up a dummy endpoint into an existing server instance.
+// It creates two users (requester + approver) and gives the approver an admin group membership
+// so that the default "any org admin can approve" behavior works.
 func setupE2EGovernanceServer(t *testing.T, srv *testServerRBAC, org *rbac.Organization) (string, string) {
-	
+
 	// Create required users
 	requesterID := uuid.New().String()
 	approverID := uuid.New().String()
-	
+
 	for _, id := range []string{requesterID, approverID} {
 		require.NoError(t, srv.db.CreateUser(context.Background(), &rbac.User{
 			ID:         id,
@@ -33,6 +35,34 @@ func setupE2EGovernanceServer(t *testing.T, srv *testServerRBAC, org *rbac.Organ
 			UpdatedAt:  time.Now(),
 		}))
 	}
+
+	// Create an admin group in this org and add the approver to it,
+	// so that IsGovernanceApprover returns true (backward compat: any org admin can approve).
+	adminGroupID := uuid.New().String()
+	require.NoError(t, srv.db.CreateGroup(context.Background(), &rbac.Group{
+		ID:        adminGroupID,
+		OrgID:     org.ID,
+		Slug:      "admin-" + adminGroupID[:8],
+		Name:      "Admin Group",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, srv.db.CreateGroupAccess(context.Background(), &rbac.GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        adminGroupID,
+		AllowedMethods: []string{"*"},
+		Claims:         []rbac.Claim{rbac.ClaimAdmin},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}))
+	require.NoError(t, srv.db.CreateMembership(context.Background(), &rbac.UserMembership{
+		ID:        uuid.New().String(),
+		UserID:    approverID,
+		GroupID:   adminGroupID,
+		Source:    rbac.MembershipSourceAdmin,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
 
 	// Re-initialize engine
 	srv.governanceEngine = governance.NewEngine(srv.db, srv.Server, nil)

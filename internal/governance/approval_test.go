@@ -62,9 +62,14 @@ func setupTestDB(t *testing.T) *db.DB {
 	// Clean tables
 	ctx := context.Background()
 	conn := database.Conn()
+	conn.ExecContext(ctx, "DELETE FROM governance_approver_groups")
 	conn.ExecContext(ctx, "DELETE FROM approval_notifications")
 	conn.ExecContext(ctx, "DELETE FROM approval_decisions")
 	conn.ExecContext(ctx, "DELETE FROM approval_requests")
+	conn.ExecContext(ctx, "DELETE FROM user_memberships")
+	conn.ExecContext(ctx, "DELETE FROM group_access")
+	conn.ExecContext(ctx, "DELETE FROM groups")
+	conn.ExecContext(ctx, "DELETE FROM users")
 	conn.ExecContext(ctx, "DELETE FROM organizations")
 
 	t.Cleanup(func() {
@@ -99,6 +104,39 @@ func createTestUser(t *testing.T, database *db.DB, id string) {
 	require.NoError(t, database.CreateUser(context.Background(), user))
 }
 
+// grantAdminClaim creates an admin group in the org and adds the user to it.
+// This is necessary because IsGovernanceApprover requires either admin claim
+// (when no approver groups configured) or approver group membership.
+func grantAdminClaim(t *testing.T, database *db.DB, orgID, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	groupID := uuid.New().String()
+	require.NoError(t, database.CreateGroup(ctx, &rbac.Group{
+		ID:        groupID,
+		OrgID:     orgID,
+		Slug:      "admin-" + groupID[:8],
+		Name:      "Admin",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        groupID,
+		AllowedMethods: []string{"*"},
+		Claims:         []rbac.Claim{rbac.ClaimAdmin},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}))
+	require.NoError(t, database.CreateMembership(ctx, &rbac.UserMembership{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		GroupID:   groupID,
+		Source:    rbac.MembershipSourceAdmin,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+}
+
 func TestEngine_ProcessDecision_HappyPath_Threshold1(t *testing.T) {
 	database := setupTestDB(t)
 	org := createTestOrg(t, database)
@@ -112,6 +150,7 @@ func TestEngine_ProcessDecision_HappyPath_Threshold1(t *testing.T) {
 	approverID := uuid.New().String()
 	createTestUser(t, database, requesterID)
 	createTestUser(t, database, approverID)
+	grantAdminClaim(t, database, org.ID, approverID)
 
 	// Create request
 	payload := json.RawMessage(`{"foo":"bar"}`)
@@ -141,6 +180,8 @@ func TestEngine_ProcessDecision_HappyPath_Threshold2(t *testing.T) {
 	createTestUser(t, database, user1)
 	createTestUser(t, database, user2)
 	createTestUser(t, database, user3)
+	grantAdminClaim(t, database, org.ID, user2)
+	grantAdminClaim(t, database, org.ID, user3)
 
 	req, err := engine.SubmitChange(ctx, org.ID, user1, "test_change", nil, nil, json.RawMessage(`{}`), 2)
 	require.NoError(t, err)
@@ -171,6 +212,7 @@ func TestEngine_ProcessDecision_Reject(t *testing.T) {
 	user2 := uuid.New().String()
 	createTestUser(t, database, user1)
 	createTestUser(t, database, user2)
+	grantAdminClaim(t, database, org.ID, user2)
 
 	req, err := engine.SubmitChange(ctx, org.ID, user1, "test_change", nil, nil, json.RawMessage(`{}`), 2)
 	require.NoError(t, err)
@@ -179,7 +221,7 @@ func TestEngine_ProcessDecision_Reject(t *testing.T) {
 	reason := "Nope"
 	req1, err := engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "reject", &reason)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, rbac.StatusRejected, req1.Status)
 	assert.False(t, applier.called)
 }
@@ -196,6 +238,8 @@ func TestEngine_ProcessDecision_AlreadyResolved(t *testing.T) {
 	createTestUser(t, database, user1)
 	createTestUser(t, database, user2)
 	createTestUser(t, database, user3)
+	grantAdminClaim(t, database, org.ID, user2)
+	grantAdminClaim(t, database, org.ID, user3)
 
 	req, err := engine.SubmitChange(ctx, org.ID, user1, "test_change", nil, nil, json.RawMessage(`{}`), 1)
 	require.NoError(t, err)
@@ -220,6 +264,7 @@ func TestEngine_DoubleVotingPrevention(t *testing.T) {
 	user2 := uuid.New().String()
 	createTestUser(t, database, user1)
 	createTestUser(t, database, user2)
+	grantAdminClaim(t, database, org.ID, user2)
 
 	req, err := engine.SubmitChange(ctx, org.ID, user1, "test_change", nil, nil, json.RawMessage(`{}`), 2)
 	require.NoError(t, err)
@@ -232,4 +277,48 @@ func TestEngine_DoubleVotingPrevention(t *testing.T) {
 	_, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "approve", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already voted") // Assuming DB unique constraint catches it! Or we handle it.
+}
+
+func TestEngine_ProcessDecision_ApproverEligibilityReevaluated(t *testing.T) {
+	database := setupTestDB(t)
+	org := createTestOrg(t, database)
+	ctx := context.Background()
+	engine := governance.NewEngine(database, &mockApplier{}, &mockNotifier{})
+
+	requesterID := uuid.New().String()
+	approverUserID := uuid.New().String()
+	createTestUser(t, database, requesterID)
+	createTestUser(t, database, approverUserID)
+
+	// Create approver group and add approverUserID
+	approverGroupID := uuid.New().String()
+	require.NoError(t, database.CreateGroup(ctx, &rbac.Group{
+		ID:        approverGroupID,
+		OrgID:     org.ID,
+		Slug:      "approvers-" + approverGroupID[:8],
+		Name:      "Approvers",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, database.CreateMembership(ctx, &rbac.UserMembership{
+		ID:        uuid.New().String(),
+		UserID:    approverUserID,
+		GroupID:   approverGroupID,
+		Source:    rbac.MembershipSourceAdmin,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, database.AddGovernanceApproverGroup(ctx, org.ID, approverGroupID))
+
+	req, err := engine.SubmitChange(ctx, org.ID, requesterID, "test_change", nil, nil, json.RawMessage(`{}`), 1)
+	require.NoError(t, err)
+
+	// REMOVE the approver group designation BEFORE processing the decision
+	// This tests the explicit race condition fix (re-evaluating inside the transaction lock).
+	require.NoError(t, database.RemoveGovernanceApproverGroup(ctx, org.ID, approverGroupID))
+
+	// Attempt to approve -> Should FAIL because the user is no longer an approver (and isn't an org admin)
+	_, err = engine.ProcessDecision(ctx, org.ID, req.ID, approverUserID, "approve", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a designated approver")
 }

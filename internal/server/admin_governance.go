@@ -74,9 +74,11 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	var input struct {
 		Reason string `json:"reason"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	approverID := c.GetString("admin_user_id")
@@ -98,6 +100,8 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "approve", reasonPtr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// E2E DEBUG HOOK: Print the exact trace triggering HTTP 400
+		println("[CRITICAL E2E DEBUG] ProcessDecision failed: " + err.Error())
 		return
 	}
 
@@ -118,8 +122,13 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 	var input struct {
 		Reason string `json:"reason" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required to reject"})
 		return
 	}
 
@@ -145,6 +154,35 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "decision recorded", "request": req})
+}
+
+// Get Governance Settings
+// GET /orgs/:org_id/governance/settings
+func (s *Server) getGovernanceSettings(c *gin.Context) {
+	orgID := c.Param("org_id")
+
+	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if org == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		return
+	}
+
+	approverGroups, err := s.db.ListGovernanceApproverGroups(c.Request.Context(), orgID)
+	if err != nil {
+		approverGroups = nil
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"governance_enabled":                  org.GovernanceEnabled,
+		"approval_threshold":                  org.ApprovalThreshold,
+		"governance_webhook_url":              org.GovernanceWebhookURL,
+		"governance_escalation_timeout_hours": org.GovernanceEscalationTimeoutHours,
+		"approver_groups":                     approverGroups,
+	})
 }
 
 // Update Governance Settings
@@ -217,10 +255,18 @@ func (s *Server) updateGovernanceSettings(c *gin.Context) {
 		return
 	}
 
+	// Include approver groups in the response for convenience
+	approverGroups, err := s.db.ListGovernanceApproverGroups(c.Request.Context(), orgID)
+	if err != nil {
+		// Non-fatal: return settings without approver groups
+		approverGroups = nil
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"governance_enabled":                  org.GovernanceEnabled,
 		"approval_threshold":                  org.ApprovalThreshold,
 		"governance_webhook_url":              org.GovernanceWebhookURL,
 		"governance_escalation_timeout_hours": org.GovernanceEscalationTimeoutHours,
+		"approver_groups":                     approverGroups,
 	})
 }
