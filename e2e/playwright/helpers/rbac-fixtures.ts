@@ -287,6 +287,27 @@ export class RBACTestFixture {
   }
 
   /**
+   * Create a contract with an ABI and track for cleanup.
+   */
+  async createContractWithABI(
+    orgId: string,
+    opts: {
+      address?: string;
+      name?: string;
+      abi: string;
+    }
+  ): Promise<Contract> {
+    const contract = await this.createContract(orgId, {
+      address: opts.address,
+      name: opts.name,
+    });
+    const address = contract.address || contract.contract_address || '';
+    await this.rbac.updateContractABI(orgId, address, opts.abi);
+    contract.abi = opts.abi;
+    return contract;
+  }
+
+  /**
    * Create a contract and grant it to a group.
    */
   async createContractWithGrant(orgId: string, groupId: string, opts?: {

@@ -112,12 +112,35 @@ export interface ParamRule {
   must_be: string; // "self" for now
 }
 
+// EventRule - describes visibility of a single contract event with optional parameter constraints
+export interface EventRule {
+  topic0: string;    // keccak256(EventName(paramTypes)) — 32-byte hex with 0x prefix
+  name: string;      // human-readable event name, from ABI
+  param_rules?: ParamRule[] | null;
+}
+
+// EventSignature returned by GET /orgs/:org_id/contracts/:address/events
+export interface EventSignature {
+  name: string;        // e.g. "Transfer"
+  signature: string;   // e.g. "Transfer(address,address,uint256)"
+  topic0: string;      // keccak256 of signature, hex-encoded with 0x prefix
+  inputs: EventInput[];
+}
+
+// EventInput describes one parameter of an event
+export interface EventInput {
+  name: string;
+  type: string;    // ABI type string (e.g. "address", "uint256")
+  indexed: boolean;
+}
+
 // ContractGrant - links groups to contracts (claims are inherited from GroupAccess)
 export interface ContractGrant {
   id: string;
   contract_id: string;
   group_id: string;
   functions?: FunctionRule[] | null; // null = all functions, or structured rules
+  event_rules?: EventRule[] | null;  // null = all events visible, or allowlist
   created_at: string;
   updated_at: string;
 }
@@ -230,10 +253,12 @@ export interface UpdateContractInput {
 export interface CreateContractGrantInput {
   group_id: string;
   functions?: FunctionRule[] | null;
+  event_rules?: EventRule[] | null;
 }
 
 export interface UpdateContractGrantInput {
   functions?: FunctionRule[] | null;
+  event_rules?: EventRule[] | null;
 }
 
 // Shorthand: convert a selector string to a FunctionRule with no param constraints.
@@ -586,6 +611,18 @@ export class RBACApiClient {
       throw new Error(`Failed to update contract ABI: ${response.status()} - ${body}`);
     }
     return (await response.json()) as Contract;
+  }
+
+  async listContractEvents(orgId: string, address: string): Promise<EventSignature[]> {
+    const response = await this.get(
+      `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/contracts/${address}/events`
+    );
+    if (!response.ok()) {
+      const body = await response.text();
+      throw new Error(`Failed to list contract events: ${response.status()} - ${body}`);
+    }
+    const body = (await response.json()) as { events: EventSignature[] };
+    return body.events ?? [];
   }
 
   // === Contract Grants ===
