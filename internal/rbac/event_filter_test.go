@@ -1,7 +1,9 @@
 package rbac
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -666,5 +668,1093 @@ func TestContractGrant_JSON_NilEventRules(t *testing.T) {
 	}
 	if string(raw) != "null" {
 		t.Fatalf("expected event_rules to be null, got %s", string(raw))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U01-U04: IsValidTopic0 validation (supplements event_signatures_test.go)
+// ---------------------------------------------------------------------------
+
+func TestIsValidTopic0_Comprehensive(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		// U01: Valid topic0 (0x + 64 hex chars)
+		{"U01_ValidTopic0", "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", true},
+		// U02: Too short
+		{"U02_TooShort", "0xddf252", false},
+		// U03: Non-hex characters
+		{"U03_NotHex", "0xZZf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", false},
+		// U04: Empty topic0
+		{"U04_Empty", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsValidTopic0(tt.input)
+			if got != tt.want {
+				t.Errorf("IsValidTopic0(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U06-U08: ParamRule validation
+// Note: There is no standalone ParamRule/EventRule validation function in the
+// codebase. Validation happens at the admin API layer (grant create/update).
+// These tests document the expected validity of ParamRule values.
+// ParamRule{Index: 0, MustBe: "self"} is valid (U06).
+// ParamRule{Index: -1, MustBe: "self"} and ParamRule{Index: 0, MustBe: "admin"}
+// are invalid (U07, U08), but enforcement is at the API layer, not model layer.
+// The filter itself silently ignores unknown MustBe values (safe: fail-closed
+// because no match occurs).
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_UnknownMustBe_FailClosed(t *testing.T) {
+	// U08 behavior at the filter level: an event rule with an unknown MustBe
+	// value will never match because checkEventParamRules skips non-"self" rules,
+	// meaning no param rule matches and the log is hidden (fail-closed).
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "admin"}, // unknown constraint
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `","` + userTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("U08: unknown MustBe should fail-closed, expected 0 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NegativeParamIndex_FailClosed(t *testing.T) {
+	// U07 behavior at the filter level: negative index is out of range, so
+	// matchesParamSelf returns false → log hidden.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: -1, MustBe: "self"}, // negative index
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `","` + userTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("U07: negative param index should fail-closed, expected 0 logs, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U13: Anonymous event extraction from ABI
+// ---------------------------------------------------------------------------
+
+func TestExtractEventSignatures_AnonymousEvent(t *testing.T) {
+	// U13: Anonymous events in ABI should be extracted. The go-ethereum ABI
+	// parser marks them as Anonymous but still computes a topic0 from the
+	// signature (the actual topic0 won't appear in logs for anonymous events).
+	abiJSON := `[
+		{
+			"anonymous": true,
+			"inputs": [
+				{"indexed": false, "name": "amount", "type": "uint256"}
+			],
+			"name": "Deposit",
+			"type": "event"
+		},
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "from", "type": "address"},
+				{"indexed": false, "name": "value", "type": "uint256"}
+			],
+			"name": "Transfer",
+			"type": "event"
+		}
+	]`
+
+	sigs, err := ExtractEventSignatures(abiJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// go-ethereum's ABI parser includes anonymous events in Events map.
+	// Both should be extracted.
+	if len(sigs) < 1 {
+		t.Fatalf("expected at least 1 event signature, got %d", len(sigs))
+	}
+
+	// Find Deposit (anonymous)
+	var depositFound bool
+	for _, sig := range sigs {
+		if sig.Name == "Deposit" {
+			depositFound = true
+			// The signature should still have a valid topic0 (from keccak256 of sig).
+			if !IsValidTopic0(sig.Topic0) {
+				t.Errorf("anonymous event Deposit should have valid topic0, got %q", sig.Topic0)
+			}
+			break
+		}
+	}
+	if !depositFound {
+		t.Error("anonymous event Deposit not found in extracted signatures")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U21: Allowlist_MixedLogs — 3 logs, only 1 event type allowed
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_Allowlist_MixedLogs(t *testing.T) {
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+	customTopic0 := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("U21: expected 1 log (only Transfer), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U23: Anonymous_Allowed — no AllowAnonymous field exists in the model.
+// AllowAnonymous is NOT implemented in the EventRule model. Anonymous events
+// (no topic0) are always blocked in allowlist mode. This test documents the
+// current behavior. If AllowAnonymous is added later, this test should be
+// updated.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// U28-U30: Non-indexed param matching
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_NonIndexedParam_Match(t *testing.T) {
+	// U28: Non-indexed address param matches user → visible.
+	// CustomEvent(uint256 indexed id, address recipient) — recipient is non-indexed.
+	customEventABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "id", "type": "uint256"},
+			{"indexed": false, "name": "recipient", "type": "address"}
+		],
+		"name": "CustomEvent",
+		"type": "event"
+	}]`
+
+	sigs, err := ExtractEventSignatures(customEventABI)
+	if err != nil {
+		t.Fatalf("failed to extract sigs: %v", err)
+	}
+	if len(sigs) != 1 {
+		t.Fatalf("expected 1 sig, got %d", len(sigs))
+	}
+	customTopic0 := sigs[0].Topic0
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	// ABI-encode the user address as the data field (non-indexed param, 32-byte padded).
+	userAddrPadded := "000000000000000000000000" + userAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: customTopic0,
+						Name:   "CustomEvent",
+						ParamRules: []ParamRule{
+							{Index: 1, MustBe: "self"}, // recipient (non-indexed, param index 1)
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// id=42 in topics[1], recipient in data
+	idTopic := "0x000000000000000000000000000000000000000000000000000000000000002a"
+	logJSON := `{"address":"0xcontract1","topics":["` + customTopic0 + `","` + idTopic + `"],"data":"0x` + userAddrPadded + `"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": customEventABI}}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 1 {
+		t.Errorf("U28: non-indexed address param matches user, expected 1 log, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NonIndexedParam_NoMatch(t *testing.T) {
+	// U29: Non-indexed address param doesn't match user → hidden.
+	customEventABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "id", "type": "uint256"},
+			{"indexed": false, "name": "recipient", "type": "address"}
+		],
+		"name": "CustomEvent",
+		"type": "event"
+	}]`
+
+	sigs, err := ExtractEventSignatures(customEventABI)
+	if err != nil {
+		t.Fatalf("failed to extract sigs: %v", err)
+	}
+	customTopic0 := sigs[0].Topic0
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherAddrPadded := "000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: customTopic0,
+						Name:   "CustomEvent",
+						ParamRules: []ParamRule{
+							{Index: 1, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	idTopic := "0x000000000000000000000000000000000000000000000000000000000000002a"
+	logJSON := `{"address":"0xcontract1","topics":["` + customTopic0 + `","` + idTopic + `"],"data":"0x` + otherAddrPadded + `"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": customEventABI}}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("U29: non-indexed param doesn't match user, expected 0 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
+	// U30: No ABI available, param rule on non-indexed param → hidden (fail-closed).
+	// Without ABI, matchesParamSelf falls back to topic position guess.
+	// For a non-indexed param, the topic position won't have the right data.
+	customTopic0 := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userAddrPadded := "000000000000000000000000" + userAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: customTopic0,
+						Name:   "CustomEvent",
+						ParamRules: []ParamRule{
+							// Index 1 is a non-indexed param in reality, but without ABI
+							// the filter can't decode data. If there's no topics[2], it
+							// falls back to false.
+							{Index: 1, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Only 1 topic beyond topic0 (the indexed "id"), no topics[2] for param index 1
+	idTopic := "0x000000000000000000000000000000000000000000000000000000000000002a"
+	logJSON := `{"address":"0xcontract1","topics":["` + customTopic0 + `","` + idTopic + `"],"data":"0x` + userAddrPadded + `"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	// No ABI provider
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 0 {
+		t.Errorf("U30: no ABI with non-indexed param rule should fail-closed, expected 0 logs, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U36-U40: Union edge cases (tests for unionEventRules)
+// ---------------------------------------------------------------------------
+
+func TestUnionEventRules_OneNil_OneRestricted(t *testing.T) {
+	// U36: Grant A has rules [Transfer], Grant B has nil → unrestricted wins.
+	a := []EventRule{
+		{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
+	}
+	var b []EventRule // nil
+
+	result := unionEventRules(a, b)
+	if result != nil {
+		t.Errorf("U36: nil + restricted should yield nil (unrestricted), got %v", result)
+	}
+
+	// Also test reversed order.
+	result = unionEventRules(b, a)
+	if result != nil {
+		t.Errorf("U36 reversed: restricted + nil should yield nil (unrestricted), got %v", result)
+	}
+}
+
+func TestUnionEventRules_BothNil(t *testing.T) {
+	// U37: Both grants nil → all visible (nil).
+	result := unionEventRules(nil, nil)
+	if result != nil {
+		t.Errorf("U37: nil + nil should yield nil, got %v", result)
+	}
+}
+
+func TestUnionEventRules_SameEvent_BothParams(t *testing.T) {
+	// U39: Same event, Grant A: param 0 self, Grant B: param 1 self.
+	// Current implementation: when both have param rules, keeps existing (Grant A).
+	// This means only param 0 self is checked. The filter itself uses OR semantics
+	// within a single rule's ParamRules, so ideally the union should merge both
+	// param rules. This test documents current behavior.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	a := []EventRule{
+		{
+			Topic0:     transferTopic0,
+			Name:       "Transfer",
+			ParamRules: []ParamRule{{Index: 0, MustBe: "self"}},
+		},
+	}
+	b := []EventRule{
+		{
+			Topic0:     transferTopic0,
+			Name:       "Transfer",
+			ParamRules: []ParamRule{{Index: 1, MustBe: "self"}},
+		},
+	}
+
+	result := unionEventRules(a, b)
+	if result == nil {
+		t.Fatal("U39: expected non-nil result")
+	}
+	if len(result) != 1 {
+		t.Fatalf("U39: expected 1 rule, got %d", len(result))
+	}
+
+	// Current behavior: keeps Grant A's param rules (arbitrary but consistent).
+	// Both param rules should ideally be present for true OR semantics across grants.
+	// Document this as the current behavior; a future fix could merge param rules.
+	rule := result[0]
+	if !strings.EqualFold(rule.Topic0, transferTopic0) {
+		t.Errorf("U39: expected topic0 %s, got %s", transferTopic0, rule.Topic0)
+	}
+	// The rule should have param rules (not nil/empty — that would mean unrestricted).
+	if len(rule.ParamRules) == 0 {
+		t.Error("U39: expected param rules on merged rule, got none (would mean unrestricted)")
+	}
+}
+
+func TestUnionEventRules_EmptySlice_vs_Rules(t *testing.T) {
+	// U40: Grant A: [] (empty), Grant B: [Transfer] → Transfer visible.
+	// Empty slice means "deny all". Union with [Transfer] = [Transfer].
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	a := []EventRule{} // deny all
+	b := []EventRule{
+		{Topic0: transferTopic0, Name: "Transfer"},
+	}
+
+	result := unionEventRules(a, b)
+	if result == nil {
+		t.Fatal("U40: expected non-nil result (not unrestricted)")
+	}
+	if len(result) != 1 {
+		t.Fatalf("U40: expected 1 rule (Transfer), got %d", len(result))
+	}
+	if !strings.EqualFold(result[0].Topic0, transferTopic0) {
+		t.Errorf("U40: expected Transfer topic0, got %s", result[0].Topic0)
+	}
+}
+
+func TestUnionEventRules_SameEvent_OneNoParams(t *testing.T) {
+	// U38: Grant A: Transfer + self, Grant B: Transfer (no params).
+	// Union should pick the less restrictive: Transfer with no params.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	a := []EventRule{
+		{
+			Topic0:     transferTopic0,
+			Name:       "Transfer",
+			ParamRules: []ParamRule{{Index: 0, MustBe: "self"}},
+		},
+	}
+	b := []EventRule{
+		{Topic0: transferTopic0, Name: "Transfer"}, // no param rules = less restrictive
+	}
+
+	result := unionEventRules(a, b)
+	if result == nil {
+		t.Fatal("U38: expected non-nil result")
+	}
+	if len(result) != 1 {
+		t.Fatalf("U38: expected 1 rule, got %d", len(result))
+	}
+	if len(result[0].ParamRules) != 0 {
+		t.Errorf("U38: expected no param rules (less restrictive wins), got %d", len(result[0].ParamRules))
+	}
+}
+
+func TestUnionEventRules_DifferentEvents(t *testing.T) {
+	// U35: Grant A: Transfer, Grant B: Approval → union = both.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	a := []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}
+	b := []EventRule{{Topic0: approvalTopic0, Name: "Approval"}}
+
+	result := unionEventRules(a, b)
+	if result == nil {
+		t.Fatal("U35: expected non-nil result")
+	}
+	if len(result) != 2 {
+		t.Fatalf("U35: expected 2 rules (Transfer + Approval), got %d", len(result))
+	}
+
+	topics := make(map[string]bool)
+	for _, r := range result {
+		topics[strings.ToLower(r.Topic0)] = true
+	}
+	if !topics[transferTopic0] {
+		t.Error("U35: Transfer missing from union")
+	}
+	if !topics[approvalTopic0] {
+		t.Error("U35: Approval missing from union")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// U41-U45: HasEventAccess / GetEventRule helpers
+// Note: There is no HasEventAccess function in the codebase. The closest is
+// GetEventRules on EffectivePermissions and the eventAllowed internal function.
+// We test the effective behavior through GetEventRules and FilterEventLogs.
+// ---------------------------------------------------------------------------
+
+func TestGetEventRules_NilUnrestricted(t *testing.T) {
+	// U41: nil EventRules means unrestricted — true for any topic0.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil,
+			},
+		},
+	}
+
+	rules := perms.GetEventRules("0xcontract1")
+	if rules != nil {
+		t.Errorf("U41: nil EventRules should return nil (unrestricted), got %v", rules)
+	}
+}
+
+func TestGetEventRules_EmptyDenyAll(t *testing.T) {
+	// U42: empty slice means deny all — false for any topic0.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: []EventRule{},
+			},
+		},
+	}
+
+	rules := perms.GetEventRules("0xcontract1")
+	if rules == nil {
+		t.Fatal("U42: empty EventRules should return non-nil empty slice, got nil")
+	}
+	if len(rules) != 0 {
+		t.Errorf("U42: expected empty slice, got %d rules", len(rules))
+	}
+}
+
+func TestGetEventRules_PopulatedAllowlist(t *testing.T) {
+	// U43: Populated rules — acts as allowlist.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	rules := perms.GetEventRules("0xcontract1")
+	if len(rules) != 1 {
+		t.Fatalf("U43: expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Topic0 != transferTopic0 {
+		t.Errorf("U43: expected Transfer topic0, got %s", rules[0].Topic0)
+	}
+}
+
+func TestGetEventRules_FindByTopic0(t *testing.T) {
+	// U44-U45: GetEventRule (find by topic0) — no dedicated function exists,
+	// but we can search the returned slice.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rules := perms.GetEventRules("0xcontract1")
+
+	// U44: Found — Transfer with ParamRules
+	var found *EventRule
+	for i := range rules {
+		if strings.EqualFold(rules[i].Topic0, transferTopic0) {
+			found = &rules[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("U44: Transfer rule not found by topic0")
+	}
+	if len(found.ParamRules) != 1 {
+		t.Errorf("U44: expected 1 param rule, got %d", len(found.ParamRules))
+	}
+
+	// U45: Not found — Approval topic0 not in rules
+	var notFound *EventRule
+	for i := range rules {
+		if strings.EqualFold(rules[i].Topic0, approvalTopic0) {
+			notFound = &rules[i]
+			break
+		}
+	}
+	if notFound != nil {
+		t.Error("U45: Approval should not be found in rules")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// I28-I30: Admin bypass / no bypass for event rules
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_AdminClaim_NoBypass(t *testing.T) {
+	// I28: SECURITY FINDING — Admin claim on contract + restrictive event_rules.
+	// Current behavior: FilterEventLogs does NOT check claims at all. It only
+	// looks at EventRules. So an admin-claim user with restrictive rules
+	// will still be filtered. This is arguably a bug: admin should see all logs.
+	//
+	// However, in practice, org_admin users get nil EventRules from the resolver
+	// (computeOrgAdminPermissions), so they naturally bypass. The gap is for
+	// users who have ClaimAdmin via a grant (not org_admin) with explicit rules.
+	//
+	// This test documents the current behavior. When admin bypass is implemented
+	// in FilterEventLogs, update this test.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy}, // admin!
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+					// Approval is NOT in the allowlist
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+
+	// BUG DOCUMENTATION: Admin with restrictive rules only sees Transfer, not Approval.
+	// FilterEventLogs does not inspect Claims — event_rules are applied regardless.
+	// TODO(security): FilterEventLogs should bypass event_rules when Claims includes
+	// ClaimAdmin. Until then, this documents the current (incorrect) behavior.
+	if len(result) != 1 {
+		t.Errorf("I28: admin claim with restrictive rules: expected 1 log (current behavior: no admin bypass), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_OrgAdmin_Bypass(t *testing.T) {
+	// I29: Org admin gets nil EventRules from the resolver (computeOrgAdminPermissions),
+	// so all logs are visible (nil = unrestricted → address-based filtering only).
+	// This is the correct behavior.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	// Org admin permissions: nil EventRules (all visible), all claims
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     AllClaims(),
+				EventRules: nil, // org admin: no restrictions
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 2 {
+		t.Errorf("I29: org admin with nil EventRules should see all logs (where address appears), expected 2, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_ReadClaim_NoByppass(t *testing.T) {
+	// I30: User with only read claim + event_rules [Transfer] → only Transfer visible.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("I30: read claim should not bypass event_rules, expected 1 log, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// I25-I27: Cross-org isolation (unit-level simulation)
+// Full cross-org isolation requires the AccessController + DB. These tests
+// simulate the permissions that the resolver would produce.
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_CrossOrg_NoAccess(t *testing.T) {
+	// I25: User in Org Alpha has no grant on Org Beta's contract → no logs.
+	// The resolver would not include Org Beta's contract in ContractAccess.
+	betaContractAddr := "0x6666666666666666666666666666666666666666"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			// Only Alpha's contract
+			"0x5555555555555555555555555555555555555555": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil,
+			},
+			// No entry for Beta's contract
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + betaContractAddr + `","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xaaaa"}, nil)
+	if len(result) != 0 {
+		t.Errorf("I25: cross-org contract should be invisible, expected 0 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_MultipleContracts_PartialAccess(t *testing.T) {
+	// I26: User has grants on contracts X and Z but not Y → only X and Z logs.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontractx": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil, // unrestricted
+			},
+			"0xcontractz": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil,
+			},
+			// No entry for 0xcontracty
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontractx","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontracty","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontractz","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 2 {
+		t.Errorf("I26: expected 2 logs (X and Z), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Viewer-role dimension tests: sender, receiver, 3rd party
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer(t *testing.T) {
+	// Sender with event_rules: [Transfer] sees Transfer they sent.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	senderAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	receiverAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	senderTopic := "0x000000000000000000000000" + senderAddr[2:]
+	receiverTopic := "0x000000000000000000000000" + receiverAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"}, // from must be self
+							{Index: 1, MustBe: "self"}, // OR to must be self
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Sender is "from" (topics[1])
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + senderTopic + `","` + receiverTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{senderAddr}, abiProvider)
+	if len(result) != 1 {
+		t.Errorf("ViewerDimension: sender should see Transfer they sent, expected 1, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom(t *testing.T) {
+	// Receiver with event_rules: [Transfer, self on from] does NOT see Transfer
+	// (from != self). Only "from" constraint, no "to" constraint.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	receiverAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	senderAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	senderTopic := "0x000000000000000000000000" + senderAddr[2:]
+	receiverTopic := "0x000000000000000000000000" + receiverAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"}, // ONLY from must be self (no "to" constraint)
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Receiver is "to" (topics[2]), but only "from" (index 0) has self constraint
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + senderTopic + `","` + receiverTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{receiverAddr}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("ViewerDimension: receiver should NOT see Transfer (from != self), expected 0, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch(t *testing.T) {
+	// 3rd party with grant but no param match → blocked by param rule.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	thirdPartyAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+	senderAddr := "0x1111111111111111111111111111111111111111"
+	receiverAddr := "0x2222222222222222222222222222222222222222"
+	senderTopic := "0x000000000000000000000000" + senderAddr[2:]
+	receiverTopic := "0x000000000000000000000000" + receiverAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"},
+							{Index: 1, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + senderTopic + `","` + receiverTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("ViewerDimension: 3rd party with no param match should be blocked, expected 0, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules(t *testing.T) {
+	// 3rd party with grant and no param rules → sees event (event allowed,
+	// no further constraint).
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	thirdPartyAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+	senderTopic := "0x0000000000000000000000001111111111111111111111111111111111111111"
+	receiverTopic := "0x0000000000000000000000002222222222222222222222222222222222222222"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"}, // no param rules
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + senderTopic + `","` + receiverTopic + `"],"data":"0x"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+
+	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, nil)
+	if len(result) != 1 {
+		t.Errorf("ViewerDimension: 3rd party with no param rules should see allowed event, expected 1, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Union across grants: E2E simulation through FilterEventLogs
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_UnionGrants_UnrestrictedWins(t *testing.T) {
+	// U36 applied to filtering: when effective permissions have nil EventRules
+	// (because one grant was unrestricted), all logs with user's address pass.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	// After union: nil (unrestricted) wins
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil, // result of union where one grant was nil
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 2 {
+		t.Errorf("Union unrestricted: expected 2 logs (all with user address), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_UnionGrants_BothRestricted(t *testing.T) {
+	// After union of [Transfer] and [Approval] → both should be visible.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+	customTopic0 := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	// Union result of two restricted grants
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+					{Topic0: approvalTopic0, Name: "Approval"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 2 {
+		t.Errorf("Union both restricted: expected 2 logs (Transfer + Approval), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Utility: Verify hex encoding helpers used in tests
+// ---------------------------------------------------------------------------
+
+func TestHexEncodingConsistency(t *testing.T) {
+	// Ensure our test address padding matches what the EVM produces.
+	addr := "1234567890abcdef1234567890abcdef12345678"
+	padded := "000000000000000000000000" + addr
+	if len(padded) != 64 {
+		t.Fatalf("padded address should be 64 hex chars, got %d", len(padded))
+	}
+	_, err := hex.DecodeString(padded)
+	if err != nil {
+		t.Fatalf("padded address is not valid hex: %v", err)
 	}
 }

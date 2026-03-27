@@ -1,0 +1,440 @@
+package server
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"privacy-proxy/internal/rbac"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Well-known topic0 hashes for test assertions.
+const (
+	transferTopic0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+)
+
+// Standard ERC20 ABI used across the event-rule tests.
+const erc20ABI = `[
+	{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "owner", "type": "address"},
+			{"indexed": true, "name": "spender", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Approval",
+		"type": "event"
+	}
+]`
+
+// eventRulesFixture holds shared state created once per top-level test run.
+type eventRulesFixture struct {
+	server          *testServerRBAC
+	orgID           string
+	groupID         string
+	secondGroupID   string
+	contractAddress string
+}
+
+// setupEventRulesFixture creates an org, two groups, and a contract for event-rule tests.
+func setupEventRulesFixture(t *testing.T) *eventRulesFixture {
+	t.Helper()
+
+	srv := setupTestServerForRBAC(t)
+
+	// Create org
+	orgID := createEventRulesOrg(t, srv)
+	// Create two groups inside the org
+	groupID := createEventRulesGroup(t, srv, orgID, "group-alpha", "Group Alpha")
+	secondGroupID := createEventRulesGroup(t, srv, orgID, "group-beta", "Group Beta")
+	// Create a contract
+	contractAddr := "0x5555555555555555555555555555555555555555"
+	createEventRulesContract(t, srv, orgID, contractAddr, "TestToken")
+
+	return &eventRulesFixture{
+		server:          srv,
+		orgID:           orgID,
+		groupID:         groupID,
+		secondGroupID:   secondGroupID,
+		contractAddress: contractAddr,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helper: create org, group, contract via the admin API
+// ---------------------------------------------------------------------------
+
+func createEventRulesOrg(t *testing.T, srv *testServerRBAC) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"slug": "event-rules-org",
+		"name": "Event Rules Org",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/orgs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "create org: %s", w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp["id"].(string)
+}
+
+func createEventRulesGroup(t *testing.T, srv *testServerRBAC, orgID, slug, name string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"slug": slug, "name": name})
+	req := httptest.NewRequest(http.MethodPost, "/api/orgs/"+orgID+"/groups", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "create group: %s", w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp["id"].(string)
+}
+
+func createEventRulesContract(t *testing.T, srv *testServerRBAC, orgID, address, name string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"address": address, "name": name})
+	req := httptest.NewRequest(http.MethodPost, "/api/orgs/"+orgID+"/contracts", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "create contract: %s", w.Body.String())
+}
+
+// ---------------------------------------------------------------------------
+// I01-I08: Admin API CRUD for event_rules
+// ---------------------------------------------------------------------------
+
+func TestAdminEventRulesCRUD(t *testing.T) {
+	f := setupEventRulesFixture(t)
+
+	// I01: POST grant with event_rules -> 201, rules persisted
+	t.Run("I01_CreateGrant_WithEventRules", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.groupID,
+			"event_rules": []map[string]any{
+				{"topic0": transferTopic0, "name": "Transfer"},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+		var grant rbac.ContractGrant
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
+		require.Len(t, grant.EventRules, 1, "event_rules should have 1 rule")
+		assert.Equal(t, transferTopic0, grant.EventRules[0].Topic0)
+		assert.Equal(t, "Transfer", grant.EventRules[0].Name)
+	})
+
+	// I02: POST grant with invalid topic0 -> 400
+	t.Run("I02_CreateGrant_InvalidTopic0", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.secondGroupID,
+			"event_rules": []map[string]any{
+				{"topic0": "0xZZZZ", "name": "Bad"},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "invalid topic0")
+	})
+
+	// I03: PUT grant adding event_rules -> 200, rules present
+	t.Run("I03_UpdateGrant_AddEventRules", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"event_rules": []map[string]any{
+				{"topic0": transferTopic0, "name": "Transfer"},
+				{"topic0": approvalTopic0, "name": "Approval"},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var grant rbac.ContractGrant
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
+		require.Len(t, grant.EventRules, 2)
+		assert.Equal(t, transferTopic0, grant.EventRules[0].Topic0)
+		assert.Equal(t, approvalTopic0, grant.EventRules[1].Topic0)
+	})
+
+	// I04: PUT with event_rules: null -> 200, response has event_rules key present with null value.
+	// This verifies the omitempty bug fix: the JSON key must be present, not omitted.
+	t.Run("I04_UpdateGrant_ClearRules_Null", func(t *testing.T) {
+		// Send {"event_rules": null}
+		body := []byte(`{"event_rules": null}`)
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Parse the raw JSON to verify the event_rules key is present
+		var rawResp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rawResp))
+
+		eventRulesRaw, keyExists := rawResp["event_rules"]
+		assert.True(t, keyExists, "event_rules key must be present in response JSON (omitempty bug)")
+		assert.Equal(t, "null", string(eventRulesRaw), "event_rules value must be null, not omitted")
+	})
+
+	// I05: PUT with event_rules: [] -> 200, response has event_rules key present with empty array.
+	// Empty array means deny-all; it must not be omitted from JSON.
+	t.Run("I05_UpdateGrant_EmptyRules_DenyAll", func(t *testing.T) {
+		body := []byte(`{"event_rules": []}`)
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Parse raw JSON to verify event_rules is present and is an empty array
+		var rawResp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rawResp))
+
+		eventRulesRaw, keyExists := rawResp["event_rules"]
+		assert.True(t, keyExists, "event_rules key must be present in response JSON (omitempty bug)")
+		assert.Equal(t, "[]", string(eventRulesRaw), "event_rules value must be [], not omitted")
+	})
+
+	// I06: PUT with param_rules -> 200, param_rules persisted
+	t.Run("I06_UpdateGrant_WithParamRules", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 0, "must_be": "self"},
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var grant rbac.ContractGrant
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
+		require.Len(t, grant.EventRules, 1)
+		require.Len(t, grant.EventRules[0].ParamRules, 1, "param_rules should be persisted")
+		assert.Equal(t, 0, grant.EventRules[0].ParamRules[0].Index)
+		assert.Equal(t, "self", grant.EventRules[0].ParamRules[0].MustBe)
+	})
+
+	// Create a second grant for I07 verification
+	t.Run("setup_second_grant", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.secondGroupID,
+			"event_rules": []map[string]any{
+				{"topic0": approvalTopic0, "name": "Approval"},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	})
+
+	// I07: GET grants -> both grants show correct event_rules
+	t.Run("I07_ListGrants_IncludesRules", func(t *testing.T) {
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var grants []rbac.ContractGrant
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grants))
+		require.Len(t, grants, 2, "should have 2 grants")
+
+		// Find each grant by group ID and verify its event_rules
+		grantByGroup := make(map[string]*rbac.ContractGrant)
+		for i := range grants {
+			grantByGroup[grants[i].GroupID] = &grants[i]
+		}
+
+		// First grant (group-alpha): has Transfer with param_rules from I06
+		g1 := grantByGroup[f.groupID]
+		require.NotNil(t, g1, "grant for group-alpha should exist")
+		require.Len(t, g1.EventRules, 1)
+		assert.Equal(t, transferTopic0, g1.EventRules[0].Topic0)
+		require.Len(t, g1.EventRules[0].ParamRules, 1)
+
+		// Second grant (group-beta): has Approval
+		g2 := grantByGroup[f.secondGroupID]
+		require.NotNil(t, g2, "grant for group-beta should exist")
+		require.Len(t, g2.EventRules, 1)
+		assert.Equal(t, approvalTopic0, g2.EventRules[0].Topic0)
+	})
+
+	// I08: GET contract by-address -> includes grants with event_rules
+	t.Run("I08_LookupContract_IncludesRules", func(t *testing.T) {
+		url := "/api/contracts/by-address/" + f.contractAddress
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Contract *rbac.Contract `json:"contract"`
+			Grants   []struct {
+				Grant *rbac.ContractGrant `json:"grant"`
+			} `json:"grants"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.NotNil(t, resp.Contract)
+		assert.Equal(t, f.contractAddress, resp.Contract.Address)
+		require.Len(t, resp.Grants, 2, "lookup should include both grants")
+
+		// Verify at least one grant has event_rules populated
+		var foundRules bool
+		for _, gi := range resp.Grants {
+			if gi.Grant != nil && len(gi.Grant.EventRules) > 0 {
+				foundRules = true
+				break
+			}
+		}
+		assert.True(t, foundRules, "at least one grant should have event_rules populated")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// I09-I13: ABI Event Endpoint
+// ---------------------------------------------------------------------------
+
+func TestAdminEventRulesABIEndpoint(t *testing.T) {
+	f := setupEventRulesFixture(t)
+
+	// Upload ERC20 ABI to the contract
+	uploadContractABI := func(t *testing.T, orgID, addr, abiJSON string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"abi": abiJSON})
+		url := "/api/orgs/" + orgID + "/contracts/" + addr + "/abi"
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "upload ABI: %s", w.Body.String())
+	}
+
+	// I09: GET events with ERC20 ABI -> returns Transfer + Approval with correct topic0
+	t.Run("I09_ParsesABI_ERC20", func(t *testing.T) {
+		uploadContractABI(t, f.orgID, f.contractAddress, erc20ABI)
+
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events []rbac.EventSignature `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Len(t, resp.Events, 2, "ERC20 ABI should yield 2 events")
+
+		// Build a map of name -> topic0 for flexible assertion order
+		eventMap := make(map[string]string)
+		for _, ev := range resp.Events {
+			eventMap[ev.Name] = ev.Topic0
+		}
+
+		assert.Equal(t, transferTopic0, eventMap["Transfer"], "Transfer topic0 mismatch")
+		assert.Equal(t, approvalTopic0, eventMap["Approval"], "Approval topic0 mismatch")
+
+		// Verify inputs for Transfer
+		for _, ev := range resp.Events {
+			if ev.Name == "Transfer" {
+				require.Len(t, ev.Inputs, 3)
+				assert.Equal(t, "from", ev.Inputs[0].Name)
+				assert.True(t, ev.Inputs[0].Indexed)
+				assert.Equal(t, "to", ev.Inputs[1].Name)
+				assert.True(t, ev.Inputs[1].Indexed)
+				assert.Equal(t, "value", ev.Inputs[2].Name)
+				assert.False(t, ev.Inputs[2].Indexed)
+			}
+		}
+	})
+
+	// I10: GET events, no ABI stored -> empty array
+	t.Run("I10_NoABI_EmptyArray", func(t *testing.T) {
+		// Create a second contract without an ABI
+		noABIAddr := "0x6666666666666666666666666666666666666666"
+		createEventRulesContract(t, f.server, f.orgID, noABIAddr, "NoABI")
+
+		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events  []rbac.EventSignature `json:"events"`
+			Message string                `json:"message"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Empty(t, resp.Events, "no ABI should return empty events array")
+		assert.Contains(t, resp.Message, "no ABI", "should include helpful message")
+	})
+
+	// I12: GET events for nonexistent address -> 404
+	t.Run("I12_ContractNotFound_404", func(t *testing.T) {
+		fakeAddr := "0x0000000000000000000000000000000000099999"
+		url := "/api/orgs/" + f.orgID + "/contracts/" + fakeAddr + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "not found")
+	})
+}
