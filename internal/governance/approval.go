@@ -38,15 +38,28 @@ func (e *Engine) SubmitChange(ctx context.Context, orgID, requesterID, changeTyp
 }
 
 // ProcessDecision records an approval or rejection and updates the request status.
-func (e *Engine) ProcessDecision(ctx context.Context, requestID, approverID, decision string, reason *string) (*rbac.ApprovalRequest, error) {
+func (e *Engine) ProcessDecision(ctx context.Context, orgID, requestID, approverID, decision string, reason *string) (*rbac.ApprovalRequest, error) {
+	// First, load the request to perform initial checks outside the transaction.
+	// Note: This initial load does not acquire a transactional lock.
+	// The lock will be acquired again inside the transaction.
+	initialReq, err := e.db.GetApprovalRequest(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load approval request: %w", err)
+	}
+
+	if initialReq.OrgID != orgID {
+		return nil, fmt.Errorf("request does not belong to the specified organization")
+	}
+
 	if decision != "approve" && decision != "reject" {
 		return nil, fmt.Errorf("invalid decision type")
 	}
 
 	var updatedReq *rbac.ApprovalRequest
-	var req *rbac.ApprovalRequest
-	err := e.db.WithTx(ctx, func(tx *db.Tx) error {
+	var req *rbac.ApprovalRequest // This 'req' will be used inside the transaction
+	err = e.db.WithTx(ctx, func(tx *db.Tx) error {
 		var txErr error
+		// Acquire a transactional lock on the request
 		req, txErr = tx.LockApprovalRequest(ctx, requestID)
 		if txErr != nil {
 			return fmt.Errorf("failed to lock request: %w", txErr)

@@ -119,7 +119,7 @@ func TestEngine_ProcessDecision_HappyPath_Threshold1(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rbac.StatusPending, req.Status)
 
-	req, err = engine.ProcessDecision(ctx, req.ID, approverID, "approve", nil)
+	req, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, approverID, "approve", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, rbac.StatusApproved, req.Status)
@@ -146,14 +146,14 @@ func TestEngine_ProcessDecision_HappyPath_Threshold2(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1st approval
-	req1, err := engine.ProcessDecision(ctx, req.ID, user2, "approve", nil)
+	req1, err := engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "approve", nil)
 	require.NoError(t, err)
 	assert.Equal(t, rbac.StatusPending, req1.Status, "should still be pending after 1 approval")
 	assert.False(t, applier.called)
 
 	// 2nd approval
 	reason := "LGTM"
-	req2, err := engine.ProcessDecision(ctx, req.ID, user3, "approve", &reason)
+	req2, err := engine.ProcessDecision(ctx, req.OrgID, req.ID, user3, "approve", &reason)
 	require.NoError(t, err)
 	assert.Equal(t, rbac.StatusApproved, req2.Status, "should be approved after 2 approvals")
 	assert.True(t, applier.called)
@@ -177,7 +177,7 @@ func TestEngine_ProcessDecision_Reject(t *testing.T) {
 
 	// Rejection immediately fails the request even if threshold is 2
 	reason := "Nope"
-	req1, err := engine.ProcessDecision(ctx, req.ID, user2, "reject", &reason)
+	req1, err := engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "reject", &reason)
 	require.NoError(t, err)
 	
 	assert.Equal(t, rbac.StatusRejected, req1.Status)
@@ -201,11 +201,11 @@ func TestEngine_ProcessDecision_AlreadyResolved(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1st approval (resolves it)
-	_, err = engine.ProcessDecision(ctx, req.ID, user2, "approve", nil)
+	_, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "approve", nil)
 	require.NoError(t, err)
 
 	// Try to approve again
-	_, err = engine.ProcessDecision(ctx, req.ID, user3, "approve", nil)
+	_, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, user3, "approve", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no longer pending")
 }
@@ -225,11 +225,11 @@ func TestEngine_DoubleVotingPrevention(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1st approval
-	_, err = engine.ProcessDecision(ctx, req.ID, user2, "approve", nil)
+	_, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "approve", nil)
 	require.NoError(t, err)
 
 	// 2nd approval by SAME user
-	_, err = engine.ProcessDecision(ctx, req.ID, user2, "approve", nil)
+	_, err = engine.ProcessDecision(ctx, req.OrgID, req.ID, user2, "approve", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already voted") // Assuming DB unique constraint catches it! Or we handle it.
 }

@@ -95,7 +95,7 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	}
 
 	// This validates orgID matching inside the engine and processes the decision
-	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), requestID, approverID, "approve", reasonPtr)
+	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "approve", reasonPtr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -133,7 +133,7 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 		return
 	}
 
-	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), requestID, approverID, "reject", &input.Reason)
+	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "reject", &input.Reason)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
