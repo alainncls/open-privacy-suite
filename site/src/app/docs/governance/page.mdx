@@ -1,0 +1,35 @@
+import { Callout } from '@/components/Callout'
+
+# Multi-Party Governance Approval
+
+The Privacy Proxy includes a built-in Multi-Party Governance engine that allows Organizations to require N-of-M sign-offs for sensitive Role-Based Access Control (RBAC) mutations before they effectuate.
+
+When Governance is enabled, attempting to modify an RBAC entity (such as updating a Group's Access Claims, or adding a new API Contract parameter) will **NOT** immediately execute on the Proxy nodes. Instead, standard validation asserts the boundaries and the system intercepts the request into a **Pending Governance Log** awaiting secondary validation.
+
+---
+
+## Configuring Governance
+
+Governance can be individually attached directly per organization.
+
+1. Navigate to your **Organizations** module within the Admin UI.
+2. Select your Organization.
+3. Tap the **Governance Settings** tab inside the layout.
+4. Toggle **Enable Governance Approvals**.
+5. Set the **Approval Threshold** (requires integers `1-10`). This designates the absolute quantity of completely distinct administrative User identities that must sign off to execute standard proxy mutations.
+6. (Optional) Provide a **Webhook Notification URL** referencing a Slack/Discord hook to receive an instant JSON push whenever an action crosses the interceptor filter.
+
+<Callout type="warning">
+  You cannot approve a request that you personally spawned. If your threshold is `1` and you submit a mutation, you will see it sitting in your dashboard, but attempting to press "Approve" will trigger an automatic policy rejection!
+</Callout>
+
+---
+
+## Processing Pending Approvals
+
+When an API/UI mutation occurs asynchronously, navigating to the **Pending Approvals Dashboard** renders all intercepted entities.
+
+Users with Admin status will actively observe the actual JSON payloads being requested. 
+You can natively click **Approve** or **Reject** on the line item. Rejecting outright destroys the intercepted payload permanently. Approving increments the decision table bound integrally to your physical User Identity.
+
+Once the `threshold` numeric hits the org bounds, the backend will instantaneously fire the JSON mutation back into the origin proxy systems natively executing the block rules perfectly synchronously!
