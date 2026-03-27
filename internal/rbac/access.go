@@ -635,7 +635,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Get contract access for this address (may return default_claims for unregistered contracts)
 		access := perms.GetContractAccess(addr)
 
-		// Strip default_claims access for truly unregistered addresses (not owned by any org).
+		// For non-explicit access (default claims), check ownership to enforce cross-org isolation.
+		// Unregistered addresses (ownerOrgID == "") are public — keep default claims.
+		// Addresses owned by another org are denied — strip access.
 		// Cache the owner lookup so the preregistered-address check below can reuse it.
 		var (
 			ownerOrgID        string
@@ -648,9 +650,12 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 			ownerOrgIDFetched = true
-			if ownerOrgID == "" {
+			if ownerOrgID != "" && !orgCtx.UserOrgIDs()[ownerOrgID] {
+				// Registered to a different org — deny via default claims.
 				access = nil
 			}
+			// ownerOrgID == "" means unregistered — keep default claims (public).
+			// ownerOrgID in user's orgs — keep default claims (own org).
 		}
 
 		// If no access from explicit registration or default_claims, check if it's a preregistered address.
@@ -672,22 +677,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				access = &ContractAccess{
 					Claims:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
 					Functions: nil, // All functions allowed
-				}
-			}
-		}
-
-		// Cross-org deploy claim check: for unregistered contracts, permissions are resolved
-		// for one org (typically default), which may not have deploy claims. Check if the user
-		// has deploy/admin claims in ANY of their group memberships across all orgs.
-		if access == nil && !hasExplicitAccess && ownerOrgID == "" {
-			hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, user.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check cross-org deploy claims: %w", err)
-			}
-			if hasDeployClaim {
-				access = &ContractAccess{
-					Claims:    []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
-					Functions: nil,
 				}
 			}
 		}
@@ -1865,17 +1854,12 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 				return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
 			}
 			if ownerOrgID == "" {
-				// Truly unregistered: allow only if user has deploy claims, consistent
-				// with the deployment-window access granted in CheckAccess.
-				hasDeployClaim, err := c.userHasDeployClaimInAnyOrg(ctx, perms.UserID)
-				if err != nil {
-					return fmt.Errorf("eth_getLogs: failed to check deploy claims: %w", err)
+				// Unregistered contract — treated as public. Any authenticated user
+				// with a read claim can query logs. Skip the claim checks below
+				// (which assume a registered contract).
+				if !containsClaim(perms.Claims, ClaimRead) {
+					return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 				}
-				if !hasDeployClaim {
-					return fmt.Errorf("eth_getLogs: unregistered contract %s is not allowed", addr)
-				}
-				// Deploy-claim user in deployment window: grant read access and skip
-				// the claim checks below (which assume a registered contract).
 				continue
 			}
 		}

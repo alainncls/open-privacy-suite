@@ -326,17 +326,19 @@ func (e *EffectivePermissions) HasMethod(method string) bool {
 
 // GetContractAccess returns the access for a specific contract address.
 // For registered contracts, returns the explicit access from ContractAccess.
-// For unregistered contracts, only deploy/admin users get access via default claims.
-// Regular read/write users must use registered contracts with explicit grants.
+// For unregistered contracts, any authenticated user with claims gets access
+// via default claims — unregistered contracts are treated as public.
+// The caller (access.go) enforces cross-org isolation: contracts registered
+// to a different org are denied regardless of claims.
 func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess {
 	addr := strings.ToLower(address)
 	if access, ok := e.ContractAccess[addr]; ok {
 		return &access
 	}
-	// Only deploy/admin users can access unregistered contracts.
-	// All traffic goes through the proxy on a private network —
-	// regular read/write users must use registered contracts with explicit grants.
-	if len(e.Claims) > 0 && (hasClaim(e.Claims, ClaimDeploy) || hasClaim(e.Claims, ClaimAdmin)) {
+	// Unregistered contracts are public — any authenticated user with claims
+	// can access them using their default claims. Cross-org isolation for
+	// registered contracts is enforced at the controller level (access.go).
+	if len(e.Claims) > 0 {
 		return &ContractAccess{
 			Claims:    e.Claims,
 			Functions: nil, // All functions allowed for default
