@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Contract, ContractGrant, FunctionRule, Group, GroupAccess, GroupWithAccess } from '@/types/rbac';
+import type { Contract, ContractGrant, FunctionRule, EventRule, Group, GroupAccess, GroupWithAccess } from '@/types/rbac';
 import { CLAIM_LABELS } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import {
   Info,
   Pencil,
   Code2,
+  Radio,
 } from 'lucide-react';
 
 // Helper to get contract address from either new or legacy format
@@ -354,6 +355,37 @@ export default function ContractGrantsManager({
                     </div>
                   )}
                 </div>
+
+                {/* Event visibility */}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-neutral-500">Events:</span>
+                  {!grant.event_rules || grant.event_rules.length === 0 ? (
+                    <span className="text-xs text-success font-medium">All events visible</span>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {grant.event_rules.map((rule: EventRule) => {
+                        const paramLabels = (rule.param_rules || []).map(
+                          pr => `param[${pr.index}]=${pr.must_be}`
+                        );
+                        return (
+                          <span
+                            key={rule.topic0}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-violet-100 text-violet-800 border border-violet-200"
+                            title={`${rule.name} — ${rule.topic0}`}
+                          >
+                            <Radio className="w-3 h-3" />
+                            {rule.name}
+                            {paramLabels.length > 0 && (
+                              <span className="ml-1 text-[10px] text-violet-700">
+                                [{paramLabels.join(', ')}]
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -382,7 +414,7 @@ export default function ContractGrantsManager({
       <Dialog open={!!editingGrant} onOpenChange={open => !open && setEditingGrant(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Function Access</DialogTitle>
+            <DialogTitle>Edit Grant Rules</DialogTitle>
           </DialogHeader>
           {editingGrant && (
             <ContractGrantForm

@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
-import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, ParamRule } from '@/types/rbac';
+import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, EventRule, ParamRule, EventSignature } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, Save, X, Loader2, Users, Plus, FileJson } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Users, Plus, FileJson, Radio } from 'lucide-react';
 
 interface ContractGrantFormProps {
   orgId: string;
@@ -80,10 +80,33 @@ export default function ContractGrantForm({
   );
   const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
+  const [eventMode, setEventMode] = useState<'all' | 'specific'>(
+    grant?.event_rules && grant.event_rules.length > 0 ? 'specific' : 'all'
+  );
+  const [eventRules, setEventRules] = useState<EventRule[]>(grant?.event_rules || []);
+  const [availableEvents, setAvailableEvents] = useState<EventSignature[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!grant;
+
+  // Fetch available events from the backend (ABI-parsed)
+  useEffect(() => {
+    const fetchEvents = async () => {
+      setEventsLoading(true);
+      try {
+        const res = await rbacApi.contracts.listEvents(orgId, contractAddress);
+        setAvailableEvents(res.data?.events || []);
+      } catch {
+        // If events can't be loaded, we just won't show the picker
+        setAvailableEvents([]);
+      } finally {
+        setEventsLoading(false);
+      }
+    };
+    fetchEvents();
+  }, [orgId, contractAddress]);
 
   // Parse ABI to extract function selectors
   const abiFunctions = useMemo<AbiFunction[]>(() => {
@@ -183,6 +206,39 @@ export default function ContractGrantForm({
     );
   };
 
+  // Check if an event topic0 is already in the event rules list
+  const hasEventTopic = (topic0: string): boolean => {
+    return eventRules.some(r => r.topic0.toLowerCase() === topic0.toLowerCase());
+  };
+
+  const handleAddEvent = (event: EventSignature) => {
+    if (!hasEventTopic(event.topic0)) {
+      setEventRules([...eventRules, { topic0: event.topic0, name: event.name }]);
+    }
+  };
+
+  const handleRemoveEvent = (topic0: string) => {
+    setEventRules(eventRules.filter(r => r.topic0.toLowerCase() !== topic0.toLowerCase()));
+  };
+
+  // Toggle a param_rule on an event rule (same pattern as function param_rules)
+  const handleToggleEventParamRule = (topic0: string, paramIndex: number, checked: boolean) => {
+    setEventRules(prev =>
+      prev.map(rule => {
+        if (rule.topic0.toLowerCase() !== topic0.toLowerCase()) return rule;
+        const existing = rule.param_rules || [];
+        if (checked) {
+          if (existing.some(pr => pr.index === paramIndex)) return rule;
+          const newRule: ParamRule = { index: paramIndex, must_be: 'self' };
+          return { ...rule, param_rules: [...existing, newRule] };
+        } else {
+          const filtered = existing.filter(pr => pr.index !== paramIndex);
+          return { ...rule, param_rules: filtered.length > 0 ? filtered : null };
+        }
+      })
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -197,19 +253,27 @@ export default function ContractGrantForm({
       return;
     }
 
+    if (eventMode === 'specific' && eventRules.length === 0) {
+      setError('Please add at least one event, or select "All events visible"');
+      return;
+    }
+
     setSaving(true);
 
     try {
+      const resolvedEventRules = eventMode === 'all' ? null : eventRules;
       const input: CreateContractGrantInput = {
         group_id: selectedGroupId,
         // claims field is deprecated - permissions come from the group's GroupAccess.claims
         functions: functionMode === 'all' ? null : functions,
+        event_rules: resolvedEventRules,
       };
 
       if (isEditing) {
         // Update existing grant
         await rbacApi.contracts.updateGrant(orgId, contractAddress, grant.group_id, {
           functions: functionMode === 'all' ? null : functions,
+          event_rules: resolvedEventRules,
         });
       } else {
         // Create new grant
@@ -500,6 +564,180 @@ export default function ContractGrantForm({
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Event Visibility */}
+      <div className="space-y-3">
+        <label className="block text-sm font-medium text-neutral-700">
+          Event Visibility
+        </label>
+        <p className="text-xs text-neutral-400">
+          Restrict which contract event logs are visible to this group, or allow all events.
+        </p>
+
+        {/* Radio options */}
+        <div className="space-y-2">
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
+            <input
+              type="radio"
+              name="eventMode"
+              value="all"
+              checked={eventMode === 'all'}
+              onChange={() => setEventMode('all')}
+              className="w-4 h-4 text-primary focus:ring-primary"
+            />
+            <div>
+              <p className="text-sm font-medium text-neutral-900">All events visible</p>
+              <p className="text-xs text-neutral-500">Group can see all event logs from this contract</p>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
+            <input
+              type="radio"
+              name="eventMode"
+              value="specific"
+              checked={eventMode === 'specific'}
+              onChange={() => setEventMode('specific')}
+              className="w-4 h-4 text-primary focus:ring-primary"
+            />
+            <div>
+              <p className="text-sm font-medium text-neutral-900">Specific events only</p>
+              <p className="text-xs text-neutral-500">Restrict to selected events (allowlist)</p>
+            </div>
+          </label>
+        </div>
+
+        {/* Event picker (shown when specific mode) */}
+        {eventMode === 'specific' && (
+          <div className="space-y-3 pt-2">
+            {/* Selected event rules */}
+            {eventRules.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-neutral-500">Visible events:</p>
+                <div className="space-y-2">
+                  {eventRules.map(rule => {
+                    // Find the event signature to show param info
+                    const eventSig = availableEvents.find(
+                      e => e.topic0.toLowerCase() === rule.topic0.toLowerCase()
+                    );
+                    const addressParams = eventSig
+                      ? eventSig.inputs
+                          .map((inp, idx) => ({ ...inp, index: idx }))
+                          .filter(inp => inp.type === 'address')
+                      : [];
+
+                    return (
+                      <div
+                        key={rule.topic0}
+                        className="p-2 rounded-lg border border-primary-50 bg-neutral-50"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary border border-primary-50">
+                            <Radio className="w-3 h-3" />
+                            {rule.name}
+                            {eventSig && (
+                              <span className="text-primary-300">({eventSig.signature})</span>
+                            )}
+                          </span>
+                          {(rule.param_rules || []).map(pr => (
+                            <span
+                              key={pr.index}
+                              className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium"
+                            >
+                              param[{pr.index}]={pr.must_be}
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveEvent(rule.topic0)}
+                            className="ml-auto hover:text-primary-700 text-primary-300"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {/* Parameter constraints for address-type params */}
+                        {addressParams.length > 0 && (
+                          <div className="mt-2 ml-2 space-y-1">
+                            {addressParams.map(param => {
+                              const isChecked = (rule.param_rules || []).some(
+                                pr => pr.index === param.index && pr.must_be === 'self'
+                              );
+                              return (
+                                <label
+                                  key={param.index}
+                                  className="flex items-center gap-2 text-xs text-neutral-500 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={e =>
+                                      handleToggleEventParamRule(rule.topic0, param.index, e.target.checked)
+                                    }
+                                    className="w-3.5 h-3.5 rounded text-primary focus:ring-primary"
+                                  />
+                                  <span>
+                                    <code className="font-mono text-neutral-700">{param.name || `param[${param.index}]`}</code>
+                                    {param.indexed && (
+                                      <span className="ml-1 px-1 py-0.5 rounded text-[10px] bg-neutral-200 text-neutral-500">indexed</span>
+                                    )}
+                                    {' '}must be caller's own address
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Available events from ABI */}
+            {eventsLoading ? (
+              <div className="flex items-center gap-2 py-2">
+                <Loader2 className="w-4 h-4 animate-spin text-neutral-400" />
+                <span className="text-xs text-neutral-500">Loading events from ABI...</span>
+              </div>
+            ) : availableEvents.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <FileJson className="w-3.5 h-3.5 text-success" />
+                  <p className="text-xs font-medium text-success-dark">Contract events ({availableEvents.length}):</p>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-1 border border-neutral-200 rounded-lg p-2">
+                  {availableEvents.map(event => (
+                    <button
+                      key={event.topic0}
+                      type="button"
+                      onClick={() => handleAddEvent(event)}
+                      disabled={hasEventTopic(event.topic0)}
+                      className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-neutral-100 hover:border-primary-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <Radio className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                        <code className="font-mono text-neutral-500 truncate">{event.name}</code>
+                        <span className="text-neutral-400 text-[10px] truncate">({event.signature})</span>
+                      </span>
+                      <code className="font-mono text-neutral-400 text-[10px] ml-2 flex-shrink-0">
+                        {event.topic0.slice(0, 10)}...
+                      </code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-lg bg-warning-light border border-amber-200 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-800 flex-shrink-0 mt-0.5" />
+                <span className="text-amber-800 text-sm">
+                  No ABI uploaded for this contract. Upload an ABI to configure event visibility rules.
+                </span>
               </div>
             )}
           </div>

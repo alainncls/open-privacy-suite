@@ -1369,6 +1369,24 @@ func (c *AccessController) userHasDeployClaimInAnyOrg(ctx context.Context, userI
 	return false, nil
 }
 
+// GetUserOrgIDs returns all org IDs the user belongs to.
+// Used by response filters to resolve permissions across all orgs.
+func (c *AccessController) GetUserOrgIDs(ctx context.Context, userID string) ([]string, error) {
+	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var orgIDs []string
+	for _, m := range memberships {
+		if m.Group != nil && !seen[m.Group.OrgID] {
+			seen[m.Group.OrgID] = true
+			orgIDs = append(orgIDs, m.Group.OrgID)
+		}
+	}
+	return orgIDs, nil
+}
+
 // getUserDefaultOrganization returns the user's default (first) organization.
 // Used for operations without a target address (e.g., deployments).
 func (c *AccessController) getUserDefaultOrganization(ctx context.Context, userID string) (*Organization, error) {
