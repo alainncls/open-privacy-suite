@@ -91,8 +91,9 @@ To see user EOA activity, an org admin would need a **disclosure grant** from ea
 `VisibilityFull` for org contracts is granted only to viewers who are members of a group that meets one of:
 1. `is_org_admin = true` on the group (org-wide admin flag)
 2. `'admin' = ANY(contract_grants.claims)` on a contract_grant linking the group to the specific contract
+3. `'admin' = ANY(group_access.claims)` when the group also has a contract_grant on the contract (G11 fix — aligns explorer visibility with RPC layer admin claims)
 
-Standard claims (`read`, `write`, `deploy`) do **not** grant `VisibilityFull`. The `admin` claim in `group_access.claims` (RPC method access) is also not checked — only `is_org_admin` and `contract_grants.claims` matter for visibility. See G11 for the alignment TODO.
+Standard claims (`read`, `write`, `deploy`) do **not** grant `VisibilityFull` regardless of where they appear (group_access or contract_grants).
 
 ---
 
@@ -243,7 +244,7 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G8, G9, G14 are resolved. G4–G7, G15–G16 are outstanding.
+The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14 are resolved. G4–G7, G15–G16 are outstanding.
 
 ### Resolved
 
@@ -269,8 +270,8 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G14 are resolved. G4–G7, 
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
 
-- **G11: Visibility admin check not aligned with group_access.claims**
-  `GetBatchVisibility` grants `VisibilityFull` based on `is_org_admin = true` or `'admin' = ANY(contract_grants.claims)`. It does NOT check `group_access.claims`, which is where the admin claim is typically set via the API and admin dashboard. A group with `claims: [admin]` in group_access and contract_grants with `claims: {}` will NOT grant explorer visibility. This is confusing: users expect "admin claim" to mean admin everywhere. **Fix:** either check `group_access.claims` in the visibility query, or auto-set `is_org_admin` when admin claim is granted. **Workaround:** manually set `is_org_admin = true` on admin groups.
+- **G11 (resolved): Visibility admin check not aligned with group_access.claims**
+  `GetBatchVisibility` and `GetBatchVisibilityDetailed` now check `group_access.claims` for the `admin` claim when the group has a `contract_grant` on the contract. The admin group query joins `group_access` and includes the condition `cg.id IS NOT NULL AND 'admin' = ANY(ga.claims)`, ensuring a group must have both a contract grant AND the admin claim in group_access to qualify. This aligns explorer visibility with the RPC layer, where admin claims are typically set via `group_access`. Standard claims (`read`, `write`, `deploy`) in `group_access` still do not grant `VisibilityFull`.
 
 - **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
   Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**

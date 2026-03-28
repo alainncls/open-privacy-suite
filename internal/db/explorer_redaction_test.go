@@ -481,6 +481,220 @@ func TestGetBatchVisibility_EdgeCases(t *testing.T) {
 }
 
 // ============================================================================
+// G11: group_access.claims admin should grant VisibilityFull
+// ============================================================================
+
+// TestGetBatchVisibility_GroupAccessAdminClaim verifies that a group with
+// 'admin' in group_access.claims AND a contract_grant on the contract receives
+// VisibilityFull. This is the G11 fix — previously only is_org_admin and
+// contract_grants.claims were checked, not group_access.claims.
+func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	// Setup: org + contract + non-admin group with contract_grant
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "g11-org-"+orgID[:8], "G11 Test Org")
+	require.NoError(t, err)
+
+	contractAddr := "0xg110000000000000000000000000000000000001"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'G11 Contract')",
+		contractID, orgID, contractAddr)
+	require.NoError(t, err)
+
+	// Group with group_access.claims = ['admin'] (NOT is_org_admin)
+	adminClaimGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admin-claim', 'Admin Claim Group', 0, 'admin-claim', false)",
+		adminClaimGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{\"*\"}', '{admin}')",
+		uuid.New().String(), adminClaimGroupID)
+	require.NoError(t, err)
+
+	// contract_grant linking the group to the contract (no claims on the grant itself)
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, adminClaimGroupID)
+	require.NoError(t, err)
+
+	// Group with group_access.claims = ['read'] and a contract_grant
+	readClaimGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'read-claim', 'Read Claim Group', 0, 'read-claim', false)",
+		readClaimGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{\"*\"}', '{read}')",
+		uuid.New().String(), readClaimGroupID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, readClaimGroupID)
+	require.NoError(t, err)
+
+	// Group with group_access.claims = ['admin'] but NO contract_grant
+	noGrantGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admin-no-grant', 'Admin No Grant', 0, 'admin-no-grant', false)",
+		noGrantGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{\"*\"}', '{admin}')",
+		uuid.New().String(), noGrantGroupID)
+	require.NoError(t, err)
+	// No contract_grant for this group
+
+	t.Run("group_access admin claim + grant = VisibilityFull", func(t *testing.T) {
+		const memberDID = "did:test:g11_admin_claim_member"
+		addMember(t, database, memberDID, adminClaimGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"member of group with 'admin' in group_access.claims + contract_grant must get VisibilityFull (G11 fix)")
+	})
+
+	t.Run("group_access read claim + grant = VisibilityRedacted", func(t *testing.T) {
+		const memberDID = "did:test:g11_read_claim_member"
+		addMember(t, database, memberDID, readClaimGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"member of group with 'read' in group_access.claims must NOT get VisibilityFull — only 'admin' does")
+	})
+
+	t.Run("group_access admin claim but no grant = VisibilityRedacted", func(t *testing.T) {
+		const memberDID = "did:test:g11_admin_no_grant_member"
+		addMember(t, database, memberDID, noGrantGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"member of group with 'admin' in group_access.claims but NO contract_grant must NOT get VisibilityFull")
+	})
+
+	t.Run("is_org_admin still works", func(t *testing.T) {
+		const adminDID = "did:test:g11_org_admin_member"
+
+		orgAdminGroupID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'org-admins', 'Org Admins', 0, 'org-admins', true)",
+			orgAdminGroupID, orgID)
+		require.NoError(t, err)
+
+		addMember(t, database, adminDID, orgAdminGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, adminDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"is_org_admin group member must still get VisibilityFull (existing behavior preserved)")
+	})
+}
+
+// TestGetBatchVisibilityDetailed_GroupAccessAdminClaim verifies the same G11
+// fix applies to GetBatchVisibilityDetailed.
+func TestGetBatchVisibilityDetailed_GroupAccessAdminClaim(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "g11d-org-"+orgID[:8], "G11 Detailed Test Org")
+	require.NoError(t, err)
+
+	contractAddr := "0xg11d000000000000000000000000000000000001"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'G11D Contract')",
+		contractID, orgID, contractAddr)
+	require.NoError(t, err)
+
+	// Group with group_access.claims = ['admin'] + contract_grant
+	adminClaimGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'admin-claim-d', 'Admin Claim Detailed', 0, 'admin-claim-d', false)",
+		adminClaimGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{\"*\"}', '{admin}')",
+		uuid.New().String(), adminClaimGroupID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, adminClaimGroupID)
+	require.NoError(t, err)
+
+	// Group with group_access.claims = ['read'] + contract_grant
+	readClaimGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'read-claim-d', 'Read Claim Detailed', 0, 'read-claim-d', false)",
+		readClaimGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO group_access (id, group_id, allowed_methods, claims) VALUES ($1, $2, '{\"*\"}', '{read}')",
+		uuid.New().String(), readClaimGroupID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id) VALUES ($1, $2, $3)",
+		uuid.New().String(), contractID, readClaimGroupID)
+	require.NoError(t, err)
+
+	t.Run("group_access admin claim + grant = VisibilityFull", func(t *testing.T) {
+		const memberDID = "did:test:g11d_admin_claim_member"
+		addMember(t, database, memberDID, adminClaimGroupID)
+
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		vis := visMap[contractAddr]
+		assert.Equal(t, explorer.VisibilityFull, vis.Level,
+			"member of group with 'admin' in group_access.claims + contract_grant must get VisibilityFull (G11 fix)")
+		assert.True(t, vis.Visible)
+		assert.Equal(t, explorer.ReasonRBACGroupMember, vis.Reason)
+	})
+
+	t.Run("group_access read claim + grant = VisibilityRedacted", func(t *testing.T) {
+		const memberDID = "did:test:g11d_read_claim_member"
+		addMember(t, database, memberDID, readClaimGroupID)
+
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		vis := visMap[contractAddr]
+		assert.Equal(t, explorer.VisibilityRedacted, vis.Level,
+			"member of group with 'read' in group_access.claims must NOT get VisibilityFull")
+		assert.False(t, vis.Visible)
+	})
+
+	t.Run("anonymous sees Redacted", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, "", []string{contractAddr})
+		require.NoError(t, err)
+		vis := visMap[contractAddr]
+		assert.Equal(t, explorer.VisibilityRedacted, vis.Level,
+			"anonymous viewer must see org contract as Redacted")
+		assert.False(t, vis.Visible)
+	})
+}
+
+// ============================================================================
 // ViewerHasContractAccess
 // ============================================================================
 
