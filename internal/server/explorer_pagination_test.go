@@ -176,11 +176,10 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		}
 	})
 
-	t.Run("non-admin org member sees same as anonymous", func(t *testing.T) {
-		// Eve is a member of a NON-admin group with only 'read' claim on the contract.
-		// Since she is not admin, the org contract is VisibilityRedacted for her,
-		// and none of the test transactions have Eve as from/to, so she should see
-		// exactly the same filtered results as anonymous.
+	t.Run("non-admin grant holder sees public and org transactions", func(t *testing.T) {
+		// Eve is a member of a NON-admin group with a 'read' contract_grant on the contract.
+		// Any grant holder now gets VisibilityFull on the granted contract, so Eve should
+		// see org contract transactions (same as Alice the admin).
 		eveDID := "did:test:eve"
 		eveUserID := createTestUserForExplorer(t, database, eveDID)
 
@@ -212,12 +211,11 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(3), total, "non-admin org member (Eve) should see only 3 public transactions, same as anonymous")
-		assert.Len(t, txs, 3, "page should contain the same 3 visible transactions as anonymous")
+		assert.Equal(t, int64(5), total, "grant holder (Eve) should see 3 public + 2 org contract txs = 5")
+		assert.Len(t, txs, 5, "page should contain all 5 visible transactions for grant holder")
 
 		for _, tx := range txs {
-			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From), "private contract address must not appear for non-admin member")
-			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear for non-admin member")
+			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear for Eve")
 		}
 	})
 
@@ -603,15 +601,17 @@ func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- Table-driven subtests ---
-	// Non-admin users: privContract is Redacted (hidden). tx1 dropped (rule1). tx2 survives (only to hidden). tx3 visible.
-	// Admin users: privContract is Full (not hidden). All 3 visible.
+	// Any user with a contract_grant on privContract gets VisibilityFull, so privContract
+	// is NOT in the hidden set and all 3 txs are visible. The only difference is
+	// is_org_admin (sees ALL org contracts without explicit grants) vs explicit grants.
+	// Since all groups here have a contract_grant, all users see 3 transactions.
 	cases := []testUser{
-		{"readUser", "did:test:claims_read", 2},
-		{"writeUser", "did:test:claims_write", 2},
-		{"readWriteUser", "did:test:claims_rw", 2},
-		{"deployUser", "did:test:claims_deploy", 2},
-		{"readWriteDeployUser", "did:test:claims_rwd", 2},
-		{"noClaimsUser", "did:test:claims_none", 2},
+		{"readUser", "did:test:claims_read", 3},
+		{"writeUser", "did:test:claims_write", 3},
+		{"readWriteUser", "did:test:claims_rw", 3},
+		{"deployUser", "did:test:claims_deploy", 3},
+		{"readWriteDeployUser", "did:test:claims_rwd", 3},
+		{"noClaimsUser", "did:test:claims_none", 3},
 		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 3},
 		{"adminUser (is_org_admin group)", "did:test:claims_admin", 3},
 		{"multiGroupUser (read + admin groups)", "did:test:claims_multi", 3},

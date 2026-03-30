@@ -104,14 +104,15 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr])
 	})
 
-	t.Run("standard member sees Redacted", func(t *testing.T) {
+	t.Run("standard member with grant sees Full", func(t *testing.T) {
 		const memberDID = "did:privado:batch_member"
 		addMember(t, database, memberDID, groupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{privateAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr],
-			"standard group member must ONLY have VisibilityRedacted for org contract")
+		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
+			"standard group member with contract_grant must have VisibilityFull — "+
+				"aligns explorer visibility with RPC access")
 	})
 
 	t.Run("admin member sees Full", func(t *testing.T) {
@@ -230,14 +231,15 @@ func TestGetBatchVisibility_NoAdminGroups(t *testing.T) {
 			"org contract must be Redacted for anonymous even with no admin groups")
 	})
 
-	t.Run("read-only member sees Redacted", func(t *testing.T) {
+	t.Run("read-only member with grant sees Full", func(t *testing.T) {
 		memberDID := "did:test:reader_no_admin"
 		addMember(t, database, memberDID, groupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
-			"read-only member must see Redacted when no admin groups exist")
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"member of group with contract_grant sees Full regardless of claims — "+
+				"aligns explorer visibility with RPC access")
 	})
 }
 
@@ -294,7 +296,7 @@ func TestGetBatchVisibility_EdgeCases(t *testing.T) {
 			"admin of Org A must NOT see Org B contract as Full — cross-org isolation")
 	})
 
-	t.Run("deploy claim does not grant Full", func(t *testing.T) {
+	t.Run("deploy grant holder sees Full", func(t *testing.T) {
 		orgID := uuid.New().String()
 		_, err := conn.ExecContext(ctx,
 			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
@@ -324,8 +326,8 @@ func TestGetBatchVisibility_EdgeCases(t *testing.T) {
 
 		visMap, err := database.GetBatchVisibility(ctx, deployDID, []string{contractAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
-			"deploy claim must NOT grant VisibilityFull — only 'admin' claim or is_org_admin does")
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"any grant holder sees Full — explorer visibility aligns with RPC access")
 	})
 
 	t.Run("contract with no grants still Redacted", func(t *testing.T) {
@@ -566,14 +568,15 @@ func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
 			"member of group with 'admin' in group_access.claims + contract_grant must get VisibilityFull (G11 fix)")
 	})
 
-	t.Run("group_access read claim + grant = VisibilityRedacted", func(t *testing.T) {
+	t.Run("group_access read claim + grant = VisibilityFull", func(t *testing.T) {
 		const memberDID = "did:test:g11_read_claim_member"
 		addMember(t, database, memberDID, readClaimGroupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
-			"member of group with 'read' in group_access.claims must NOT get VisibilityFull — only 'admin' does")
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"member of group with contract_grant sees Full regardless of claims — "+
+				"explorer visibility aligns with RPC access")
 	})
 
 	t.Run("group_access admin claim but no grant = VisibilityRedacted", func(t *testing.T) {
@@ -601,6 +604,92 @@ func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
 			"is_org_admin group member must still get VisibilityFull (existing behavior preserved)")
+	})
+}
+
+// TestGetBatchVisibility_NoGrantNoFull verifies that users in a group WITHOUT
+// a contract_grant on the specific contract still see Redacted. The grant-holder
+// visibility upgrade must not leak to non-grant groups in the same org.
+func TestGetBatchVisibility_NoGrantNoFull(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "nogrant-org-"+orgID[:8], "No Grant Org")
+	require.NoError(t, err)
+
+	contractAddr := "0xng01000000000000000000000000000000000001"
+	contractID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'No Grant Contract')",
+		contractID, orgID, contractAddr)
+	require.NoError(t, err)
+
+	// Group A: has a contract_grant on this contract
+	grantedGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'granted', 'Granted Group', 0, 'granted', false)",
+		grantedGroupID, orgID)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO contract_grants (id, contract_id, group_id, claims) VALUES ($1, $2, $3, '{read}')",
+		uuid.New().String(), contractID, grantedGroupID)
+	require.NoError(t, err)
+
+	// Group B: same org, NO contract_grant on this contract
+	noGrantGroupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'no-grant', 'No Grant Group', 0, 'no-grant', false)",
+		noGrantGroupID, orgID)
+	require.NoError(t, err)
+
+	t.Run("member of granted group sees Full", func(t *testing.T) {
+		const memberDID = "did:test:nogrant_granted_member"
+		addMember(t, database, memberDID, grantedGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"member of group WITH contract_grant must see Full")
+	})
+
+	t.Run("member of non-granted group in same org sees Redacted", func(t *testing.T) {
+		const memberDID = "did:test:nogrant_no_grant_member"
+		addMember(t, database, memberDID, noGrantGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"member of group WITHOUT contract_grant must see Redacted — "+
+				"being in the same org is not enough without a grant")
+	})
+
+	t.Run("member of different org sees Redacted", func(t *testing.T) {
+		// Create a separate org with a group
+		otherOrgID := uuid.New().String()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+			otherOrgID, "other-org-"+otherOrgID[:8], "Other Org")
+		require.NoError(t, err)
+
+		otherGroupID := uuid.New().String()
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'members', 'Members', 0, 'members', false)",
+			otherGroupID, otherOrgID)
+		require.NoError(t, err)
+
+		const memberDID = "did:test:nogrant_other_org_member"
+		addMember(t, database, memberDID, otherGroupID)
+
+		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"member of a different org must see Redacted — cross-org isolation")
 	})
 }
 

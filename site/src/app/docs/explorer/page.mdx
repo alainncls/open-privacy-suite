@@ -178,9 +178,13 @@ Counterparty addresses revealed this way are labeled "Private" in the UI — ind
 
 The participant override also extends to **transaction logs**: when a viewer is the sender or receiver of a transaction, logs emitted by private contracts in that transaction are shown with full topics and data instead of being stripped. This ensures participants can see the results of their own contract calls (e.g., ERC-20 Transfer events from a token contract they interacted with).
 
-### What Org Admins Can and Cannot See
+### What Grant Holders and Org Admins Can See
 
-Org admins (`is_org_admin` group or `admin` claim in contract_grants) have **full visibility on org contracts** — all contract calls, contract-to-contract interactions, and contract state are visible. However, **individual user wallets (EOAs) remain private** even to org admins:
+Any user whose group has a **contract grant** on a contract sees it with **full visibility** in the explorer — the contract name, address, and all associated transaction data are shown unredacted. This aligns explorer visibility with RPC access: if you can `eth_call` on a contract, hiding its name in the explorer would be security theater.
+
+**Org admins** (`is_org_admin` group) see all contracts in their org with full visibility, even without explicit grants.
+
+However, **individual user wallets (EOAs) remain private** even to org admins and grant holders:
 
 | Activity | Visible to org admin? | Why |
 |---|---|---|

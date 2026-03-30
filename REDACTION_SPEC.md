@@ -71,11 +71,11 @@ These levels are computed per-address by the redaction engine based on the viewe
 
 `GetBatchVisibility` resolves each address independently based on what kind of address it is and the viewer's relationship to it:
 
-| Address type | How identified | Anonymous viewer | Org admin viewer | Standard org member | Address owner |
-|---|---|---|---|---|---|
-| **Org contract** | In `contracts` table | Redacted | **Full** (if admin of owning org) | Redacted | N/A |
-| **User EOA** | In `eth_address_links` | Hidden | **Hidden** | Hidden | **Full** |
-| **Public address** | Not in contracts or eth_address_links | Full | Full | Full | Full |
+| Address type | How identified | Anonymous viewer | Org admin viewer | Grant holder (any claim) | Standard org member (no grant) | Address owner |
+|---|---|---|---|---|---|---|
+| **Org contract** | In `contracts` table | Redacted | **Full** (if admin of owning org) | **Full** (group has contract_grant) | Redacted | N/A |
+| **User EOA** | In `eth_address_links` | Hidden | **Hidden** | Hidden | Hidden | **Full** |
+| **Public address** | Not in contracts or eth_address_links | Full | Full | Full | Full | Full |
 
 **Key implication for org admins:** An org admin has `VisibilityFull` on their org's **contracts** but NOT on individual **user EOAs**. User EOAs are personal wallets — they remain `VisibilityHidden` to everyone except the owner (and recipients of disclosure grants). This means:
 
@@ -86,14 +86,15 @@ These levels are computed per-address by the redaction engine based on the viewe
 
 To see user EOA activity, an org admin would need a **disclosure grant** from each user, or the visibility model would need to be changed to treat user EOAs differently for org admins (design decision, see G11 below).
 
-### 2.2 Admin Access Criteria
+### 2.2 Full Access Criteria
 
-`VisibilityFull` for org contracts is granted only to viewers who are members of a group that meets one of:
-1. `is_org_admin = true` on the group (org-wide admin flag)
-2. `'admin' = ANY(contract_grants.claims)` on a contract_grant linking the group to the specific contract
-3. `'admin' = ANY(group_access.claims)` when the group also has a contract_grant on the contract (G11 fix — aligns explorer visibility with RPC layer admin claims)
+`VisibilityFull` for org contracts is granted to viewers who are members of a group that meets one of:
+1. `is_org_admin = true` on the group (org-wide admin flag — sees ALL contracts in the org)
+2. The group has a `contract_grant` linking it to the specific contract (any claims — `read`, `write`, `deploy`, `admin`)
 
-Standard claims (`read`, `write`, `deploy`) do **not** grant `VisibilityFull` regardless of where they appear (group_access or contract_grants).
+The admin claim distinction is no longer relevant for explorer visibility. If a user can `eth_call` on a contract via their group's grant, the contract should not appear as `[PRIVATE]` in the explorer — that would be security theater. The admin/non-admin distinction still matters for event rules (Section 2.3) and other RBAC enforcement, but not for basic address visibility.
+
+Users in the same org but in a group **without** a `contract_grant` on the specific contract still see `VisibilityRedacted`.
 
 ---
 
@@ -177,7 +178,7 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 
 ### 3.7 Explorer API — Participant Visibility Override
 
-The visibility map (`GetBatchVisibility`) resolves each address independently: own address → Full, disclosure grant → grant level, org contract member → Full, everything else → Hidden.
+The visibility map (`GetBatchVisibility`) resolves each address independently: own address → Full, org contract grant holder → Full, org admin → Full (all org contracts), everything else → Hidden/Redacted.
 
 However, **transaction participants must always see their counterparty** in their own transactions. A sender already knows the recipient (it's in their wallet history) and vice versa. Hiding it from them adds no privacy, only confusion.
 
@@ -238,6 +239,8 @@ Token visibility is determined by the token's contract address. If the address i
 
 **Sub-endpoints** (`/tokens/:address/holders`, `/tokens/:address/transfers`): Hidden or Redacted returns 404. Full proceeds normally (holder/transfer redaction still applies to individual entries).
 
+**Grant holder visibility:** Any user whose group has a `contract_grant` on a token's contract address sees the token with `VisibilityFull` — full name, symbol, supply, and holder count are visible. This aligns with RPC access: if you can call `balanceOf()` on the contract, hiding its name in the token list is security theater.
+
 **List total:** The `total` field in `/tokens` reflects the count after filtering, never the raw database count.
 
 ---
@@ -270,8 +273,8 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14 are resolved. G4�
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
 
-- **G11 (resolved): Visibility admin check not aligned with group_access.claims**
-  `GetBatchVisibility` and `GetBatchVisibilityDetailed` now check `group_access.claims` for the `admin` claim when the group has a `contract_grant` on the contract. The admin group query joins `group_access` and includes the condition `cg.id IS NOT NULL AND 'admin' = ANY(ga.claims)`, ensuring a group must have both a contract grant AND the admin claim in group_access to qualify. This aligns explorer visibility with the RPC layer, where admin claims are typically set via `group_access`. Standard claims (`read`, `write`, `deploy`) in `group_access` still do not grant `VisibilityFull`.
+- **G11 (resolved, then superseded): Visibility admin check not aligned with group_access.claims**
+  Originally, `GetBatchVisibility` required `admin` claims (via `is_org_admin`, `contract_grants.claims`, or `group_access.claims`) for `VisibilityFull`. This was superseded: `GetBatchVisibility` now grants `VisibilityFull` to ANY group member with a `contract_grant` on the contract, regardless of claims. The admin-only restriction was security theater — users who can `eth_call` on a contract via RPC should not see it as `[PRIVATE]` in the explorer. `is_org_admin` still grants Full on all contracts in the org.
 
 - **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
   Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**
