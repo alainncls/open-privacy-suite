@@ -109,15 +109,21 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		}
 
 		// Step 2: For authenticated viewers, check if they have admin-level access
-		// to any of these contracts. Admin = is_org_admin group OR 'admin' claim in contract_grants.
+		// to any of these contracts. Admin = is_org_admin group OR 'admin' claim in
+		// contract_grants OR 'admin' claim in group_access (when group has a grant on
+		// the contract). The group_access.claims check aligns explorer visibility with
+		// the RPC layer, where admin claim is typically set via group_access (G11 fix).
 		if viewerDID != "" && len(orgContractAddrs) > 0 {
 			adminGroupQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
 				JOIN groups g ON g.org_id = c.org_id
 				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+				LEFT JOIN group_access ga ON ga.group_id = g.id
 				WHERE LOWER(c.address) = ANY($1)
-				  AND (g.is_org_admin = true OR 'admin' = ANY(cg.claims))`
+				  AND (g.is_org_admin = true
+				       OR 'admin' = ANY(cg.claims)
+				       OR (cg.id IS NOT NULL AND 'admin' = ANY(ga.claims)))`
 
 			orgRows, err := d.conn.QueryContext(ctx, adminGroupQuery, pq.Array(orgContractAddrs))
 			if err != nil {
