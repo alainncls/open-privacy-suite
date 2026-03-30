@@ -150,6 +150,10 @@ When a user accesses a contract:
 
 - Users can only access contracts owned by organizations they belong to
 - Unregistered contracts (no registered owner) are treated as public -- any authenticated user can access them using their default claims
+- Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the tx is forwarded
+- **Deploying contracts by bypassing the proxy is strongly discouraged and should be treated as an exception.** The proxy is the sole privacy and access control gateway — bypassing it means the contract is not automatically registered, not subject to RBAC, and not tracked in the audit trail. If a bypass deployment is unavoidable (e.g., genesis contracts, system upgrades via node console), the contract must be claimed afterwards via the admin API.
+- To claim an on-chain contract not deployed through the proxy, use `POST /orgs/:org_id/contracts/claim` with the `deployment_tx_hash` — the proxy verifies the receipt and bytecode before registering
+- Contract addresses are globally unique across all orgs — one org cannot claim an address already registered to another
 - A contract registered to another org is **always denied**, regardless of the requester's claims
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
 - Regular `read`/`write` users must have an explicit `ContractGrant`

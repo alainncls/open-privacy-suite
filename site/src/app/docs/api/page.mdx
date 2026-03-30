@@ -370,7 +370,8 @@ Available claims: `reader`, `writer`, `deployer`, `admin`, `upgrade`
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/orgs/:org_id/contracts` | List contracts |
-| POST | `/api/orgs/:org_id/contracts` | Register a contract |
+| POST | `/api/orgs/:org_id/contracts` | Register a contract (internal/proxy-deployed) |
+| POST | `/api/orgs/:org_id/contracts/claim` | Claim an on-chain contract with proof of deployment |
 | PUT | `/api/orgs/:org_id/contracts/:addr` | Update contract |
 | DELETE | `/api/orgs/:org_id/contracts/:addr` | Delete contract |
 
@@ -379,13 +380,23 @@ The list contracts endpoint supports optional filters:
 - `?created_after=timestamp` — return contracts created after this date
 - `?created_before=timestamp` — return contracts created before this date
 
-**Body:**
+**Body (register):**
 
 ```json
 {
   "contract_address": "0x...",
   "owner_group_id": "uuid",
   "metadata": {}
+}
+```
+
+**Body (claim):** For claiming contracts deployed outside the proxy. Requires the deployment transaction hash as proof. The proxy verifies the receipt's `contractAddress` matches and the address has bytecode on-chain. All verification failures return an opaque error to prevent address existence disclosure.
+
+```json
+{
+  "address": "0x...",
+  "name": "My Contract",
+  "deployment_tx_hash": "0x..."
 }
 ```
 
