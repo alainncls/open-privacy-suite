@@ -84,6 +84,31 @@ func (s *Server) claimUnregisteredContract(c *gin.Context) {
 		return
 	}
 
+	// Verify the deployer belongs to the claiming org.
+	// Without this check, any org that knows a tx hash could claim another org's contract.
+	deployerAddr, ok := receipt["from"].(string)
+	if !ok || deployerAddr == "" {
+		slog.Warn("contract claim: receipt missing from address",
+			"address", normalizedAddr, "tx_hash", txHash, "org_id", orgID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contract registration failed"})
+		return
+	}
+	deployerDID, err := s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(deployerAddr))
+	if err != nil || deployerDID == "" {
+		slog.Warn("contract claim: deployer address not linked to any user",
+			"address", normalizedAddr, "deployer", deployerAddr, "org_id", orgID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contract registration failed"})
+		return
+	}
+	// Check if the deployer's user is a member of the claiming org
+	deployerInOrg, err := s.db.IsUserInOrg(c.Request.Context(), deployerDID, orgID)
+	if err != nil || !deployerInOrg {
+		slog.Warn("contract claim: deployer is not a member of claiming org",
+			"address", normalizedAddr, "deployer", deployerAddr, "deployer_did", deployerDID, "org_id", orgID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "contract registration failed"})
+		return
+	}
+
 	// Verify the address has bytecode on chain
 	code, err := s.getContractCode(normalizedAddr)
 	if err != nil {
