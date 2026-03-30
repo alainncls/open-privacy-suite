@@ -40,6 +40,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	// Contracts
 	api.GET("/orgs/:org_id/contracts", s.listContracts)
 	api.POST("/orgs/:org_id/contracts", s.createContract)
+	api.POST("/orgs/:org_id/contracts/claim", s.claimUnregisteredContract)
 	api.GET("/orgs/:org_id/contracts/:address", s.getContract)
 	api.PUT("/orgs/:org_id/contracts/:address", s.updateContract)
 	api.DELETE("/orgs/:org_id/contracts/:address", s.deleteContract)
