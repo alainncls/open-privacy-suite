@@ -1142,6 +1142,18 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 		respondInternalError(c, err.Error())
 		return
 	}
+
+	// G22: Always compute live filtered tx count from the transactions table
+	// instead of using the pre-computed address_stats.tx_count, which may be
+	// stale and does not respect visibility filtering. Same class of fix as
+	// block transaction count (RD-758).
+	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
+	filter := s.buildVisibilityFilter(c.Request.Context(), resolvedDID)
+	filteredCount, err := s.explorerStore.GetAddressTransactionCountFiltered(c.Request.Context(), address, filter)
+	if err == nil {
+		stats.TxCount = filteredCount
+	}
+
 	c.JSON(http.StatusOK, stats)
 }
 

@@ -388,6 +388,28 @@ func (s *Store) GetAddressStats(ctx context.Context, address string) (*AddressSt
 	return &stats, err
 }
 
+// GetAddressTransactionCountFiltered returns the visible tx count for an address.
+// It counts transactions where the address appears as from or to, excluding
+// hidden transactions based on the visibility filter.
+func (s *Store) GetAddressTransactionCountFiltered(ctx context.Context, address string, filter *VisibilityFilter) (int, error) {
+	address = strings.ToLower(address)
+	if filter == nil || len(filter.HiddenAddresses) == 0 {
+		var count int
+		err := s.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM transactions t WHERE LOWER(t.from_address) = $1 OR LOWER(t.to_address) = $1",
+			address).Scan(&count)
+		return count, err
+	}
+	visClause, visArgs, nextArg := visibilityWhereClause(filter, 1)
+	query := fmt.Sprintf(
+		"SELECT COUNT(*) FROM transactions t WHERE (LOWER(t.from_address) = $%d OR LOWER(t.to_address) = $%d)%s",
+		nextArg, nextArg, visClause)
+	args := append(visArgs, address)
+	var count int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
 // Internal Transactions
 
 func (s *Store) GetInternalTransactionsByTx(ctx context.Context, txHash string) ([]InternalTransaction, error) {
