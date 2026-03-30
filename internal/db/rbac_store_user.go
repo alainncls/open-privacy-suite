@@ -640,3 +640,22 @@ func scanMembershipsWithDetails(rows *sql.Rows) ([]*rbac.MembershipWithDetails, 
 
 	return results, nil
 }
+
+// IsUserInOrg checks if a user (by DID) has any active membership in any group belonging to the given org.
+func (d *DB) IsUserInOrg(ctx context.Context, userDID, orgID string) (bool, error) {
+	var exists bool
+	err := d.conn.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM user_memberships m
+			JOIN users u ON u.id = m.user_id
+			JOIN groups g ON g.id = m.group_id
+			WHERE u.external_id = $1
+			  AND g.org_id = $2
+			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		)`, userDID, orgID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check user org membership: %w", err)
+	}
+	return exists, nil
+}

@@ -19,6 +19,8 @@ import (
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 
+	"github.com/google/uuid"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -164,8 +166,12 @@ func rpcRequestBody(r *http.Request) (method string, params []interface{}) {
 }
 
 // validReceiptAndCodeHandler returns a mock handler that provides a valid receipt
-// for the given txHash/contractAddress and valid bytecode at the address.
-func validReceiptAndCodeHandler(txHash, contractAddress string) func(w http.ResponseWriter, r *http.Request) {
+// for the given txHash/contractAddress/deployerAddress and valid bytecode at the address.
+func validReceiptAndCodeHandler(txHash, contractAddress string, deployerAddr ...string) func(w http.ResponseWriter, r *http.Request) {
+	deployer := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	if len(deployerAddr) > 0 {
+		deployer = deployerAddr[0]
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		method, _ := rpcRequestBody(r)
 		w.Header().Set("Content-Type", "application/json")
@@ -174,6 +180,7 @@ func validReceiptAndCodeHandler(txHash, contractAddress string) func(w http.Resp
 		case "eth_getTransactionReceipt":
 			receipt := map[string]interface{}{
 				"contractAddress": strings.ToLower(contractAddress),
+				"from":            strings.ToLower(deployer),
 				"status":          "0x1",
 				"blockNumber":     "0xa",
 			}
@@ -196,9 +203,47 @@ func validReceiptAndCodeHandler(txHash, contractAddress string) func(w http.Resp
 	}
 }
 
+// setupDeployerInOrg creates a user, links an ETH address, and adds them to a group in the org.
+// Returns the deployer's ETH address.
+func setupDeployerInOrg(t *testing.T, ts *testServerContractProof, orgID string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn := ts.db.Conn()
+
+	deployerAddr := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	deployerDID := "did:test:deployer"
+
+	// Create user
+	userID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		userID, deployerDID)
+	require.NoError(t, err)
+
+	// Link ETH address
+	err = ts.db.SystemLinkEthAddress(ctx, deployerDID, deployerAddr)
+	require.NoError(t, err)
+
+	// Create group in org and add user
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'deployers', 'Deployers', 0, 'deployers')",
+		groupID, orgID)
+	require.NoError(t, err)
+
+	membershipID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO user_memberships (id, user_id, group_id, source) VALUES ($1, $2, $3, 'admin')",
+		membershipID, userID, groupID)
+	require.NoError(t, err)
+
+	return deployerAddr
+}
+
 func TestContractRegistrationProofOfDeployment(t *testing.T) {
 	ts := setupTestServerForContractProof(t)
 	orgID := createTestOrgForProof(t, ts, "proof-test-org")
+	deployerAddr := setupDeployerInOrg(t, ts, orgID)
 
 	contractAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	validTxHash := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -207,7 +252,7 @@ func TestContractRegistrationProofOfDeployment(t *testing.T) {
 		addr := "0x1111111111111111111111111111111111111111"
 		txHash := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr)
+		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
 
 		body := map[string]any{
 			"address":            addr,
@@ -276,10 +321,10 @@ func TestContractRegistrationProofOfDeployment(t *testing.T) {
 	})
 
 	t.Run("AddressOwnedByAnotherOrgFails", func(t *testing.T) {
-		// First, register the contract to orgID
+		// First, register the contract to orgID (deployer is in this org)
 		addr := "0x3333333333333333333333333333333333333333"
 		txHash := "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr)
+		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
 
 		body := map[string]any{
 			"address":            addr,
@@ -319,10 +364,10 @@ func TestContractRegistrationProofOfDeployment(t *testing.T) {
 	})
 
 	t.Run("AlreadyRegisteredSameOrgFails", func(t *testing.T) {
-		// Register a contract first
+		// Register a contract first (deployer in org)
 		addr := "0x4444444444444444444444444444444444444444"
 		txHash := "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr)
+		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
 
 		body := map[string]any{
 			"address":            addr,
@@ -488,7 +533,7 @@ func TestContractRegistrationProofOfDeployment(t *testing.T) {
 		addr := "0xABCDEF0123456789ABCDEF0123456789ABCDEF01"
 		txHash := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"
 
-		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr)
+		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
 
 		body := map[string]any{
 			"address":            addr,
@@ -510,18 +555,45 @@ func TestContractRegistrationProofOfDeployment(t *testing.T) {
 		// Address should be stored lowercase
 		assert.Equal(t, strings.ToLower(addr), response["address"])
 	})
+
+	t.Run("DeployerNotInClaimingOrgFails", func(t *testing.T) {
+		// Create a second org WITHOUT the deployer
+		otherOrgID := createTestOrgForProof(t, ts, "other-org-no-deployer")
+		addr := "0x7777777777777777777777777777777777777777"
+		txHash := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+
+		// Receipt has the correct deployer, but they're not in otherOrg
+		ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
+
+		body := map[string]any{
+			"address":            addr,
+			"name":               "Stolen Contract",
+			"deployment_tx_hash": txHash,
+		}
+		jsonBody, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/orgs/%s/contracts/claim", otherOrgID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var response map[string]any
+		json.Unmarshal(w.Body.Bytes(), &response)
+		assert.Equal(t, "contract registration failed", response["error"])
+	})
 }
 
 func TestGlobalUniqueAddressConstraint(t *testing.T) {
 	ts := setupTestServerForContractProof(t)
 	org1ID := createTestOrgForProof(t, ts, "unique-org-1")
 	org2ID := createTestOrgForProof(t, ts, "unique-org-2")
+	deployerAddr := setupDeployerInOrg(t, ts, org1ID)
 
 	addr := "0xaaaa000000000000000000000000000000000001"
 	txHash := "0x1111111111111111111111111111111111111111111111111111111111111111"
 
 	// Register to org1
-	ts.mockHandler = validReceiptAndCodeHandler(txHash, addr)
+	ts.mockHandler = validReceiptAndCodeHandler(txHash, addr, deployerAddr)
 
 	body := map[string]any{
 		"address":            addr,
@@ -537,7 +609,7 @@ func TestGlobalUniqueAddressConstraint(t *testing.T) {
 
 	// Try to register same address (different case) to org2
 	txHash2 := "0x2222222222222222222222222222222222222222222222222222222222222222"
-	ts.mockHandler = validReceiptAndCodeHandler(txHash2, strings.ToUpper(addr))
+	ts.mockHandler = validReceiptAndCodeHandler(txHash2, strings.ToUpper(addr), deployerAddr)
 
 	body2 := map[string]any{
 		"address":            strings.ToUpper(strings.TrimPrefix(addr, "0x")),
