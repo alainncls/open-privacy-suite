@@ -108,30 +108,32 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 			orgContractAddrs = append(orgContractAddrs, addr)
 		}
 
-		// Step 2: For authenticated viewers, check if they have admin-level access
-		// to any of these contracts. Admin = is_org_admin group OR 'admin' claim in
-		// contract_grants OR 'admin' claim in group_access (when group has a grant on
-		// the contract). The group_access.claims check aligns explorer visibility with
-		// the RPC layer, where admin claim is typically set via group_access (G11 fix).
+		// Step 2: For authenticated viewers, check if they have access to any of
+		// these contracts. A viewer gets VisibilityFull if they are a member of:
+		//   - An is_org_admin group (sees ALL contracts in their org), OR
+		//   - Any group that has a contract_grant on the specific contract
+		//
+		// This aligns explorer visibility with RPC access: if a user can eth_call
+		// on a contract (because their group has a grant), the contract should not
+		// appear as "[PRIVATE]" in the explorer. The admin-only restriction was
+		// security theater — hiding metadata from users who already have RPC access.
 		if viewerDID != "" && len(orgContractAddrs) > 0 {
-			adminGroupQuery := `
+			grantedGroupQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
 				JOIN groups g ON g.org_id = c.org_id
 				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
-				LEFT JOIN group_access ga ON ga.group_id = g.id
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
-				       OR 'admin' = ANY(cg.claims)
-				       OR (cg.id IS NOT NULL AND 'admin' = ANY(ga.claims)))`
+				       OR cg.id IS NOT NULL)`
 
-			orgRows, err := d.conn.QueryContext(ctx, adminGroupQuery, pq.Array(orgContractAddrs))
+			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, pq.Array(orgContractAddrs))
 			if err != nil {
 				return nil, err
 			}
 			defer orgRows.Close()
 
-			// Map: address -> set of admin group_ids
+			// Map: address -> set of group_ids that grant visibility
 			contractGroupIDs := make(map[string]map[string]bool)
 			for orgRows.Next() {
 				var addr, groupID string
@@ -179,7 +181,7 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 					viewerGroups[gid] = true
 				}
 
-				// Upgrade to VisibilityFull only for contracts where viewer is in an admin group
+				// Upgrade to VisibilityFull for contracts where viewer is in a granted group
 				for addr, groups := range contractGroupIDs {
 					for gid := range groups {
 						if viewerGroups[gid] {
