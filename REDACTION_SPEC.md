@@ -244,7 +244,7 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14 are resolved. G4–G7, G15–G16 are outstanding.
+The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G22 are resolved. G4–G7, G15–G16 are outstanding.
 
 ### Resolved
 
@@ -255,6 +255,8 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14 are resolved. G4�
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
 - **G14 (resolved):** Token endpoints (`/tokens`, `/tokens/:address`, `/tokens/:address/holders`, `/tokens/:address/transfers`) returned raw unredacted token data without any visibility checks. Now: Hidden tokens are dropped from lists and return 404 from single-token endpoints. Redacted tokens have sensitive fields masked (`[PRIVATE]`, nil names/symbols, zeroed counts). Sub-endpoints (holders, transfers) return 404 for Hidden or Redacted token addresses. List total reflects filtered count only.
+- **G22 (resolved): Address page transaction count not filtered**
+  The `/addresses/:address/stats` endpoint returned the pre-computed `tx_count` from the `address_stats` table without applying visibility filtering. A viewer who could only see 2 of 12 transactions still saw "Transactions: 12", leaking the total activity volume of the address. Same class of issue as RD-758 (fixed for paginated list endpoints and block counts) but missed for address summary counts. Fixed: the handler now computes a live `COUNT(*)` from the `transactions` table with the SQL-level visibility filter applied via `GetAddressTransactionCountFiltered`, overriding the stale `address_stats.tx_count`. The filter is built per-viewer using `buildVisibilityFilter`, matching the pattern used by block transaction counts.
 
 ### Outstanding
 
