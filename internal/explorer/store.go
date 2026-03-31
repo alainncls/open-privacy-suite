@@ -949,16 +949,20 @@ func (s *Store) GetLogs(ctx context.Context, address *string, topic0 *string, fr
 func (s *Store) GetContract(ctx context.Context, address string) (*Contract, error) {
 	address = strings.ToLower(address)
 	var c Contract
+	var abiData []byte
 	err := s.db.QueryRowContext(ctx, `
 		SELECT address, bytecode, bytecode_hash, creator, creation_tx, block_number, is_verified,
 			contract_name, compiler_version, optimization_used, evm_version, source_code, abi, created_at,
 			license_type, constructor_args, optimization_runs
 		FROM contracts WHERE LOWER(address) = $1`, address).Scan(
 		&c.Address, &c.Bytecode, &c.BytecodeHash, &c.Creator, &c.CreationTx, &c.BlockNumber, &c.IsVerified,
-		&c.ContractName, &c.CompilerVersion, &c.OptimizationUsed, &c.EVMVersion, &c.SourceCode, &c.ABI, &c.CreatedAt,
+		&c.ContractName, &c.CompilerVersion, &c.OptimizationUsed, &c.EVMVersion, &c.SourceCode, &abiData, &c.CreatedAt,
 		&c.LicenseType, &c.ConstructorArgs, &c.OptimizationRuns)
 	if err == sql.ErrNoRows {
 		return nil, nil
+	}
+	if abiData != nil {
+		c.ABI = abiData
 	}
 	return &c, err
 }
