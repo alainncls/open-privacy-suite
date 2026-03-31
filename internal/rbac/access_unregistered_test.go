@@ -7,13 +7,13 @@ import (
 )
 
 // TestUnregisteredContractAccess verifies that unregistered contracts (not registered
-// to any org) are treated as public: any authenticated user with matching claims can
-// access them. Cross-org isolation is unchanged — contracts registered to a different
-// org are still denied.
+// to any org) are now DENIED — all contracts are private by default. Only EVM
+// precompiles (0x01-0x09) are truly public. Cross-org isolation is unchanged.
 func TestUnregisteredContractAccess(t *testing.T) {
 	const (
 		unregisteredAddr = "0xeeee000000000000000000000000000000000001"
 		crossOrgAddr     = "0xbbbb000000000000000000000000000000000002" // owned by org-b
+		precompileAddr   = "0x0000000000000000000000000000000000000001" // ecrecover
 	)
 
 	ctx := context.Background()
@@ -63,7 +63,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		return store, controller
 	}
 
-	t.Run("read-only user can call unregistered contract", func(t *testing.T) {
+	t.Run("read-only user DENIED on unregistered contract (private by default)", func(t *testing.T) {
 		_, controller := setup([]Claim{ClaimRead})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -75,12 +75,12 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected read-only user to access unregistered (public) contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected unregistered contract to be denied (private by default)")
 		}
 	})
 
-	t.Run("write user can call unregistered contract", func(t *testing.T) {
+	t.Run("write user DENIED on unregistered contract (private by default)", func(t *testing.T) {
 		_, controller := setup([]Claim{ClaimRead, ClaimWrite})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -93,8 +93,8 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected write user to access unregistered (public) contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected unregistered contract to be denied (private by default)")
 		}
 	})
 
@@ -133,7 +133,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		}
 	})
 
-	t.Run("deploy user can call unregistered contract", func(t *testing.T) {
+	t.Run("deploy user DENIED on unregistered contract (private by default)", func(t *testing.T) {
 		_, controller := setup([]Claim{ClaimDeploy, ClaimRead, ClaimWrite})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -145,12 +145,12 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected deploy user to access unregistered (public) contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected unregistered contract to be denied (private by default)")
 		}
 	})
 
-	t.Run("read user can eth_getLogs on unregistered contract", func(t *testing.T) {
+	t.Run("read user DENIED eth_getLogs on unregistered contract", func(t *testing.T) {
 		_, controller := setup([]Claim{ClaimRead})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -161,12 +161,12 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected read user to query logs on unregistered (public) contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected eth_getLogs on unregistered contract to be denied (private by default)")
 		}
 	})
 
-	t.Run("read user can eth_getCode on unregistered address", func(t *testing.T) {
+	t.Run("read user DENIED eth_getCode on unregistered address (all private)", func(t *testing.T) {
 		_, controller := setup([]Claim{ClaimRead})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
@@ -178,8 +178,8 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !result.Allowed {
-			t.Errorf("expected read user to getCode on unregistered (public) address, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Error("expected eth_getCode on unregistered address to be denied (all contracts private)")
 		}
 	})
 
@@ -197,6 +197,75 @@ func TestUnregisteredContractAccess(t *testing.T) {
 		}
 		if result.Allowed {
 			t.Error("expected user with no claims to be denied even on unregistered contract")
+		}
+	})
+
+	// Precompile tests — precompiles are always accessible
+	t.Run("read user can call precompile address", func(t *testing.T) {
+		_, controller := setup([]Claim{ClaimRead})
+
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:user",
+			Method:         "eth_call",
+			Params:         []any{map[string]any{"to": precompileAddr, "data": "0x"}, "latest"},
+			TargetAddress:  precompileAddr,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected precompile access to be allowed, got denied: %s", result.Reason)
+		}
+	})
+
+	t.Run("eth_getLogs on precompile is allowed", func(t *testing.T) {
+		_, controller := setup([]Claim{ClaimRead})
+
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:user",
+			Method:         "eth_getLogs",
+			Params:         []any{map[string]any{"address": precompileAddr}},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected eth_getLogs on precompile to be allowed, got denied: %s", result.Reason)
+		}
+	})
+
+	// Value transfer and basic address query paths must still work for unregistered EOAs
+	t.Run("value transfer to unregistered EOA still allowed", func(t *testing.T) {
+		_, controller := setup([]Claim{ClaimRead, ClaimWrite})
+
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:user",
+			Method:         "eth_sendTransaction",
+			Params:         []any{map[string]any{"to": unregisteredAddr, "value": "0x1"}},
+			TargetAddress:  unregisteredAddr,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected value transfer to unregistered EOA to be allowed, got denied: %s", result.Reason)
+		}
+	})
+
+	t.Run("eth_getBalance on unregistered address still allowed (basic query)", func(t *testing.T) {
+		_, controller := setup([]Claim{ClaimRead})
+
+		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+			UserExternalID: "did:test:user",
+			Method:         "eth_getBalance",
+			Params:         []any{unregisteredAddr, "latest"},
+			TargetAddress:  unregisteredAddr,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.Allowed {
+			t.Errorf("expected eth_getBalance on unregistered address to be allowed (basic query), got denied: %s", result.Reason)
 		}
 	})
 }

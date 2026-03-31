@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"privacy-proxy/internal/evm/precompile"
 )
 
 // OrgContext encapsulates organization-scoped access decisions.
@@ -169,8 +171,12 @@ func (oc *OrgContext) CheckAddressInScope(ctx context.Context, address string) e
 	}
 
 	if ownerOrgID == "" {
-		// Contract is public (not owned by any org) - allowed
-		return nil
+		// Not owned by any org — only precompiles are allowed.
+		// All other unregistered addresses are private by default.
+		if precompile.IsPrecompileAddress(addr) {
+			return nil
+		}
+		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	// Contract is owned by an org - check if user is a member
@@ -222,8 +228,12 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 	}
 
 	if ownerOrgID == "" {
-		// Contract is truly public (not registered anywhere) - allow default_claims
-		return nil
+		// Not registered anywhere — only precompiles are truly public.
+		// All other unregistered addresses are private by default.
+		if precompile.IsPrecompileAddress(addr) {
+			return nil
+		}
+		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
 	// Contract belongs to a different org - deny

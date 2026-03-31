@@ -1000,6 +1000,9 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 // transaction queries at the SQL level. Only org-registered addresses and
 // user EOAs can be hidden — unregistered addresses default to VisibilityFull (public).
 func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *explorer.VisibilityFilter {
+	// All contracts are private by default — use allowlist mode.
+	// Only addresses the viewer has VisibilityFull on are shown.
+
 	// 1. Get all registered org contracts
 	orgAddrs, err := s.db.GetAllRegisteredAddresses(ctx)
 	if err != nil {
@@ -1012,27 +1015,32 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		userAddrs = []string{}
 	}
 
-	// Combine to get all addresses that could potentially be hidden
+	// Combine to get all known addresses
 	allAddrs := append(orgAddrs, userAddrs...)
+
+	// Even with no known addresses, we still need AllPrivate=true to hide
+	// everything by default. With an empty visible list, no txs are shown.
+	filter := &explorer.VisibilityFilter{
+		AllPrivate: true,
+	}
+
 	if len(allAddrs) == 0 {
-		return nil
+		return filter
 	}
 
 	visMap, err := s.db.GetBatchVisibility(ctx, viewerDID, allAddrs)
 	if err != nil {
-		return nil
+		return filter
 	}
 
-	var hidden []string
+	var visible []string
 	for addr, level := range visMap {
-		if level == explorer.VisibilityHidden || level == explorer.VisibilityRedacted {
-			hidden = append(hidden, addr)
+		if level == explorer.VisibilityFull {
+			visible = append(visible, addr)
 		}
 	}
-	if len(hidden) == 0 {
-		return nil
-	}
-	return &explorer.VisibilityFilter{HiddenAddresses: hidden}
+	filter.VisibleAddresses = visible
+	return filter
 }
 
 func (s *Server) getExplorerTransactions(c *gin.Context) {

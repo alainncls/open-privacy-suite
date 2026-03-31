@@ -74,20 +74,20 @@ func TestAzureAD_Integration_RBACAccess(t *testing.T) {
 		 VALUES ('0xtx_azure_rbac3', 100, 2, '0xbbbb000000000000000000000000000000000101', '0xbbbb000000000000000000000000000000000102', 0, 21000, 1000, 1, '0x')`)
 	require.NoError(t, err)
 
-	// --- Anonymous: should see only 2 public txs (private contract creation hidden) ---
-	t.Run("anonymous sees only public transactions", func(t *testing.T) {
+	// --- Anonymous: sees nothing (all private by default) ---
+	t.Run("anonymous sees nothing (all private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(2), total)
-		assert.Len(t, txs, 2)
+		assert.Equal(t, int64(0), total, "anonymous sees 0 txs (all private by default)")
+		assert.Len(t, txs, 0)
 	})
 
-	// --- Azure AD user: should see all 3 txs (granted on the private contract) ---
-	t.Run("Azure AD user sees granted org transactions", func(t *testing.T) {
+	// --- Azure AD user: sees only org contract tx (unregistered addrs are private) ---
+	t.Run("Azure AD user sees only org contract transactions", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, azureSubject)
 		w := httptest.NewRecorder()
@@ -95,11 +95,11 @@ func TestAzureAD_Integration_RBACAccess(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(3), total, "Azure AD user with grant should see all 3 txs")
-		assert.Len(t, txs, 3)
+		assert.Equal(t, int64(1), total, "Azure AD user sees only 1 tx involving org contract (unregistered addrs hidden)")
+		assert.Len(t, txs, 1)
 	})
 
-	// --- Privado user: should see the same 3 txs ---
+	// --- Privado user: same result ---
 	t.Run("Privado user with same grants sees identical results", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, privadoSubject)
@@ -108,8 +108,8 @@ func TestAzureAD_Integration_RBACAccess(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(3), total, "Privado user with same grants should see same txs as Azure user")
-		assert.Len(t, txs, 3)
+		assert.Equal(t, int64(1), total, "Privado user sees only 1 tx involving org contract (unregistered addrs hidden)")
+		assert.Len(t, txs, 1)
 	})
 }
 
@@ -174,17 +174,17 @@ func TestAzureAD_Integration_AdminVisibility(t *testing.T) {
 		 VALUES ('0xtx_azure_admin4', 200, 3, '0xbbbb000000000000000000000000000000000201', '0xbbbb000000000000000000000000000000000202', 0, 21000, 1000, 1, '0x')`)
 	require.NoError(t, err)
 
-	t.Run("anonymous sees only 2 public txs", func(t *testing.T) {
+	t.Run("anonymous sees nothing (all private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, _ := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(2), total)
+		assert.Equal(t, int64(0), total, "anonymous sees 0 txs (all private by default)")
 	})
 
-	t.Run("Azure AD admin sees all 4 txs", func(t *testing.T) {
+	t.Run("Azure AD admin sees only org contract txs", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, azureSubject)
 		w := httptest.NewRecorder()
@@ -192,8 +192,8 @@ func TestAzureAD_Integration_AdminVisibility(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(4), total, "admin Azure AD user should see all 4 transactions")
-		assert.Len(t, txs, 4)
+		assert.Equal(t, int64(2), total, "admin Azure AD user sees 2 txs involving org contract (unregistered hidden)")
+		assert.Len(t, txs, 2)
 	})
 }
 
@@ -243,15 +243,15 @@ func TestAzureAD_Integration_ParticipantOverride(t *testing.T) {
 		 VALUES ('0xtx_azure_part4', 300, 3, '0xbbbb000000000000000000000000000000000301', '0xbbbb000000000000000000000000000000000302', 0, 21000, 1000, 1, '0x')`)
 	require.NoError(t, err)
 
-	t.Run("anonymous sees only 2 public txs", func(t *testing.T) {
+	t.Run("anonymous sees nothing (all private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(2), total, "anonymous sees only public txs")
-		assert.Len(t, txs, 2)
+		assert.Equal(t, int64(0), total, "anonymous sees 0 txs (all private by default)")
+		assert.Len(t, txs, 0)
 	})
 
 	t.Run("Azure AD user sees own participant txs", func(t *testing.T) {
@@ -262,8 +262,9 @@ func TestAzureAD_Integration_ParticipantOverride(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(4), total, "Azure AD user should see own EOA txs as participant")
-		assert.Len(t, txs, 4)
+		// Linked address is in visible set; tx1 and tx2 involve it. tx3/tx4 are unregistered -> hidden.
+		assert.Equal(t, int64(2), total, "Azure AD user sees 2 txs involving linked address")
+		assert.Len(t, txs, 2)
 
 		// Verify the participant txs are present.
 		hashes := make(map[string]bool)

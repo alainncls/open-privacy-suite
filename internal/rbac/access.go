@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/evm/bytecode"
+	"privacy-proxy/internal/evm/precompile"
 
 	"github.com/google/uuid"
 )
@@ -1796,16 +1797,17 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 			continue
 		}
 
-		// Contract is public (not owned by any org) - check default claims
+		// Contract is not owned by any org — deny unless precompile.
+		// All unregistered addresses are private by default.
 		if !hasExplicitAccess {
-			// Using default_claims for public contract
-			access := perms.GetContractAccess(addr)
-			if access == nil {
+			if !precompile.IsPrecompileAddress(addr) {
 				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
-			if !containsClaim(access.Claims, ClaimRead) {
+			// Precompile — allow with read claim
+			if !containsClaim(perms.Claims, ClaimRead) {
 				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
+			continue
 		}
 
 		// For backwards compatibility: also check explicit access in current org
@@ -1854,9 +1856,12 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 				return fmt.Errorf("eth_getLogs: failed to check contract owner: %w", err)
 			}
 			if ownerOrgID == "" {
-				// Unregistered contract — treated as public. Any authenticated user
-				// with a read claim can query logs. Skip the claim checks below
-				// (which assume a registered contract).
+				// Not owned by any org — deny unless precompile.
+				// All unregistered addresses are private by default.
+				if !precompile.IsPrecompileAddress(addr) {
+					return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
+				}
+				// Precompile — allow with read claim
 				if !containsClaim(perms.Claims, ClaimRead) {
 					return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 				}

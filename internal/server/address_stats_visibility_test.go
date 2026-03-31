@@ -97,48 +97,33 @@ func TestExplorerAddressStats_TxCountVisibilityFiltered(t *testing.T) {
 
 	router := setupAddressStatsRouter(srv)
 
-	t.Run("anonymous viewer sees live filtered tx count, not raw stats total", func(t *testing.T) {
+	t.Run("anonymous viewer gets 404 for unregistered address (private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/addresses/"+publicAddr+"/stats", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var stats explorer.AddressStats
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
-
-		assert.Equal(t, 3, stats.TxCount,
-			"tx count must be the live filtered count (3), not the raw address_stats total (12)")
+		assert.Equal(t, http.StatusNotFound, w.Code,
+			"unregistered address should return 404 (private by default)")
 	})
 
-	t.Run("authenticated admin sees live filtered tx count", func(t *testing.T) {
+	t.Run("authenticated admin gets 404 for unregistered address (private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/addresses/"+publicAddr+"/stats", nil)
 		addBearerToken(t, req, srv, aliceDID)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var stats explorer.AddressStats
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
-
-		assert.Equal(t, 3, stats.TxCount,
-			"admin sees live filtered count (3), not raw address_stats total (12)")
+		assert.Equal(t, http.StatusNotFound, w.Code,
+			"unregistered address should return 404 even for admin (private by default)")
 	})
 
-	t.Run("outsider sees live filtered tx count", func(t *testing.T) {
+	t.Run("outsider gets 404 for unregistered address (private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/addresses/"+publicAddr+"/stats", nil)
 		addBearerToken(t, req, srv, bobDID)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var stats explorer.AddressStats
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
-
-		assert.Equal(t, 3, stats.TxCount,
-			"outsider sees live filtered count (3), not raw address_stats total (12)")
+		assert.Equal(t, http.StatusNotFound, w.Code,
+			"unregistered address should return 404 for outsider (private by default)")
 	})
 }
 

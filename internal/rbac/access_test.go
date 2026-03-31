@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1063,32 +1064,35 @@ func TestValidateGetLogsAccess(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "Single address - deploy user access via default claims",
+			name:  "Single address - deploy user denied unregistered contract (all private)",
 			perms: permsWithDefaultDeploy,
 			params: []any{map[string]any{
 				"address": "0xunregisteredcontract",
 			}},
-			expectError: false,
+			expectError: true,
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
-			name:  "Multiple addresses - some registered, some via default (deploy user)",
+			name:  "Multiple addresses - registered passes but unregistered fails (all private)",
 			perms: permsWithDefaultDeploy,
 			params: []any{map[string]any{
 				"address": []any{"0xcontract1", "0xunregisteredcontract"},
 			}},
-			expectError: false,
+			expectError: true,
+			errorSubstr: ErrContractAccessDenied,
 		},
 		{
-			name:  "Single address - read-only user allowed unregistered contract",
+			name:  "Single address - read-only user denied unregistered contract (all private)",
 			perms: &EffectivePermissions{
 				AllowedMethods: []string{"eth_getLogs"},
 				ContractAccess: map[string]ContractAccess{},
-				Claims:         []Claim{ClaimRead}, // Read-only, unregistered contracts are public
+				Claims:         []Claim{ClaimRead},
 			},
 			params: []any{map[string]any{
 				"address": "0xunregisteredcontract",
 			}},
-			expectError: false,
+			expectError: true,
+			errorSubstr: ErrContractAccessDenied,
 		},
 	}
 
@@ -1186,7 +1190,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("GetContractAccess returns default claims for unregistered with deploy claim", func(t *testing.T) {
+	t.Run("GetContractAccess returns nil for unregistered (private by default)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
@@ -1201,14 +1205,14 @@ func TestCrossOrgIsolation(t *testing.T) {
 			t.Errorf("Expected 2 claims for registered contract, got %v", access)
 		}
 
-		// Unregistered contract should return default claims for deploy user
+		// Unregistered contract should return nil (private by default)
 		access = perms.GetContractAccess("0xunregistered")
-		if access == nil || len(access.Claims) != 3 {
-			t.Errorf("Expected 3 default claims for unregistered contract with deploy, got %v", access)
+		if access != nil {
+			t.Errorf("Expected nil for unregistered contract (private by default), got %v", access)
 		}
 	})
 
-	t.Run("GetContractAccess allows unregistered for read-only user", func(t *testing.T) {
+	t.Run("GetContractAccess returns read for precompile address", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
@@ -1223,13 +1227,19 @@ func TestCrossOrgIsolation(t *testing.T) {
 			t.Errorf("Expected 1 claim for registered contract, got %v", access)
 		}
 
-		// Unregistered contract should return default claims (read-only user, public contract)
-		access = perms.GetContractAccess("0xunregistered")
+		// Precompile should return read access
+		access = perms.GetContractAccess("0x0000000000000000000000000000000000000001")
 		if access == nil {
-			t.Fatal("Expected default claims for unregistered (public) contract with read-only user, got nil")
+			t.Fatal("Expected read access for precompile, got nil")
 		}
 		if !access.HasClaim(ClaimRead) {
-			t.Error("Expected read claim on unregistered contract")
+			t.Error("Expected read claim on precompile")
+		}
+
+		// Non-precompile unregistered should return nil
+		access = perms.GetContractAccess("0xunregistered")
+		if access != nil {
+			t.Errorf("Expected nil for unregistered contract (private by default), got %v", access)
 		}
 	})
 
@@ -1249,20 +1259,21 @@ func TestCrossOrgIsolation(t *testing.T) {
 	})
 }
 
-// TestGetContractAccessUnregisteredRestriction verifies that only deploy/admin users
-// can access unregistered contracts via default claims.
+// TestGetContractAccessUnregisteredRestriction verifies that ALL users are
+// denied access to unregistered contracts (private by default). Only precompiles
+// are accessible without explicit registration.
 func TestGetContractAccessUnregisteredRestriction(t *testing.T) {
 	tests := []struct {
 		name     string
 		claims   []Claim
 		expected bool // true = access returned, false = nil
 	}{
-		{"read-only allowed", []Claim{ClaimRead}, true},
-		{"write-only allowed", []Claim{ClaimWrite}, true},
-		{"read+write allowed", []Claim{ClaimRead, ClaimWrite}, true},
-		{"upgrade+read+write allowed", []Claim{ClaimUpgrade, ClaimRead, ClaimWrite}, true},
-		{"deploy allowed", []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, true},
-		{"admin allowed", []Claim{ClaimAdmin, ClaimDeploy, ClaimRead, ClaimWrite, ClaimUpgrade}, true},
+		{"read-only denied", []Claim{ClaimRead}, false},
+		{"write-only denied", []Claim{ClaimWrite}, false},
+		{"read+write denied", []Claim{ClaimRead, ClaimWrite}, false},
+		{"upgrade+read+write denied", []Claim{ClaimUpgrade, ClaimRead, ClaimWrite}, false},
+		{"deploy denied", []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, false},
+		{"admin denied", []Claim{ClaimAdmin, ClaimDeploy, ClaimRead, ClaimWrite, ClaimUpgrade}, false},
 		{"empty claims denied", []Claim{}, false},
 	}
 
@@ -1431,22 +1442,19 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("read-only user allowed access to public contract", func(t *testing.T) {
+	t.Run("read-only user denied access to unregistered contract (all private)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
 				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
 			},
-			Claims: []Claim{ClaimRead}, // Read only — unregistered contracts are public
+			Claims: []Claim{ClaimRead},
 		}
 
-		// Read-only user SHOULD get default_claims access to unregistered contracts
+		// All unregistered contracts are private by default — no access
 		access := perms.GetContractAccess(publicContract)
-		if access == nil {
-			t.Fatal("Read-only user should have access to unregistered (public) contract")
-		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("Access should include read claim")
+		if access != nil {
+			t.Fatal("Unregistered contracts should be denied (all private)")
 		}
 	})
 
@@ -1513,37 +1521,31 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("empty contract access map with deploy claim gets default access", func(t *testing.T) {
+	t.Run("empty contract access map with deploy claim denied unregistered (all private)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{}, // Empty
 			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
 		}
 
-		// Deploy users get default claims for unregistered contracts
+		// All unregistered contracts are private — even deploy users are denied
 		access := perms.GetContractAccess("0x1234567890123456789012345678901234567890")
-		if access == nil {
-			t.Error("Should return default access for deploy user")
-		}
-		if !access.HasClaim(ClaimDeploy) {
-			t.Error("Should have default deploy claim")
+		if access != nil {
+			t.Error("Unregistered contracts should be denied (all private)")
 		}
 	})
 
-	t.Run("empty contract access map with read-only claims gets default access", func(t *testing.T) {
+	t.Run("empty contract access map with read-only claims denied unregistered (all private)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{}, // Empty
 			Claims:  []Claim{ClaimRead},
 		}
 
-		// Unregistered contracts are public — read-only users get default claims
+		// All unregistered contracts are private — denied
 		access := perms.GetContractAccess("0x1234567890123456789012345678901234567890")
-		if access == nil {
-			t.Fatal("Should return default access for read-only user on unregistered (public) contract")
-		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("Should have read claim")
+		if access != nil {
+			t.Error("Unregistered contracts should be denied (all private)")
 		}
 	})
 
@@ -1751,7 +1753,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("returns default_claims for deploy user on public contract", func(t *testing.T) {
+	t.Run("returns nil for unregistered contract (private by default)", func(t *testing.T) {
 		userAddr := "0xaaaa000000000000000000000000000000000001"
 		publicAddr := "0xcccc000000000000000000000000000000000003"
 
@@ -1763,18 +1765,28 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		}
 
 		access := perms.GetContractAccess(publicAddr)
-		if access == nil {
-			t.Fatal("Should return default claims for deploy user on public contract")
+		if access != nil {
+			t.Error("Should return nil for unregistered contract (private by default)")
 		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("Should have default read claim")
+	})
+
+	t.Run("returns read access for precompile address", func(t *testing.T) {
+		perms := &EffectivePermissions{
+			ContractAccess: map[string]ContractAccess{},
+			Claims:         []Claim{ClaimRead},
 		}
-		if !access.HasClaim(ClaimDeploy) {
-			t.Error("Should have deploy claim")
-		}
-		// Default access has nil functions (all functions allowed)
-		if access.Functions != nil {
-			t.Error("Default access should have nil Functions (all allowed)")
+
+		// Test all precompile addresses (0x01-0x09)
+		for i := 1; i <= 9; i++ {
+			addr := fmt.Sprintf("0x%040x", i)
+			access := perms.GetContractAccess(addr)
+			if access == nil {
+				t.Errorf("Should return access for precompile %s", addr)
+				continue
+			}
+			if !access.HasClaim(ClaimRead) {
+				t.Errorf("Precompile %s should have read claim", addr)
+			}
 		}
 	})
 
@@ -2046,13 +2058,13 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}
 	})
 
-	t.Run("eth_getLogs with deploy claims for public contract", func(t *testing.T) {
+	t.Run("eth_getLogs with deploy claims denied for unregistered contract (all private)", func(t *testing.T) {
 		publicAddr := "0xcccc000000000000000000000000000000000003"
 
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy users can access unregistered
+			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
 		}
 
 		params := []any{map[string]any{
@@ -2060,18 +2072,18 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}}
 
 		err := ValidateGetLogsAccess(perms, params)
-		if err != nil {
-			t.Errorf("Should allow deploy user with default claims, got: %v", err)
+		if err == nil {
+			t.Error("Should deny deploy user on unregistered contract (all private)")
 		}
 	})
 
-	t.Run("eth_getLogs read-only user allowed for unregistered contract", func(t *testing.T) {
+	t.Run("eth_getLogs read-only user denied for unregistered contract (all private)", func(t *testing.T) {
 		publicAddr := "0xcccc000000000000000000000000000000000003"
 
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:  []Claim{ClaimRead}, // Read-only, unregistered contracts are public
+			Claims:  []Claim{ClaimRead},
 		}
 
 		params := []any{map[string]any{
@@ -2079,8 +2091,8 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}}
 
 		err := ValidateGetLogsAccess(perms, params)
-		if err != nil {
-			t.Errorf("Should allow read-only user for unregistered (public) contract, got: %v", err)
+		if err == nil {
+			t.Error("Should deny read-only user on unregistered contract (all private)")
 		}
 	})
 

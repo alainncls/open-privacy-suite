@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"privacy-proxy/internal/evm/precompile"
 )
 
 // Claim represents a permission claim type for contract access.
@@ -384,8 +386,10 @@ func (e *EffectivePermissions) HasMethod(method string) bool {
 
 // GetContractAccess returns the access for a specific contract address.
 // For registered contracts, returns the explicit access from ContractAccess.
-// For unregistered contracts, any authenticated user with claims gets access
-// via default claims — unregistered contracts are treated as public.
+// For EVM precompiles (0x01-0x09), returns read-only access (precompiles are
+// always accessible since they are built into the EVM).
+// For all other unregistered addresses, returns nil (deny). All contracts are
+// private by default — only explicit grants or org membership grant access.
 // The caller (access.go) enforces cross-org isolation: contracts registered
 // to a different org are denied regardless of claims.
 func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess {
@@ -393,15 +397,14 @@ func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess
 	if access, ok := e.ContractAccess[addr]; ok {
 		return &access
 	}
-	// Unregistered contracts are public — any authenticated user with claims
-	// can access them using their default claims. Cross-org isolation for
-	// registered contracts is enforced at the controller level (access.go).
-	if len(e.Claims) > 0 {
+	// Precompiles (0x01-0x09) are always accessible — they are native EVM functions.
+	if precompile.IsPrecompileAddress(addr) {
 		return &ContractAccess{
-			Claims:    e.Claims,
-			Functions: nil, // All functions allowed for default
+			Claims:    []Claim{ClaimRead},
+			Functions: nil,
 		}
 	}
+	// All other unregistered addresses are private by default — deny.
 	return nil
 }
 

@@ -191,8 +191,15 @@ func (v *TraceValidator) ValidateTrace(
 			}, nil
 		}
 
-		// Rule 2e: Public address (not owned by any org) -> allow
-		// This is the implicit case - we continue to the next target
+		// Rule 2e: Unregistered address — deny. All contracts are private by
+		// default; only precompiles (handled in Rule 2a), shared infrastructure
+		// (Rule 2b), and org-owned contracts (Rule 2c) are allowed.
+		slog.Debug("trace denied: unregistered address (private by default)", "address", addr)
+		return &TraceValidationResult{
+			Allowed:      false,
+			Reason:       ErrContractAccessDenied,
+			DeniedTarget: addr,
+		}, nil
 	}
 
 	return &TraceValidationResult{

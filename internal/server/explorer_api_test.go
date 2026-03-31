@@ -704,14 +704,14 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
-			name:          "public address",
+			name:          "unregistered address (no longer public)",
 			viewerWallet:  testViewerWallet,
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
-				Visible: true,
-				Level:   VisibilityFull,
-				Reason:  ReasonPublicAddress,
+				Visible: false,
+				Level:   VisibilityHidden,
+				Reason:  ReasonNoAccess,
 			},
 		},
 		{
@@ -728,14 +728,14 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
-			name:          "anonymous viewer sees public",
+			name:          "anonymous viewer sees unregistered as hidden",
 			viewerWallet:  testUnknownWallet,
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
-				Visible: true,
-				Level:   VisibilityFull,
-				Reason:  ReasonPublicAddress,
+				Visible: false,
+				Level:   VisibilityHidden,
+				Reason:  ReasonNoAccess,
 			},
 		},
 		{
@@ -2430,14 +2430,14 @@ func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) 
 	assert.Len(t, txs, 0, "grant must NOT leak into regular explorer — both sides hidden, tx should be dropped")
 }
 
-// TestExplorerTransactions_PublicAddresses_VisibleToAll verifies that
-// transactions between public (unowned) addresses are fully visible to everyone,
-// including anonymous viewers.
-func TestExplorerTransactions_PublicAddresses_VisibleToAll(t *testing.T) {
+// TestExplorerTransactions_UnownedAddresses_HiddenByDefault verifies that
+// transactions between unregistered addresses are NOT visible to anonymous viewers
+// because all addresses are private by default.
+func TestExplorerTransactions_UnownedAddresses_HiddenByDefault(t *testing.T) {
 	srv, _, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
 
-	// These addresses are not linked to any user — they are public.
+	// These addresses are not linked to any user — private by default.
 	addrE := "0xeeee000000000000000000000000000000000041"
 	addrF := "0xffff000000000000000000000000000000000042"
 
@@ -2453,9 +2453,5 @@ func TestExplorerTransactions_PublicAddresses_VisibleToAll(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 1, "transaction between public addresses must be visible")
-	assert.Equal(t, txHash, txs[0].Hash)
-	assert.Equal(t, addrE, strings.ToLower(txs[0].From))
-	require.NotNil(t, txs[0].To)
-	assert.Equal(t, addrF, strings.ToLower(*txs[0].To))
+	require.Len(t, txs, 0, "transactions between unregistered addresses must be hidden (all private by default)")
 }

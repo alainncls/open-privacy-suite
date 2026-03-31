@@ -73,7 +73,7 @@ func (s *Store) GetChainStatsFiltered(ctx context.Context, filter *VisibilityFil
 	if err != nil {
 		return nil, err
 	}
-	if filter == nil || len(filter.HiddenAddresses) == 0 {
+	if !isFilterActive(filter) {
 		return stats, nil
 	}
 
@@ -86,8 +86,12 @@ func (s *Store) GetChainStatsFiltered(ctx context.Context, filter *VisibilityFil
 	}
 	stats.TotalTransactions = filteredTxCount
 
-	// Adjust TotalAddresses: subtract hidden addresses from count
-	stats.TotalAddresses -= int64(len(filter.HiddenAddresses))
+	// Adjust TotalAddresses based on filter mode
+	if filter.AllPrivate {
+		stats.TotalAddresses = int64(len(filter.VisibleAddresses))
+	} else {
+		stats.TotalAddresses -= int64(len(filter.HiddenAddresses))
+	}
 	if stats.TotalAddresses < 0 {
 		stats.TotalAddresses = 0
 	}
@@ -97,7 +101,7 @@ func (s *Store) GetChainStatsFiltered(ctx context.Context, filter *VisibilityFil
 
 // GetTransactionHistoryFiltered returns tx history with visibility filtering.
 func (s *Store) GetTransactionHistoryFiltered(ctx context.Context, intervalSeconds int, limit int, filter *VisibilityFilter) ([]TxHistoryPoint, error) {
-	if filter == nil || len(filter.HiddenAddresses) == 0 {
+	if !isFilterActive(filter) {
 		return s.GetTransactionHistory(ctx, intervalSeconds, limit)
 	}
 
@@ -133,7 +137,7 @@ func (s *Store) GetTransactionHistoryFiltered(ctx context.Context, intervalSecon
 
 // GetBlockTransactionCountFiltered returns the visible tx count for a block.
 func (s *Store) GetBlockTransactionCountFiltered(ctx context.Context, blockNumber uint64, filter *VisibilityFilter) (int, error) {
-	if filter == nil || len(filter.HiddenAddresses) == 0 {
+	if !isFilterActive(filter) {
 		var count int
 		err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM transactions WHERE block_number = $1", blockNumber).Scan(&count)
 		return count, err
@@ -211,7 +215,7 @@ func (s *Store) GetBlocks(ctx context.Context, limit int, beforeBlock *uint64) (
 // GetBlocksFiltered returns blocks with their transaction counts filtered by visibility.
 func (s *Store) GetBlocksFiltered(ctx context.Context, limit int, beforeBlock *uint64, filter *VisibilityFilter) ([]Block, error) {
 	blocks, err := s.GetBlocks(ctx, limit, beforeBlock)
-	if err != nil || len(blocks) == 0 || filter == nil || len(filter.HiddenAddresses) == 0 {
+	if err != nil || len(blocks) == 0 || !isFilterActive(filter) {
 		return blocks, err
 	}
 
@@ -393,7 +397,7 @@ func (s *Store) GetAddressStats(ctx context.Context, address string) (*AddressSt
 // hidden transactions based on the visibility filter.
 func (s *Store) GetAddressTransactionCountFiltered(ctx context.Context, address string, filter *VisibilityFilter) (int, error) {
 	address = strings.ToLower(address)
-	if filter == nil || len(filter.HiddenAddresses) == 0 {
+	if !isFilterActive(filter) {
 		var count int
 		err := s.db.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM transactions t WHERE LOWER(t.from_address) = $1 OR LOWER(t.to_address) = $1",
@@ -572,28 +576,58 @@ func (s *Store) GetTransactionsPaginatedWithCategories(ctx context.Context, page
 }
 
 // VisibilityFilter contains addresses that should be excluded from transaction queries.
-// Transactions are excluded when:
-//   - Both from AND to are in HiddenAddresses
-//   - Contract creation (to IS NULL) AND from is in HiddenAddresses
+// Two modes:
+//
+//  1. Blocklist mode (AllPrivate=false): HiddenAddresses are excluded.
+//     Transactions are excluded when both from AND to are hidden,
+//     or contract creation (to IS NULL) with from in hidden.
+//
+//  2. Allowlist mode (AllPrivate=true): VisibleAddresses are the only ones allowed.
+//     Transactions are excluded unless at least one participant is in the allowlist.
 type VisibilityFilter struct {
-	HiddenAddresses []string // lowercase addresses with VisibilityHidden or VisibilityRedacted
+	HiddenAddresses  []string // blocklist mode: addresses with VisibilityHidden or VisibilityRedacted
+	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
+	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
+}
+
+// isFilterActive returns true if the filter has any effect.
+func isFilterActive(filter *VisibilityFilter) bool {
+	if filter == nil {
+		return false
+	}
+	if filter.AllPrivate {
+		return true // allowlist mode is always active (even with empty visible list = hide everything)
+	}
+	return len(filter.HiddenAddresses) > 0
 }
 
 // visibilityWhereClause builds the SQL WHERE clause for visibility filtering.
 // Returns the clause fragment and args starting from argIdx.
-// If filter is nil or has no hidden addresses, returns empty string and no args.
+// If filter is nil or inactive, returns empty string and no args.
 func visibilityWhereClause(filter *VisibilityFilter, argIdx int) (string, []any, int) {
-	if filter == nil || len(filter.HiddenAddresses) == 0 {
+	if !isFilterActive(filter) {
 		return "", nil, argIdx
 	}
-	// Exclude txs where:
-	// 1. Contract creation from hidden deployer: to_address IS NULL AND from_address in hidden
-	// 2. Both sides hidden: from_address in hidden AND to_address in hidden
+
+	if filter.AllPrivate {
+		// Allowlist mode: only show transactions where at least one participant is visible.
+		// If VisibleAddresses is empty, no transactions are shown (fully private network
+		// with no viewer access). This is correct — fail closed.
+		if len(filter.VisibleAddresses) == 0 {
+			return " AND FALSE", nil, argIdx
+		}
+		// Show tx if from OR to is in the visible set (at least one participant visible).
+		clause := fmt.Sprintf(` AND (
+			LOWER(t.from_address) = ANY($%d) OR LOWER(COALESCE(t.to_address, '')) = ANY($%d)
+		)`, argIdx, argIdx)
+		return clause, []any{pq.Array(filter.VisibleAddresses)}, argIdx + 1
+	}
+
+	// Blocklist mode (legacy): exclude txs where both sides are hidden.
 	clause := fmt.Sprintf(` AND NOT (
 		(t.to_address IS NULL AND LOWER(t.from_address) = ANY($%d))
 		OR (LOWER(t.from_address) = ANY($%d) AND LOWER(t.to_address) = ANY($%d))
 	)`, argIdx, argIdx, argIdx)
-	// We reuse the same $N parameter for all three references to the hidden list
 	return clause, []any{pq.Array(filter.HiddenAddresses)}, argIdx + 1
 }
 
