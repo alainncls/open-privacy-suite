@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"privacy-proxy/internal/evm/precompile"
 	"privacy-proxy/internal/explorer"
 
 	"github.com/lib/pq"
@@ -59,8 +60,12 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		ownerDID, hasOwner := addressOwners[addr]
 
 		if !hasOwner {
-			// Public address (no owner)
-			result[addr] = explorer.VisibilityFull
+			// No eth_address_links owner. Precompiles are always visible;
+			// all other unowned addresses default to Hidden (private by default).
+			if precompile.IsPrecompileAddress(addr) {
+				result[addr] = explorer.VisibilityFull
+			}
+			// else: stays VisibilityHidden (set in initialization above)
 			continue
 		}
 
@@ -76,11 +81,11 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 	}
 
 	// 4. Org contract visibility check
-	// Collect addresses that were marked VisibilityFull due to no eth_address_links owner.
-	// These might be org-owned contracts, which should be hidden to non-members.
+	// Collect addresses that have no eth_address_links owner AND are not precompiles.
+	// These might be org-owned contracts — check for grants/admin access.
 	var publicAddrs []string
 	for _, addr := range uniqueAddrs {
-		if _, hasOwner := addressOwners[addr]; !hasOwner {
+		if _, hasOwner := addressOwners[addr]; !hasOwner && !precompile.IsPrecompileAddress(addr) {
 			publicAddrs = append(publicAddrs, addr)
 		}
 	}
@@ -260,13 +265,17 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		ownerDID, hasOwner := addressOwners[addr]
 
 		if !hasOwner {
-			// Public address (no owner) — may be overridden by org contract check below
-			result[addr] = explorer.AddressVisibility{
-				Address: addr,
-				Visible: true,
-				Level:   explorer.VisibilityFull,
-				Reason:  explorer.ReasonPublicAddress,
+			// No eth_address_links owner. Precompiles are always visible;
+			// all other unowned addresses default to Hidden (private by default).
+			if precompile.IsPrecompileAddress(addr) {
+				result[addr] = explorer.AddressVisibility{
+					Address: addr,
+					Visible: true,
+					Level:   explorer.VisibilityFull,
+					Reason:  explorer.ReasonPublicAddress,
+				}
 			}
+			// else: stays VisibilityHidden (set in initialization above)
 			continue
 		}
 
@@ -286,10 +295,10 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		didToAddresses[ownerDID] = append(didToAddresses[ownerDID], addr)
 	}
 
-	// 4. Org contract visibility check
+	// 4. Org contract visibility check — only non-precompile unowned addresses
 	var publicAddrs []string
 	for _, addr := range uniqueAddrs {
-		if _, hasOwner := addressOwners[addr]; !hasOwner {
+		if _, hasOwner := addressOwners[addr]; !hasOwner && !precompile.IsPrecompileAddress(addr) {
 			publicAddrs = append(publicAddrs, addr)
 		}
 	}

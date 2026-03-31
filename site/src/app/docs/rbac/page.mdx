@@ -32,7 +32,7 @@ The RBAC system uses a **group-centric claim model**:
 
 2. **ContractGrants link groups to contracts** -- for registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
 
-3. **Unregistered contracts use default claims** -- if a contract is not registered to any organization, any authenticated user with matching claims (`read`, `write`, etc.) can access it. A contract registered to a *different* org is always denied regardless of the user's claims.
+3. **All contracts are private by default** -- unregistered addresses (not registered to any organization) are denied. Only EVM precompiles (0x01-0x09) are accessible without explicit registration. A contract registered to a *different* org is always denied regardless of the user's claims.
 
 4. **Deploy/admin users have broad access** -- they can access any registered contract in their own org without needing explicit `ContractGrant` entries.
 
@@ -42,7 +42,8 @@ The RBAC system uses a **group-centric claim model**:
 
 | Contract Type | Deploy/Admin Users | Read/Write Users |
 |--------------|-------------------|-----------------|
-| Unregistered | Allowed (default claims) | Allowed (default claims) |
+| Unregistered | **Denied** (private by default) | **Denied** (private by default) |
+| EVM Precompile (0x01-0x09) | Allowed (read) | Allowed (read) |
 | Registered (own org) | Allowed (default claims) | ContractGrant required |
 | Registered (other org) | Denied (cross-org) | Denied (cross-org) |
 | Self-deployed | Automatic read+write | Automatic read+write |
@@ -130,7 +131,7 @@ graph TD
 <Callout variant="info" title="How permissions are computed">
 
 1. **Group has claims** via GroupAccess: `{ claims: [read, write], methods: [...] }`
-2. **Unregistered contracts**: only deploy/admin users can access. Read/write-only users must use registered contracts.
+2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
 3. **Registered contracts (own org)**: deploy/admin users allowed via default claims. Read/write users need a ContractGrant. Claims come from GroupAccess. Functions can be restricted via FunctionRule. Parameters can be constrained via ParamRule.
 4. **Deployer auto-grant**: user who deployed a contract gets read+write automatically.
 5. **Org admin bypass**: groups with `is_org_admin=true` get ALL claims on ALL contracts in the organization.
@@ -223,11 +224,12 @@ based on the **target contract**:
 |--------|-------------|----------|
 | Contract owned by Org A | Org A | Use Org A memberships |
 | Contract owned by Org B | Org B | Use Org B memberships |
-| Unregistered contract | User's default org | Allowed (default claims apply — see note below) |
+| Unregistered contract | -- | **Denied** (private by default) |
+| EVM precompile (0x01-0x09) | N/A | Allowed (read access) |
 | Contract in Org C (user not member) | -- | Request denied |
 | No target (deployment) | User's default org | Use default org memberships |
 
-**Note on "unregistered" contracts:** Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node, closing any race window. "Unregistered" only applies to contracts that exist on-chain but were not deployed through the proxy (e.g., system/genesis contracts, or contracts deployed via direct node console access). These are treated as public for any authenticated user with claims.
+**Note on "unregistered" contracts:** Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node, closing any race window. All unregistered addresses are private by default. If a contract exists on-chain but was not deployed through the proxy (e.g., system/genesis contracts), it must be claimed via the admin API (`POST /orgs/:org_id/contracts/claim`) to become accessible.
 
 ---
 

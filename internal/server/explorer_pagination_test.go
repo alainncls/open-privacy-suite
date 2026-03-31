@@ -124,7 +124,7 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 
 	// --- Test cases ---
 
-	t.Run("anonymous viewer gets filtered total and correct page size", func(t *testing.T) {
+	t.Run("anonymous viewer sees nothing (all contracts private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -132,17 +132,11 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(3), total, "anonymous viewer should see only 3 public transactions")
-		assert.Len(t, txs, 3, "page 1 should contain all 3 visible transactions")
-
-		// None of the returned transactions should involve the private contract or user address.
-		for _, tx := range txs {
-			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From), "private contract address must not appear")
-			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear")
-		}
+		assert.Equal(t, int64(0), total, "anonymous viewer should see 0 transactions (all private by default)")
+		assert.Len(t, txs, 0, "page 1 should contain 0 visible transactions")
 	})
 
-	t.Run("authenticated org member sees public and org transactions, but not other private user txs", func(t *testing.T) {
+	t.Run("authenticated org member sees only org transactions (unregistered addrs hidden)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, aliceDID)
 		w := httptest.NewRecorder()
@@ -151,15 +145,15 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(5), total, "alice should see 3 public + 2 org txs = 5")
-		assert.Len(t, txs, 5, "page 1 should contain all 5 transactions for org member")
+		assert.Equal(t, int64(2), total, "alice should see 2 org txs (unregistered addrs no longer visible)")
+		assert.Len(t, txs, 2, "page 1 should contain 2 org transactions for org member")
 
 		for _, tx := range txs {
 			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear for alice")
 		}
 	})
 
-	t.Run("authenticated user sees public and own transactions", func(t *testing.T) {
+	t.Run("authenticated user sees only own transactions", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, bobDID)
 		w := httptest.NewRecorder()
@@ -168,8 +162,8 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(5), total, "bob should see 3 public + 2 own txs = 5")
-		assert.Len(t, txs, 5, "page 1 should contain all 5 transactions for bob")
+		assert.Equal(t, int64(2), total, "bob should see 2 own txs (unregistered addrs no longer visible)")
+		assert.Len(t, txs, 2, "page 1 should contain 2 own transactions for bob")
 
 		for _, tx := range txs {
 			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From), "private org address must not appear for bob")
@@ -211,8 +205,8 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(5), total, "grant holder (Eve) should see 3 public + 2 org contract txs = 5")
-		assert.Len(t, txs, 5, "page should contain all 5 visible transactions for grant holder")
+		assert.Equal(t, int64(2), total, "grant holder (Eve) should see 2 org contract txs (unregistered hidden)")
+		assert.Len(t, txs, 2, "page should contain 2 visible transactions for grant holder")
 
 		for _, tx := range txs {
 			assert.NotEqual(t, privateUserAddr, strings.ToLower(tx.From), "private user address must not appear for Eve")
@@ -227,8 +221,8 @@ func TestExplorerTransactionsPaginated_VisibilityFiltering(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		assert.Equal(t, int64(3), total, "total should still reflect filtered count")
-		assert.Len(t, txs, 0, "page 2 should be empty when all visible txs fit in page 1")
+		assert.Equal(t, int64(0), total, "total should still reflect filtered count (all private)")
+		assert.Len(t, txs, 0, "page 2 should be empty")
 	})
 }
 
@@ -274,7 +268,7 @@ func TestExplorerTransactions_NoAdminGroups(t *testing.T) {
 		 VALUES ('0xtx_noadmin3', 100, 2, $1, $2, 0, 21000, 1000, 1, '0x')`, publicFrom, publicTo)
 	require.NoError(t, err)
 
-	t.Run("anonymous sees only public tx despite no admin groups existing", func(t *testing.T) {
+	t.Run("anonymous sees nothing (all contracts private by default)", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -282,16 +276,9 @@ func TestExplorerTransactions_NoAdminGroups(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		// tx1 dropped: contract creation from hidden deployer
-		// tx2 survives SQL (only to is hidden, not both) but to-address gets redacted
-		// tx3 fully visible
-		assert.Equal(t, int64(2), total, "anonymous should see 2 txs: 1 public + 1 with redacted to-address")
-		assert.Len(t, txs, 2)
-
-		for _, tx := range txs {
-			assert.NotEqual(t, privateAddr, strings.ToLower(tx.From),
-				"org contract address must not appear as from even without admin groups")
-		}
+		// All addresses are private by default — anonymous sees nothing
+		assert.Equal(t, int64(0), total, "anonymous should see 0 txs (all private by default)")
+		assert.Len(t, txs, 0)
 	})
 }
 
@@ -431,24 +418,9 @@ func TestExplorerVisibility_TransactionShapes(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		// Hidden = [orgAContract, orgBContract, bobEOA]
-		// Dropped: tx1 (rule1), tx3 (rule2), tx9 (rule2), tx10 (rule2), tx11 (rule1)
-		// Visible: tx2, tx4, tx5, tx6, tx7, tx8 = 6
-		assert.Equal(t, int64(6), total, "anonymous should see 6 transactions")
-		assert.Len(t, txs, 6)
-
-		// Verify no transaction has both from and to in the hidden set
-		hiddenSet := map[string]bool{
-			orgAContract: true,
-			orgBContract: true,
-			bobEOA:       true,
-		}
-		for _, tx := range txs {
-			fromHidden := hiddenSet[strings.ToLower(tx.From)]
-			toHidden := tx.To != nil && hiddenSet[strings.ToLower(*tx.To)]
-			assert.False(t, fromHidden && (tx.To == nil || toHidden),
-				"transaction %s should not have hidden from with null/hidden to", tx.Hash)
-		}
+		// AllPrivate mode: anonymous has no visible addresses, so no txs are shown.
+		assert.Equal(t, int64(0), total, "anonymous should see 0 transactions (all private by default)")
+		assert.Len(t, txs, 0)
 	})
 
 	t.Run("alice (admin of orgA)", func(t *testing.T) {
@@ -459,12 +431,12 @@ func TestExplorerVisibility_TransactionShapes(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		// Alice: orgAContract=Full, orgBContract=Redacted(hidden), bobEOA=Hidden
-		// Hidden = [orgBContract, bobEOA]
-		// Dropped: tx11 (rule1: bob hidden, to=NULL)
-		// Visible: tx1-tx10 = 10
-		assert.Equal(t, int64(10), total, "alice should see 10 transactions")
-		assert.Len(t, txs, 10)
+		// AllPrivate allowlist mode: only orgAContract is Full for alice.
+		// Txs involving orgAContract as from or to:
+		//   tx1 (from=orgA, to=NULL), tx3 (orgA->orgB), tx4 (orgA->pub1),
+		//   tx5 (pub1->orgA), tx9 (bobEOA->orgA), tx10 (orgA->bobEOA) = 6
+		assert.Equal(t, int64(6), total, "alice should see 6 transactions involving orgA contract")
+		assert.Len(t, txs, 6)
 	})
 
 	t.Run("bob (EOA owner)", func(t *testing.T) {
@@ -475,12 +447,12 @@ func TestExplorerVisibility_TransactionShapes(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		// Bob: bobEOA=Full, orgAContract=Redacted(hidden), orgBContract=Redacted(hidden)
-		// Hidden = [orgAContract, orgBContract]
-		// Dropped: tx1 (rule1: orgA hidden, to=NULL), tx3 (rule2: orgA+orgB both hidden)
-		// Visible: tx2, tx4, tx5, tx6, tx7, tx8, tx9, tx10, tx11 = 9
-		assert.Equal(t, int64(9), total, "bob should see 9 transactions")
-		assert.Len(t, txs, 9)
+		// AllPrivate allowlist mode: only bobEOA is Full for bob.
+		// Txs involving bobEOA as from or to:
+		//   tx7 (bob->pub1), tx8 (pub1->bob), tx9 (bob->orgA),
+		//   tx10 (orgA->bob), tx11 (bob->NULL) = 5
+		assert.Equal(t, int64(5), total, "bob should see 5 transactions involving his EOA")
+		assert.Len(t, txs, 5)
 	})
 
 	t.Run("authenticated user with no memberships", func(t *testing.T) {
@@ -491,11 +463,9 @@ func TestExplorerVisibility_TransactionShapes(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-		// Same as anonymous: no org access, no EOA links
-		// Hidden = [orgAContract, orgBContract, bobEOA]
-		// Expected: 6
-		assert.Equal(t, int64(6), total, "no-membership user should see same 6 as anonymous")
-		assert.Len(t, txs, 6)
+		// Same as anonymous: no org access, no EOA links = no visible addresses
+		assert.Equal(t, int64(0), total, "no-membership user should see 0 (same as anonymous)")
+		assert.Len(t, txs, 0)
 	})
 }
 
@@ -602,19 +572,19 @@ func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
 
 	// --- Table-driven subtests ---
 	// Any user with a contract_grant on privContract gets VisibilityFull, so privContract
-	// is NOT in the hidden set and all 3 txs are visible. The only difference is
-	// is_org_admin (sees ALL org contracts without explicit grants) vs explicit grants.
-	// Since all groups here have a contract_grant, all users see 3 transactions.
+	// is in the visible set (allowlist). Txs involving privContract: tx1 (privContract->NULL)
+	// and tx2 (pubAddr->privContract) = 2 visible. tx3 (pubAddr->pubAddr2) is hidden
+	// because neither pubAddr nor pubAddr2 are in any visible set.
 	cases := []testUser{
-		{"readUser", "did:test:claims_read", 3},
-		{"writeUser", "did:test:claims_write", 3},
-		{"readWriteUser", "did:test:claims_rw", 3},
-		{"deployUser", "did:test:claims_deploy", 3},
-		{"readWriteDeployUser", "did:test:claims_rwd", 3},
-		{"noClaimsUser", "did:test:claims_none", 3},
-		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 3},
-		{"adminUser (is_org_admin group)", "did:test:claims_admin", 3},
-		{"multiGroupUser (read + admin groups)", "did:test:claims_multi", 3},
+		{"readUser", "did:test:claims_read", 2},
+		{"writeUser", "did:test:claims_write", 2},
+		{"readWriteUser", "did:test:claims_rw", 2},
+		{"deployUser", "did:test:claims_deploy", 2},
+		{"readWriteDeployUser", "did:test:claims_rwd", 2},
+		{"noClaimsUser", "did:test:claims_none", 2},
+		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 2},
+		{"adminUser (is_org_admin group)", "did:test:claims_admin", 2},
+		{"multiGroupUser (read + admin groups)", "did:test:claims_multi", 2},
 	}
 
 	for _, tc := range cases {
@@ -710,10 +680,10 @@ func TestExplorerBlocks_VisibilityFiltering(t *testing.T) {
 		
 		// Expected order is descending (Block 11 then Block 10)
 		assert.Equal(t, uint64(11), blocks[0].Number)
-		assert.Equal(t, 0, blocks[0].TransactionCount, "anonymous should see 0 txs in block 11")
+		assert.Equal(t, 0, blocks[0].TransactionCount, "anonymous should see 0 txs in block 11 (all private)")
 
 		assert.Equal(t, uint64(10), blocks[1].Number)
-		assert.Equal(t, 2, blocks[1].TransactionCount, "anonymous should see 2 public txs out of 4 in block 10")
+		assert.Equal(t, 0, blocks[1].TransactionCount, "anonymous should see 0 txs in block 10 (all private by default)")
 	})
 
 	t.Run("authenticated org member sees all transaction counts", func(t *testing.T) {
@@ -727,9 +697,9 @@ func TestExplorerBlocks_VisibilityFiltering(t *testing.T) {
 		require.Len(t, blocks, 2)
 		
 		assert.Equal(t, uint64(11), blocks[0].Number)
-		assert.Equal(t, 1, blocks[0].TransactionCount)
+		assert.Equal(t, 1, blocks[0].TransactionCount, "alice sees 1 tx in block 11 (privContract)")
 
 		assert.Equal(t, uint64(10), blocks[1].Number)
-		assert.Equal(t, 4, blocks[1].TransactionCount)
+		assert.Equal(t, 2, blocks[1].TransactionCount, "alice sees 2 txs in block 10 (only privContract ones, not pub-to-pub)")
 	})
 }

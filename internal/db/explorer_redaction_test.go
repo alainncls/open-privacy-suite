@@ -173,20 +173,29 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 			"expired member must not retain access after expiry")
 	})
 
-	t.Run("public address not affected", func(t *testing.T) {
-		const publicAddr = "0x9999000000000000000000000000000000000001"
-		visMap, err := database.GetBatchVisibility(ctx, "", []string{publicAddr})
+	t.Run("unregistered address is Hidden (private by default)", func(t *testing.T) {
+		const unregAddr = "0x9999000000000000000000000000000000000001"
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{unregAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityFull, visMap[publicAddr],
-			"public address (not in contracts table) must remain VisibilityFull")
+		assert.Equal(t, explorer.VisibilityHidden, visMap[unregAddr],
+			"unregistered address (not in contracts table) must be VisibilityHidden (private by default)")
 	})
 
-	t.Run("mixed batch: public and private", func(t *testing.T) {
-		const publicAddr = "0x9999000000000000000000000000000000000002"
-		visMap, err := database.GetBatchVisibility(ctx, "", []string{privateAddr, publicAddr})
+	t.Run("precompile address is Full", func(t *testing.T) {
+		const precompileAddr = "0x0000000000000000000000000000000000000001"
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{precompileAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[precompileAddr],
+			"precompile address must remain VisibilityFull")
+	})
+
+	t.Run("mixed batch: unregistered and private", func(t *testing.T) {
+		const unregAddr = "0x9999000000000000000000000000000000000002"
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{privateAddr, unregAddr})
 		require.NoError(t, err)
 		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr])
-		assert.Equal(t, explorer.VisibilityFull, visMap[publicAddr])
+		assert.Equal(t, explorer.VisibilityHidden, visMap[unregAddr],
+			"unregistered address must be VisibilityHidden (private by default)")
 	})
 }
 

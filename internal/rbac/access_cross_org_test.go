@@ -564,9 +564,8 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-007: Public contract allowed for read-only user", func(t *testing.T) {
-		// publicContract is NOT registered to any org — unregistered contracts are public.
-		// Any authenticated user with matching claims can access them.
+	t.Run("SECURITY-007: Unregistered contract denied (private by default)", func(t *testing.T) {
+		// publicContract is NOT registered to any org — all contracts are private by default.
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:user-a",
 			Method:         "eth_call",
@@ -578,9 +577,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be ALLOWED - unregistered contracts are public, user has read claim
-		if !result.Allowed {
-			t.Errorf("expected read-only user to access unregistered (public) contract, got denied: %s", result.Reason)
+		// Should be DENIED - unregistered contracts are private by default
+		if result.Allowed {
+			t.Errorf("expected unregistered contract to be denied (private by default)")
 		}
 	})
 
@@ -843,7 +842,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-013: Public contract allowed for read-only user via default_claims", func(t *testing.T) {
+	t.Run("SECURITY-013: Unregistered contract denied for read-only user (private by default)", func(t *testing.T) {
 		publicContract := "0x1111111111111111111111111111111111111111"
 
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
@@ -852,7 +851,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // No explicit grants
-			Claims:         []Claim{ClaimRead},          // Read only — unregistered contracts are public
+			Claims:         []Claim{ClaimRead},          // Read only
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -870,13 +869,13 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be ALLOWED - unregistered contracts are public, user has read claim
-		if !result.Allowed {
-			t.Errorf("expected read-only user to access unregistered (public) contract, got denied: %s", result.Reason)
+		// Should be DENIED — all contracts are private by default
+		if result.Allowed {
+			t.Errorf("expected unregistered contract to be denied (private by default)")
 		}
 	})
 
-	t.Run("SECURITY-013b: Public contract allowed for deploy user via default_claims", func(t *testing.T) {
+	t.Run("SECURITY-013b: Unregistered contract denied for deploy user (private by default)", func(t *testing.T) {
 		publicContract := "0x1111111111111111111111111111111111111111"
 
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
@@ -889,13 +888,6 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
-		// userHasDeployClaimInAnyOrg checks actual group access records, not cached
-		// permissions, so we need the group to have deploy claims too.
-		store.groupAccess["group-a"] = &GroupAccess{
-			ID:      "access-a",
-			GroupID: "group-a",
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
-		}
 
 		controller := NewAccessController(store, 5*time.Minute)
 
@@ -910,17 +902,18 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be ALLOWED - deploy user can access unregistered contracts
-		if !result.Allowed {
-			t.Errorf("expected access to be allowed for public contract with deploy user, got: %s", result.Reason)
+		// Should be DENIED — all contracts are private by default
+		if result.Allowed {
+			t.Errorf("expected unregistered contract to be denied (private by default)")
 		}
 	})
 }
 
-// TestContractExistenceOracle verifies that cross-org contracts are denied while
-// unregistered addresses are allowed (they are public). The existence oracle concern
-// is mitigated differently now: unregistered addresses are intentionally public,
-// so there is no information leak in treating them differently from cross-org contracts.
+// TestContractExistenceOracle verifies that both cross-org contracts and unregistered
+// addresses are denied. With all-contracts-private-by-default, both cross-org and
+// unregistered addresses return the same generic denial, preventing existence oracle attacks.
+// Exception: basic address queries (eth_getCode, eth_getBalance) are allowed for unregistered
+// addresses (wallet functionality preserved).
 func TestContractExistenceOracle(t *testing.T) {
 	ctx := context.Background()
 	store := NewMockCrossOrgStore()
@@ -946,7 +939,7 @@ func TestContractExistenceOracle(t *testing.T) {
 	}
 
 	// User B queries a completely non-existent (unregistered) address.
-	// Unregistered addresses are public — should be allowed.
+	// All unregistered addresses are now private by default — denied.
 	resultNonExistent, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 		UserExternalID: "did:test:user-b",
 		Method:         "eth_getCode",
@@ -956,8 +949,23 @@ func TestContractExistenceOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error for non-existent contract: %v", err)
 	}
-	if !resultNonExistent.Allowed {
-		t.Fatalf("expected unregistered address to be allowed (public), got denied: %s", resultNonExistent.Reason)
+	// eth_getCode on unregistered is denied (all contracts private by default)
+	if resultNonExistent.Allowed {
+		t.Fatalf("expected eth_getCode on unregistered address to be denied, got allowed")
+	}
+
+	// eth_call on unregistered is also denied (private by default)
+	resultCall, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		UserExternalID: "did:test:user-b",
+		Method:         "eth_call",
+		Params:         []any{map[string]any{"to": nonExistentAddr, "data": "0x"}, "latest"},
+		TargetAddress:  nonExistentAddr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resultCall.Allowed {
+		t.Fatal("expected eth_call on unregistered address to be denied (private by default)")
 	}
 
 	// Cross-org denial should use the generic constant
@@ -1082,7 +1090,7 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 	})
 }
 
-func TestUnregisteredAddressesAllowed(t *testing.T) {
+func TestUnregisteredAddressesDenied(t *testing.T) {
 	ctx := context.Background()
 	store := NewMockCrossOrgStore()
 	setupCrossOrgTestScenario(store)
@@ -1090,7 +1098,7 @@ func TestUnregisteredAddressesAllowed(t *testing.T) {
 	publicContract := "0x1111111111111111111111111111111111111111"
 
 	// User has deploy/read/write default claims but no explicit contract grant.
-	// Unregistered contracts are public — default claims should be sufficient.
+	// Unregistered contracts are now private by default — access should be denied.
 	store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 		ID:             "perms-a",
 		UserID:         "user-a",
@@ -1102,7 +1110,7 @@ func TestUnregisteredAddressesAllowed(t *testing.T) {
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
 
-	t.Run("allows unregistered contract access via eth_call", func(t *testing.T) {
+	t.Run("denies unregistered contract access via eth_call (private by default)", func(t *testing.T) {
 		controller := NewAccessController(store, 5*time.Minute)
 
 		callReq := &AccessCheckRequest{
@@ -1115,12 +1123,12 @@ func TestUnregisteredAddressesAllowed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !callResult.Allowed {
-			t.Fatalf("expected eth_call to be allowed for unregistered (public) contract, got denied: %s", callResult.Reason)
+		if callResult.Allowed {
+			t.Fatal("expected eth_call on unregistered contract to be denied (private by default)")
 		}
 	})
 
-	t.Run("allows unregistered contract access via eth_getLogs", func(t *testing.T) {
+	t.Run("denies unregistered contract access via eth_getLogs (private by default)", func(t *testing.T) {
 		controller := NewAccessController(store, 5*time.Minute)
 
 		logReq := &AccessCheckRequest{
@@ -1132,8 +1140,8 @@ func TestUnregisteredAddressesAllowed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !logResult.Allowed {
-			t.Fatalf("expected eth_getLogs to be allowed for unregistered (public) contract, got denied: %s", logResult.Reason)
+		if logResult.Allowed {
+			t.Fatal("expected eth_getLogs on unregistered contract to be denied (private by default)")
 		}
 	})
 }
@@ -1689,9 +1697,9 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		}
 	})
 
-	t.Run("EOA-003: Value transfer with calldata to unregistered address is allowed", func(t *testing.T) {
+	t.Run("EOA-003: Value transfer with calldata to unregistered address is denied (private by default)", func(t *testing.T) {
 		// If there's calldata, it goes through contract access check.
-		// Unregistered addresses are public — write user has default claims.
+		// Unregistered addresses are now private by default — denied.
 		req := &AccessCheckRequest{
 			UserExternalID:   "did:test:writer",
 			Method:           "eth_sendTransaction",
@@ -1704,9 +1712,9 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Should be allowed — unregistered addresses are public, user has write claim
-		if !result.Allowed {
-			t.Errorf("expected write user to call unregistered address, got denied: %s", result.Reason)
+		// Should be denied — unregistered addresses are private by default
+		if result.Allowed {
+			t.Error("expected calldata to unregistered address to be denied (private by default)")
 		}
 	})
 
@@ -1779,9 +1787,9 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 	}{
 		{"eth_getBalance on EOA allowed", "eth_getBalance", true},
 		{"eth_getTransactionCount on EOA allowed", "eth_getTransactionCount", true},
-		{"eth_getCode on EOA allowed (unregistered = public)", "eth_getCode", true},
+		{"eth_getCode on EOA denied (all unregistered private)", "eth_getCode", false},
 		{"eth_getStorageAt on EOA denied (globally blocked)", "eth_getStorageAt", false},
-		{"eth_getProof on EOA allowed (unregistered = public)", "eth_getProof", true},
+		{"eth_getProof on EOA denied (all unregistered private)", "eth_getProof", false},
 	}
 
 	for _, tt := range tests {

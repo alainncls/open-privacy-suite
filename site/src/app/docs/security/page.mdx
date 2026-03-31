@@ -149,7 +149,7 @@ When a user accesses a contract:
 ### Isolation Rules
 
 - Users can only access contracts owned by organizations they belong to
-- Unregistered contracts (no registered owner) are treated as public -- any authenticated user can access them using their default claims
+- **All contracts are private by default** — unregistered addresses (no registered owner) are denied. Only EVM precompiles (0x01-0x09) are truly public
 - Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the tx is forwarded
 - **Deploying contracts by bypassing the proxy is strongly discouraged and should be treated as an exception.** The proxy is the sole privacy and access control gateway — bypassing it means the contract is not automatically registered, not subject to RBAC, and not tracked in the audit trail. If a bypass deployment is unavoidable (e.g., genesis contracts, system upgrades via node console), the contract must be claimed afterwards via the admin API.
 - To claim an on-chain contract not deployed through the proxy, use `POST /orgs/:org_id/contracts/claim` with the `deployment_tx_hash` — the proxy verifies the receipt and bytecode before registering

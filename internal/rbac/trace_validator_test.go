@@ -255,9 +255,9 @@ func TestValidateTrace_OtherOrgContractDenied(t *testing.T) {
 	}
 }
 
-func TestValidateTrace_PublicContractAllowed(t *testing.T) {
+func TestValidateTrace_UnregisteredContractDenied(t *testing.T) {
 	store := NewMockTraceStore()
-	// Contract not registered to any org - it's public
+	// Contract not registered to any org — private by default
 
 	validator := NewTraceValidator(store)
 
@@ -272,8 +272,11 @@ func TestValidateTrace_PublicContractAllowed(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !result.Allowed {
-		t.Errorf("expected public contract call to be allowed, got denied: %s", result.Reason)
+	if result.Allowed {
+		t.Errorf("expected unregistered contract call to be denied (private by default)")
+	}
+	if result.DeniedTarget != "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Errorf("expected DeniedTarget to be the unregistered address, got: %s", result.DeniedTarget)
 	}
 }
 
@@ -318,8 +321,6 @@ func TestValidateTrace_MixedTargets(t *testing.T) {
 			{Type: "STATICCALL", From: "0x1111", To: "0x0000000000000000000000000000000000000002"},
 			// Shared infrastructure
 			{Type: "CALL", From: "0x1111", To: "0xcccccccccccccccccccccccccccccccccccccccc"},
-			// Public contract
-			{Type: "DELEGATECALL", From: "0x1111", To: "0xdddddddddddddddddddddddddddddddddddddddd"},
 		},
 	}
 
@@ -330,6 +331,34 @@ func TestValidateTrace_MixedTargets(t *testing.T) {
 
 	if !result.Allowed {
 		t.Errorf("expected mixed valid targets to be allowed, got denied: %s", result.Reason)
+	}
+}
+
+func TestValidateTrace_MixedTargetsWithUnregistered(t *testing.T) {
+	store := NewMockTraceStore()
+	store.AddOwnedAddress("org1", "0x1111111111111111111111111111111111111111")
+	store.AddSharedInfrastructure("0xcccccccccccccccccccccccccccccccccccccccc")
+
+	validator := NewTraceValidator(store)
+
+	// Including an unregistered address should cause denial
+	trace := &tracer.TraceResult{
+		CallTargets: []tracer.CallTarget{
+			{Type: "CALL", From: "0xsender", To: "0x1111111111111111111111111111111111111111"},
+			{Type: "STATICCALL", From: "0x1111", To: "0x0000000000000000000000000000000000000002"},
+			{Type: "CALL", From: "0x1111", To: "0xcccccccccccccccccccccccccccccccccccccccc"},
+			// Unregistered address — should trigger denial
+			{Type: "DELEGATECALL", From: "0x1111", To: "0xdddddddddddddddddddddddddddddddddddddddd"},
+		},
+	}
+
+	result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Allowed {
+		t.Error("expected trace with unregistered address to be denied (private by default)")
 	}
 }
 

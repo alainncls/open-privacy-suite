@@ -398,7 +398,7 @@ func TestOrgContext_CheckAddressInScope(t *testing.T) {
 		}
 	})
 
-	t.Run("allows public address", func(t *testing.T) {
+	t.Run("denies unregistered non-precompile address (private by default)", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -409,7 +409,7 @@ func TestOrgContext_CheckAddressInScope(t *testing.T) {
 			},
 			contractOwners: map[string]string{
 				"0xcontract1": "org-a",
-				// 0xPublic not in map = public
+				// 0xPublic not in map = unregistered
 			},
 		}
 		user := &User{ID: "user-1"}
@@ -417,8 +417,32 @@ func TestOrgContext_CheckAddressInScope(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		err := orgCtx.CheckAddressInScope(ctx, "0xPublic")
+		if err == nil {
+			t.Error("expected error for unregistered address (private by default)")
+		}
+	})
+
+	t.Run("allows precompile address", func(t *testing.T) {
+		orgA := &Organization{ID: "org-a", Slug: "org-a"}
+		store := &MockOrgContextStore{
+			memberships: []*MembershipWithDetails{
+				{Group: &Group{OrgID: "org-a"}},
+			},
+			organizations: map[string]*Organization{
+				"org-a": orgA,
+			},
+			contractOwners: map[string]string{
+				"0xcontract1": "org-a",
+			},
+		}
+		user := &User{ID: "user-1"}
+
+		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
+
+		// ecrecover precompile (0x01)
+		err := orgCtx.CheckAddressInScope(ctx, "0x0000000000000000000000000000000000000001")
 		if err != nil {
-			t.Errorf("unexpected error for public address: %v", err)
+			t.Errorf("unexpected error for precompile address: %v", err)
 		}
 	})
 }
@@ -426,7 +450,7 @@ func TestOrgContext_CheckAddressInScope(t *testing.T) {
 func TestOrgContext_CheckMultiAddressesInScope(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("all addresses in scope succeeds", func(t *testing.T) {
+	t.Run("all registered addresses in scope succeeds", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -438,16 +462,38 @@ func TestOrgContext_CheckMultiAddressesInScope(t *testing.T) {
 			contractOwners: map[string]string{
 				"0xcontract1": "org-a",
 				"0xcontract2": "org-a",
-				// 0xPublic not registered = public
 			},
 		}
 		user := &User{ID: "user-1"}
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		err := orgCtx.CheckMultiAddressesInScope(ctx, []string{"0xContract1", "0xContract2", "0xPublic"})
+		err := orgCtx.CheckMultiAddressesInScope(ctx, []string{"0xContract1", "0xContract2"})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("unregistered address in multi-check fails", func(t *testing.T) {
+		orgA := &Organization{ID: "org-a", Slug: "org-a"}
+		store := &MockOrgContextStore{
+			memberships: []*MembershipWithDetails{
+				{Group: &Group{OrgID: "org-a"}},
+			},
+			organizations: map[string]*Organization{
+				"org-a": orgA,
+			},
+			contractOwners: map[string]string{
+				"0xcontract1": "org-a",
+			},
+		}
+		user := &User{ID: "user-1"}
+
+		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
+
+		err := orgCtx.CheckMultiAddressesInScope(ctx, []string{"0xContract1", "0xPublic"})
+		if err == nil {
+			t.Error("expected error for unregistered address in multi-check (private by default)")
 		}
 	})
 
@@ -563,7 +609,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		}
 	})
 
-	t.Run("allows for truly public contracts", func(t *testing.T) {
+	t.Run("denies unregistered non-precompile contracts (private by default)", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -578,17 +624,39 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 			addressOwnedByOrg: map[string]map[string]bool{
 				"0xcontract1": {"org-a": true},
 			},
-			registeredToAnyOrg: map[string]bool{
-				// 0xPublic not registered anywhere
-			},
+			registeredToAnyOrg: map[string]bool{},
 		}
 		user := &User{ID: "user-1"}
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xPublic", false, []Claim{ClaimRead})
+		if err == nil {
+			t.Error("expected error for unregistered contract (private by default)")
+		}
+	})
+
+	t.Run("allows precompile via CheckDefaultClaimsAllowed", func(t *testing.T) {
+		orgA := &Organization{ID: "org-a", Slug: "org-a"}
+		store := &MockOrgContextStore{
+			memberships: []*MembershipWithDetails{
+				{Group: &Group{OrgID: "org-a"}},
+			},
+			organizations: map[string]*Organization{
+				"org-a": orgA,
+			},
+			contractOwners: map[string]string{
+				"0xcontract1": "org-a",
+			},
+		}
+		user := &User{ID: "user-1"}
+
+		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
+
+		// ecrecover precompile (0x01)
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0x0000000000000000000000000000000000000001", false, []Claim{ClaimRead})
 		if err != nil {
-			t.Errorf("unexpected error for public contract: %v", err)
+			t.Errorf("unexpected error for precompile: %v", err)
 		}
 	})
 

@@ -65,7 +65,7 @@ These levels are computed per-address by the redaction engine based on the viewe
 
 **Nonce rule:** Nonce is tied to the sender. Strip nonce when `from` is Hidden or Redacted. Preserve nonce when only `to` is Hidden or Redacted (nonce belongs to the sender, who is visible).
 
-**Unregistered addresses:** Addresses not present in the `contracts` or `preregistered_addresses` tables and not linked via `eth_address_links` are treated as **public** (`VisibilityFull`). This includes system/genesis contracts and addresses not deployed through the proxy. Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node.
+**Unregistered addresses (private by default):** Addresses not present in the `contracts` or `preregistered_addresses` tables and not linked via `eth_address_links` are treated as **private** (`VisibilityHidden`). The only exception is EVM precompile addresses (0x01-0x09), which are always `VisibilityFull` since they are native EVM functions. Contracts deployed through the proxy are **never unregistered** — they are pre-registered to the deployer's org before the transaction is forwarded to the node.
 
 ### 2.1 Visibility Resolution by Address Type
 
@@ -75,7 +75,8 @@ These levels are computed per-address by the redaction engine based on the viewe
 |---|---|---|---|---|---|---|
 | **Org contract** | In `contracts` table | Redacted | **Full** (if admin of owning org) | **Full** (group has contract_grant) | Redacted | N/A |
 | **User EOA** | In `eth_address_links` | Hidden | **Hidden** | Hidden | Hidden | **Full** |
-| **Public address** | Not in contracts or eth_address_links | Full | Full | Full | Full | Full |
+| **EVM Precompile** | Address 0x01-0x09 | Full | Full | Full | Full | Full |
+| **Unregistered** | Not in contracts, eth_address_links, or precompiles | **Hidden** | **Hidden** | **Hidden** | **Hidden** | **Hidden** |
 
 **Key implication for org admins:** An org admin has `VisibilityFull` on their org's **contracts** but NOT on individual **user EOAs**. User EOAs are personal wallets — they remain `VisibilityHidden` to everyone except the owner (and recipients of disclosure grants). This means:
 
@@ -217,7 +218,7 @@ At the RPC layer, visibility is binary: the caller either is or is not a partici
 
 ### 3.9 Token (Explorer API)
 
-Token visibility is determined by the token's contract address. If the address is registered as an org contract in the RBAC database, the token inherits that contract's visibility. Unregistered addresses default to `VisibilityFull`.
+Token visibility is determined by the token's contract address. If the address is registered as an org contract in the RBAC database, the token inherits that contract's visibility. Unregistered addresses default to `VisibilityHidden` (all contracts are private by default).
 
 | Field | Hidden | Redacted | Full | Implemented | Tested | Notes |
 |-------|--------|----------|------|-------------|--------|-------|

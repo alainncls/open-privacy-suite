@@ -150,31 +150,21 @@ func TestTokenList_AnonymousViewer_OrgTokenRedacted(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	total, tokens := parseTokenListResponse(t, w.Body.Bytes())
 
-	// Public token should be visible; private token should be redacted (not dropped).
-	require.Len(t, tokens, 2, "both tokens should appear (one redacted, one full)")
-	assert.Equal(t, 2, total, "total must reflect filtered count")
+	// With all-private-by-default: unregistered token is Hidden (dropped),
+	// org token is Redacted (visible but redacted). Only 1 token should appear.
+	require.Len(t, tokens, 1, "only org token should appear (redacted); unregistered token is dropped")
+	assert.Equal(t, 1, total, "total must reflect filtered count")
 
-	// Find the redacted token.
-	var foundRedacted, foundPublic bool
-	for _, tok := range tokens {
-		if tok.Address == "[PRIVATE]" {
-			foundRedacted = true
-			assert.Empty(t, tok.Symbol, "symbol should be empty for redacted token")
-			assert.Nil(t, tok.Name, "name should be nil for redacted token")
-			assert.Nil(t, tok.CreationTx, "creationTx should be nil for redacted token")
-			assert.Nil(t, tok.L1Address, "l1Address should be nil for redacted token")
-			assert.Nil(t, tok.TotalSupply, "totalSupply should be nil for redacted token")
-			assert.Equal(t, 0, tok.HolderCount, "holderCount should be 0 for redacted token")
-			assert.Equal(t, 0, tok.TransferCount, "transferCount should be 0 for redacted token")
-		}
-		if tok.Address == publicAddr {
-			foundPublic = true
-			assert.Equal(t, "PUB", tok.Symbol)
-			assert.NotNil(t, tok.Name)
-		}
-	}
-	assert.True(t, foundRedacted, "should have found a redacted token")
-	assert.True(t, foundPublic, "should have found the public token")
+	// The one remaining token should be the redacted org token.
+	tok := tokens[0]
+	assert.Equal(t, "[PRIVATE]", tok.Address, "org token should be redacted")
+	assert.Empty(t, tok.Symbol, "symbol should be empty for redacted token")
+	assert.Nil(t, tok.Name, "name should be nil for redacted token")
+	assert.Nil(t, tok.CreationTx, "creationTx should be nil for redacted token")
+	assert.Nil(t, tok.L1Address, "l1Address should be nil for redacted token")
+	assert.Nil(t, tok.TotalSupply, "totalSupply should be nil for redacted token")
+	assert.Equal(t, 0, tok.HolderCount, "holderCount should be 0 for redacted token")
+	assert.Equal(t, 0, tok.TransferCount, "transferCount should be 0 for redacted token")
 }
 
 // TestTokenList_AdminViewer_SeesFullTokenDetails verifies that an admin of the
@@ -244,9 +234,10 @@ func TestTokenList_HiddenTokenExcluded(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	total, tokens := parseTokenListResponse(t, w.Body.Bytes())
 
-	assert.Equal(t, 1, total, "hidden token should not be counted")
-	require.Len(t, tokens, 1)
-	assert.Equal(t, publicAddr, tokens[0].Address, "only public token should appear")
+	// With all-private-by-default, both the EOA-linked token (Hidden) and the
+	// unregistered "public" token (Hidden) are dropped.
+	assert.Equal(t, 0, total, "both tokens should be hidden (all private by default)")
+	require.Len(t, tokens, 0)
 }
 
 // TestTokenSingle_HiddenReturns404 verifies that GET /tokens/:address returns
@@ -382,12 +373,15 @@ func TestTokenList_TotalReflectsFilteredCount(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	total, tokens := parseTokenListResponse(t, w.Body.Bytes())
 
-	// Public + redacted org token = 2 visible; hidden is dropped.
-	assert.Equal(t, 2, total, "total must be 2 (public + redacted), not 3 (raw DB count)")
-	assert.Len(t, tokens, 2, "should have 2 tokens in data")
+	// With all-private-by-default: unregistered is Hidden (dropped),
+	// org token is Redacted (visible), EOA-linked is Hidden (dropped).
+	// Only the redacted org token remains.
+	assert.Equal(t, 1, total, "total must be 1 (only redacted org token), not 3 (raw DB count)")
+	assert.Len(t, tokens, 1, "should have 1 token in data")
 
-	// Verify the hidden token's address doesn't appear.
+	// Verify the hidden token addresses don't appear.
 	for _, tok := range tokens {
 		assert.NotEqual(t, hiddenAddr, tok.Address, "hidden token address must not leak")
+		assert.NotEqual(t, publicAddr, tok.Address, "unregistered token address must not leak")
 	}
 }
