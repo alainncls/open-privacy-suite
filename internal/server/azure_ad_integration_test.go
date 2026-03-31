@@ -2,10 +2,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"privacy-proxy/internal/auth"
@@ -434,81 +432,5 @@ func TestAzureAD_Integration_TenantIDImmutability(t *testing.T) {
 		sameTenantID := "tenant-A"
 		assert.Equal(t, *user.AuthTenantID, sameTenantID,
 			"matching tenant should be accepted")
-	})
-}
-
-// =============================================================================
-// Test 6: Azure AD user visibility parity — cross-check with check-address
-// =============================================================================
-
-func TestAzureAD_Integration_CheckAddressVisibility(t *testing.T) {
-	srv, database, _ := setupTestServerForExplorerTransactions(t)
-
-	// Set up explorer router with check-address endpoint.
-	router := setupExplorerRouter(srv)
-
-	// Register an org contract — returns the member group ID that has a contract_grant.
-	contractAddr := "0xaaaa000000000000000000000000000000000501"
-	grantGroupID := registerOrgContract(t, database, contractAddr)
-
-	// Create Azure AD user in the grant group (the group with contract_grant).
-	// The check-address endpoint uses GetBatchVisibilityDetailed which checks
-	// contract_grants membership, not admin access.
-	azureSubject := auth.AzureSubject("test-oid-check-addr")
-	azureUserID := createTestUserForExplorer(t, database, azureSubject)
-	addUserToGroup(t, database, azureUserID, grantGroupID)
-
-	// Create Privado user in same grant group for comparison.
-	privadoSubject := "did:privado:check-addr-comparison"
-	privadoUserID := createTestUserForExplorer(t, database, privadoSubject)
-	addUserToGroup(t, database, privadoUserID, grantGroupID)
-
-	// Create a "non-owner" wallet for anonymous lookup.
-	anonWallet := "0xdddd000000000000000000000000000000000501"
-
-	t.Run("anonymous with wallet: private contract address is masked as public", func(t *testing.T) {
-		// G16: non-visible addresses are masked as public to prevent enumeration.
-		// checkAddressVisibility requires either wallet or JWT.
-		req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+contractAddr+"?wallet="+anonWallet, nil)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		level := resp["level"].(string)
-		assert.Equal(t, "full", strings.ToLower(level),
-			"G16: anonymous should see contract masked as public (oracle prevention)")
-		reason := resp["reason"].(string)
-		assert.Equal(t, "public_address", reason,
-			"G16: reason must be public_address to prevent enumeration")
-	})
-
-	t.Run("Azure AD user: granted contract address is visible", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+contractAddr, nil)
-		addBearerToken(t, req, srv, azureSubject)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		level := resp["level"].(string)
-		assert.Equal(t, "full", strings.ToLower(level),
-			"Azure AD user with admin access should see contract as full visibility")
-	})
-
-	t.Run("Privado user: same visibility as Azure AD user", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/explorer/check-address/"+contractAddr, nil)
-		addBearerToken(t, req, srv, privadoSubject)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		level := resp["level"].(string)
-		assert.Equal(t, "full", strings.ToLower(level),
-			"Privado user with same grants should have identical visibility to Azure AD user")
 	})
 }

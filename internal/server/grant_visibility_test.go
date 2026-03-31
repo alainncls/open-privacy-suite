@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,21 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupGrantVisibilityRouter creates a gin router with check-addresses, grant transactions,
+// setupGrantVisibilityRouter creates a gin router with grant transactions
 // and explorer transactions endpoints for the grant visibility test matrix.
 func setupGrantVisibilityRouter(srv *Server) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	explorerGroup := router.Group("/api/v1/explorer")
 	explorerGroup.Use(auth.OptionalJWTAuthMiddleware(srv.jwtService, srv.db))
-	explorerGroup.POST("/check-addresses", srv.batchCheckAddresses)
 	explorerGroup.GET("/grant/:grant_id/:address_id/transactions", srv.getGrantTransactions)
 	explorerGroup.GET("/transactions", srv.getExplorerTransactions)
 	return router
 }
 
 // TestGrantVisibility is the comprehensive test suite covering the interaction between
-// disclosure grants, participant override, and the check-addresses API.
+// disclosure grants, participant override, and the explorer transaction list.
 func TestGrantVisibility(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupGrantVisibilityRouter(srv)
@@ -65,119 +63,6 @@ func TestGrantVisibility(t *testing.T) {
 	// Alice gets a pseudonymous grant on Dave
 	pseudoGrantID := createDisclosureGrantWithLevel(t, database, aliceDID, daveUserID,
 		disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
-
-	// ========================================================================
-	// Test Group 1: check-addresses API (GetBatchVisibilityDetailed)
-	// ========================================================================
-
-	t.Run("Group1_CheckAddresses", func(t *testing.T) {
-		t.Run("DaveAddr_AsAlice_HiddenNoGrantLeak", func(t *testing.T) {
-			body := BatchCheckAddressesRequest{Addresses: []string{addrDave}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, aliceDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrDave]
-			// G16: oracle masking — non-visible masked as public
-			// Alice has a pseudonymous grant, but check-addresses must NOT reveal grant existence.
-			// The address appears public to prevent address enumeration.
-			assert.True(t, vis.Visible, "grant target should appear public in check-addresses (G16 oracle masking)")
-			assert.Equal(t, VisibilityFull, vis.Level)
-			assert.Equal(t, ReasonPublicAddress, vis.Reason, "reason must be public_address, not disclosure_grant")
-
-			// Grant metadata must NOT be present — check-addresses must not leak grant existence
-			assert.Nil(t, vis.GrantID, "grant_id must NOT be returned in check-addresses")
-			assert.Nil(t, vis.Pseudonym, "pseudonym must NOT be returned in check-addresses")
-		})
-
-		t.Run("DaveAddr_AsBob_HiddenNoMetadata", func(t *testing.T) {
-			body := BatchCheckAddressesRequest{Addresses: []string{addrDave}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, bobDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrDave]
-			// G16: oracle masking — non-visible masked as public
-			assert.True(t, vis.Visible)
-			assert.Equal(t, VisibilityFull, vis.Level)
-			assert.Equal(t, ReasonPublicAddress, vis.Reason)
-			// Bob has no grant — no metadata
-			assert.Nil(t, vis.GrantID, "outsider should not see grant_id")
-			assert.Nil(t, vis.Pseudonym, "outsider should not see pseudonym")
-		})
-
-		t.Run("DaveAddr_AsDave_OwnAddress", func(t *testing.T) {
-			body := BatchCheckAddressesRequest{Addresses: []string{addrDave}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, daveDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrDave]
-			assert.True(t, vis.Visible)
-			assert.Equal(t, VisibilityFull, vis.Level)
-			assert.Equal(t, ReasonOwnAddress, vis.Reason)
-		})
-
-		t.Run("AliceAddr_AsAlice_OwnAddress", func(t *testing.T) {
-			body := BatchCheckAddressesRequest{Addresses: []string{addrAlice}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, aliceDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrAlice]
-			assert.True(t, vis.Visible)
-			assert.Equal(t, VisibilityFull, vis.Level)
-			assert.Equal(t, ReasonOwnAddress, vis.Reason)
-		})
-
-		t.Run("AliceAddr_AsBob_Hidden", func(t *testing.T) {
-			body := BatchCheckAddressesRequest{Addresses: []string{addrAlice}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, bobDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrAlice]
-			// G16: oracle masking — non-visible masked as public
-			assert.True(t, vis.Visible)
-			assert.Equal(t, VisibilityFull, vis.Level)
-			assert.Equal(t, ReasonPublicAddress, vis.Reason)
-		})
-	})
 
 	// ========================================================================
 	// Test Group 2: Grant transactions endpoint
@@ -376,29 +261,6 @@ func TestGrantVisibility(t *testing.T) {
 					t.Fatal("Bob must NOT see Dave → Alice tx (both sides hidden, not a participant)")
 				}
 			}
-		})
-
-		t.Run("CheckAddresses_GrantHolder_ReasonIsPublicAddress", func(t *testing.T) {
-			// G16: oracle masking — non-visible masked as public
-			// Even though Alice has a grant on Dave, the check-addresses API should
-			// report reason=public_address (NOT disclosure_grant) for the address visibility.
-			body := BatchCheckAddressesRequest{Addresses: []string{addrDave}}
-			jsonBody, _ := json.Marshal(body)
-			req := httptest.NewRequest("POST", "/api/v1/explorer/check-addresses", bytes.NewReader(jsonBody))
-			req.Header.Set("Content-Type", "application/json")
-			addBearerToken(t, req, srv, aliceDID)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			require.Equal(t, http.StatusOK, w.Code)
-			var resp BatchCheckAddressesResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-			vis := resp.Results[addrDave]
-			assert.Equal(t, ReasonPublicAddress, vis.Reason,
-				"grant holder should see reason=public_address in check-addresses, not disclosure_grant")
-			assert.True(t, vis.Visible,
-				"grant target should appear public in check-addresses (G16 oracle masking)")
 		})
 	})
 }

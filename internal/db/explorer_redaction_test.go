@@ -777,7 +777,7 @@ func TestGetBatchVisibilityDetailed_GroupAccessAdminClaim(t *testing.T) {
 		visMap, err := database.GetBatchVisibilityDetailed(ctx, memberDID, []string{contractAddr})
 		require.NoError(t, err)
 		vis := visMap[contractAddr]
-		// GetBatchVisibilityDetailed (check-address/privacy dashboard) gives Full to
+		// GetBatchVisibilityDetailed (privacy dashboard) gives Full to
 		// any grant holder regardless of claims. This differs from GetBatchVisibility
 		// (redaction engine) which only gives Full to admins.
 		assert.Equal(t, explorer.VisibilityFull, vis.Level,

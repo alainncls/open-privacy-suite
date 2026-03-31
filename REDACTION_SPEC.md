@@ -219,7 +219,7 @@ This is implemented as a **per-transaction override** in `RedactTransactions` (`
 
 **Log participant override:** `RedactLogs` accepts optional `participantAddrs` (the parent tx's `from` and `to`). When the viewer's linked address matches a participant address, Redacted emitting contracts are upgraded to Full for that log context — topics and data are preserved instead of stripped. Hidden emitting contracts remain dropped even with participant override. The API handler (`getExplorerTransactionLogs`) fetches the parent transaction and passes its `from`/`to` as participant context.
 
-**Security invariant:** The override ONLY applies within `RedactTransactions`/`RedactLogs`/`RedactTransfers`/`RedactInternalTransactions`, which process a specific transaction's data. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed` (used by the address visibility check endpoint). A counterparty address visible via participant override in a transaction list will still show as Hidden when queried individually via `/check-address`.
+**Security invariant:** The override ONLY applies within `RedactTransactions`/`RedactLogs`/`RedactTransfers`/`RedactInternalTransactions`, which process a specific transaction's data. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed`. A counterparty address visible via participant override in a transaction list will still show as Hidden when queried via other visibility resolution paths.
 
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
@@ -269,7 +269,7 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G22 are resolved. G4–G7, G15–G16 are outstanding.
+The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G16, G22 are resolved. G4–G7, G15 are outstanding.
 
 ### Resolved
 
@@ -309,14 +309,14 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G22 are resolved.
 - **G15: Address parameters in URL paths leak real addresses**
   All `/addresses/:address/...` endpoints embed real addresses in URLs visible in server logs, network intermediaries, and browser history. An untrusted block explorer client that knows a private address can confirm its existence by requesting its sub-endpoints (even if the response is 404, the address appears in access logs). This is a design-level issue requiring API redesign (e.g., opaque address IDs instead of raw hex addresses in URL paths).
 
-- **G16: `checkAddressVisibility` enables address enumeration**
-  The `/check-address/:address` endpoint allows an untrusted client to probe arbitrary addresses to discover which are private (returns different visibility levels). An attacker can enumerate addresses to build a map of private contracts and user EOAs. Rate limiting mitigates but does not prevent this. A redesign (e.g., returning only the visibility for addresses the viewer already knows about) would close this gap.
+- **G16 (resolved): `check-address` enumeration vector closed**
+  The `/check-address/:address` and `/check-addresses` endpoints were removed entirely. Address visibility is now communicated inline via `addressMetadata` fields in explorer API responses (PR #96), eliminating the enumeration oracle.
 
 - **G17 (resolved): Disclosure grants leaked into regular explorer views (RD-774)**
   `GetBatchVisibility` checked disclosure grants and upgraded address visibility for the grant recipient across all explorer views. Fixed: grants removed from `GetBatchVisibility`. `GetBatchVisibilityDetailed` retains grant metadata (for privacy dashboard) but no longer upgrades visibility level.
 
-- **G18: Disclosure grant label/visibility consistency across explorer views**
-  When a viewer has a disclosure grant AND is a participant in a transaction, the participant override reveals the real address. The "Disclosed" label should NOT appear on regular explorer pages (tx detail, block page) — only on the grant page and privacy dashboard. Current `check-addresses` API returns `reason: disclosure_grant` which causes the explorer to show "Disclosed" label everywhere. **Fix:** the explorer frontend should only show "Disclosed" label on the grant page. On regular pages, participant-revealed addresses show with no label. See visibility matrix in this section.
+- **G18 (resolved): Disclosure grant label/visibility consistency across explorer views**
+  When a viewer has a disclosure grant AND is a participant in a transaction, the participant override reveals the real address. The "Disclosed" label should NOT appear on regular explorer pages (tx detail, block page) — only on the grant page and privacy dashboard. The `check-addresses` endpoint (which leaked `reason: disclosure_grant`) has been removed. Address visibility is now communicated inline via `addressMetadata` in explorer API responses, which does not include grant metadata on regular pages.
 
 - **G19: Grant page should show viewer's own address as "Mine" not External-XXXX**
   On the pseudonymous grant page, the viewer's own address is pseudonymized as `External-XXXX` like any other external address. The proxy should detect when an external address in a grant transaction matches the viewer's linked address and label it as "You" or "Mine" instead of generating a pseudonym.

@@ -393,10 +393,10 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 
 	// NOTE: Disclosure grants are intentionally NOT checked here (G17).
 	// Per REDACTION_SPEC.md: "GetBatchVisibilityDetailed retains grant metadata
-	// but no longer upgrades visibility level." The check-address endpoint must not
+	// but no longer upgrades visibility level." Visibility endpoints must not
 	// reveal grant existence — that would create a new oracle (attacker learns which
 	// addresses have grants). The privacy dashboard discovers grants via the
-	// viewable-addresses endpoint, not check-address.
+	// viewable-addresses endpoint.
 
 	return result, nil
 }
