@@ -704,14 +704,14 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
-			name:          "public address",
+			name:          "unregistered address (no longer public)",
 			viewerWallet:  testViewerWallet,
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
-				Visible: true,
-				Level:   VisibilityFull,
-				Reason:  ReasonPublicAddress,
+				Visible: false,
+				Level:   VisibilityHidden,
+				Reason:  ReasonNoAccess,
 			},
 		},
 		{
@@ -728,14 +728,14 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 			},
 		},
 		{
-			name:          "anonymous viewer sees public",
+			name:          "anonymous viewer sees unregistered as hidden",
 			viewerWallet:  testUnknownWallet,
 			targetAddress: testPublicAddress,
 			expectedResult: AddressVisibility{
 				Address: testPublicAddress,
-				Visible: true,
-				Level:   VisibilityFull,
-				Reason:  ReasonPublicAddress,
+				Visible: false,
+				Level:   VisibilityHidden,
+				Reason:  ReasonNoAccess,
 			},
 		},
 		{
