@@ -264,6 +264,148 @@ test.describe('Governance Dashboard Lifecycle', () => {
     await expect(page.getByText('No pending requests at this time.')).toBeVisible({ timeout: 10000 });
   });
 
+  test('can filter requests by "Awaiting My Approval" tab', async ({ page, request }) => {
+    test.setTimeout(45000);
+    const orgName = generateOrgName();
+    const orgSlug = generateOrgSlug();
+
+    // 1. Create an org
+    await page.goto('/admin/rbac/organizations');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: /add organization/i }).click();
+    const dialog = page.locator(selectors.common.dialog);
+    await dialog.getByLabel(/name/i).fill(orgName);
+    await dialog.getByLabel(/slug/i).fill(orgSlug);
+    await dialog.getByRole('button', { name: /create organization/i }).click();
+    await expect(dialog).not.toBeVisible({ timeout: 10000 });
+
+    const orgRow = page.getByRole('row').filter({ hasText: orgName });
+    await expect(orgRow).toBeVisible({ timeout: 10000 });
+    await orgRow.click();
+    await page.getByTestId('tab-governance').click();
+
+    // 2. Enable Governance
+    const enableCheckbox = page.getByRole('checkbox', { name: /Enable Governance Approvals/i });
+    await enableCheckbox.check();
+    await page.getByRole('button', { name: /Save Settings/i }).click();
+    await expect(page.locator('.bg-error-light')).not.toBeVisible();
+
+    // 3. Get the org ID
+    const orgsRes = await request.get(`${ADMIN_URL}/api/v1/admin/orgs?limit=100`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    const orgs = await orgsRes.json();
+    const org = orgs.data.find((o: any) => o.slug === orgSlug);
+    expect(org).toBeDefined();
+
+    // 4. Create a group and submit a governance request via API
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json' },
+      data: { slug: 'awaiting-test-group', name: 'Awaiting Test Group' }
+    });
+    const groupsRes = await request.get(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    const groups = await groupsRes.json();
+    const group = groups.data.find((g: any) => g.group.slug === 'awaiting-test-group');
+
+    await request.put(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups/${group.group.id}/access`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json' },
+      data: { allowed_methods: ['eth_call'], claims: ['read'] }
+    });
+
+    // 5. Refresh UI and verify the "All Pending" tab shows the request
+    await page.getByTestId('tab-contracts').click();
+    await page.getByTestId('tab-governance').click();
+    await expect(page.getByText('updateGroupAccess')).toBeVisible({ timeout: 10000 });
+
+    // 6. Click "Awaiting My Approval" tab
+    await page.getByTestId('tab-awaiting-my-approval').click();
+
+    // The request should be visible (current user hasn't voted yet)
+    await expect(page.getByText('updateGroupAccess')).toBeVisible({ timeout: 10000 });
+
+    // 7. Approve it via the "All Pending" tab and then verify "Awaiting My Approval" clears
+    await page.getByTestId('tab-all-requests').click();
+    await expect(page.getByText('updateGroupAccess')).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: 'Approve' }).first().click();
+    await expect(page.getByText('No pending requests at this time.')).toBeVisible({ timeout: 10000 });
+
+    // Switch back to awaiting tab — should be empty now
+    await page.getByTestId('tab-awaiting-my-approval').click();
+    await expect(page.getByText('No requests awaiting your approval.')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('can view resolved requests in the History tab', async ({ page, request }) => {
+    test.setTimeout(45000);
+    const orgName = generateOrgName();
+    const orgSlug = generateOrgSlug();
+
+    // 1. Create an org with governance enabled
+    await page.goto('/admin/rbac/organizations');
+    await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: /add organization/i }).click();
+    const dialog = page.locator(selectors.common.dialog);
+    await dialog.getByLabel(/name/i).fill(orgName);
+    await dialog.getByLabel(/slug/i).fill(orgSlug);
+    await dialog.getByRole('button', { name: /create organization/i }).click();
+    await expect(dialog).not.toBeVisible({ timeout: 10000 });
+
+    const orgRow = page.getByRole('row').filter({ hasText: orgName });
+    await expect(orgRow).toBeVisible({ timeout: 10000 });
+    await orgRow.click();
+    await page.getByTestId('tab-governance').click();
+
+    const enableCheckbox = page.getByRole('checkbox', { name: /Enable Governance Approvals/i });
+    await enableCheckbox.check();
+    await page.getByRole('button', { name: /Save Settings/i }).click();
+
+    // 2. Get org info
+    const orgsRes = await request.get(`${ADMIN_URL}/api/v1/admin/orgs?limit=100`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    const orgs = await orgsRes.json();
+    const org = orgs.data.find((o: any) => o.slug === orgSlug);
+    expect(org).toBeDefined();
+
+    // 3. Create group and submit change
+    await request.post(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json' },
+      data: { slug: 'history-test-group', name: 'History Test Group' }
+    });
+    const groupsRes = await request.get(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN }
+    });
+    const groups = await groupsRes.json();
+    const group = groups.data.find((g: any) => g.group.slug === 'history-test-group');
+
+    await request.put(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups/${group.group.id}/access`, {
+      headers: { 'X-Admin-Token': ADMIN_TOKEN, 'Content-Type': 'application/json' },
+      data: { allowed_methods: ['eth_getBalance'], claims: ['read'] }
+    });
+
+    // 4. Approve the request via UI
+    await page.getByTestId('tab-contracts').click();
+    await page.getByTestId('tab-governance').click();
+    await expect(page.getByText('updateGroupAccess')).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: 'Approve' }).first().click();
+    await expect(page.getByText('No pending requests at this time.')).toBeVisible({ timeout: 10000 });
+
+    // 5. Switch to History tab
+    await page.getByTestId('tab-history').click();
+
+    // The resolved request should appear with "Approved" status
+    await expect(page.getByText('Approved')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('updateGroupAccess')).toBeVisible();
+
+    // 6. Click on the row to expand decisions (optional, checks detail loading)
+    const historyRow = page.getByTestId('history-row').first();
+    await historyRow.click();
+
+    // Should show the decision details (approve/reject with approver info)
+    await expect(page.getByText('approved')).toBeVisible({ timeout: 10000 });
+  });
+
   test('can designate and remove approver groups via UI', async ({ page, request }) => {
     test.setTimeout(45000);
     const orgName = generateOrgName();

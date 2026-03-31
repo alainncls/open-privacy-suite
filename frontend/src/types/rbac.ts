@@ -30,6 +30,7 @@ export interface ApprovalRequest {
   approvals_needed: number;
   created_at: string;
   resolved_at?: string;
+  escalated_at?: string;
 }
 
 export interface ApprovalDecision {
@@ -38,7 +39,12 @@ export interface ApprovalDecision {
   approver_id: string;
   decision: 'approve' | 'reject';
   reason?: string;
-  created_at: string;
+  decided_at: string;
+}
+
+export interface ApprovalRequestWithDecisions {
+  request: ApprovalRequest;
+  decisions: ApprovalDecision[];
 }
 
 export interface GovernanceApproverGroup {

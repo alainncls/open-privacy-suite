@@ -44,10 +44,10 @@ const api = adminApi;
 export const rbacApi = {
   // Governance
   governance: {
-    listRequests: (orgId: string, params?: { status?: string; limit?: number; offset?: number }) =>
+    listRequests: (orgId: string, params?: { status?: string; limit?: number; offset?: number; awaiting_my_approval?: boolean }) =>
       api.get<import('../types/rbac').PaginatedResponse<import('../types/rbac').ApprovalRequest>>(`/orgs/${orgId}/governance/requests`, { params }),
     getRequest: (orgId: string, requestId: string) =>
-      api.get<import('../types/rbac').ApprovalRequest>(`/orgs/${orgId}/governance/requests/${requestId}`),
+      api.get<import('../types/rbac').ApprovalRequestWithDecisions>(`/orgs/${orgId}/governance/requests/${requestId}`),
     approve: (orgId: string, requestId: string, reason?: string) =>
       api.post<{ message: string; request: import('../types/rbac').ApprovalRequest }>(`/orgs/${orgId}/governance/requests/${requestId}/approve`, { reason }),
     reject: (orgId: string, requestId: string, reason?: string) =>

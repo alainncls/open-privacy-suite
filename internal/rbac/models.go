@@ -122,6 +122,7 @@ type ApprovalRequest struct {
 	ApprovalsNeeded    int                   `json:"approvals_needed"`
 	CreatedAt          time.Time             `json:"created_at"`
 	ResolvedAt         *time.Time            `json:"resolved_at,omitempty"`
+	EscalatedAt        *time.Time            `json:"escalated_at,omitempty"`
 }
 
 type ApprovalDecision struct {

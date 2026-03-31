@@ -5,15 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"privacy-proxy/internal/rbac"
 )
 
 // ApprovalRequestFilter holds optional filters for listing requests.
 type ApprovalRequestFilter struct {
-	Status      *rbac.ApprovalRequestStatus
-	RequesterID *string
-	ChangeType  *string
+	Status             *rbac.ApprovalRequestStatus
+	RequesterID        *string
+	ChangeType         *string
+	AwaitingApproverID *string // When set, returns only pending requests where the user has NOT yet voted.
 }
 
 // ListApprovalRequests fetches approval requests with optional filtering and pagination.
@@ -37,6 +39,13 @@ func (d *DB) ListApprovalRequests(ctx context.Context, orgID string, limit, offs
 		args = append(args, *filter.ChangeType)
 		argIdx++
 	}
+	if filter.AwaitingApproverID != nil {
+		// Only pending requests where the user has NOT yet voted.
+		baseQuery += ` AND status = 'pending'`
+		baseQuery += fmt.Sprintf(` AND NOT EXISTS (SELECT 1 FROM approval_decisions ad WHERE ad.request_id = approval_requests.id AND ad.approver_id = $%d)`, argIdx)
+		args = append(args, *filter.AwaitingApproverID)
+		argIdx++
+	}
 
 	countQuery := `SELECT count(*) ` + baseQuery
 	var total int
@@ -44,7 +53,7 @@ func (d *DB) ListApprovalRequests(ctx context.Context, orgID string, limit, offs
 		return nil, 0, fmt.Errorf("failed to count requests: %w", err)
 	}
 
-	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at ` +
+	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at, escalated_at ` +
 		baseQuery + fmt.Sprintf(` ORDER BY created_at DESC LIMIT %d OFFSET %d`, limit, offset)
 
 	rows, err := d.conn.QueryContext(ctx, query, args...)
@@ -57,13 +66,16 @@ func (d *DB) ListApprovalRequests(ctx context.Context, orgID string, limit, offs
 	for rows.Next() {
 		var req rbac.ApprovalRequest
 		var payload []byte
-		var resolvedAt sql.NullTime
-		if err := rows.Scan(&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt); err != nil {
+		var resolvedAt, escalatedAt sql.NullTime
+		if err := rows.Scan(&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt, &escalatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan request: %w", err)
 		}
 		req.Payload = json.RawMessage(payload)
 		if resolvedAt.Valid {
 			req.ResolvedAt = &resolvedAt.Time
+		}
+		if escalatedAt.Valid {
+			req.EscalatedAt = &escalatedAt.Time
 		}
 		reqs = append(reqs, &req)
 	}
@@ -88,15 +100,15 @@ func (d *DB) CreateApprovalRequest(ctx context.Context, req *rbac.ApprovalReques
 
 // GetApprovalRequest fetches an approval request by ID.
 func (d *DB) GetApprovalRequest(ctx context.Context, id string) (*rbac.ApprovalRequest, error) {
-	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at
+	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at, escalated_at
 	          FROM approval_requests WHERE id = $1`
 
 	var req rbac.ApprovalRequest
 	var payload []byte
-	var resolvedAt sql.NullTime
+	var resolvedAt, escalatedAt sql.NullTime
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt,
+		&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt, &escalatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -109,13 +121,16 @@ func (d *DB) GetApprovalRequest(ctx context.Context, id string) (*rbac.ApprovalR
 	if resolvedAt.Valid {
 		req.ResolvedAt = &resolvedAt.Time
 	}
+	if escalatedAt.Valid {
+		req.EscalatedAt = &escalatedAt.Time
+	}
 
 	return &req, nil
 }
 
 // ListPendingApprovalRequests fetches all pending requests for a specific organization.
 func (d *DB) ListPendingApprovalRequests(ctx context.Context, orgID string) ([]*rbac.ApprovalRequest, error) {
-	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at
+	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at, escalated_at
 	          FROM approval_requests WHERE org_id = $1 AND status = 'pending'
 			  ORDER BY created_at DESC`
 
@@ -129,10 +144,10 @@ func (d *DB) ListPendingApprovalRequests(ctx context.Context, orgID string) ([]*
 	for rows.Next() {
 		var req rbac.ApprovalRequest
 		var payload []byte
-		var resolvedAt sql.NullTime
+		var resolvedAt, escalatedAt sql.NullTime
 
 		if err := rows.Scan(
-			&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt,
+			&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt, &escalatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan request: %w", err)
 		}
@@ -141,10 +156,73 @@ func (d *DB) ListPendingApprovalRequests(ctx context.Context, orgID string) ([]*
 		if resolvedAt.Valid {
 			req.ResolvedAt = &resolvedAt.Time
 		}
+		if escalatedAt.Valid {
+			req.EscalatedAt = &escalatedAt.Time
+		}
 		requests = append(requests, &req)
 	}
 
 	return requests, rows.Err()
+}
+
+// ListStaleApprovalRequests returns all pending requests that have exceeded their
+// organization's escalation timeout and haven't been escalated yet.
+func (d *DB) ListStaleApprovalRequests(ctx context.Context) ([]*rbac.ApprovalRequest, error) {
+	query := `SELECT ar.id, ar.org_id, ar.requester_id, ar.change_type, ar.target_resource_id,
+	                 ar.target_resource_type, ar.payload, ar.status, ar.approvals_needed,
+	                 ar.created_at, ar.resolved_at, ar.escalated_at
+	          FROM approval_requests ar
+	          JOIN organizations o ON o.id = ar.org_id
+	          WHERE ar.status = 'pending'
+	            AND ar.escalated_at IS NULL
+	            AND o.governance_enabled = true
+	            AND o.governance_escalation_timeout_hours > 0
+	            AND ar.created_at + (o.governance_escalation_timeout_hours || ' hours')::interval < NOW()
+	          ORDER BY ar.created_at ASC`
+
+	rows, err := d.conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list stale requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []*rbac.ApprovalRequest
+	for rows.Next() {
+		var req rbac.ApprovalRequest
+		var payload []byte
+		var resolvedAt, escalatedAt sql.NullTime
+
+		if err := rows.Scan(
+			&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID,
+			&req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded,
+			&req.CreatedAt, &resolvedAt, &escalatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan stale request: %w", err)
+		}
+
+		req.Payload = json.RawMessage(payload)
+		if resolvedAt.Valid {
+			req.ResolvedAt = &resolvedAt.Time
+		}
+		if escalatedAt.Valid {
+			req.EscalatedAt = &escalatedAt.Time
+		}
+		requests = append(requests, &req)
+	}
+
+	return requests, rows.Err()
+}
+
+// MarkRequestEscalated sets the escalated_at timestamp on an approval request.
+func (d *DB) MarkRequestEscalated(ctx context.Context, requestID string, escalatedAt time.Time) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE approval_requests SET escalated_at = $2 WHERE id = $1`,
+		requestID, escalatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark request as escalated: %w", err)
+	}
+	return nil
 }
 
 
