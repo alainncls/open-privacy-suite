@@ -321,7 +321,7 @@ describe('ContractGrantForm', () => {
       expect(screen.queryByText('Visible events:')).not.toBeInTheDocument();
     });
 
-    it('shows self-address checkbox for address-type event params', async () => {
+    it('shows param constraint dropdowns for event params', async () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       renderForm();
@@ -335,11 +335,11 @@ describe('ContractGrantForm', () => {
       // Add Transfer event (has from:address and to:address params)
       await user.click(screen.getByRole('button', { name: /Transfer/ }));
 
-      // Should show self-address checkboxes for the address-type params
-      // Transfer event has from (index 0) and to (index 1) as address-type params
+      // Should show param constraint dropdowns for address-type params
+      // The EventParamConstraint component renders <select> elements with "Any value" default
       await waitFor(() => {
-        expect(screen.getByLabelText(/from.*must be caller's own address/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/to.*must be caller's own address/i)).toBeInTheDocument();
+        expect(screen.getByText('from')).toBeInTheDocument();
+        expect(screen.getByText('to')).toBeInTheDocument();
       });
     });
 
@@ -412,7 +412,7 @@ describe('ContractGrantForm', () => {
       });
     });
 
-    it('submits event_rules with param_rules when self constraint is toggled', async () => {
+    it('submits event_rules with param_rules when self constraint is selected', async () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       const createGrantSpy = vi
@@ -428,12 +428,21 @@ describe('ContractGrantForm', () => {
       });
       await user.click(screen.getByRole('button', { name: /Transfer/ }));
 
-      // Check the "from must be caller's own address" checkbox
-      // The event has address params: from (index 0) and to (index 1)
+      // Select "Caller's address (self)" from the param constraint dropdown for the first address param
+      // The EventParamConstraint renders a <select> per param
       await waitFor(() => {
-        expect(screen.getByLabelText(/from.*must be caller's own address/i)).toBeInTheDocument();
+        expect(screen.getByText('from')).toBeInTheDocument();
       });
-      await user.click(screen.getByLabelText(/from.*must be caller's own address/i));
+      // Find all select elements within the event param area and pick the first one (from param)
+      const selects = screen.getAllByRole('combobox');
+      // The first combobox is the group selector, param selects come after
+      const fromParamSelect = selects.find(s => {
+        const options = Array.from(s.querySelectorAll('option'));
+        return options.some(o => o.textContent?.includes("Caller's address"));
+      });
+      if (fromParamSelect) {
+        await user.selectOptions(fromParamSelect, 'self');
+      }
       await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
       await waitFor(() => {
