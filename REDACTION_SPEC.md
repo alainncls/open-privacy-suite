@@ -93,7 +93,7 @@ To see user EOA activity, an org admin would need a **disclosure grant** from ea
 1. `is_org_admin = true` on the group (org-wide admin flag — sees ALL contracts in the org)
 2. The group has a `contract_grant` linking it to the specific contract (any claims — `read`, `write`, `deploy`, `admin`)
 
-The admin claim distinction is no longer relevant for explorer visibility. If a user can `eth_call` on a contract via their group's grant, the contract should not appear as `[PRIVATE]` in the explorer — that would be security theater. The admin/non-admin distinction still matters for event rules (Section 2.3) and other RBAC enforcement, but not for basic address visibility.
+The admin claim distinction is no longer relevant for explorer visibility. If a user can `eth_call` on a contract via their group's grant, the contract should not appear as `[PRIVATE]` in the explorer — that would be security theater. The admin/non-admin distinction still matters for event rules (Section 3.4.1 — admin bypass) but not for basic address visibility.
 
 Users in the same org but in a group **without** a `contract_grant` on the specific contract still see `VisibilityRedacted`.
 
