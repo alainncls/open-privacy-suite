@@ -438,3 +438,301 @@ func TestAdminEventRulesABIEndpoint(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "not found")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// ABI Validation Tests (RD-792)
+// ---------------------------------------------------------------------------
+
+func TestAdminEventRulesABIValidation(t *testing.T) {
+	f := setupEventRulesFixture(t)
+
+	// Upload ERC20 ABI to the contract
+	uploadABI := func(t *testing.T, addr, abiJSON string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"abi": abiJSON})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + addr + "/abi"
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "upload ABI: %s", w.Body.String())
+	}
+
+	uploadABI(t, f.contractAddress, erc20ABI)
+
+	// V01: param index out of bounds -> 400
+	t.Run("V01_ParamIndex_OutOfBounds", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.groupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 5, "must_be": "self"}, // Transfer only has 3 inputs (0,1,2)
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "out of bounds")
+	})
+
+	// V02: "self" on non-address param -> 400
+	t.Run("V02_Self_OnNonAddressParam", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.groupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 2, "must_be": "self"}, // index 2 is "value" (uint256), not address
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "not address")
+	})
+
+	// V03: valid "self" on address param -> 201
+	t.Run("V03_Self_OnAddressParam_OK", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.groupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 0, "must_be": "self"}, // index 0 is "from" (address) — valid
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	})
+
+	// V04: hex value wrong length for address -> 400
+	t.Run("V04_HexValue_WrongLengthForAddress", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.secondGroupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						// index 0 is "from" (address) — expects 20 bytes, but giving 32 bytes
+						{"index": 0, "must_be": "0x0000000000000000000000000000000000000000000000000000000000000001"},
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "bytes")
+	})
+
+	// V05: no ABI -> skip validation, accept anything
+	t.Run("V05_NoABI_SkipsValidation", func(t *testing.T) {
+		// Create a contract without uploading any ABI
+		noABIAddr := "0x7777777777777777777777777777777777777777"
+		createEventRulesContract(t, f.server, f.orgID, noABIAddr, "NoABIToken")
+
+		// Create a third group for this test
+		thirdGroupID := createEventRulesGroup(t, f.server, f.orgID, "group-gamma", "Group Gamma")
+
+		body, _ := json.Marshal(map[string]any{
+			"group_id": thirdGroupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 99, "must_be": "self"}, // would be out of bounds with ABI
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		// Should succeed — no ABI means validation is skipped
+		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	})
+
+	// V06: update grant with invalid param rules -> 400
+	t.Run("V06_UpdateGrant_InvalidParamRules", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 2, "must_be": "self"}, // uint256, not address
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "not address")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Built-in ABI Registry Tests (RD-793)
+// ---------------------------------------------------------------------------
+
+func TestContractEventsBuiltInABI(t *testing.T) {
+	f := setupEventRulesFixture(t)
+
+	// Create a contract with token_type metadata but no custom ABI
+	erc20Addr := "0x8888888888888888888888888888888888888888"
+	createEventRulesContractWithMetadata(t, f.server, f.orgID, erc20Addr, "ERC20Token", map[string]any{
+		"token_type": "ERC20",
+	})
+
+	t.Run("EventList_FallsBackToBuiltInABI", func(t *testing.T) {
+		url := "/api/orgs/" + f.orgID + "/contracts/" + erc20Addr + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events []rbac.EventSignature `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Equal(t, 2, len(resp.Events), "built-in ERC20 ABI should yield 2 events")
+
+		eventMap := make(map[string]string)
+		for _, ev := range resp.Events {
+			eventMap[ev.Name] = ev.Topic0
+		}
+		assert.Equal(t, transferTopic0, eventMap["Transfer"])
+		assert.Equal(t, approvalTopic0, eventMap["Approval"])
+	})
+
+	t.Run("ParamValidation_UsesBuiltInABI", func(t *testing.T) {
+		groupID := createEventRulesGroup(t, f.server, f.orgID, "group-delta", "Group Delta")
+
+		// "self" on uint256 should fail even with built-in ABI
+		body, _ := json.Marshal(map[string]any{
+			"group_id": groupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 2, "must_be": "self"}, // value is uint256
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + erc20Addr + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "not address")
+	})
+
+	t.Run("CustomABI_TakesPrecedence", func(t *testing.T) {
+		// Upload a custom ABI that only has a single custom event
+		customABI := `[{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "amount", "type": "uint256"}
+			],
+			"name": "CustomEvent",
+			"type": "event"
+		}]`
+		body, _ := json.Marshal(map[string]any{"abi": customABI})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + erc20Addr + "/abi"
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Now events should show only the custom event, not the built-in ERC20 events
+		url = "/api/orgs/" + f.orgID + "/contracts/" + erc20Addr + "/events"
+		req = httptest.NewRequest(http.MethodGet, url, nil)
+		w = httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events []rbac.EventSignature `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Len(t, resp.Events, 1, "custom ABI should take precedence over built-in")
+		assert.Equal(t, "CustomEvent", resp.Events[0].Name)
+	})
+}
+
+// createEventRulesContractWithMetadata creates a contract with metadata via the
+// admin API, then directly updates metadata in the DB since the create endpoint
+// doesn't support metadata.
+func createEventRulesContractWithMetadata(t *testing.T, srv *testServerRBAC, orgID, address, name string, metadata map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"address":  address,
+		"name":     name,
+		"metadata": metadata,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/orgs/"+orgID+"/contracts", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "create contract: %s", w.Body.String())
+
+	// Update the contract metadata via PUT (the create endpoint stores metadata)
+	var created rbac.Contract
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	body, _ = json.Marshal(map[string]any{
+		"metadata": metadata,
+	})
+	req = httptest.NewRequest(http.MethodPut, "/api/orgs/"+orgID+"/contracts/"+address, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "update contract metadata: %s", w.Body.String())
+}
