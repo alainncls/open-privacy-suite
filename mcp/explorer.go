@@ -20,7 +20,6 @@ func registerExplorerTools(s *mcp.Server, client *httpClient) {
 	registerExplorerAddressBalance(s, client)
 	registerExplorerTokens(s, client)
 	registerViewableAddresses(s, client)
-	registerCheckAddressVisibility(s, client)
 }
 
 func registerExplorerSyncStatus(s *mcp.Server, client *httpClient) {
@@ -258,24 +257,3 @@ func registerViewableAddresses(s *mcp.Server, client *httpClient) {
 	})
 }
 
-type checkVisibilityArgs struct {
-	Address string `json:"address" jsonschema:"ETH address to check (0x-prefixed, required)"`
-}
-
-func registerCheckAddressVisibility(s *mcp.Server, client *httpClient) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "check_address_visibility",
-		Description: "Check if a specific address is visible to a viewer (requires wallet query param or JWT on the API side).",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args checkVisibilityArgs) (*mcp.CallToolResult, any, error) {
-		if args.Address == "" {
-			return errorResult("address is required")
-		}
-		raw, err := client.get("/api/v1/explorer/check-address/" + url.PathEscape(args.Address))
-		if err != nil {
-			return errorResult("checking address visibility: %v", err)
-		}
-		lines := section("Address Visibility: " + args.Address)
-
-		return textResult(lines, prettyJSON(json.RawMessage(raw)))
-	})
-}

@@ -87,10 +87,9 @@ type Server struct {
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
-	explorerStore                 *explorer.Store
-	explorerRedactor              *explorer.RedactionEngine
-	explorerVisibilityRateLimiter *ExplorerVisibilityRateLimiter
-	siemForwarder                 *audit.SIEMForwarder
+	explorerStore    *explorer.Store
+	explorerRedactor *explorer.RedactionEngine
+	siemForwarder    *audit.SIEMForwarder
 	retentionCleaner              *audit.RetentionCleaner
 	governanceEngine              *governance.Engine
 	escalationWorker              *governance.EscalationWorker
@@ -136,9 +135,6 @@ func (s *Server) Stop() {
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
-	}
-	if s.explorerVisibilityRateLimiter != nil {
-		s.explorerVisibilityRateLimiter.Stop()
 	}
 	if s.escalationWorker != nil {
 		s.escalationWorker.Stop()
@@ -246,15 +242,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 	authRateLimiter := NewAuthRateLimiter(authRateLimiterCfg)
 
-	// Initialize explorer visibility rate limiter (anti-enumeration for check-address endpoints)
-	var explorerVisRLCfg ExplorerVisibilityRateLimiterConfig
-	if cfg.IsProduction() {
-		explorerVisRLCfg = DefaultExplorerVisibilityRateLimiterConfig()
-	} else {
-		explorerVisRLCfg = DevExplorerVisibilityRateLimiterConfig()
-	}
-	explorerVisibilityRL := NewExplorerVisibilityRateLimiter(explorerVisRLCfg)
-
 	// Initialize ENS resolver (optional - may fail if no mainnet RPC available)
 	var ensResolver *ens.Resolver
 	if cfg.ENSResolverURL != "" {
@@ -326,9 +313,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
-		explorerStore:                 explorerStore,
-		explorerRedactor:              explorer.NewRedactionEngine(explorerStore, database),
-		explorerVisibilityRateLimiter: explorerVisibilityRL,
+		explorerStore:    explorerStore,
+		explorerRedactor: explorer.NewRedactionEngine(explorerStore, database),
 	}
 
 	// Initialize governance engine and escalation worker

@@ -23,9 +23,9 @@ func TestEthAddressPattern(t *testing.T) {
 			expected: "/api/v1/explorer/addresses/0x[REDACTED]/stats",
 		},
 		{
-			name:     "multiple addresses in path",
-			input:    "/api/v1/explorer/check-address/0x1111111111111111111111111111111111111111?wallet=0x2222222222222222222222222222222222222222",
-			expected: "/api/v1/explorer/check-address/0x[REDACTED]?wallet=0x[REDACTED]",
+			name:     "multiple addresses in path and query",
+			input:    "/api/v1/explorer/addresses/0x1111111111111111111111111111111111111111/transactions?wallet=0x2222222222222222222222222222222222222222",
+			expected: "/api/v1/explorer/addresses/0x[REDACTED]/transactions?wallet=0x[REDACTED]",
 		},
 		{
 			name:     "no address in path",
