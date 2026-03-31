@@ -954,10 +954,9 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 // I28-I30: Admin Bypass
 // ---------------------------------------------------------------------------
 
-func TestFilterLogs_I28_AdminClaim_Filtered(t *testing.T) {
-	// I28: Admin claim + restrictive event_rules → still filtered.
-	// DOCUMENTED BEHAVIOR: FilterEventLogs does not inspect claims.
-	// Admin-via-grant with explicit rules still gets filtered.
+func TestFilterLogs_I28_AdminClaim_Bypass(t *testing.T) {
+	// I28: Admin claim on contract bypasses event_rules — admin sees ALL logs.
+	// RD-751: FilterEventLogs now checks Claims for ClaimAdmin and short-circuits.
 	contractAddr := "0xcontract0000000000000000000000000000001"
 
 	perms := &rbac.EffectivePermissions{
@@ -979,17 +978,18 @@ func TestFilterLogs_I28_AdminClaim_Filtered(t *testing.T) {
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xadmin"}, perms, &testABIProviderServer{})
 	result := parseLogsResult(t, got)
 
-	// Current behavior: admin with restrictive rules still gets filtered.
-	if len(result) != 1 {
-		t.Errorf("I28: admin claim with restrictive rules: expected 1 log (no admin bypass), got %d", len(result))
+	// Admin bypass: both logs should be visible regardless of event rules.
+	if len(result) != 2 {
+		t.Errorf("I28: admin claim should bypass event rules, expected 2 logs, got %d", len(result))
 	}
 }
 
 func TestFilterLogs_I29_OrgAdmin_Bypass(t *testing.T) {
-	// I29: Org admin gets nil EventRules from resolver → sees all logs
-	// where user address appears (address-based filter).
-	userAddr := "0xabc1234567890123456789012345678901234567"
-	paddedUser := "0x000000000000000000000000" + userAddr[2:]
+	// I29: Org admin gets AllClaims() (including admin) from resolver. The admin
+	// bypass in FilterEventLogs means org admins see ALL logs, even without
+	// address in topics.
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	paddedOther := "0x000000000000000000000000" + otherAddr[2:]
 	contractAddr := "0xcontract0000000000000000000000000000001"
 
 	perms := &rbac.EffectivePermissions{
@@ -1001,16 +1001,18 @@ func TestFilterLogs_I29_OrgAdmin_Bypass(t *testing.T) {
 		},
 	}
 
+	// User address NOT in any topics — admin bypass means this doesn't matter.
 	logs := []map[string]any{
-		{"address": contractAddr, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
-		{"address": contractAddr, "topics": []string{integApprovalTopic0, paddedUser}, "data": "0x"},
+		{"address": contractAddr, "topics": []string{integTransferTopic0, paddedOther}, "data": "0x"},
+		{"address": contractAddr, "topics": []string{integApprovalTopic0, paddedOther}, "data": "0x"},
 	}
 
+	userAddr := "0xabc1234567890123456789012345678901234567"
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
-		t.Errorf("I29: org admin with nil EventRules should see all logs (where addr appears), got %d", len(result))
+		t.Errorf("I29: org admin should see all logs via admin bypass, expected 2, got %d", len(result))
 	}
 }
 

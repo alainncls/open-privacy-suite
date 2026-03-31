@@ -158,6 +158,27 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 | `data` (when emitter full + ABI registered) | — | — | Non-indexed address params decoded, private ones zeroed | Yes | Partial | |
 | `data` (when emitter full + NO ABI) | — | — | **Not scanned — returned unmodified** | **No** | No | **GAP G5** — private addresses in non-indexed params of unverified contracts leak through |
 
+### 3.4.1 RPC-Layer Log Filtering (Event Access Control)
+
+In addition to Explorer API redaction, logs returned by `eth_getLogs` and `eth_getTransactionReceipt` are filtered at the RPC layer by `FilterEventLogs` (`internal/rbac/event_filter.go`). This is a separate layer from Explorer API redaction — it controls which log entries are visible at all, before any field-level redaction occurs.
+
+**Admin bypass (RD-751):** Users with the `admin` claim on a contract see ALL logs from that contract, regardless of event rules or address-in-topic checks. This applies to:
+- Per-contract admin (group has `admin` in `group_access.claims` + `contract_grant`)
+- Org admin (`is_org_admin = true` group — resolver grants `admin` on all org contracts)
+
+The bypass does NOT apply to users with `deploy`, `write`, `read`, or `upgrade` claims only.
+
+| Viewer | Event rules configured | Address in topics | Log visible? |
+|--------|----------------------|-------------------|-------------|
+| Admin on contract | Any | Any | **Yes** (bypass) |
+| Org admin | Any | Any | **Yes** (bypass via admin claim) |
+| Read user | `null` (default) | Yes | Yes |
+| Read user | `null` (default) | No | No |
+| Read user | `[Transfer]` | N/A | Only Transfer logs |
+| Read user | `[]` (deny all) | Any | No |
+| No access to contract | Any | Any | No |
+| `perms == nil` | N/A | N/A | No (fail-closed) |
+
 ### 3.5 TokenHolder (Explorer API)
 
 | Field | Hidden | Redacted | Full | Implemented | Tested | Notes |

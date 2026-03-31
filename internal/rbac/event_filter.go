@@ -72,6 +72,15 @@ func FilterEventLogs(
 			continue
 		}
 
+		// Admin bypass: users with the admin claim on this contract see ALL
+		// logs regardless of event rules or address-in-topic checks. Org admins
+		// already get ClaimAdmin on every contract via computeOrgAdminPermissions
+		// in the resolver, so this covers both per-contract admin and org admin.
+		if containsClaim(access.Claims, ClaimAdmin) {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
 		// If no event rules configured on this contract access, apply default
 		// address-based filtering: log visible only if user's address appears
 		// in any topic (backward compat with pre-event-rules behavior).
