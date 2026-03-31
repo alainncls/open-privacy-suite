@@ -43,6 +43,7 @@ type RedactionEngine struct {
 // Database interface for the methods RedactionEngine needs from the main DB
 type Database interface {
 	GetBatchVisibility(ctx context.Context, viewerDID string, addresses []string) (VisibilityMap, error)
+	GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, addresses []string) (map[string]AddressVisibility, error)
 	// GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.
 	GetLinkedAddresses(ctx context.Context, did string) ([]string, error)
 }
@@ -87,8 +88,12 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	// 1. Extract unique addresses
 	uniqueAddrs := extractUniqueAddresses(txs)
 
-	// 2. Get batch visibility
+	// 2. Get batch visibility (authoritative levels) + detailed (for reason metadata)
 	visibilityMap, err := r.db.GetBatchVisibility(ctx, viewerDID, uniqueAddrs)
+	if err != nil {
+		return nil, err
+	}
+	visibilityMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, uniqueAddrs)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +161,15 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		}
 
 		redactedTx := tx
+		redactedTx.AddressMetadata = make(map[string]VisibilityReason)
+		setMeta := func(addr string, baseLvl VisibilityLevel) {
+			aLower := strings.ToLower(addr)
+			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
+				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if meta, ok := visibilityMapDetailed[aLower]; ok {
+				redactedTx.AddressMetadata[aLower] = meta.Reason
+			}
+		}
 
 		// If one side is non-identifiable (hidden or redacted) but the other is
 		// identifiable, replace the non-identifiable side with [PRIVATE] and strip
@@ -168,6 +182,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 				redactedTx.Nonce = nil
 			} else {
 				redactedTx.From = r.applyRedaction(tx.From, fromLevel)
+				setMeta(tx.From, baseFromLevel)
 			}
 			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
@@ -175,6 +190,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			} else if tx.HasRecipient() {
 				redacted := r.applyRedaction(*tx.To, toLevel)
 				redactedTx.To = &redacted
+				setMeta(*tx.To, baseToLevel)
 			}
 			redactedTx.Value = JSONString("")
 			redactedTx.InputData = ""
@@ -187,10 +203,12 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		// Neither side is hidden or redacted — apply normal redaction
 		if tx.From != "" {
 			redactedTx.From = r.applyRedaction(tx.From, fromLevel)
+			setMeta(tx.From, baseFromLevel)
 		}
 		if tx.HasRecipient() {
 			redacted := r.applyRedaction(*tx.To, toLevel)
 			redactedTx.To = &redacted
+			setMeta(*tx.To, baseToLevel)
 		}
 
 		// Participant override: even when the counterparty address is revealed,
@@ -232,6 +250,10 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	if err != nil {
 		return nil, err
 	}
+	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get viewer's linked addresses for participant visibility override.
 	viewerAddrs := make(map[string]bool)
@@ -251,8 +273,10 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
-		fromLevel := visMap[strings.ToLower(t.From)]
-		toLevel := visMap[strings.ToLower(t.To)]
+		baseFromLevel := visMap[strings.ToLower(t.From)]
+		baseToLevel := visMap[strings.ToLower(t.To)]
+		fromLevel := baseFromLevel
+		toLevel := baseToLevel
 
 		// Participant override: reveal counterparty address so the transfer
 		// isn't stripped — the viewer already knows who they transacted with.
@@ -271,6 +295,15 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		}
 
 		redacted := t
+		redacted.AddressMetadata = make(map[string]VisibilityReason)
+		setMeta := func(addr string, baseLvl VisibilityLevel) {
+			aLower := strings.ToLower(addr)
+			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if meta, ok := visMapDetailed[aLower]; ok {
+				redacted.AddressMetadata[aLower] = meta.Reason
+			}
+		}
 
 		// If one side is non-identifiable, replace with [PRIVATE] and strip amount
 		if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
@@ -278,11 +311,13 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 				redacted.From = "[PRIVATE]"
 			} else {
 				redacted.From = r.applyRedaction(t.From, fromLevel)
+				setMeta(t.From, baseFromLevel)
 			}
 			if isNonIdentifiable(toLevel) {
 				redacted.To = "[PRIVATE]"
 			} else {
 				redacted.To = r.applyRedaction(t.To, toLevel)
+				setMeta(t.To, baseToLevel)
 			}
 			redacted.Value = JSONString("")
 			result = append(result, redacted)
@@ -291,7 +326,9 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 
 		// Neither side hidden or redacted — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
+		setMeta(t.From, baseFromLevel)
 		redacted.To = r.applyRedaction(t.To, toLevel)
+		setMeta(t.To, baseToLevel)
 
 		result = append(result, redacted)
 	}
@@ -323,6 +360,10 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 	if err != nil {
 		return nil, err
 	}
+	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get viewer's linked addresses for participant visibility override.
 	viewerAddrs := make(map[string]bool)
@@ -342,11 +383,13 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		viewerIsTo := t.To != nil && *t.To != "" && viewerAddrs[strings.ToLower(*t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
 
-		fromLevel := visMap[strings.ToLower(t.From)]
-		toLevel := VisibilityFull
+		baseFromLevel := visMap[strings.ToLower(t.From)]
+		baseToLevel := VisibilityFull
 		if t.To != nil && *t.To != "" {
-			toLevel = visMap[strings.ToLower(*t.To)]
+			baseToLevel = visMap[strings.ToLower(*t.To)]
 		}
+		fromLevel := baseFromLevel
+		toLevel := baseToLevel
 
 		// Participant override: reveal counterparty.
 		if viewerIsParticipant {
@@ -364,6 +407,15 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 		}
 
 		redacted := t
+		redacted.AddressMetadata = make(map[string]VisibilityReason)
+		setMeta := func(addr string, baseLvl VisibilityLevel) {
+			aLower := strings.ToLower(addr)
+			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if meta, ok := visMapDetailed[aLower]; ok {
+				redacted.AddressMetadata[aLower] = meta.Reason
+			}
+		}
 
 		// If one side is non-identifiable, replace with [PRIVATE] and strip financial data
 		if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
@@ -371,6 +423,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 				redacted.From = "[PRIVATE]"
 			} else {
 				redacted.From = r.applyRedaction(t.From, fromLevel)
+				setMeta(t.From, baseFromLevel)
 			}
 			if isNonIdentifiable(toLevel) {
 				p := "[PRIVATE]"
@@ -378,6 +431,7 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 			} else if t.To != nil && *t.To != "" {
 				r2 := r.applyRedaction(*t.To, toLevel)
 				redacted.To = &r2
+				setMeta(*t.To, baseToLevel)
 			}
 			redacted.Value = JSONString("")
 			redacted.Input = nil
@@ -388,9 +442,11 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 
 		// Neither side hidden or redacted — apply normal redaction
 		redacted.From = r.applyRedaction(t.From, fromLevel)
+		setMeta(t.From, baseFromLevel)
 		if t.To != nil && *t.To != "" {
 			r2 := r.applyRedaction(*t.To, toLevel)
 			redacted.To = &r2
+			setMeta(*t.To, baseToLevel)
 		}
 
 		result = append(result, redacted)
@@ -645,6 +701,14 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 	if err != nil {
 		return nil, err
 	}
+	visMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, addrs)
+	if err != nil {
+		return nil, err
+	}
+	masterMeta := make(map[string]VisibilityReason)
+	for k, v := range visMapDetailed {
+		masterMeta[k] = v.Reason
+	}
 
 	// Check if viewer is actually a participant in the parent tx.
 	isParticipant := false
@@ -690,6 +754,13 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		for k, v := range extraVisMap {
 			visMap[k] = v
 		}
+		extraVisMapDetailed, err := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, extraAddrs)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range extraVisMapDetailed {
+			masterMeta[k] = v.Reason
+		}
 	}
 
 	// Phase 3: ABI-based data scanning for logs from visible/pseudonymous contracts.
@@ -732,6 +803,13 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 			}
 			for k, v := range abiVisMap {
 				visMap[k] = v
+			}
+			abiVisMapDetailed, err2 := r.db.GetBatchVisibilityDetailed(ctx, viewerDID, abiDataAddrs)
+			if err2 != nil {
+				return nil, err2
+			}
+			for k, v := range abiVisMapDetailed {
+				masterMeta[k] = v.Reason
 			}
 		}
 	}
@@ -788,7 +866,20 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		}
 
 		redacted := l
+		redacted.AddressMetadata = make(map[string]VisibilityReason)
+
+		setMeta := func(addr string, baseLvl VisibilityLevel) {
+			aLower := strings.ToLower(addr)
+			if isParticipant && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if reason, ok := masterMeta[aLower]; ok {
+				redacted.AddressMetadata[aLower] = reason
+			}
+		}
+
 		redacted.Address = r.applyRedaction(l.Address, level)
+		setMeta(l.Address, visMap[strings.ToLower(l.Address)])
+
 		if level == VisibilityRedacted {
 			redacted.Topic0 = nil
 			redacted.Topic1 = nil
@@ -798,13 +889,36 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		} else {
 			// Contract is visible — scan topics for embedded private addresses.
 			redacted.Topic0 = redactTopicField(l.Topic0, visMap)
+			if l.Topic0 != nil {
+				if a, ok := extractTopicAddress(*l.Topic0); ok {
+					setMeta(a, visMap[a])
+				}
+			}
 			redacted.Topic1 = redactTopicField(l.Topic1, visMap)
+			if l.Topic1 != nil {
+				if a, ok := extractTopicAddress(*l.Topic1); ok {
+					setMeta(a, visMap[a])
+				}
+			}
 			redacted.Topic2 = redactTopicField(l.Topic2, visMap)
+			if l.Topic2 != nil {
+				if a, ok := extractTopicAddress(*l.Topic2); ok {
+					setMeta(a, visMap[a])
+				}
+			}
 			redacted.Topic3 = redactTopicField(l.Topic3, visMap)
+			if l.Topic3 != nil {
+				if a, ok := extractTopicAddress(*l.Topic3); ok {
+					setMeta(a, visMap[a])
+				}
+			}
 			// Scan non-indexed Data field for private addresses when ABI is registered.
 			if l.Data != "" && l.Topic0 != nil {
 				addrKey := strings.ToLower(l.Address)
 				if contractABI, ok := contractABIs[addrKey]; ok && len(contractABI) > 0 {
+					for _, a := range extractDataAddresses(l.Data, contractABI, l.Topic0) {
+						setMeta(a, visMap[a])
+					}
 					redacted.Data = r.redactLogData(l.Data, contractABI, l.Topic0, visMap)
 				}
 			}

@@ -24,6 +24,26 @@ func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (Vi
 	return m.visMap, nil
 }
 
+func (m *mockDB) GetBatchVisibilityDetailed(_ context.Context, _ string, _ []string) (map[string]AddressVisibility, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	res := make(map[string]AddressVisibility)
+	for k, v := range m.visMap {
+		reason := ReasonPublicAddress
+		switch v {
+		case VisibilityFull:
+			reason = ReasonPublicAddress
+		case VisibilityHidden, VisibilityRedacted:
+			reason = ReasonNoAccess
+		case VisibilityPseudonymous:
+			reason = ReasonRBACGroupMember
+		}
+		res[k] = AddressVisibility{Level: v, Reason: reason}
+	}
+	return res, nil
+}
+
 func (m *mockDB) GetLinkedAddresses(_ context.Context, _ string) ([]string, error) {
 	if m.err != nil {
 		return nil, m.err

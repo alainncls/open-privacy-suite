@@ -53,8 +53,9 @@ type Transaction struct {
 	Error                *string    `json:"error,omitempty"`
 	RevertReason         *string    `json:"revertReason,omitempty"`
 	CreatedAt            time.Time  `json:"createdAt"`
-	TxCategories         []string   `json:"txCategories,omitempty"`
-	TokenTransferCount   int        `json:"tokenTransferCount,omitempty"`
+	TxCategories         []string                    `json:"txCategories,omitempty"`
+	TokenTransferCount   int                         `json:"tokenTransferCount,omitempty"`
+	AddressMetadata      map[string]VisibilityReason `json:"addressMetadata,omitempty"`
 }
 
 // IsContractCreation returns true if this transaction is a contract deployment
@@ -91,8 +92,9 @@ type TokenTransfer struct {
 	Timestamp    *uint64    `json:"timestamp,omitempty"`
 	TransferType string     `json:"transferType"`
 	TokenType    string     `json:"tokenType"`
-	TokenID      *string    `json:"tokenId,omitempty"`
-	IsInternal   bool       `json:"isInternal"`
+	TokenID         *string                     `json:"tokenId,omitempty"`
+	IsInternal      bool                        `json:"isInternal"`
+	AddressMetadata map[string]VisibilityReason `json:"addressMetadata,omitempty"`
 }
 
 type InternalTransaction struct {
@@ -107,9 +109,10 @@ type InternalTransaction struct {
 	GasUsed      *uint64    `json:"gasUsed,omitempty"`
 	Input        *string    `json:"input,omitempty"`
 	Output       *string    `json:"output,omitempty"`
-	CallType     string     `json:"callType"`
-	Error        *string    `json:"error,omitempty"`
-	Timestamp    *uint64    `json:"timestamp,omitempty"`
+	CallType        string                      `json:"callType"`
+	Error           *string                     `json:"error,omitempty"`
+	Timestamp       *uint64                     `json:"timestamp,omitempty"`
+	AddressMetadata map[string]VisibilityReason `json:"addressMetadata,omitempty"`
 }
 
 type Log struct {
@@ -123,8 +126,9 @@ type Log struct {
 	Topic3      *string `json:"topic3"`
 	Data        string  `json:"data"`
 	BlockNumber uint64  `json:"blockNumber"`
-	Timestamp   *uint64 `json:"timestamp,omitempty"`
-	Removed     bool    `json:"removed"`
+	Timestamp       *uint64                     `json:"timestamp,omitempty"`
+	Removed         bool                        `json:"removed"`
+	AddressMetadata map[string]VisibilityReason `json:"addressMetadata,omitempty"`
 }
 
 type SyncStatus struct {
