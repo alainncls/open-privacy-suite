@@ -75,6 +75,44 @@ curl /api/v1/admin/orgs/:org_id/governance/settings
 
 ---
 
+## Dashboard Tabs
+
+The Governance Dashboard in the Admin UI provides three views for managing approval requests:
+
+### All Pending
+
+The default view. Shows every pending governance request in the organization. Any eligible approver can approve or reject requests from this tab.
+
+### Awaiting My Approval
+
+A filtered view that shows only requests where:
+- The status is **pending**
+- The current user has **not yet voted**
+
+This is useful when there are many pending requests and you want to quickly find the ones that still need your attention.
+
+The API supports this filter via query parameter:
+
+```bash
+curl "/api/v1/admin/orgs/:org_id/governance/requests?awaiting_my_approval=true"
+```
+
+### History
+
+Shows resolved (approved and rejected) requests sorted by resolution time. Clicking on a row expands it to show the full decision trail: who approved or rejected, when, and their stated reason.
+
+---
+
+## Escalation
+
+When a governance request has been pending longer than the configured **Escalation Timeout** (default: 24 hours), the proxy automatically sends an escalation webhook notification with the event `"request_escalated"`.
+
+The escalation worker runs on a 5-minute interval. Each stale request is escalated exactly once. After escalation, the `escalated_at` timestamp is set and the request is marked with an "Escalated" badge in the dashboard.
+
+To configure the timeout, set `governance_escalation_timeout_hours` in the governance settings (API or Admin UI). A value of `0` disables automatic escalation.
+
+---
+
 ## Webhook Notifications
 
 When a webhook URL is configured, the proxy sends a POST request for governance events.

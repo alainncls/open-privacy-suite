@@ -93,6 +93,7 @@ type Server struct {
 	siemForwarder                 *audit.SIEMForwarder
 	retentionCleaner              *audit.RetentionCleaner
 	governanceEngine              *governance.Engine
+	escalationWorker              *governance.EscalationWorker
 }
 
 // DB returns the database instance (for testing)
@@ -138,6 +139,9 @@ func (s *Server) Stop() {
 	}
 	if s.explorerVisibilityRateLimiter != nil {
 		s.explorerVisibilityRateLimiter.Stop()
+	}
+	if s.escalationWorker != nil {
+		s.escalationWorker.Stop()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -327,9 +331,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		explorerVisibilityRateLimiter: explorerVisibilityRL,
 	}
 
-	// Initialize governance engine
+	// Initialize governance engine and escalation worker
 	webhookNotifier := governance.NewWebhookNotifier(database)
 	s.governanceEngine = governance.NewEngine(database, s, webhookNotifier)
+	s.escalationWorker = governance.NewEscalationWorker(database, webhookNotifier, 5*time.Minute)
+	s.escalationWorker.Start()
 
 	// Initialize JSON-RPC processor with dependencies
 	if runtimeTracer != nil {

@@ -33,15 +33,15 @@ func (t *Tx) RecordApprovalDecision(ctx context.Context, decision *rbac.Approval
 
 // LockApprovalRequest loads an approval request within a transaction with FOR UPDATE.
 func (t *Tx) LockApprovalRequest(ctx context.Context, id string) (*rbac.ApprovalRequest, error) {
-	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at
+	query := `SELECT id, org_id, requester_id, change_type, target_resource_id, target_resource_type, payload, status, approvals_needed, created_at, resolved_at, escalated_at
 	          FROM approval_requests WHERE id = $1 FOR UPDATE`
 
 	var req rbac.ApprovalRequest
 	var payload []byte
-	var resolvedAt sql.NullTime
+	var resolvedAt, escalatedAt sql.NullTime
 
 	err := t.tx.QueryRowContext(ctx, query, id).Scan(
-		&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt,
+		&req.ID, &req.OrgID, &req.RequesterID, &req.ChangeType, &req.TargetResourceID, &req.TargetResourceType, &payload, &req.Status, &req.ApprovalsNeeded, &req.CreatedAt, &resolvedAt, &escalatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -53,6 +53,9 @@ func (t *Tx) LockApprovalRequest(ctx context.Context, id string) (*rbac.Approval
 	req.Payload = json.RawMessage(payload)
 	if resolvedAt.Valid {
 		req.ResolvedAt = &resolvedAt.Time
+	}
+	if escalatedAt.Valid {
+		req.EscalatedAt = &escalatedAt.Time
 	}
 
 	return &req, nil

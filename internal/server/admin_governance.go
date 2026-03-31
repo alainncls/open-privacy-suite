@@ -27,6 +27,12 @@ func (s *Server) listGovernanceRequests(c *gin.Context) {
 	if cType := c.Query("change_type"); cType != "" {
 		filter.ChangeType = &cType
 	}
+	if c.Query("awaiting_my_approval") == "true" {
+		userID := c.GetString("admin_user_id")
+		if userID != "" {
+			filter.AwaitingApproverID = &userID
+		}
+	}
 
 	reqs, total, err := s.db.ListApprovalRequests(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
