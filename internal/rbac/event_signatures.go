@@ -70,3 +70,32 @@ func IsValidTopic0(topic0 string) bool {
 	_, err := hex.DecodeString(topic0[2:])
 	return err == nil
 }
+
+// ValidateParamRuleMustBe validates a ParamRule.MustBe value.
+// Valid values are:
+//   - "self" — matches the caller's linked addresses
+//   - "0x..." — a valid hex string (at least 1 byte, at most 32 bytes)
+//
+// Returns an error message suitable for API responses, or "" if valid.
+func ValidateParamRuleMustBe(mustBe string) string {
+	if mustBe == "self" {
+		return ""
+	}
+	if !strings.HasPrefix(mustBe, "0x") {
+		return "must_be must be \"self\" or a 0x-prefixed hex value"
+	}
+	hexPart := mustBe[2:]
+	if len(hexPart) == 0 {
+		return "must_be hex value cannot be empty (just \"0x\")"
+	}
+	if len(hexPart)%2 != 0 {
+		return "must_be hex value must have even number of hex characters"
+	}
+	if len(hexPart) > 64 {
+		return "must_be hex value too long (max 32 bytes / 64 hex chars)"
+	}
+	if _, err := hex.DecodeString(hexPart); err != nil {
+		return "must_be contains invalid hex characters"
+	}
+	return ""
+}
