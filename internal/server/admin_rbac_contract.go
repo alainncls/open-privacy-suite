@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -222,12 +223,13 @@ func (s *Server) listContractEvents(c *gin.Context) {
 		return
 	}
 
-	if contract.ABI == "" {
+	abiJSON := resolveContractABI(contract)
+	if abiJSON == "" {
 		c.JSON(http.StatusOK, gin.H{"events": []rbac.EventSignature{}, "message": "no ABI registered"})
 		return
 	}
 
-	events, err := rbac.ExtractEventSignatures(contract.ABI)
+	events, err := rbac.ExtractEventSignatures(abiJSON)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse ABI: " + err.Error()})
 		return
@@ -436,6 +438,123 @@ func (s *Server) getContractCode(address string) (string, error) {
 	return code, nil
 }
 
+// resolveContractABI returns the best available ABI for a contract: custom ABI
+// first, then built-in ABI based on the contract's metadata token_type field.
+func resolveContractABI(contract *rbac.Contract) string {
+	if contract.ABI != "" {
+		return contract.ABI
+	}
+	// Fall back to built-in ABI if the contract has a known token type.
+	if contract.Metadata != nil {
+		if tokenType, ok := contract.Metadata["token_type"].(string); ok {
+			return rbac.GetBuiltInABI(tokenType)
+		}
+	}
+	return ""
+}
+
+// validateEventRulesWithABI validates event param_rules against a contract ABI.
+// If abiJSON is empty, validation is skipped (returns ""). Otherwise, each rule's
+// param_rules are checked:
+//   - index must be within the event's input count
+//   - "self" constraints must target an address-typed parameter
+//   - hex value constraints must have the correct byte length for the param type
+//
+// Returns a descriptive error message, or "" if valid.
+func validateEventRulesWithABI(rules []rbac.EventRule, abiJSON string) string {
+	if abiJSON == "" {
+		return ""
+	}
+
+	events, err := rbac.ExtractEventSignatures(abiJSON)
+	if err != nil {
+		// ABI is unparseable — skip validation rather than blocking saves
+		return ""
+	}
+
+	// Build lookup: topic0 -> EventSignature
+	eventByTopic := make(map[string]*rbac.EventSignature, len(events))
+	for i := range events {
+		eventByTopic[strings.ToLower(events[i].Topic0)] = &events[i]
+	}
+
+	for _, rule := range rules {
+		if len(rule.ParamRules) == 0 {
+			continue
+		}
+
+		ev, ok := eventByTopic[strings.ToLower(rule.Topic0)]
+		if !ok {
+			// topic0 not found in ABI — can't validate param rules against it.
+			// This is not necessarily an error (custom events not in ABI), skip.
+			continue
+		}
+
+		for _, pr := range rule.ParamRules {
+			if pr.Index < 0 || pr.Index >= len(ev.Inputs) {
+				return fmt.Sprintf(
+					"event %s: param_rule index %d out of bounds (event has %d inputs)",
+					ev.Name, pr.Index, len(ev.Inputs),
+				)
+			}
+
+			paramType := ev.Inputs[pr.Index].Type
+
+			switch {
+			case pr.MustBe == "self":
+				// "self" constraint only makes sense for address parameters.
+				if paramType != "address" {
+					return fmt.Sprintf(
+						"event %s: param_rule index %d has must_be=\"self\" but parameter type is %s, not address",
+						ev.Name, pr.Index, paramType,
+					)
+				}
+
+			case strings.HasPrefix(pr.MustBe, "0x"):
+				// Hex value constraint — validate byte length matches the param type.
+				hexStr := strings.TrimPrefix(pr.MustBe, "0x")
+				decoded, decErr := hex.DecodeString(hexStr)
+				if decErr != nil {
+					return fmt.Sprintf(
+						"event %s: param_rule index %d has invalid hex value: %s",
+						ev.Name, pr.Index, pr.MustBe,
+					)
+				}
+
+				expectedLen := expectedByteLength(paramType)
+				if expectedLen > 0 && len(decoded) != expectedLen {
+					return fmt.Sprintf(
+						"event %s: param_rule index %d has hex value of %d bytes but %s requires %d bytes",
+						ev.Name, pr.Index, len(decoded), paramType, expectedLen,
+					)
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// expectedByteLength returns the expected byte length for common ABI types used
+// in param_rule hex value validation. Returns 0 for types where length is variable
+// or unknown (which means length validation is skipped).
+func expectedByteLength(abiType string) int {
+	switch {
+	case abiType == "address":
+		return 20
+	case abiType == "bool":
+		return 32 // ABI-encoded bool is 32 bytes
+	case strings.HasPrefix(abiType, "uint") || strings.HasPrefix(abiType, "int"):
+		return 32
+	case strings.HasPrefix(abiType, "bytes32"):
+		return 32
+	case abiType == "bytes20":
+		return 20
+	default:
+		return 0
+	}
+}
+
 // Contract Grant handlers
 
 func (s *Server) listContractGrants(c *gin.Context) {
@@ -487,6 +606,13 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	// Validate event rules if provided
 	if input.EventRules != nil {
 		if errMsg := validateEventRules(input.EventRules); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+
+		// Validate param_rules against ABI if available
+		abiJSON := resolveContractABI(contract)
+		if errMsg := validateEventRulesWithABI(input.EventRules, abiJSON); errMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
@@ -587,6 +713,14 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}
+
+			// Validate param_rules against ABI if available
+			abiJSON := resolveContractABI(contract)
+			if errMsg := validateEventRulesWithABI(rules, abiJSON); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
+
 			grant.EventRules = rules
 		}
 	}

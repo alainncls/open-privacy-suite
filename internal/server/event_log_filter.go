@@ -35,8 +35,16 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 		p.cache[addr] = ""
 		return ""
 	}
-	p.cache[addr] = contract.ABI
-	return contract.ABI
+	abi := contract.ABI
+	// Fall back to built-in ABI if no custom ABI is stored but the contract
+	// has a known token type in its metadata.
+	if abi == "" && contract.Metadata != nil {
+		if tokenType, ok := contract.Metadata["token_type"].(string); ok {
+			abi = rbac.GetBuiltInABI(tokenType)
+		}
+	}
+	p.cache[addr] = abi
+	return abi
 }
 
 // FilterLogsWithEventRules filters an eth_getLogs response using the unified
