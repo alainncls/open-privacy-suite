@@ -144,13 +144,13 @@ Addresses: User A = `0xaaaa...aaaa`, User B = `0xbbbb...bbbb`, Contract X = `0x5
 | I26 | NoAddressFilter_Scoped | Logs from X, Y, Z; user has grants on X, Z | Only X, Z logs |
 | I27 | Receipt_MixedOrgs | Tx has logs from both orgs | Only own-org logs visible |
 
-### 2.6 Admin Bypass (I28–I30)
+### 2.6 Admin Bypass (I28–I30) — RD-751 IMPLEMENTED
 
-| # | Name | Setup | Assert |
-|---|------|-------|--------|
-| I28 | AdminClaim_Bypasses | Admin on contract X, restrictive rules | All logs visible |
-| I29 | OrgAdmin_Bypasses | is_org_admin user | All logs visible |
-| I30 | ReadClaim_NoByppass | read claim only, rules: [Transfer] | Only Transfer |
+| # | Name | Setup | Assert | Status |
+|---|------|-------|--------|--------|
+| I28 | AdminClaim_Bypasses | Admin on contract X, restrictive rules | All logs visible | PASS (unit + server) |
+| I29 | OrgAdmin_Bypasses | is_org_admin user | All logs visible | PASS (unit + server) |
+| I30 | ReadClaim_NoByppass | read claim only, rules: [Transfer] | Only Transfer | PASS (unit + server) |
 
 ### 2.7 Multiple Grants Union (I31–I33)
 

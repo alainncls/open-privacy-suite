@@ -1332,18 +1332,10 @@ func TestGetEventRules_FindByTopic0(t *testing.T) {
 // I28-I30: Admin bypass / no bypass for event rules
 // ---------------------------------------------------------------------------
 
-func TestFilterEventLogs_AdminClaim_NoBypass(t *testing.T) {
-	// I28: SECURITY FINDING — Admin claim on contract + restrictive event_rules.
-	// Current behavior: FilterEventLogs does NOT check claims at all. It only
-	// looks at EventRules. So an admin-claim user with restrictive rules
-	// will still be filtered. This is arguably a bug: admin should see all logs.
-	//
-	// However, in practice, org_admin users get nil EventRules from the resolver
-	// (computeOrgAdminPermissions), so they naturally bypass. The gap is for
-	// users who have ClaimAdmin via a grant (not org_admin) with explicit rules.
-	//
-	// This test documents the current behavior. When admin bypass is implemented
-	// in FilterEventLogs, update this test.
+func TestFilterEventLogs_AdminClaim_Bypass(t *testing.T) {
+	// I28: Admin claim on contract bypasses event_rules — admin sees ALL logs.
+	// Previously this was a documented gap (admin claim did not bypass event
+	// rules). Now FilterEventLogs checks Claims for ClaimAdmin and short-circuits.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 
@@ -1353,7 +1345,7 @@ func TestFilterEventLogs_AdminClaim_NoBypass(t *testing.T) {
 				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy}, // admin!
 				EventRules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-					// Approval is NOT in the allowlist
+					// Approval is NOT in the allowlist — but admin bypasses
 				},
 			},
 		},
@@ -1366,26 +1358,23 @@ func TestFilterEventLogs_AdminClaim_NoBypass(t *testing.T) {
 
 	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
 
-	// BUG DOCUMENTATION: Admin with restrictive rules only sees Transfer, not Approval.
-	// FilterEventLogs does not inspect Claims — event_rules are applied regardless.
-	// TODO(security): FilterEventLogs should bypass event_rules when Claims includes
-	// ClaimAdmin. Until then, this documents the current (incorrect) behavior.
-	if len(result) != 1 {
-		t.Errorf("I28: admin claim with restrictive rules: expected 1 log (current behavior: no admin bypass), got %d", len(result))
+	// Admin bypass: both logs should be visible regardless of event rules.
+	if len(result) != 2 {
+		t.Errorf("I28: admin claim should bypass event rules, expected 2 logs, got %d", len(result))
 	}
 }
 
 func TestFilterEventLogs_OrgAdmin_Bypass(t *testing.T) {
-	// I29: Org admin gets nil EventRules from the resolver (computeOrgAdminPermissions),
-	// so all logs are visible (nil = unrestricted → address-based filtering only).
-	// This is the correct behavior.
+	// I29: Org admin gets AllClaims() (including ClaimAdmin) from the resolver
+	// (computeOrgAdminPermissions). The admin bypass in FilterEventLogs means
+	// org admins see ALL logs, regardless of event rules or address-in-topics.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 
-	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
-	userTopic := "0x000000000000000000000000" + userAddr[2:]
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
 
-	// Org admin permissions: nil EventRules (all visible), all claims
+	// Org admin permissions: all claims (including admin), nil EventRules
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
@@ -1395,14 +1384,16 @@ func TestFilterEventLogs_OrgAdmin_Bypass(t *testing.T) {
 		},
 	}
 
+	// User address NOT in any topics — admin bypass means this doesn't matter.
 	logs := []json.RawMessage{
-		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
-		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
 	if len(result) != 2 {
-		t.Errorf("I29: org admin with nil EventRules should see all logs (where address appears), expected 2, got %d", len(result))
+		t.Errorf("I29: org admin should see all logs via admin bypass, expected 2, got %d", len(result))
 	}
 }
 
@@ -1756,5 +1747,253 @@ func TestHexEncodingConsistency(t *testing.T) {
 	_, err := hex.DecodeString(padded)
 	if err != nil {
 		t.Fatalf("padded address is not valid hex: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RD-751: Admin bypass for log filtering
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics(t *testing.T) {
+	// Admin user should see ALL logs from their contract even when their address
+	// does NOT appear in any topic. This is the primary RD-751 requirement.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+	customTopic0 := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+				EventRules: nil, // no event rules = would normally require address in topics
+			},
+		},
+	}
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+
+	// None of these logs contain the user's address in topics.
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + otherTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 3 {
+		t.Errorf("admin should see all 3 logs without address in topics, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered(t *testing.T) {
+	// A user with only the read claim (no admin) should NOT see logs when their
+	// address does not appear in topics and no event rules are configured.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil, // default address-based filtering
+			},
+		},
+	}
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + otherTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 0 {
+		t.Errorf("read user without address in topics should see 0 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll(t *testing.T) {
+	// Admin claim overrides event rules: even with restrictive event rules that
+	// would normally filter some logs, an admin sees everything.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+	customTopic0 := "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite},
+				EventRules: []EventRule{
+					// Only Transfer is in the allowlist — but admin bypasses
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 3 {
+		t.Errorf("admin should bypass event rules and see all 3 logs, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AdminBypassWithEmptyEventRules(t *testing.T) {
+	// Empty event rules [] means "deny all events". But admin bypass still
+	// overrides this and sees everything.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimAdmin, ClaimRead},
+				EventRules: []EventRule{}, // deny all — but admin overrides
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("admin should bypass empty event rules, expected 1, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AdminOnOneContract_ReadOnAnother(t *testing.T) {
+	// Admin bypass should only apply to the contract the user has admin claim on.
+	// On other contracts, normal filtering still applies.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	otherAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract_admin": {
+				Claims:     []Claim{ClaimAdmin, ClaimRead},
+				EventRules: nil, // no rules
+			},
+			"0xcontract_read": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+
+	logs := []json.RawMessage{
+		// Admin contract — user address NOT in topics. Admin bypass: visible.
+		json.RawMessage(`{"address":"0xcontract_admin","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
+		// Read contract — Approval event NOT in allowlist. Normal filtering: blocked.
+		json.RawMessage(`{"address":"0xcontract_read","topics":["` + approvalTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
+		// Read contract — Transfer event in allowlist. Normal filtering: passed.
+		json.RawMessage(`{"address":"0xcontract_read","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 2 {
+		t.Errorf("expected 2 logs (admin contract + allowed event on read contract), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
+	// Verify that cross-org isolation works: a user with no access to a contract
+	// (simulating a contract in another org) sees zero logs from it.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+
+	// User only has access to contract1 (their org). No entry for contract_other_org.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil,
+			},
+			// 0xcontract_other_org is NOT in ContractAccess → no access
+		},
+	}
+
+	logs := []json.RawMessage{
+		// Own contract — user address in topic → visible.
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+		// Other org's contract — even though user address appears in topic → hidden.
+		json.RawMessage(`{"address":"0xcontract_other_org","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	if len(result) != 1 {
+		t.Errorf("cross-org isolation: expected 1 log (own contract only), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AdminBypassWithAnonymousEvent(t *testing.T) {
+	// Admin bypass should include anonymous events (no topic0) which would
+	// normally be blocked in allowlist mode.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimAdmin, ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		// Anonymous event (no topics)
+		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0xdeadbeef"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("admin should bypass and see anonymous events, expected 1, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_DeployWriteClaims_NoBypass(t *testing.T) {
+	// Users with deploy or write claims (but NOT admin) should NOT get the
+	// admin bypass. Only the admin claim triggers the bypass.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("deploy/write user should NOT get admin bypass, expected 1 log, got %d", len(result))
 	}
 }

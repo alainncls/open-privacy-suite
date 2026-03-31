@@ -136,6 +136,65 @@ Participant status is determined by comparing the user's **linked ETH addresses*
 
 ---
 
+## Log Access Control
+
+Event logs emitted by smart contracts are filtered before being returned to the caller. This applies to both `eth_getLogs` responses and the `logs` array within `eth_getTransactionReceipt` responses.
+
+### Filtering Modes
+
+The proxy uses two filtering modes, selected per-contract based on whether event rules are configured:
+
+| Mode | When active | Behavior |
+|------|------------|----------|
+| **Default (address-based)** | No event rules configured (`event_rules: null`) | Log visible only if user's linked ETH address appears in any topic (zero-padded address match) |
+| **Allowlist (event rules)** | Event rules configured (`event_rules: [...]`) | Only logs whose `topic0` matches an allowed event rule pass; optional `param_rules` with `"self"` constraints further restrict by requiring the user's address in specific parameter positions |
+
+An **empty event rules array** (`event_rules: []`) means "deny all events" -- no logs pass regardless of their content.
+
+### Admin Bypass
+
+Users with the **admin claim** on a contract see ALL logs from that contract, bypassing both address-based filtering and event rule restrictions. This includes:
+
+- Logs where the user's address does not appear in any topic
+- Logs from events not in the allowlist
+- Anonymous events (logs with no topics)
+- Logs that would be blocked by empty event rules (`[]`)
+
+The admin bypass applies per-contract: having admin on contract A does not grant bypass on contract B. The user must have the `admin` claim specifically on the contract that emitted the log.
+
+**Org admins** (members of a group with `is_org_admin = true`) automatically receive the `admin` claim on all contracts in their organization via the permission resolver. This means org admins see all logs from all org contracts without restriction.
+
+<Callout variant="info" title="Claim hierarchy">
+  The `admin` claim implies `read`, `write`, `deploy`, and `upgrade`. Users with `deploy`, `write`, or `read` claims alone do NOT get the admin log bypass -- they are subject to normal event filtering.
+</Callout>
+
+### Cross-Organization Isolation
+
+Logs from contracts the user has **no access to** are silently dropped. Since `EffectivePermissions.GetContractAccess()` returns `nil` for contracts in other organizations, cross-org log isolation is enforced at the same layer as log filtering. A user in Org A will never see logs emitted by contracts registered to Org B, even if their address appears in the log topics.
+
+### Anonymous Events
+
+Anonymous events (Solidity `event` declarations with the `anonymous` keyword) emit logs with an empty topics array -- there is no `topic0` event signature hash. In allowlist mode, anonymous events are always blocked because there is no `topic0` to match against rules. In default mode, anonymous events are blocked because the address-in-topic check finds no topics to scan. The admin bypass is the only path that includes anonymous events.
+
+### Fail-Closed Behavior
+
+The log filter is fail-closed at every level:
+
+| Failure | Result |
+|---------|--------|
+| `perms` is `nil` (permission resolution failed) | All logs denied |
+| Log entry is malformed JSON | Log dropped |
+| ABI not available for param rule decoding | Param rule fails to match (log hidden) |
+| Param index out of range | Param rule fails to match (log hidden) |
+| Log data truncated or invalid | Param rule fails to match (log hidden) |
+| `eth_getLogs` response is not a JSON array | Empty array returned |
+
+### `eth_getTransactionReceipt` Log Filtering
+
+For transaction receipts, the proxy first checks whether the caller is a participant (`from` or `to` matches a linked address). Non-participants receive `null`. For participants, the receipt's `logs` array is filtered using the same `FilterEventLogs` logic described above, and the `logsBloom` is zeroed (since it no longer reflects the actual log set).
+
+---
+
 ## Cross-Organization Isolation
 
 ### Organization Context Resolution
