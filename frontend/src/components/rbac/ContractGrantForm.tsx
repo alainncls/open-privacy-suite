@@ -64,6 +64,141 @@ const isValidSelector = (selector: string): boolean => {
   return /^0x[a-fA-F0-9]{8}$/.test(selector);
 };
 
+// Validate hex value for custom param constraints
+const isValidHexValue = (value: string): boolean => {
+  return /^0x[a-fA-F0-9]{2,64}$/.test(value) && value.length % 2 === 0;
+};
+
+// Get constraint dropdown options based on ABI type
+function getConstraintOptions(paramType: string): { value: string; label: string }[] {
+  const options = [{ value: 'any', label: 'Any value' }];
+
+  if (paramType === 'address') {
+    options.push({ value: 'self', label: "Caller's address (self)" });
+    options.push({ value: 'custom', label: 'Custom address' });
+  } else if (paramType === 'bool') {
+    options.push({ value: 'true', label: 'True' });
+    options.push({ value: 'false', label: 'False' });
+  } else if (paramType.startsWith('uint') || paramType.startsWith('int')) {
+    options.push({ value: 'custom', label: 'Custom value' });
+  } else if (paramType.startsWith('bytes')) {
+    options.push({ value: 'custom', label: 'Custom value' });
+  } else {
+    options.push({ value: 'custom', label: 'Custom hex value' });
+  }
+
+  return options;
+}
+
+// Get placeholder text for custom value input based on ABI type
+function getCustomPlaceholder(paramType: string): string {
+  if (paramType === 'address') return '0x1234...abcd (20-byte address)';
+  if (paramType.startsWith('uint')) return '0x (hex-encoded number, e.g. 0x2a for 42)';
+  if (paramType === 'bytes32') return '0x (32-byte hex value)';
+  if (paramType.startsWith('bytes')) return '0x (hex-encoded bytes)';
+  return '0x (hex-encoded value)';
+}
+
+// Inline component for a single event parameter constraint
+function EventParamConstraint({
+  param,
+  constraintMode,
+  customValue,
+  onChange,
+}: {
+  param: { index: number; name: string; type: string; indexed: boolean };
+  constraintMode: string; // 'any' | 'self' | 'custom' | 'true' | 'false'
+  customValue: string;
+  onChange: (mustBe: string) => void; // '' to remove, 'self' or '0x...' to set
+}) {
+  const [localCustom, setLocalCustom] = useState(customValue);
+  const [customError, setCustomError] = useState('');
+  const options = getConstraintOptions(param.type);
+
+  const handleModeChange = (mode: string) => {
+    setCustomError('');
+    switch (mode) {
+      case 'any':
+        onChange('');
+        break;
+      case 'self':
+        onChange('self');
+        break;
+      case 'true':
+        onChange('0x01');
+        break;
+      case 'false':
+        onChange('0x00');
+        break;
+      case 'custom':
+        // Don't call onChange yet — wait for user to enter a value
+        setLocalCustom('');
+        break;
+    }
+  };
+
+  const handleCustomApply = () => {
+    const val = localCustom.trim().toLowerCase();
+    if (!val) {
+      setCustomError('Value is required');
+      return;
+    }
+    if (!isValidHexValue(val)) {
+      setCustomError('Must be a valid 0x-prefixed hex value (even number of chars, max 32 bytes)');
+      return;
+    }
+    setCustomError('');
+    onChange(val);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <code className="font-mono text-xs text-neutral-700 min-w-[80px]">
+          {param.name || `param[${param.index}]`}
+        </code>
+        {param.indexed && (
+          <span className="px-1 py-0.5 rounded text-[10px] bg-neutral-200 text-neutral-500">indexed</span>
+        )}
+        <span className="text-[10px] text-neutral-400">{param.type}</span>
+        <select
+          value={constraintMode}
+          onChange={e => handleModeChange(e.target.value)}
+          className="ml-auto px-2 py-1 text-xs border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {options.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+      {constraintMode === 'custom' && (
+        <div className="ml-[80px] pl-2 space-y-1">
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={localCustom}
+              onChange={e => { setLocalCustom(e.target.value); setCustomError(''); }}
+              placeholder={getCustomPlaceholder(param.type)}
+              className="flex-1 px-2 py-1 text-xs font-mono border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCustomApply(); } }}
+            />
+            <button
+              type="button"
+              onClick={handleCustomApply}
+              className="px-2 py-1 text-xs rounded bg-primary text-white hover:bg-primary-700 transition-colors"
+            >
+              Set
+            </button>
+          </div>
+          {customError && (
+            <p className="text-[10px] text-red-600">{customError}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ContractGrantForm({
   orgId,
   contractAddress,
@@ -223,20 +358,23 @@ export default function ContractGrantForm({
     setEventRules(eventRules.filter(r => r.topic0.toLowerCase() !== topic0.toLowerCase()));
   };
 
-  // Toggle a param_rule on an event rule (same pattern as function param_rules)
-  const handleToggleEventParamRule = (topic0: string, paramIndex: number, checked: boolean) => {
+  // Set or remove a param_rule on an event rule.
+  // mustBe = '' means remove the constraint ("Any value").
+  // mustBe = 'self' or '0x...' sets the constraint.
+  const handleSetEventParamRule = (topic0: string, paramIndex: number, mustBe: string) => {
     setEventRules(prev =>
       prev.map(rule => {
         if (rule.topic0.toLowerCase() !== topic0.toLowerCase()) return rule;
         const existing = rule.param_rules || [];
-        if (checked) {
-          if (existing.some(pr => pr.index === paramIndex)) return rule;
-          const newRule: ParamRule = { index: paramIndex, must_be: 'self' };
-          return { ...rule, param_rules: [...existing, newRule] };
-        } else {
+        if (!mustBe) {
+          // Remove constraint for this param
           const filtered = existing.filter(pr => pr.index !== paramIndex);
           return { ...rule, param_rules: filtered.length > 0 ? filtered : null };
         }
+        // Add or update constraint
+        const updated = existing.filter(pr => pr.index !== paramIndex);
+        updated.push({ index: paramIndex, must_be: mustBe });
+        return { ...rule, param_rules: updated };
       })
     );
   };
@@ -644,10 +782,8 @@ export default function ContractGrantForm({
                     const eventSig = availableEvents.find(
                       e => e.topic0.toLowerCase() === rule.topic0.toLowerCase()
                     );
-                    const addressParams = eventSig
-                      ? eventSig.inputs
-                          .map((inp, idx) => ({ ...inp, index: idx }))
-                          .filter(inp => inp.type === 'address')
+                    const allParams = eventSig
+                      ? eventSig.inputs.map((inp, idx) => ({ ...inp, index: idx }))
                       : [];
 
                     return (
@@ -681,34 +817,32 @@ export default function ContractGrantForm({
                             <X className="w-3 h-3" />
                           </button>
                         </div>
-                        {/* Parameter constraints for address-type params */}
-                        {addressParams.length > 0 && (
-                          <div className="mt-2 ml-2 space-y-1">
-                            {addressParams.map(param => {
-                              const isChecked = (rule.param_rules || []).some(
-                                pr => pr.index === param.index && pr.must_be === 'self'
+                        {/* Parameter constraints */}
+                        {allParams.length > 0 && (
+                          <div className="mt-2 ml-2 space-y-2">
+                            {allParams.map(param => {
+                              const existingRule = (rule.param_rules || []).find(
+                                pr => pr.index === param.index
                               );
+                              const constraintMode = !existingRule
+                                ? 'any'
+                                : existingRule.must_be === 'self'
+                                  ? 'self'
+                                  : param.type === 'bool'
+                                    ? (existingRule.must_be === '0x01' ? 'true' : 'false')
+                                    : 'custom';
+                              const customValue = existingRule && constraintMode === 'custom'
+                                ? existingRule.must_be
+                                : '';
+
                               return (
-                                <label
+                                <EventParamConstraint
                                   key={param.index}
-                                  className="flex items-center gap-2 text-xs text-neutral-500 cursor-pointer"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={e =>
-                                      handleToggleEventParamRule(rule.topic0, param.index, e.target.checked)
-                                    }
-                                    className="w-3.5 h-3.5 rounded text-primary focus:ring-primary"
-                                  />
-                                  <span>
-                                    <code className="font-mono text-neutral-700">{param.name || `param[${param.index}]`}</code>
-                                    {param.indexed && (
-                                      <span className="ml-1 px-1 py-0.5 rounded text-[10px] bg-neutral-200 text-neutral-500">indexed</span>
-                                    )}
-                                    {' '}must be caller's own address
-                                  </span>
-                                </label>
+                                  param={param}
+                                  constraintMode={constraintMode}
+                                  customValue={customValue}
+                                  onChange={(mustBe) => handleSetEventParamRule(rule.topic0, param.index, mustBe)}
+                                />
                               );
                             })}
                           </div>

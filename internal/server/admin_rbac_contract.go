@@ -486,11 +486,9 @@ func (s *Server) createContractGrant(c *gin.Context) {
 
 	// Validate event rules if provided
 	if input.EventRules != nil {
-		for _, rule := range input.EventRules {
-			if !rbac.IsValidTopic0(rule.Topic0) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid topic0 hash: %s", rule.Topic0)})
-				return
-			}
+		if errMsg := validateEventRules(input.EventRules); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
 		}
 	}
 
@@ -584,12 +582,10 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_rules format"})
 				return
 			}
-			// Validate topic0 hashes
-			for _, rule := range rules {
-				if !rbac.IsValidTopic0(rule.Topic0) {
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid topic0 hash: %s", rule.Topic0)})
-					return
-				}
+			// Validate topic0 hashes and param rules
+			if errMsg := validateEventRules(rules); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
 			}
 			grant.EventRules = rules
 		}
@@ -710,6 +706,22 @@ func (s *Server) deleteContractGrant(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "grant deleted"})
+}
+
+// validateEventRules validates a slice of EventRules: topic0 format and param
+// rule must_be values. Returns an error message or "" if valid.
+func validateEventRules(rules []rbac.EventRule) string {
+	for _, rule := range rules {
+		if !rbac.IsValidTopic0(rule.Topic0) {
+			return fmt.Sprintf("invalid topic0 hash: %s", rule.Topic0)
+		}
+		for _, pr := range rule.ParamRules {
+			if errMsg := rbac.ValidateParamRuleMustBe(pr.MustBe); errMsg != "" {
+				return fmt.Sprintf("event %s param[%d]: %s", rule.Name, pr.Index, errMsg)
+			}
+		}
+	}
+	return ""
 }
 
 // batchMoveContracts moves contracts from auto-created groups to a target group.

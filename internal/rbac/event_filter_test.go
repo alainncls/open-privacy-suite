@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // testABIProvider is a simple ABIProvider for tests.
@@ -696,6 +698,460 @@ func TestIsValidTopic0_Comprehensive(t *testing.T) {
 			got := IsValidTopic0(tt.input)
 			if got != tt.want {
 				t.Errorf("IsValidTopic0(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Custom param value tests ---
+
+func TestFilterEventLogs_CustomHex_IndexedAddress_Match(t *testing.T) {
+	// Custom hex value matching on an indexed address param.
+	// Event: Transfer(address indexed from, address indexed to, uint256 value)
+	// Rule: param[0] must be a specific address.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	targetAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	targetTopic := "0x000000000000000000000000" + targetAddr[2:]
+	otherAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: targetAddr}, // from must be the specific address
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Log where from matches target address.
+	logMatch := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + targetTopic + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	// Log where from does NOT match.
+	logNoMatch := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + targetTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logMatch),
+		json.RawMessage(logNoMatch),
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (custom address match on indexed param), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_IndexedUint256_Match(t *testing.T) {
+	// Custom hex value matching on an indexed uint256 param.
+	// Event: ValueChanged(uint256 indexed id, address indexed setter)
+	eventABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "id", "type": "uint256"},
+			{"indexed": true, "name": "setter", "type": "address"}
+		],
+		"name": "ValueChanged",
+		"type": "event"
+	}]`
+
+	topic0 := "0x" + hex.EncodeToString(crypto.Keccak256([]byte("ValueChanged(uint256,address)")))
+
+	// Target: id must be 42 (0x2a)
+	idTopic42 := "0x000000000000000000000000000000000000000000000000000000000000002a"
+	idTopic99 := "0x0000000000000000000000000000000000000000000000000000000000000063"
+	setterTopic := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: topic0,
+						Name:   "ValueChanged",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "0x000000000000000000000000000000000000000000000000000000000000002a"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + idTopic42 + `","` + setterTopic + `"],"data":"0x"}`
+	logNoMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + idTopic99 + `","` + setterTopic + `"],"data":"0x"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logMatch),
+		json.RawMessage(logNoMatch),
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (custom uint256 match on indexed param), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_Mismatch(t *testing.T) {
+	// Custom hex value that does NOT match — event should be filtered out.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	targetAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	actualAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	actualTopic := "0x000000000000000000000000" + actualAddr[2:]
+	otherTopic := "0x000000000000000000000000cccccccccccccccccccccccccccccccccccccccc"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: targetAddr}, // from must be target — but actual is different
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + actualTopic + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (custom value mismatch), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
+	// Mixed rules: self + custom value on different params (OR semantics).
+	// param[0] must be self OR param[1] must be a specific address.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	userAddr := "0x1111111111111111111111111111111111111111"
+	targetToAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	targetToTopic := "0x000000000000000000000000" + targetToAddr[2:]
+	otherAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "self"},        // from must be caller's address
+							{Index: 1, MustBe: targetToAddr},  // OR to must be the specific address
+						},
+					},
+				},
+			},
+		},
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	// Log 1: user is NOT "from" and "to" IS the target — should pass via custom rule
+	log1 := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + targetToTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	// Log 2: user IS "from" but "to" is NOT target — should pass via self rule
+	userTopic := "0x000000000000000000000000" + userAddr[2:]
+	log2 := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	// Log 3: user is NOT "from" and "to" is NOT target — should be hidden
+	log3 := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(log1),
+		json.RawMessage(log2),
+		json.RawMessage(log3),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	if len(result) != 2 {
+		t.Errorf("expected 2 logs (mixed self+custom rules, OR semantics), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_CaseInsensitive(t *testing.T) {
+	// Custom address value should match case-insensitively.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	// mustBe in lowercase
+	targetAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	// Topic in mixed case
+	targetTopicMixedCase := "0x000000000000000000000000AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	otherTopic := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: targetAddr},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + targetTopicMixedCase + `","` + otherTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (case-insensitive custom address match), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
+	// Custom hex value matching on a non-indexed address param (decoded from data).
+	// Event: Approval(address indexed owner, address indexed spender, uint256 value)
+	// We want to constrain the non-indexed "value" param.
+	// Instead, let's use a simpler event: Deposit(address indexed to, uint256 amount, address refundAddr)
+	// where refundAddr is non-indexed and we constrain it.
+	eventABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "amount", "type": "uint256"},
+			{"indexed": false, "name": "refundAddr", "type": "address"}
+		],
+		"name": "Deposit",
+		"type": "event"
+	}]`
+
+	// Compute the real topic0 for Deposit(address,uint256,address).
+	topic0 := "0x" + hex.EncodeToString(crypto.Keccak256([]byte("Deposit(address,uint256,address)")))
+
+	toTopic := "0x0000000000000000000000001111111111111111111111111111111111111111"
+	targetRefund := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	// ABI-encoded: amount(uint256)=100 + refundAddr(address)=targetRefund
+	// uint256 100 = 0x64
+	amountEncoded := "0000000000000000000000000000000000000000000000000000000000000064"
+	refundEncoded := "000000000000000000000000" + targetRefund[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: topic0,
+						Name:   "Deposit",
+						ParamRules: []ParamRule{
+							{Index: 2, MustBe: targetRefund}, // refundAddr must be target
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + toTopic + `"],"data":"0x` + amountEncoded + refundEncoded + `"}`
+	// Log with a different refund address
+	wrongRefund := "000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	logNoMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + toTopic + `"],"data":"0x` + amountEncoded + wrongRefund + `"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logMatch),
+		json.RawMessage(logNoMatch),
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (custom address match on non-indexed param), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
+	// Custom bool matching on an indexed bool param.
+	eventABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "active", "type": "bool"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "StatusChanged",
+		"type": "event"
+	}]`
+
+	topic0 := "0x" + hex.EncodeToString(crypto.Keccak256([]byte("StatusChanged(bool,uint256)")))
+	trueTopic := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	falseTopic := "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: topic0,
+						Name:   "StatusChanged",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: "0x01"}, // active must be true
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logTrue := `{"address":"0xcontract1","topics":["` + topic0 + `","` + trueTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	logFalse := `{"address":"0xcontract1","topics":["` + topic0 + `","` + falseTopic + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logTrue),
+		json.RawMessage(logFalse),
+	}
+
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (bool=true match), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
+	// Without ABI, custom hex matching falls back to direct topic comparison.
+	topic0 := "0xabc0000000000000000000000000000000000000000000000000000000000000"
+	targetValue := "0x000000000000000000000000000000000000000000000000000000000000002a"
+	otherValue := "0x0000000000000000000000000000000000000000000000000000000000000063"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0: topic0,
+						Name:   "SomeEvent",
+						ParamRules: []ParamRule{
+							{Index: 0, MustBe: targetValue}, // topics[1] must match
+						},
+					},
+				},
+			},
+		},
+	}
+
+	logMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + targetValue + `"],"data":"0x"}`
+	logNoMatch := `{"address":"0xcontract1","topics":["` + topic0 + `","` + otherValue + `"],"data":"0x"}`
+
+	logs := []json.RawMessage{
+		json.RawMessage(logMatch),
+		json.RawMessage(logNoMatch),
+	}
+
+	// No ABI provider
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, nil)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (no-ABI fallback topic compare), got %d", len(result))
+	}
+}
+
+func TestValidateParamRuleMustBe(t *testing.T) {
+	tests := []struct {
+		name    string
+		mustBe  string
+		wantOK  bool
+	}{
+		{"self is valid", "self", true},
+		{"valid address hex", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true},
+		{"valid 32-byte hex", "0x000000000000000000000000000000000000000000000000000000000000002a", true},
+		{"valid short hex (1 byte)", "0x01", true},
+		{"valid bool false", "0x00", true},
+		{"empty string", "", false},
+		{"no 0x prefix", "aaaa", false},
+		{"just 0x", "0x", false},
+		{"odd hex chars", "0xaaa", false},
+		{"too long (33 bytes)", "0x" + "aa" + "0000000000000000000000000000000000000000000000000000000000000000", false},
+		{"invalid hex chars", "0xgggg", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errMsg := ValidateParamRuleMustBe(tt.mustBe)
+			gotOK := errMsg == ""
+			if gotOK != tt.wantOK {
+				if tt.wantOK {
+					t.Errorf("ValidateParamRuleMustBe(%q) returned error %q, want valid", tt.mustBe, errMsg)
+				} else {
+					t.Errorf("ValidateParamRuleMustBe(%q) returned valid, want error", tt.mustBe)
+				}
 			}
 		})
 	}

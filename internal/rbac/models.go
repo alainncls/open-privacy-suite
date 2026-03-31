@@ -182,14 +182,14 @@ type FunctionRule struct {
 	ParamRules []ParamRule `json:"param_rules,omitempty"`
 }
 
-// ParamRule constrains a single ABI parameter of a function call.
+// ParamRule constrains a single ABI parameter of a function call or event.
 type ParamRule struct {
 	Index  int    `json:"index"`   // ABI parameter position (0-based)
-	MustBe string `json:"must_be"` // constraint type: "self" for now
+	MustBe string `json:"must_be"` // "self" (caller's address) or "0x..." (literal hex value)
 }
 
 // EventRule describes access to a single event (identified by topic0 hash),
-// with optional parameter-level constraints for "self" filtering.
+// with optional parameter-level constraints.
 type EventRule struct {
 	Topic0     string      `json:"topic0"`                // keccak256(EventName(paramTypes)) — 32-byte hex with 0x prefix
 	Name       string      `json:"name"`                  // human-readable event name, from ABI
