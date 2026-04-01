@@ -153,18 +153,18 @@ function EventParamConstraint({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <code className="font-mono text-xs text-neutral-700 min-w-[80px]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <code className="font-mono text-xs text-neutral-700">
           {param.name || `param[${param.index}]`}
         </code>
         {param.indexed && (
-          <span className="px-1 py-0.5 rounded text-[10px] bg-neutral-200 text-neutral-500">indexed</span>
+          <span className="px-1 py-0.5 rounded text-[10px] bg-neutral-200 text-neutral-500">idx</span>
         )}
         <span className="text-[10px] text-neutral-400">{param.type}</span>
         <select
           value={constraintMode}
           onChange={e => handleModeChange(e.target.value)}
-          className="ml-auto px-2 py-1 text-xs border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+          className="ml-auto px-1.5 py-1 text-xs border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary max-w-[160px]"
         >
           {options.map(opt => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -172,14 +172,14 @@ function EventParamConstraint({
         </select>
       </div>
       {constraintMode === 'custom' && (
-        <div className="ml-[80px] pl-2 space-y-1">
+        <div className="pl-2 space-y-1">
           <div className="flex items-center gap-1.5">
             <input
               type="text"
               value={localCustom}
               onChange={e => { setLocalCustom(e.target.value); setCustomError(''); }}
               placeholder={getCustomPlaceholder(param.type)}
-              className="flex-1 px-2 py-1 text-xs font-mono border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 min-w-0 px-2 py-1 text-xs font-mono border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCustomApply(); } }}
             />
             <button
