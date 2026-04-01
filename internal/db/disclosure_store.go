@@ -1530,3 +1530,43 @@ func (d *DB) ListAllDisclosureGrantsForTarget(ctx context.Context, targetUserID 
 func (d *DB) ListAllGrantsForTarget(ctx context.Context, targetUserID string) ([]*disclosure.GrantWithRequest, error) {
 	return d.ListAllDisclosureGrantsForTarget(ctx, targetUserID)
 }
+
+// ViewerHasFullDisclosureGrant checks whether viewerDID has an active disclosure
+// grant with "full" disclosure level that covers the given target address.
+//
+// The check joins disclosure_grants → disclosure_requests → users → eth_address_links
+// to verify:
+//   1. The grant is active (not expired, not revoked)
+//   2. The requester_did matches the viewer
+//   3. The target user owns the address
+//   4. The grant scope has disclosure_level = "full"
+//
+// This is used by address-specific explorer endpoints to upgrade visibility for
+// full disclosure recipients without modifying GetBatchVisibility (G17 preserved).
+func (d *DB) ViewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) (bool, error) {
+	if viewerDID == "" || targetAddress == "" {
+		return false, nil
+	}
+
+	query := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM disclosure_grants g
+			JOIN disclosure_requests r ON g.request_id = r.id
+			JOIN users u ON r.target_user_id = u.id
+			JOIN eth_address_links eal ON eal.did = u.external_id
+			WHERE r.requester_did = $1
+			  AND LOWER(eal.eth_address) = LOWER($2)
+			  AND eal.revoked = false
+			  AND g.revoked_at IS NULL
+			  AND g.expires_at > NOW()
+			  AND g.scope->>'disclosure_level' = 'full'
+		)`
+
+	var exists bool
+	err := d.conn.QueryRowContext(ctx, query, viewerDID, targetAddress).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check disclosure grant: %w", err)
+	}
+	return exists, nil
+}

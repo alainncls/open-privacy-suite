@@ -2387,6 +2387,240 @@ func TestRedactTransactions_ContractCreationVisibleDeployer(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// AddressMetadata tests — verify the metadata map is populated with the correct
+// visibility reason for each address in redacted transactions.
+// ---------------------------------------------------------------------------
+
+// mockDBDetailed is a mock that allows injecting specific AddressVisibility
+// entries with fine-grained reasons (own_address, rbac_group_member, etc.).
+type mockDBDetailed struct {
+	visMap      VisibilityMap
+	detailedMap map[string]AddressVisibility
+	linkedAddrs []string
+	err         error
+}
+
+func (m *mockDBDetailed) GetBatchVisibility(_ context.Context, _ string, _ []string) (VisibilityMap, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.visMap, nil
+}
+
+func (m *mockDBDetailed) GetBatchVisibilityDetailed(_ context.Context, _ string, _ []string) (map[string]AddressVisibility, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.detailedMap, nil
+}
+
+func (m *mockDBDetailed) GetLinkedAddresses(_ context.Context, _ string) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.linkedAddrs, nil
+}
+
+func newEngineDetailed(visMap VisibilityMap, detailedMap map[string]AddressVisibility, linkedAddrs []string) *RedactionEngine {
+	return &RedactionEngine{store: nil, db: &mockDBDetailed{
+		visMap:      visMap,
+		detailedMap: detailedMap,
+		linkedAddrs: linkedAddrs,
+	}}
+}
+
+func TestRedactTransactions_AddressMetadata_OwnAddress(t *testing.T) {
+	// When the viewer owns an address (own_address reason), the metadata should
+	// reflect that.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityFull, bob: VisibilityFull},
+		map[string]AddressVisibility{
+			alice: {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			bob:   {Level: VisibilityFull, Reason: ReasonPublicAddress},
+		},
+		nil,
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].AddressMetadata == nil {
+		t.Fatal("AddressMetadata should not be nil")
+	}
+	if result[0].AddressMetadata[alice] != ReasonOwnAddress {
+		t.Errorf("expected own_address for alice, got %q", result[0].AddressMetadata[alice])
+	}
+	if result[0].AddressMetadata[bob] != ReasonPublicAddress {
+		t.Errorf("expected public_address for bob, got %q", result[0].AddressMetadata[bob])
+	}
+}
+
+func TestRedactTransactions_AddressMetadata_RBACGroupMember(t *testing.T) {
+	// A contract granted via RBAC group membership should have rbac_group_member reason.
+	viewer := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	contract := "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	engine := newEngineDetailed(
+		VisibilityMap{viewer: VisibilityFull, contract: VisibilityFull},
+		map[string]AddressVisibility{
+			viewer:   {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			contract: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		nil,
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: viewer, To: strPtr(contract), Value: "500"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].AddressMetadata[contract] != ReasonRBACGroupMember {
+		t.Errorf("expected rbac_group_member for contract, got %q", result[0].AddressMetadata[contract])
+	}
+}
+
+func TestRedactTransactions_AddressMetadata_ParticipantOverride(t *testing.T) {
+	// When the viewer is a participant and the counterparty is base-level hidden,
+	// the metadata should show participant_override for the counterparty.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityFull, bob: VisibilityHidden},
+		map[string]AddressVisibility{
+			alice: {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			bob:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+		},
+		[]string{alice}, // alice is linked to the viewer
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Alice should see Bob's real address (participant override)
+	if *result[0].To != bob {
+		t.Errorf("expected Bob's real address via participant override, got %s", *result[0].To)
+	}
+	// Bob's metadata reason should be participant_override, not no_access
+	if result[0].AddressMetadata[bob] != ReasonParticipantOverride {
+		t.Errorf("expected participant_override for Bob, got %q", result[0].AddressMetadata[bob])
+	}
+	// Alice's metadata should still show own_address
+	if result[0].AddressMetadata[alice] != ReasonOwnAddress {
+		t.Errorf("expected own_address for Alice, got %q", result[0].AddressMetadata[alice])
+	}
+}
+
+func TestRedactTransactions_AddressMetadata_NoAccess(t *testing.T) {
+	// When one side is hidden and the viewer is NOT a participant, the hidden
+	// address shows as [PRIVATE] and no metadata reason is set for it (the address
+	// is replaced, so metadata for the original address is not included).
+	viewer := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	hidden := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{viewer: VisibilityFull, hidden: VisibilityHidden},
+		map[string]AddressVisibility{
+			viewer: {Level: VisibilityFull, Reason: ReasonPublicAddress},
+			hidden: {Level: VisibilityHidden, Reason: ReasonNoAccess},
+		},
+		nil, // no linked addresses — viewer is NOT a participant
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: viewer, To: strPtr(hidden), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:outsider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Hidden address should be replaced with [PRIVATE]
+	if *result[0].To != "[PRIVATE]" {
+		t.Errorf("expected [PRIVATE] for hidden address, got %s", *result[0].To)
+	}
+	// Viewer's metadata should be present
+	if result[0].AddressMetadata[viewer] != ReasonPublicAddress {
+		t.Errorf("expected public_address for viewer, got %q", result[0].AddressMetadata[viewer])
+	}
+}
+
+func TestRedactTransactions_AddressMetadata_DisclosureGrant(t *testing.T) {
+	// When an address is visible via a disclosure grant, the metadata should
+	// reflect disclosure_grant as the reason.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	disclosed := "0xdddddddddddddddddddddddddddddddddddddd"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityFull, disclosed: VisibilityFull},
+		map[string]AddressVisibility{
+			alice:     {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			disclosed: {Level: VisibilityFull, Reason: ReasonDisclosureGrant},
+		},
+		nil,
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: alice, To: strPtr(disclosed), Value: "100"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].AddressMetadata[disclosed] != ReasonDisclosureGrant {
+		t.Errorf("expected disclosure_grant for disclosed address, got %q", result[0].AddressMetadata[disclosed])
+	}
+}
+
+func TestRedactTransactions_AddressMetadata_AlwaysPopulated(t *testing.T) {
+	// Even for fully visible transactions, AddressMetadata should be non-nil and
+	// contain entries for all involved addresses.
+	addr1 := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	addr2 := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{addr1: VisibilityFull, addr2: VisibilityFull},
+		map[string]AddressVisibility{
+			addr1: {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			addr2: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		nil,
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: addr1, To: strPtr(addr2), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if result[0].AddressMetadata == nil {
+		t.Fatal("AddressMetadata must not be nil for redacted transactions")
+	}
+	if len(result[0].AddressMetadata) != 2 {
+		t.Errorf("expected 2 entries in AddressMetadata, got %d", len(result[0].AddressMetadata))
+	}
+}
+
 // TestRedactTransactions_ContractCreationRedactedDeployer verifies that redacted
 // (not just hidden) deployers also get their contract creations dropped.
 func TestRedactTransactions_ContractCreationRedactedDeployer(t *testing.T) {

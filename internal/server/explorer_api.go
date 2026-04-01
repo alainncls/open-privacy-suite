@@ -69,10 +69,11 @@ const (
 // ResolveAddressResponse is returned when resolving an address_id.
 // SECURITY: RealAddress is only populated for "full" disclosure level.
 type ResolveAddressResponse struct {
-	RealAddress     *string `json:"real_address,omitempty"`
-	DisclosureLevel string  `json:"disclosure_level"`
-	GrantID         string  `json:"grant_id"`
-	Pseudonym       string  `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	RealAddress     *string  `json:"real_address,omitempty"`
+	DisclosureLevel string   `json:"disclosure_level"`
+	GrantID         string   `json:"grant_id"`
+	Pseudonym       string   `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	ScopeMethods    []string `json:"scope_methods,omitempty"` // Methods from grant scope (e.g. "transaction_history", "activity_logs")
 }
 
 // GrantTransactionsResponse is the response for GET /api/v1/explorer/grant/:grant_id/:address_id/transactions
@@ -407,6 +408,7 @@ func (s *Server) resolveAddressID(c *gin.Context) {
 	response := ResolveAddressResponse{
 		DisclosureLevel: disclosureLevel,
 		GrantID:         grantID,
+		ScopeMethods:    grant.Scope.Methods,
 	}
 
 	// SECURITY: Only include real address for full disclosure.
@@ -723,6 +725,66 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 	}
 }
 
+// viewerHasFullDisclosureGrant checks if the authenticated viewer has an active
+// full-disclosure grant on the target address. This is used by address-specific
+// endpoints to allow full disclosure recipients to view address pages.
+//
+// NOTE: This does NOT modify GetBatchVisibility (G17 preserved). The check is
+// performed only in address-specific endpoint handlers where the target address
+// is already known from the URL path — no information is leaked because the
+// viewer explicitly navigated to that address.
+func (s *Server) viewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) bool {
+	if viewerDID == "" || targetAddress == "" {
+		return false
+	}
+	has, err := s.db.ViewerHasFullDisclosureGrant(ctx, viewerDID, targetAddress)
+	if err != nil {
+		return false
+	}
+	return has
+}
+
+// addressVisibleOrFullGrant returns true if the address is visible via standard
+// RBAC/ownership checks OR the viewer has a full disclosure grant on it.
+// Used by address-specific endpoints (not transaction lists) to upgrade visibility.
+func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerWallet, viewerDID, address string) bool {
+	visibility := s.calculateAddressVisibilityWithDID(ctx, viewerWallet, viewerDID, address)
+	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
+		return true
+	}
+	// G17-safe: Only check disclosure grants for the specific address the viewer
+	// navigated to. This cannot leak grant existence to attackers because the
+	// viewer already knows the address (it's in the URL they requested).
+	resolvedDID := s.resolveViewerDID(ctx, viewerWallet, viewerDID)
+	return s.viewerHasFullDisclosureGrant(ctx, resolvedDID, address)
+}
+
+// addDisclosureAddressToFilter returns a copy of the visibility filter with the
+// disclosure address added to the visible set. This ensures that transaction
+// counts and filtered queries include transactions involving the disclosed address.
+func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter, address string) *explorer.VisibilityFilter {
+	if filter == nil {
+		return &explorer.VisibilityFilter{
+			AllPrivate:       true,
+			VisibleAddresses: []string{address},
+		}
+	}
+	// Check if already present
+	for _, addr := range filter.VisibleAddresses {
+		if addr == address {
+			return filter
+		}
+	}
+	// Copy to avoid mutating the original
+	newFilter := &explorer.VisibilityFilter{
+		AllPrivate:       filter.AllPrivate,
+		VisibleAddresses: make([]string, len(filter.VisibleAddresses)+1),
+	}
+	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
+	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
+	return newFilter
+}
+
 func (s *Server) getExplorerChainID(c *gin.Context) {
 	// Approximation: return 1 or get from proxy if needed
 	c.JSON(http.StatusOK, gin.H{"chain_id": 1})
@@ -987,10 +1049,9 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	}
 	address := c.Param("address")
 
-	// Pre-authorization check: Can they even see this address?
+	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found to avoid info leaks
 		return
 	}
@@ -1007,6 +1068,15 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 	// block transaction count (RD-758).
 	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
 	filter := s.buildVisibilityFilter(c.Request.Context(), resolvedDID)
+
+	// If the viewer can see this address via disclosure grant, ensure the
+	// target address is in the visibility filter's allowlist so the filtered
+	// tx count includes transactions involving this address.
+	normalizedAddr := strings.ToLower(address)
+	if s.viewerHasFullDisclosureGrant(c.Request.Context(), resolvedDID, normalizedAddr) {
+		filter = s.addDisclosureAddressToFilter(filter, normalizedAddr)
+	}
+
 	filteredCount, err := s.explorerStore.GetAddressTransactionCountFiltered(c.Request.Context(), address, filter)
 	if err == nil {
 		stats.TxCount = filteredCount
@@ -1029,10 +1099,9 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 		}
 	}
 
-	// Pre-authorization check: Can they even see this address?
+	// Pre-authorization check: Can they see this address via RBAC or full disclosure grant?
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found") // Masking forbidden as not found
 		return
 	}
@@ -1304,8 +1373,7 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1343,8 +1411,7 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1383,8 +1450,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1437,8 +1503,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1479,8 +1544,7 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1517,8 +1581,7 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1555,8 +1618,7 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
@@ -1589,8 +1651,7 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 	address := strings.ToLower(c.Param("address"))
 
 	viewerWallet, viewerDID := getViewerIdentity(c)
-	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if !s.addressVisibleOrFullGrant(c.Request.Context(), viewerWallet, viewerDID, address) {
 		respondNotFound(c, "address not found")
 		return
 	}
