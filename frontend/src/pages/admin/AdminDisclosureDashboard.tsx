@@ -45,6 +45,7 @@ import type {
 } from '@/types/disclosure';
 import {
   DISCLOSURE_LEVEL_LABELS,
+  SCOPE_LABELS,
 } from '@/types/disclosure';
 
 type TabValue = 'active' | 'pending' | 'inactive';
@@ -366,19 +367,28 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                         {request.requester_did || '-'}
                       </TableCell>
                       <TableCell>
-                        {request.disclosure_level && (
-                          <Badge
-                            variant={
-                              request.disclosure_level === 'full'
-                                ? 'destructive'
-                                : request.disclosure_level === 'redacted'
-                                ? 'success'
-                                : 'warning'
-                            }
-                          >
-                            {DISCLOSURE_LEVEL_LABELS[request.disclosure_level]}
-                          </Badge>
-                        )}
+                        <div className="space-y-1">
+                          {request.disclosure_level && (
+                            <Badge
+                              variant={
+                                request.disclosure_level === 'full'
+                                  ? 'destructive'
+                                  : request.disclosure_level === 'redacted'
+                                  ? 'success'
+                                  : 'warning'
+                              }
+                            >
+                              {DISCLOSURE_LEVEL_LABELS[request.disclosure_level]}
+                            </Badge>
+                          )}
+                          {request.scope && request.scope.length > 0 && (
+                            <div className="flex flex-wrap gap-0.5">
+                              {request.scope.map((s) => (
+                                <span key={s} className="text-[10px] text-neutral-400">{SCOPE_LABELS[s] || s}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm text-neutral-500">
                         {formatDate(request.created_at)}
@@ -680,6 +690,18 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                 <div>
                   <label className="text-xs text-neutral-500 uppercase tracking-wide">Requester DID</label>
                   <p className="font-mono text-sm break-all">{selectedRequest.requester_did || '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-500 uppercase tracking-wide">Data Access Scope</label>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {selectedRequest.scope && selectedRequest.scope.length > 0
+                      ? selectedRequest.scope.map((s) => (
+                          <span key={s} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-50 text-primary-700">
+                            {SCOPE_LABELS[s] || s}
+                          </span>
+                        ))
+                      : <span className="text-neutral-400 text-sm">-</span>}
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs text-neutral-500 uppercase tracking-wide">Disclosure Level</label>
