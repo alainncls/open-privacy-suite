@@ -133,6 +133,49 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 			"admin group member must have VisibilityFull for their org contract")
 	})
 
+	t.Run("admin via group_access.claims sees Full on ALL org contracts (G11 regression)", func(t *testing.T) {
+		// This is the real-world admin pattern: group_access.claims={admin},
+		// is_org_admin=false, NO explicit contract_grant. The admin should see
+		// ALL contracts in their org, not just granted ones.
+		// Regression: PR #87 (RD-789) dropped the group_access.claims check.
+		const claimsAdminDID = "did:privado:claims_admin_member"
+
+		// Create a second contract in the same org with no grants at all
+		ungrantedAddr := "0xaaaa000000000000000000000000000000000099"
+		ungrantedContractID := uuid.New().String()
+		var orgID string
+		err := database.Conn().QueryRowContext(ctx,
+			"SELECT org_id FROM groups WHERE id = $1", groupID).Scan(&orgID)
+		require.NoError(t, err)
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, 'Ungranted Contract')",
+			ungrantedContractID, orgID, ungrantedAddr)
+		require.NoError(t, err)
+
+		// Create admin group: is_org_admin=false, but group_access.claims={admin}
+		claimsAdminGroupID := uuid.New().String()
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'claims-admins', 'Claims Admins', 0, 'claims-admins', false)",
+			claimsAdminGroupID, orgID)
+		require.NoError(t, err)
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO group_access (id, group_id, claims) VALUES ($1, $2, '{admin}')",
+			uuid.New().String(), claimsAdminGroupID)
+		require.NoError(t, err)
+
+		addMember(t, database, claimsAdminDID, claimsAdminGroupID)
+
+		// Admin via claims must see BOTH contracts — the granted one AND the ungranted one
+		visMap, err := database.GetBatchVisibility(ctx, claimsAdminDID, []string{privateAddr, ungrantedAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
+			"admin via group_access.claims must see granted contract as Full")
+		assert.Equal(t, explorer.VisibilityFull, visMap[ungrantedAddr],
+			"admin via group_access.claims must see UNGRANTED org contract as Full — "+
+				"this is the G11 regression: without the group_access.claims check, "+
+				"admins only see explicitly granted contracts")
+	})
+
 	t.Run("contract admin via grant sees Full", func(t *testing.T) {
 		const grantAdminDID = "did:privado:grant_admin_member"
 
@@ -588,14 +631,17 @@ func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
 				"explorer visibility aligns with RPC access")
 	})
 
-	t.Run("group_access admin claim but no grant = VisibilityRedacted", func(t *testing.T) {
+	t.Run("group_access admin claim without grant sees Full on ALL org contracts", func(t *testing.T) {
+		// Admin via group_access.claims should see ALL contracts in their org,
+		// not just those with explicit contract_grants. This is the core G11 fix.
 		const memberDID = "did:test:g11_admin_no_grant_member"
 		addMember(t, database, memberDID, noGrantGroupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
-			"member of group with 'admin' in group_access.claims but NO contract_grant must NOT get VisibilityFull")
+		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
+			"admin via group_access.claims must see ALL org contracts as Full — "+
+				"this is the G11 regression fix: admin sees everything in their org")
 	})
 
 	t.Run("is_org_admin still works", func(t *testing.T) {

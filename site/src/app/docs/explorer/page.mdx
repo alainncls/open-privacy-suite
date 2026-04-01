@@ -182,7 +182,7 @@ The participant override also extends to **transaction logs**: when a viewer is 
 
 Any user whose group has a **contract grant** on a contract sees it with **full visibility** in the explorer — the contract name, address, and all associated transaction data are shown unredacted. This aligns explorer visibility with RPC access: if you can `eth_call` on a contract, hiding its name in the explorer would be security theater.
 
-**Org admins** (`is_org_admin` group) see all contracts in their org with full visibility, even without explicit grants.
+**Org admins** (`is_org_admin` group or `admin` in `group_access.claims`) see all contracts in their org with full visibility, even without explicit per-contract grants.
 
 However, **individual user wallets (EOAs) remain private** even to org admins and grant holders:
 
