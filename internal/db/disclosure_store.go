@@ -1003,6 +1003,73 @@ func (d *DB) GetActivityLogs(ctx context.Context, userExternalID string, scope *
 	return d.GetDisclosureActivityLogs(ctx, userExternalID, scope, limit, offset)
 }
 
+// GetActivityLogsForGrant returns activity log entries scoped to a specific disclosure grant.
+// It resolves the grant's target user and time bounds, then queries access_logs for entries
+// within those bounds. Only method, status_code, and created_at are returned -- sensitive
+// fields (ip_address, request_params, correlation_id) are never selected.
+//
+// The time-bound filtering is done entirely in SQL (using a subquery for the grant's
+// granted_at/expires_at) to avoid timezone mismatches between Go time.Time and
+// PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns.
+func (d *DB) GetActivityLogsForGrant(ctx context.Context, grantID string, limit, offset int) ([]disclosure.ActivityLogEntry, int, error) {
+	// Single query that joins through grant → request → user to get time bounds and external_id,
+	// then filters access_logs. This avoids round-trips and timezone conversion issues.
+	countQuery := `
+		SELECT COUNT(*)
+		FROM access_logs al
+		JOIN (
+			SELECT u.external_id, g.granted_at, g.expires_at
+			FROM disclosure_grants g
+			JOIN disclosure_requests dr ON dr.id = g.request_id
+			JOIN users u ON u.id = dr.target_user_id
+			WHERE g.id = $1
+		) grant_info ON al.external_id = grant_info.external_id
+		WHERE al.created_at >= grant_info.granted_at
+		  AND al.created_at <= grant_info.expires_at`
+
+	var total int
+	err := d.conn.QueryRowContext(ctx, countQuery, grantID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count activity logs for grant: %w", err)
+	}
+
+	// SECURITY: only select method, status_code, created_at
+	dataQuery := `
+		SELECT al.method, al.status_code, al.created_at
+		FROM access_logs al
+		JOIN (
+			SELECT u.external_id, g.granted_at, g.expires_at
+			FROM disclosure_grants g
+			JOIN disclosure_requests dr ON dr.id = g.request_id
+			JOIN users u ON u.id = dr.target_user_id
+			WHERE g.id = $1
+		) grant_info ON al.external_id = grant_info.external_id
+		WHERE al.created_at >= grant_info.granted_at
+		  AND al.created_at <= grant_info.expires_at
+		ORDER BY al.created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := d.conn.QueryContext(ctx, dataQuery, grantID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query activity logs for grant: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []disclosure.ActivityLogEntry
+	for rows.Next() {
+		var entry disclosure.ActivityLogEntry
+		if err := rows.Scan(&entry.Method, &entry.StatusCode, &entry.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan activity log entry: %w", err)
+		}
+		logs = append(logs, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return logs, total, nil
+}
+
 func (d *DB) GetActivitySummary(ctx context.Context, userExternalID string, scope *disclosure.Scope) (*disclosure.ActivitySummary, error) {
 	return d.GetDisclosureActivitySummary(ctx, userExternalID, scope)
 }
