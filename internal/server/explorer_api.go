@@ -118,6 +118,8 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		explorer.GET("/grant/:grant_id/resolve/:address_id", s.resolveAddressID)
 		// Grant-scoped transactions for a disclosed address
 		explorer.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
+		// Grant-scoped activity logs (user-facing, JWT required)
+		explorer.GET("/grant/:grant_id/activity", s.getGrantActivityLogs)
 
 		// Data Retrieval Endpoints
 		explorer.GET("/chain-id", s.getExplorerChainID)
@@ -646,6 +648,122 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		DisclosureLevel: disclosureLevel,
 		AddressLabels:   labels,
 		HasMore:         hasMore,
+	})
+}
+
+// GrantActivityLogsResponse is the response for GET /api/v1/explorer/grant/:grant_id/activity
+type GrantActivityLogsResponse struct {
+	Logs   []GrantActivityLogEntry `json:"logs"`
+	Total  int                     `json:"total"`
+	Limit  int                     `json:"limit"`
+	Offset int                     `json:"offset"`
+}
+
+// GrantActivityLogEntry is a stripped-down log entry safe for grant holders.
+// SECURITY: Does NOT include request_params, ip_address, correlation_id, or entry_hash.
+type GrantActivityLogEntry struct {
+	Method     string `json:"method"`
+	StatusCode int    `json:"status_code"`
+	Timestamp  string `json:"timestamp"` // RFC 3339
+}
+
+// getGrantActivityLogs returns activity logs scoped to a disclosure grant.
+// GET /api/v1/explorer/grant/:grant_id/activity
+//
+// SECURITY:
+//   - JWT required -- anonymous requests are rejected.
+//   - Grant holder verification: the viewer's DID must match the grant's requester_did.
+//   - Scope check: grant must include "activity_logs" or "full_disclosure".
+//   - Time-bounded: only logs within the grant's validity period are returned.
+//   - Stripped response: only method, status_code, and timestamp are returned.
+//   - Uniform 404 for "not found" and "not your grant" to prevent enumeration.
+func (s *Server) getGrantActivityLogs(c *gin.Context) {
+	grantID := c.Param("grant_id")
+	if grantID == "" {
+		respondBadRequest(c, "grant_id is required")
+		return
+	}
+
+	// 1. JWT required -- reject anonymous
+	viewerDID := s.getViewerDIDFromRequest(c)
+	if viewerDID == "" {
+		respondUnauthorized(c, "authentication required")
+		return
+	}
+
+	// 2. Look up the grant with its request
+	grantWithRequest, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
+	if err != nil || grantWithRequest == nil {
+		// Uniform 404 prevents enumeration
+		respondNotFound(c, "grant not found")
+		return
+	}
+
+	grant := grantWithRequest.Grant
+	request := grantWithRequest.Request
+
+	// 3. Grant holder verification: viewer DID must match requester_did
+	if request.RequesterDID != viewerDID {
+		// Same 404 -- do not reveal that the grant exists
+		respondNotFound(c, "grant not found")
+		return
+	}
+
+	// 4. Check grant is still active (not expired, not revoked)
+	if grant.RevokedAt != nil || grant.ExpiresAt.Before(time.Now()) {
+		respondNotFound(c, "grant not found")
+		return
+	}
+
+	// 5. Scope check: must include "activity_logs" or "full_disclosure"
+	hasScope := false
+	for _, m := range grant.Scope.Methods {
+		if m == "activity_logs" || m == "full_disclosure" {
+			hasScope = true
+			break
+		}
+	}
+	if !hasScope {
+		respondForbidden(c, "grant scope does not include activity_logs")
+		return
+	}
+
+	// 6. Parse pagination
+	limit := 25
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	// 7. Query activity logs scoped to grant time bounds
+	logs, total, err := s.db.GetActivityLogsForGrant(c.Request.Context(), grantID, limit, offset)
+	if err != nil {
+		respondInternalError(c, "failed to get activity logs")
+		return
+	}
+
+	// 8. Build stripped response
+	entries := make([]GrantActivityLogEntry, 0, len(logs))
+	for _, log := range logs {
+		entries = append(entries, GrantActivityLogEntry{
+			Method:     log.Method,
+			StatusCode: log.StatusCode,
+			Timestamp:  log.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, GrantActivityLogsResponse{
+		Logs:   entries,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
 	})
 }
 
