@@ -360,7 +360,7 @@ func (m *MockStore) DeleteSharedInfrastructure(ctx context.Context, address stri
 	return nil
 }
 
-func (m *MockStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (m *MockStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

@@ -166,7 +166,7 @@ func (s *deployValidatorTestStore) DeletePreregisteredAddressByAddress(ctx conte
 	return nil
 }
 
-func (s *deployValidatorTestStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (s *deployValidatorTestStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

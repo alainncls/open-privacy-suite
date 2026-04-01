@@ -146,7 +146,7 @@ func (m *MockOrgContextStore) GetConstructorABI(ctx context.Context, orgID, addr
 func (m *MockOrgContextStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
 func (m *MockOrgContextStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) { return nil, nil }
 func (m *MockOrgContextStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
-func (m *MockOrgContextStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error { return nil }
+func (m *MockOrgContextStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error { return nil }
 
 // Shared infrastructure stubs
 func (m *MockOrgContextStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) { return false, nil }

@@ -55,7 +55,6 @@ func (s *Server) createGroup(c *gin.Context) {
 		IsOrgAdmin  bool    `json:"is_org_admin"`
 	}
 	// Note: auto_created is intentionally NOT accepted from API input.
-	// Only the system (CreateDeployerAutoGrants) should set it.
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

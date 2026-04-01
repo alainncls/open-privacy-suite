@@ -3,12 +3,10 @@ package db
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"privacy-proxy/internal/rbac"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // CreateContractWithGrant creates a contract and its initial grant atomically.
@@ -158,83 +156,41 @@ func (d *DB) EnsureUserExistsWithMembership(ctx context.Context, user *rbac.User
 	return resultUser, err
 }
 
-// CreateDeployerAutoGrants atomically creates a deployer auto-grant group with:
-// - A group (auto_created: true) with a descriptive name
-// - Group access with [deploy] claims (expanded to [deploy, read, write])
-// - A membership for the deployer user
-// - A contract grant linking the group to the contract
+// GrantContractToDeployerGroup finds the deployer's existing group with the
+// deploy claim in the given org and adds a contract_grant linking the contract
+// to that group. No new group is created — the admin must have pre-created a
+// group with the deploy claim and added the deployer as a member.
 //
-// This is called after a contract is auto-registered from a deployment.
-// If any step fails, the entire operation is rolled back (no orphaned groups).
-func (d *DB) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
-	// Build a human-readable name: "Deploy by <short_id> · Mar 20"
-	shortID := deployerExternalID
-	if len(shortID) > 16 {
-		shortID = shortID[:16]
-	}
-	dateSuffix := time.Now().Format("Jan 02")
-	groupName := fmt.Sprintf("Deploy by %s · %s", shortID, dateSuffix)
+// Returns an error if the deployer has no group with deploy claim in the org.
+func (d *DB) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
+	// Find the deployer's group with deploy claim in this org.
+	query := `
+		SELECT g.id
+		FROM user_memberships m
+		JOIN groups g ON g.id = m.group_id
+		JOIN group_access ga ON ga.group_id = g.id
+		WHERE m.user_id = $1
+		  AND g.org_id = $2
+		  AND 'deploy' = ANY(ga.claims)
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		LIMIT 1`
 
-	// Slug: deploy-<contract_address_prefix>-<random_suffix>
-	slug := fmt.Sprintf("deploy-%s", uuid.New().String()[:8])
-
-	groupID := uuid.New().String()
-	group := &rbac.Group{
-		ID:          groupID,
-		OrgID:       orgID,
-		Slug:        slug,
-		Name:        groupName,
-		Depth:       0,
-		Path:        slug,
-		AutoCreated: true,
+	var groupID string
+	err := d.conn.QueryRowContext(ctx, query, deployerUserID, orgID).Scan(&groupID)
+	if err != nil {
+		return fmt.Errorf("deployer has no group with deploy claim in org %s: %w", orgID, err)
 	}
 
-	err := d.WithTx(ctx, func(tx *Tx) error {
-		// 1. Create the group
-		if err := tx.CreateGroup(ctx, group); err != nil {
-			return fmt.Errorf("failed to create deployer group: %w", err)
-		}
-
-		// 2. Create group access with deploy claims (expanded)
-		claims := rbac.ExpandClaims([]rbac.Claim{rbac.ClaimDeploy})
-		claimStrs := make([]string, len(claims))
-		for i, c := range claims {
-			claimStrs[i] = string(c)
-		}
-		accessID := uuid.New().String()
-		_, err := tx.tx.ExecContext(ctx,
-			`INSERT INTO group_access (id, group_id, allowed_methods, claims)
-			 VALUES ($1, $2, $3, $4)`,
-			accessID, groupID, pq.Array([]string{"*"}), pq.Array(claimStrs),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create deployer group access: %w", err)
-		}
-
-		// 3. Create membership for the deployer
-		if deployerUserID != "" {
-			membershipID := uuid.New().String()
-			if err := tx.CreateMembership(ctx, &rbac.UserMembership{
-				ID:      membershipID,
-				UserID:  deployerUserID,
-				GroupID: groupID,
-				Source:  rbac.MembershipSourceAdmin,
-			}); err != nil {
-				return fmt.Errorf("failed to create deployer membership: %w", err)
-			}
-		}
-
-		// 4. Create contract grant
-		grantID := uuid.New().String()
-		if err := tx.CreateContractGrant(ctx, &rbac.ContractGrant{
-			ID:         grantID,
-			ContractID: contractID,
-			GroupID:    groupID,
-		}); err != nil {
-			return fmt.Errorf("failed to create deployer contract grant: %w", err)
-		}
-
-		return nil
-	})
-	return err
+	// Add contract grant (idempotent).
+	grantID := uuid.New().String()
+	_, err = d.conn.ExecContext(ctx,
+		`INSERT INTO contract_grants (id, contract_id, group_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (contract_id, group_id) DO NOTHING`,
+		grantID, contractID, groupID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create contract grant: %w", err)
+	}
+	return nil
 }

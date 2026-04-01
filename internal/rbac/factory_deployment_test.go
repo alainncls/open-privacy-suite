@@ -727,7 +727,7 @@ func (s *mockAccessControllerStore) DeletePreregisteredAddressByAddress(ctx cont
 	return nil
 }
 
-func (s *mockAccessControllerStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (s *mockAccessControllerStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

@@ -559,69 +559,103 @@ func TestGroupListFilterByAutoCreated(t *testing.T) {
 	})
 }
 
-func TestCreateDeployerAutoGrants(t *testing.T) {
+func TestGrantContractToDeployerGroup(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 	ctx := context.Background()
 
-	org := createTestOrganization(t, server, "deployer-auto-org")
+	org := createTestOrganization(t, server, "deployer-grant-org")
 
 	// Create a user
 	user := &rbac.User{
 		ID:         uuid.New().String(),
-		ExternalID: "did:test:deployer-auto",
+		ExternalID: "did:test:deployer-grant",
 		Metadata:   map[string]any{},
 	}
 	require.NoError(t, server.db.CreateUser(ctx, user))
 
-	// Create a contract
-	addr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc"
-	contractID := createTestContract(t, server, org.ID, addr, "Auto Grant Contract")
+	// Create a deploy group with deploy claim and add user as member
+	deployGroup := &rbac.Group{
+		ID:    uuid.New().String(),
+		OrgID: org.ID,
+		Slug:  "deployers",
+		Name:  "Deployers",
+		Depth: 0,
+		Path:  "deployers",
+	}
+	require.NoError(t, server.db.CreateGroup(ctx, deployGroup))
+	require.NoError(t, server.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
+		ID:             uuid.New().String(),
+		GroupID:        deployGroup.ID,
+		AllowedMethods: []string{"*"},
+		Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimRead, rbac.ClaimWrite},
+	}))
+	require.NoError(t, server.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID:      uuid.New().String(),
+		UserID:  user.ID,
+		GroupID: deployGroup.ID,
+		Source:  rbac.MembershipSourceAdmin,
+	}))
 
-	// Call CreateDeployerAutoGrants directly
-	err := server.db.CreateDeployerAutoGrants(ctx, org.ID, contractID, user.ID, user.ExternalID)
-	require.NoError(t, err)
+	t.Run("contract granted to existing deploy group", func(t *testing.T) {
+		contractID := createTestContract(t, server, org.ID,
+			"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", "First Contract")
 
-	// Find the auto-created group via contract grants
-	grants, err := server.db.ListContractGrantsByContract(ctx, contractID)
-	require.NoError(t, err)
-	require.NotEmpty(t, grants, "contract should have at least one grant")
+		err := server.db.GrantContractToDeployerGroup(ctx, org.ID, contractID, user.ID)
+		require.NoError(t, err)
 
-	// Find the auto-created group among the grants
-	var autoGroupID string
-	for _, g := range grants {
-		grp, gErr := server.db.GetGroup(ctx, g.GroupID)
-		require.NoError(t, gErr)
-		if grp != nil && grp.AutoCreated {
-			autoGroupID = grp.ID
-			break
+		grants, err := server.db.ListContractGrantsByContract(ctx, contractID)
+		require.NoError(t, err)
+		require.Len(t, grants, 1, "contract should have exactly one grant")
+		assert.Equal(t, deployGroup.ID, grants[0].GroupID,
+			"grant should point to the pre-existing deploy group, not a new one")
+	})
+
+	t.Run("second contract goes to same group", func(t *testing.T) {
+		contractID2 := createTestContract(t, server, org.ID,
+			"0xcccccccccccccccccccccccccccccccccccccccc", "Second Contract")
+
+		err := server.db.GrantContractToDeployerGroup(ctx, org.ID, contractID2, user.ID)
+		require.NoError(t, err)
+
+		grants, err := server.db.ListContractGrantsByContract(ctx, contractID2)
+		require.NoError(t, err)
+		require.Len(t, grants, 1)
+		assert.Equal(t, deployGroup.ID, grants[0].GroupID,
+			"second contract should also be granted to the same deploy group")
+	})
+
+	t.Run("idempotent — duplicate grant is no-op", func(t *testing.T) {
+		// Use direct DB insert to avoid API-level unique address check
+		contractID := uuid.New().String()
+		_, err := server.db.Conn().ExecContext(ctx,
+			"INSERT INTO contracts (id, org_id, address, name) VALUES ($1, $2, $3, $4)",
+			contractID, org.ID, "0xdddddddddddddddddddddddddddddddddddddd", "Third Contract")
+		require.NoError(t, err)
+
+		require.NoError(t, server.db.GrantContractToDeployerGroup(ctx, org.ID, contractID, user.ID))
+		require.NoError(t, server.db.GrantContractToDeployerGroup(ctx, org.ID, contractID, user.ID))
+
+		grants, err := server.db.ListContractGrantsByContract(ctx, contractID)
+		require.NoError(t, err)
+		assert.Len(t, grants, 1, "duplicate call should not create a second grant")
+	})
+
+	t.Run("no deploy group returns error", func(t *testing.T) {
+		// User with no deploy group
+		noDeployUser := &rbac.User{
+			ID:         uuid.New().String(),
+			ExternalID: "did:test:no-deploy-group",
+			Metadata:   map[string]any{},
 		}
-	}
-	require.NotEmpty(t, autoGroupID, "should find an auto-created group via contract grants")
+		require.NoError(t, server.db.CreateUser(ctx, noDeployUser))
 
-	// Verify the group was created with auto_created: true
-	fetchedGroup, err := server.db.GetGroup(ctx, autoGroupID)
-	require.NoError(t, err)
-	require.NotNil(t, fetchedGroup)
-	assert.True(t, fetchedGroup.AutoCreated)
+		contractID := createTestContract(t, server, org.ID,
+			"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "Orphan Contract")
 
-	// Verify group access has deploy claims
-	access, err := server.db.GetGroupAccess(ctx, autoGroupID)
-	require.NoError(t, err)
-	require.NotNil(t, access)
-
-	claimSet := make(map[rbac.Claim]bool)
-	for _, c := range access.Claims {
-		claimSet[c] = true
-	}
-	assert.True(t, claimSet[rbac.ClaimDeploy], "should have deploy claim")
-	assert.True(t, claimSet[rbac.ClaimRead], "should have read claim (expanded)")
-	assert.True(t, claimSet[rbac.ClaimWrite], "should have write claim (expanded)")
-
-	// Verify user has membership in the group
-	members, err := server.db.ListGroupMembers(ctx, autoGroupID)
-	require.NoError(t, err)
-	require.Len(t, members, 1)
-	assert.Equal(t, user.ID, members[0].UserID)
+		err := server.db.GrantContractToDeployerGroup(ctx, org.ID, contractID, noDeployUser.ID)
+		assert.Error(t, err, "should fail when user has no deploy group")
+		assert.Contains(t, err.Error(), "no group with deploy claim")
+	})
 }
 
 func TestContractListSearch(t *testing.T) {
