@@ -1,0 +1,51 @@
+name: Docker Build (Dry Run)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-backend:
+    name: Build Backend Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.backend
+          target: prod
+          push: false
+          tags: gatewayfm/privacy-proxy-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-frontend:
+    name: Build Frontend Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend/
+          file: frontend/Dockerfile
+          target: prod
+          push: false
+          tags: gatewayfm/privacy-proxy-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
