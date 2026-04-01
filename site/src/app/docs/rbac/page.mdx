@@ -46,7 +46,7 @@ The RBAC system uses a **group-centric claim model**:
 | EVM Precompile (0x01-0x09) | Allowed (read) | Allowed (read) |
 | Registered (own org) | Allowed (default claims) | ContractGrant required |
 | Registered (other org) | Denied (cross-org) | Denied (cross-org) |
-| Self-deployed | Automatic read+write | Automatic read+write |
+| Self-deployed | Grant added to deployer's group | Grant added to deployer's group |
 | Org admin member | All claims, all contracts | N/A |
 
 ---
@@ -133,7 +133,7 @@ graph TD
 1. **Group has claims** via GroupAccess: `{ claims: [read, write], methods: [...] }`
 2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
 3. **Registered contracts (own org)**: deploy/admin users allowed via default claims. Read/write users need a ContractGrant. Claims come from GroupAccess. Functions can be restricted via FunctionRule. Parameters can be constrained via ParamRule.
-4. **Deployer auto-grant**: user who deployed a contract gets read+write automatically.
+4. **Deployer contract grant**: when a user deploys a contract, a `contract_grant` is added to their existing deploy group. The admin must pre-create a group with the `deploy` claim and add deployers to it.
 5. **Org admin bypass**: groups with `is_org_admin=true` get ALL claims on ALL contracts in the organization.
 
 </Callout>
@@ -266,18 +266,7 @@ For full request/response details, see the [API Reference](/docs/api).
 <ApiEndpoint method="PUT" path="/api/orgs/:org_id/groups/:id/access" description="Set group access (methods, claims)" />
 
 The list groups endpoint supports optional filters:
-- `?auto_created=true` — show only auto-created deployer groups
-- `?auto_created=false` — show only manually created groups
 - `?search=term` — filter by name or slug (case-insensitive)
-
-### Batch Operations
-
-<ApiEndpoint method="POST" path="/api/orgs/:org_id/contracts/batch-move" description="Move contracts from auto-created groups to a target group" />
-<ApiEndpoint method="POST" path="/api/orgs/:org_id/groups/batch-delete" description="Delete multiple groups atomically" />
-<ApiEndpoint method="POST" path="/api/orgs/:org_id/groups/batch-delete-preview" description="Preview the impact of batch-deleting groups" />
-
-Batch operations are atomic — if any step fails, the entire operation rolls back.
-Auto-created groups are generated when deployers deploy contracts and can be identified by the `auto_created` flag.
 
 ### Contract Grants
 

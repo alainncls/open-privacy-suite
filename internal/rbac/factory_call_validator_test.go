@@ -80,7 +80,7 @@ func (s *factoryCallTestStore) DeletePreregisteredAddressByAddress(ctx context.C
 	return nil
 }
 
-func (s *factoryCallTestStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (s *factoryCallTestStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

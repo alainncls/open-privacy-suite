@@ -329,7 +329,7 @@ func (m *MockCrossOrgStore) DeleteSharedInfrastructure(ctx context.Context, addr
 	return nil
 }
 
-func (m *MockCrossOrgStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (m *MockCrossOrgStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

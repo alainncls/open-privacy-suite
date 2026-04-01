@@ -62,7 +62,7 @@ func (m *MockTraceStore) GetContractOwnerOrgID(ctx context.Context, address stri
 	return "", nil
 }
 
-func (m *MockTraceStore) CreateDeployerAutoGrants(ctx context.Context, orgID, contractID, deployerUserID, deployerExternalID string) error {
+func (m *MockTraceStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error {
 	return nil
 }
 

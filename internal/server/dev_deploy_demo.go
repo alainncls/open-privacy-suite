@@ -183,14 +183,12 @@ func (s *Server) handleDeployDemoERC20(c *gin.Context) {
 		}
 		registered = true
 
-		// Create deployer auto-grant group (best-effort, non-fatal)
-		// Try to get the authenticated user from JWT context (admin middleware uses "admin_subject")
+		// Grant contract to deployer's existing deploy group (best-effort, non-fatal)
 		if subject, exists := c.Get("admin_subject"); exists {
 			if userDID, ok := subject.(string); ok && userDID != "" {
 				if user, err := s.db.GetUserByExternalID(ctx, userDID); err == nil && user != nil {
-					if err := s.db.CreateDeployerAutoGrants(ctx, req.OrgID, contract.ID, user.ID, user.ExternalID); err != nil {
-						// Log but don't fail — the contract is already registered
-						fmt.Printf("warning: failed to create deployer auto-grants: %v\n", err)
+					if err := s.db.GrantContractToDeployerGroup(ctx, req.OrgID, contract.ID, user.ID); err != nil {
+						fmt.Printf("warning: failed to grant contract to deployer group: %v\n", err)
 					}
 				}
 			}

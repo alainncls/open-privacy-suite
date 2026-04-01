@@ -359,7 +359,7 @@ func TestAdminAuth_JWT_ExpiredMembershipDenied(t *testing.T) {
 	}
 	require.NoError(t, srv.db.CreateUser(ctx, user))
 
-	pastTime := time.Now().Add(-1 * time.Hour)
+	pastTime := time.Now().Add(-24 * time.Hour)
 	membership := &rbac.UserMembership{
 		ID:        uuid.New().String(),
 		UserID:    user.ID,
@@ -368,6 +368,11 @@ func TestAdminAuth_JWT_ExpiredMembershipDenied(t *testing.T) {
 		ExpiresAt: &pastTime,
 	}
 	require.NoError(t, srv.db.CreateMembership(ctx, membership))
+
+	// Verify the expired membership is correctly ignored by HasAdminClaim.
+	isAdmin, err := srv.db.HasAdminClaim(ctx, user.ID)
+	require.NoError(t, err)
+	require.False(t, isAdmin, "HasAdminClaim should return false for expired membership")
 
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)

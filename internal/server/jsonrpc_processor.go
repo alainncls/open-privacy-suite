@@ -1763,12 +1763,8 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 				if createErr := p.rbacAccessCtrl.Store().CreateContract(ctx, contract); createErr != nil {
 					slog.Warn("failed to register diverged runtime create", "address", addr, "error", createErr)
 				} else if userID != "" {
-					deployerDID := ""
-					if u, uErr := p.rbacAccessCtrl.Store().GetUser(ctx, userID); uErr == nil && u != nil {
-						deployerDID = u.ExternalID
-					}
-					if gErr := p.rbacAccessCtrl.Store().CreateDeployerAutoGrants(ctx, orgID, contract.ID, userID, deployerDID); gErr != nil {
-						slog.Warn("failed to create deployer auto-grants for runtime create", "address", addr, "error", gErr)
+					if gErr := p.rbacAccessCtrl.Store().GrantContractToDeployerGroup(ctx, orgID, contract.ID, userID); gErr != nil {
+						slog.Warn("failed to grant contract to deployer group for runtime create", "address", addr, "error", gErr)
 					}
 				}
 			}

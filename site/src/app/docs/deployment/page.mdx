@@ -124,13 +124,16 @@ graph TD
 
 Contracts deployed through the proxy are **automatically registered** in the RBAC system. No manual registration step is required.
 
+**Prerequisites:** The deployer must be a member of a group with the `deploy` claim in their org. An admin creates this group and adds deployers to it before they start deploying.
+
 **Plain CREATE deployments** (`eth_sendTransaction` without `to`):
 
-1. Proxy computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` _before_ forwarding.
-2. Address is immediately pre-registered to the deployer's org (closes the cross-org access window).
-3. Transaction is forwarded to the node.
-4. On successful mining: pre-registration is finalized as a full `Contract` record (`auto_registered: true`, `via: plain_create`).
-5. On revert: pre-registration is cleaned up.
+1. Proxy verifies the user has the `deploy` claim (403 if not).
+2. Proxy computes the deterministic CREATE address from `keccak256(rlp([sender, nonce]))` _before_ forwarding.
+3. Address is immediately pre-registered to the deployer's org (closes the cross-org access window).
+4. Transaction is forwarded to the node.
+5. On successful mining: pre-registration is finalized as a full `Contract` record (`auto_registered: true`, `via: plain_create`). A `contract_grant` is added to the deployer's existing deploy group — no new group is created.
+6. On revert: pre-registration is cleaned up.
 
 ## Token Refresh
 
