@@ -875,13 +875,13 @@ export default function ContractGrantForm({
                       disabled={hasEventTopic(event.topic0)}
                       className="w-full flex items-center justify-between px-2 py-1.5 text-xs rounded hover:bg-neutral-100 hover:border-primary-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-left"
                     >
-                      <span className="flex items-center gap-2 min-w-0">
-                        <Radio className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                      <span className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                        <Radio className="w-3 h-3 text-neutral-400 shrink-0" />
                         <code className="font-mono text-neutral-500 truncate">{event.name}</code>
-                        <span className="text-neutral-400 text-[10px] truncate">({event.signature})</span>
+                        <span className="text-neutral-400 text-[10px] truncate hidden sm:inline">({event.signature})</span>
                       </span>
-                      <code className="font-mono text-neutral-400 text-[10px] ml-2 flex-shrink-0">
-                        {event.topic0.slice(0, 10)}...
+                      <code className="font-mono text-neutral-400 text-[10px] ml-1 shrink-0">
+                        {event.topic0.slice(0, 8)}…
                       </code>
                     </button>
                   ))}
