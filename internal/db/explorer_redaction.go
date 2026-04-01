@@ -116,20 +116,22 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		// Step 2: For authenticated viewers, check if they have access to any of
 		// these contracts. A viewer gets VisibilityFull if they are a member of:
 		//   - An is_org_admin group (sees ALL contracts in their org), OR
+		//   - A group with 'admin' in group_access.claims (sees ALL org contracts), OR
 		//   - Any group that has a contract_grant on the specific contract
 		//
-		// This aligns explorer visibility with RPC access: if a user can eth_call
-		// on a contract (because their group has a grant), the contract should not
-		// appear as "[PRIVATE]" in the explorer. The admin-only restriction was
-		// security theater — hiding metadata from users who already have RPC access.
+		// The group_access.claims check is critical because real admin groups use
+		// claims={admin} rather than is_org_admin=true. Without it, admins only see
+		// contracts explicitly granted to their group. (G11 regression fix)
 		if viewerDID != "" && len(orgContractAddrs) > 0 {
 			grantedGroupQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
 				JOIN groups g ON g.org_id = c.org_id
 				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+				LEFT JOIN group_access ga ON ga.group_id = g.id
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
+				       OR 'admin' = ANY(ga.claims)
 				       OR cg.id IS NOT NULL)`
 
 			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, pq.Array(orgContractAddrs))
@@ -304,42 +306,67 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 	}
 
 	if len(publicAddrs) > 0 {
-		orgContractQuery := `
-			SELECT LOWER(c.address) AS addr, cg.group_id
+		// Detect which addresses are org-owned contracts.
+		orgContractDetect := `
+			SELECT LOWER(c.address) AS addr
 			FROM contracts c
-			JOIN contract_grants cg ON cg.contract_id = c.id
 			WHERE LOWER(c.address) = ANY($1)`
 
-		orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(publicAddrs))
+		orgDetectRows, err := d.conn.QueryContext(ctx, orgContractDetect, pq.Array(publicAddrs))
 		if err != nil {
 			return nil, err
 		}
-		defer orgRows.Close()
+		defer orgDetectRows.Close()
 
-		contractGroupIDs := make(map[string]map[string]bool)
-		for orgRows.Next() {
-			var addr, groupID string
-			if err := orgRows.Scan(&addr, &groupID); err != nil {
+		var orgContractAddrs []string
+		for orgDetectRows.Next() {
+			var addr string
+			if err := orgDetectRows.Scan(&addr); err != nil {
 				return nil, err
 			}
-			if contractGroupIDs[addr] == nil {
-				contractGroupIDs[addr] = make(map[string]bool)
+			orgContractAddrs = append(orgContractAddrs, addr)
+			result[addr] = explorer.AddressVisibility{
+				Address: addr,
+				Visible: false,
+				Level:   explorer.VisibilityRedacted,
+				Reason:  explorer.ReasonNoAccess,
 			}
-			contractGroupIDs[addr][groupID] = true
 		}
 
-		if len(contractGroupIDs) > 0 {
-			// Default org-owned contracts to VisibilityRedacted, matching GetBatchVisibility behavior.
-			for addr := range contractGroupIDs {
-				result[addr] = explorer.AddressVisibility{
-					Address: addr,
-					Visible: false,
-					Level:   explorer.VisibilityRedacted,
-					Reason:  explorer.ReasonNoAccess,
+		// Find which groups grant visibility (same logic as GetBatchVisibility).
+		// Admin via is_org_admin or group_access.claims sees ALL org contracts.
+		// Any grant holder sees their granted contracts.
+		if viewerDID != "" && len(orgContractAddrs) > 0 {
+			orgContractQuery := `
+				SELECT LOWER(c.address) AS addr, g.id AS group_id
+				FROM contracts c
+				JOIN groups g ON g.org_id = c.org_id
+				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+				LEFT JOIN group_access ga ON ga.group_id = g.id
+				WHERE LOWER(c.address) = ANY($1)
+				  AND (g.is_org_admin = true
+				       OR 'admin' = ANY(ga.claims)
+				       OR cg.id IS NOT NULL)`
+
+			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(orgContractAddrs))
+			if err != nil {
+				return nil, err
+			}
+			defer orgRows.Close()
+
+			contractGroupIDs := make(map[string]map[string]bool)
+			for orgRows.Next() {
+				var addr, groupID string
+				if err := orgRows.Scan(&addr, &groupID); err != nil {
+					return nil, err
 				}
+				if contractGroupIDs[addr] == nil {
+					contractGroupIDs[addr] = make(map[string]bool)
+				}
+				contractGroupIDs[addr][groupID] = true
 			}
 
-			if viewerDID != "" {
+			if len(contractGroupIDs) > 0 {
 				allGroupIDs := make(map[string]bool)
 				for _, groups := range contractGroupIDs {
 					for gid := range groups {

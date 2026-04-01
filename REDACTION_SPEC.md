@@ -91,11 +91,12 @@ To see user EOA activity, an org admin would need a **disclosure grant** from ea
 
 `VisibilityFull` for org contracts is granted to viewers who are members of a group that meets one of:
 1. `is_org_admin = true` on the group (org-wide admin flag — sees ALL contracts in the org)
-2. The group has a `contract_grant` linking it to the specific contract (any claims — `read`, `write`, `deploy`, `admin`)
+2. `'admin' = ANY(group_access.claims)` on the group (admin via claims — sees ALL contracts in the org, same as `is_org_admin`)
+3. The group has a `contract_grant` linking it to the specific contract (any claims — `read`, `write`, `deploy`, `admin`)
 
-The admin claim distinction is no longer relevant for explorer visibility. If a user can `eth_call` on a contract via their group's grant, the contract should not appear as `[PRIVATE]` in the explorer — that would be security theater. The admin/non-admin distinction still matters for event rules (Section 3.4.1 — admin bypass) but not for basic address visibility.
+Paths 1 and 2 are equivalent: both grant visibility on ALL contracts in the org without needing explicit per-contract grants. Path 2 is the real-world pattern — admin groups are typically configured via `group_access.claims` rather than the `is_org_admin` flag. Path 3 is for non-admin grant holders: if a user can `eth_call` on a contract via their group's grant, the contract should not appear as `[PRIVATE]` in the explorer.
 
-Users in the same org but in a group **without** a `contract_grant` on the specific contract still see `VisibilityRedacted`.
+Users in the same org but in a group **without** a `contract_grant` and **without** admin-level access still see `VisibilityRedacted`.
 
 ---
 
@@ -297,8 +298,8 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G16, G22 are reso
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
 
-- **G11 (resolved, then superseded): Visibility admin check not aligned with group_access.claims**
-  Originally, `GetBatchVisibility` required `admin` claims (via `is_org_admin`, `contract_grants.claims`, or `group_access.claims`) for `VisibilityFull`. This was superseded: `GetBatchVisibility` now grants `VisibilityFull` to ANY group member with a `contract_grant` on the contract, regardless of claims. The admin-only restriction was security theater — users who can `eth_call` on a contract via RPC should not see it as `[PRIVATE]` in the explorer. `is_org_admin` still grants Full on all contracts in the org.
+- **G11 (resolved): Visibility admin check via group_access.claims**
+  Admin visibility on org contracts is granted through three paths: `is_org_admin = true`, `'admin' = ANY(group_access.claims)`, or any `contract_grant` on the specific contract. The `group_access.claims` path is critical because real admin groups use `claims={admin}` rather than the `is_org_admin` flag. Without it, admins only see contracts explicitly granted to their group. Additionally, any grant holder (regardless of claims) sees their granted contracts as Full — if a user can `eth_call` on a contract via RPC, hiding it in the explorer is security theater. **History:** Originally fixed in PR #84, accidentally regressed in PR #87 (RD-789) which rewrote the query and dropped the `group_access.claims` JOIN. Re-fixed with regression test.
 
 - **G12: Org admin cannot see user EOA activity (contract deployments, EOA transfers)**
   Org admins have `VisibilityFull` on org contracts but user EOAs remain `VisibilityHidden`. This means: EOA-to-EOA transfers are dropped, contract deployments from user EOAs are dropped, and the deployer's address shows as `[PRIVATE]` in surviving contract call txs. For an org admin auditing their network, not seeing who deployed which contract or who transferred ETH to whom is a significant gap. **Options:** (a) org admins automatically get visibility on all EOAs of users who are members of any group in that org, (b) require explicit disclosure grants from users, (c) add a new "audit" role that unlocks EOA visibility. **Decision pending.**
