@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -47,7 +48,8 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -63,7 +65,7 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 		ConstructorABI string `json:"constructor_abi"` // Contract ABI JSON for constructor arg validation
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -99,7 +101,8 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 		}
 		org.Settings["factory_address"] = inputFactory
 		if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save factory configuration: " + err.Error()})
+			slog.Error("failed to save factory configuration", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 	}
@@ -108,7 +111,7 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 	// This ensures different orgs get different addresses even with the same salt prefix
 	generated, err := create3.GenerateAddressPoolFromHexForOrg(input.Factory, orgID, input.SaltPrefix, input.Count)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid factory or salt parameters")
 		return
 	}
 
@@ -128,12 +131,12 @@ func (s *Server) preregisterAddresses(c *gin.Context) {
 
 	// Store in database
 	if err := s.db.CreatePreregisteredAddresses(c.Request.Context(), addresses); err != nil {
-		// Check for unique constraint violation
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			c.JSON(http.StatusConflict, gin.H{"error": "one or more addresses already registered"})
+		if isUniqueViolation(err) {
+			respondConflict(c, "one or more addresses already registered")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to create preregistered addresses", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -167,7 +170,8 @@ func (s *Server) listPreregisteredAddresses(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -177,7 +181,8 @@ func (s *Server) listPreregisteredAddresses(c *gin.Context) {
 
 	addresses, err := s.db.ListPreregisteredAddresses(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list preregistered addresses", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -217,7 +222,8 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -237,10 +243,11 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 	err = s.db.DeletePreregisteredAddress(c.Request.Context(), orgID, address)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "preregistered address not found"})
+			respondNotFound(c, "preregistered address not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to delete preregistered address", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -274,7 +281,8 @@ func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -293,7 +301,7 @@ func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
 		ConstructorABI string `json:"constructor_abi" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -306,10 +314,11 @@ func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
 	err = s.db.UpdateConstructorABI(c.Request.Context(), orgID, address, input.ConstructorABI)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "preregistered address not found"})
+			respondNotFound(c, "preregistered address not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to update constructor ABI", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -323,7 +332,8 @@ func (s *Server) getOrgCreate3Config(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -361,7 +371,8 @@ func (s *Server) setOrgCreate3Config(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -373,7 +384,7 @@ func (s *Server) setOrgCreate3Config(c *gin.Context) {
 		Factory string `json:"factory" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -390,7 +401,8 @@ func (s *Server) setOrgCreate3Config(c *gin.Context) {
 	org.Settings["factory_address"] = strings.ToLower(input.Factory)
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to update organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 

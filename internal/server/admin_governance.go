@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,8 @@ func (s *Server) listGovernanceRequests(c *gin.Context) {
 
 	reqs, total, err := s.db.ListApprovalRequests(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list approval requests", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -51,7 +53,8 @@ func (s *Server) getGovernanceRequest(c *gin.Context) {
 
 	req, err := s.db.GetApprovalRequest(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get approval request", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if req == nil || req.OrgID != orgID {
@@ -61,7 +64,8 @@ func (s *Server) getGovernanceRequest(c *gin.Context) {
 
 	decisions, err := s.db.GetApprovalDecisions(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get approval decisions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -82,7 +86,7 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	}
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, "invalid request body")
 			return
 		}
 	}
@@ -93,7 +97,7 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	}
 
 	if s.governanceEngine == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "governance engine not initialized"})
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -105,9 +109,8 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	// This validates orgID matching inside the engine and processes the decision
 	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "approve", reasonPtr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		// E2E DEBUG HOOK: Print the exact trace triggering HTTP 400
-		println("[CRITICAL E2E DEBUG] ProcessDecision failed: " + err.Error())
+		slog.Error("failed to process approval decision", "error", err)
+		respondBadRequest(c, "invalid request")
 		return
 	}
 
@@ -130,7 +133,7 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 	}
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, "invalid request body")
 			return
 		}
 	} else {
@@ -150,7 +153,8 @@ func (s *Server) rejectGovernanceRequest(c *gin.Context) {
 
 	req, err := s.governanceEngine.ProcessDecision(c.Request.Context(), orgID, requestID, approverID, "reject", &input.Reason)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		slog.Error("failed to process rejection decision", "error", err)
+		respondBadRequest(c, "invalid request")
 		return
 	}
 
@@ -169,7 +173,8 @@ func (s *Server) getGovernanceSettings(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -198,7 +203,8 @@ func (s *Server) updateGovernanceSettings(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -217,7 +223,7 @@ func (s *Server) updateGovernanceSettings(c *gin.Context) {
 	// But simple unmarshal works if the user doesn't send the key or sends null.
 	bodyBytes, _ := c.GetRawData()
 	if err := json.Unmarshal(bodyBytes, &input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload: " + err.Error()})
+		respondBadRequest(c, "invalid payload")
 		return
 	}
 
@@ -257,7 +263,8 @@ func (s *Server) updateGovernanceSettings(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update settings: " + err.Error()})
+		slog.Error("failed to update settings", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 

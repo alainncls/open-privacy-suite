@@ -846,7 +846,12 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 
 		// --- Path 3: No credentials supplied ---
 		if expectedToken == "" {
-			// Dev mode: no token configured, allow through (existing no-op behaviour).
+			if s.config.IsProduction() {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "admin authentication required"})
+				c.Abort()
+				return
+			}
+			slog.Warn("admin API request allowed without token — ADMIN_API_TOKEN not configured")
 			c.Next()
 			return
 		}

@@ -247,6 +247,29 @@ func TestAdminAuth_NoTokenConfigured_AllowsRequest(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestAdminAuth_NoTokenConfigured_Production_RejectsRequest(t *testing.T) {
+	srv, router := setupAdminAuthTestServer(t, "")
+	srv.config.Environment = "production"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAdminAuth_EmptyHeader_Production_RejectsRequest(t *testing.T) {
+	srv, router := setupAdminAuthTestServer(t, "")
+	srv.config.Environment = "production"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/status", nil)
+	req.Header.Set("X-Admin-Token", "")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
 // ---------------------------------------------------------------------------
 // Tests: /me/admin-status endpoint
 // ---------------------------------------------------------------------------

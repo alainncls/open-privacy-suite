@@ -153,6 +153,46 @@ func setupAuthOnlyRouter(t *testing.T, adminToken string) *gin.Engine {
 }
 
 // ---------------------------------------------------------------------------
+// setupProductionAuthRouter — like setupAuthOnlyRouter but with Environment=production.
+// Used to test that empty ADMIN_API_TOKEN is rejected in production mode.
+// ---------------------------------------------------------------------------
+
+func setupProductionAuthRouter(t *testing.T, adminToken string) *gin.Engine {
+	t.Helper()
+
+	jwtService, err := auth.NewJWTService(
+		"test-secret",
+		"test-refresh-secret",
+		30*time.Minute,
+		7*24*time.Hour,
+	)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		AdminAPIToken: adminToken,
+		NodeURL:       "http://localhost:8545",
+		JWTSecret:     "test-secret",
+		BaseURL:       "http://localhost:8080",
+		Environment:   "production",
+	}
+
+	srv := &Server{
+		jwtService: jwtService,
+		config:     cfg,
+	}
+
+	router := gin.New()
+
+	admin := router.Group("/api/v1/admin")
+	admin.Use(srv.adminAuthMiddleware())
+	srv.registerRBACRoutes(admin)
+	srv.registerComplianceRoutes(admin)
+	srv.registerDisclosureRoutes(admin)
+
+	return router
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

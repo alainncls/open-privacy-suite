@@ -1,9 +1,11 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // HTTP Response Helpers
@@ -82,4 +84,14 @@ func respondMessage(c *gin.Context, message string) {
 
 func respondDeleted(c *gin.Context, resourceType string) {
 	c.JSON(http.StatusOK, gin.H{"message": resourceType + " deleted"})
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

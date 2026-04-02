@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -19,7 +20,8 @@ func (s *Server) registerManagedProxy(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -33,7 +35,7 @@ func (s *Server) registerManagedProxy(c *gin.Context) {
 		CurrentImpl  string `json:"current_impl"`                  // Optional: current implementation address
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -83,11 +85,12 @@ func (s *Server) registerManagedProxy(c *gin.Context) {
 	}
 
 	if err := s.db.CreateManagedProxy(c.Request.Context(), proxy); err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "proxy already registered"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to create managed proxy", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -106,7 +109,8 @@ func (s *Server) listManagedProxies(c *gin.Context) {
 	// Verify the organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -116,7 +120,8 @@ func (s *Server) listManagedProxies(c *gin.Context) {
 
 	proxies, err := s.db.ListManagedProxies(c.Request.Context(), orgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list managed proxies", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
