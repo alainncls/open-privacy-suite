@@ -69,6 +69,7 @@ services:
         condition: service_healthy
     environment:
       - ENVIRONMENT=production
+      - GIN_MODE=release
       - MOCK_SIGNATURES=false
       - ALLOW_MOCK_LOGIN=false
       - DEMO_AUTO_AUTH_DELAY=
