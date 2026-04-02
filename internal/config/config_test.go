@@ -316,6 +316,33 @@ func TestConfig_Validate(t *testing.T) {
 			errorMsg:    "ADMIN_API_TOKEN is required in production for admin API authentication",
 		},
 		{
+			name: "production mode requires NODE_URL",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "secret",
+				JWTRefreshSecret: "refresh-secret",
+				AdminAPIToken:    "admin-token",
+				VerifierID:       "did:test:verifier",
+				NodeURL:          "",
+			},
+			expectError: true,
+			errorMsg:    "NODE_URL is required in production (Ethereum node JSON-RPC endpoint)",
+		},
+		{
+			name: "production mode requires BASE_URL",
+			config: &Config{
+				Environment:      "production",
+				JWTSecret:        "secret",
+				JWTRefreshSecret: "refresh-secret",
+				AdminAPIToken:    "admin-token",
+				VerifierID:       "did:test:verifier",
+				NodeURL:          "http://node:8545",
+				BaseURL:          "",
+			},
+			expectError: true,
+			errorMsg:    "BASE_URL is required in production (public URL for OAuth callbacks)",
+		},
+		{
 			name: "production mode with all required values passes",
 			config: &Config{
 				Environment:      "production",
@@ -323,6 +350,8 @@ func TestConfig_Validate(t *testing.T) {
 				JWTRefreshSecret: "refresh-secret",
 				AdminAPIToken:    "admin-token",
 				VerifierID:       "did:test:verifier",
+				NodeURL:          "http://node:8545",
+				BaseURL:          "https://proxy.example.com",
 			},
 			expectError: false,
 		},

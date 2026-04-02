@@ -421,17 +421,67 @@ When a user first authenticates via Azure AD, their `auth_tenant_id` is set in t
 
 ---
 
+## Production Deployment Security
+
+### Network Architecture
+
+The privacy-proxy has three categories of endpoints with different network requirements:
+
+| Category | Endpoints | Who calls it | Network access |
+|----------|-----------|-------------|----------------|
+| **Public** | `/auth/*`, `/rpc`, `/health` | Wallets, browsers, scripts | Internet (via reverse proxy) |
+| **Internal** | `/api/v1/explorer/*`, `/metrics` | Block explorer backend, monitoring | Private network only |
+| **Admin** | `/api/v1/admin/*` | Admin dashboard, scripts | Private network + auth token |
+
+<Callout variant="danger" title="Never expose port 8080 directly to the internet">
+  The backend listens on port 8080 and relies on network-level isolation for internal and admin endpoints. In production, only the reverse proxy (Caddy/nginx) ports (80/443) should be publicly accessible. The reverse proxy forwards requests to the backend over the Docker internal network, where `localhostOnlyMiddleware` allows them.
+</Callout>
+
+### How the layers work together
+
+```
+Internet → Caddy (TLS, ports 80/443)
+              ↓ Docker internal network (172.x.x.x)
+           Backend (port 8080)
+              ├─ /auth/*, /rpc → JWT auth only → public endpoints
+              ├─ /api/v1/explorer/* → localhostOnlyMiddleware → internal endpoints
+              └─ /api/v1/admin/* → localhostOnlyMiddleware + adminAuth → admin endpoints
+```
+
+When Caddy forwards a request, the backend sees Caddy's Docker IP (172.x.x.x) — which passes `localhostOnlyMiddleware`. This is by design: the **network boundary is the Docker network**, not localhost. The admin token/JWT is the authentication layer that prevents unauthorized access even if someone reaches the backend from within the Docker network.
+
+### Custom network access
+
+If the block explorer or monitoring runs outside the default Docker/RFC1918 networks (e.g., Kubernetes pod CIDRs, cloud VPCs), add their CIDRs:
+
+```
+TRUSTED_INTERNAL_CIDRS=10.100.0.0/16,fd00::/8
+```
+
+These are **appended** to the defaults (localhost, Docker, RFC1918, Tailscale). They cannot override or remove the defaults.
+
+### What protects against misconfiguration
+
+Even if the network boundary is misconfigured (backend port exposed, reverse proxy missing):
+
+- **Admin endpoints**: Still require `ADMIN_API_TOKEN` or JWT with admin claim. An attacker without credentials gets 401.
+- **Explorer endpoints**: Accessible without auth from the allowed network, but all data is redacted per the viewer's identity (anonymous viewers see almost nothing with all-contracts-private).
+- **RPC endpoint**: Always requires JWT for sensitive methods. Anonymous access is limited to claim-free methods (block number, chain ID, gas price).
+
 ## Production Checklist
 
 - [ ] Set strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`
 - [ ] Set `ENVIRONMENT=production`
+- [ ] Set `NODE_URL` to your Ethereum node endpoint
+- [ ] Set `BASE_URL` to public HTTPS URL (used for OAuth callbacks)
 - [ ] Configure `VERIFIER_ID` with your Privado DID
-- [ ] Set `BASE_URL` to public HTTPS URL
 - [ ] Set `ADMIN_API_TOKEN` to a strong random secret (32+ chars)
-- [ ] Set `CORS_ALLOWED_ORIGINS` to the block explorer's origin (e.g. `https://explorer.yourdomain.com`) — required for the block explorer to call `/eth/link/*` and `/eth/addresses` from the browser
-- [ ] Enable `REQUIRE_PROOF_OF_HUMANITY` if using Billions
+- [ ] Set `CORS_ALLOWED_ORIGINS` to the block explorer's origin
 - [ ] Configure PostgreSQL with SSL (`sslmode=require`)
-- [ ] Place behind reverse proxy with TLS termination
+- [ ] Place behind reverse proxy with TLS termination (Caddy included in prod compose)
+- [ ] Verify backend port 8080 is NOT publicly accessible (only via reverse proxy)
+- [ ] Set `TRUSTED_INTERNAL_CIDRS` if block explorer or monitoring is outside Docker network
+- [ ] Never pass `ADMIN_API_TOKEN` as a `VITE_*` frontend env var
 - [ ] Restrict admin API access at network level
 - [ ] Set up log aggregation for audit trail
 - [ ] Configure rate limits appropriate for your use case

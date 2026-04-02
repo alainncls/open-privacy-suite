@@ -75,6 +75,11 @@ type Config struct {
 	// Trusted Proxies for X-Forwarded-For trust
 	TrustedProxies []string // List of IPs/CIDRs to trust for client IP extraction
 
+	// Additional CIDRs allowed to access internal APIs (explorer, admin).
+	// Appended to the default private-network allowlist (localhost, Docker, RFC1918, Tailscale).
+	// Use for Kubernetes pod CIDRs, cloud VPC ranges, or custom networks.
+	TrustedInternalCIDRs []string
+
 	// Frontend URL for OAuth redirect (e.g., http://localhost:5173)
 	// When set, /oauth/authorize redirects browsers to the React login page instead of serving inline HTML.
 	FrontendURL string
@@ -256,6 +261,7 @@ func Load() *Config {
 		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
 		HideDevAdminOrg:          getEnv("HIDE_DEV_ADMIN_ORG", "false") == "true",
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
+		TrustedInternalCIDRs:    getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
 		FrontendURL:              getEnv("FRONTEND_URL", ""),
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
@@ -312,6 +318,12 @@ func (c *Config) Validate() error {
 	if c.AdminAPIToken == "" {
 		return errors.New("ADMIN_API_TOKEN is required in production for admin API authentication")
 	}
+	if c.NodeURL == "" {
+		return errors.New("NODE_URL is required in production (Ethereum node JSON-RPC endpoint)")
+	}
+	if c.BaseURL == "" {
+		return errors.New("BASE_URL is required in production (public URL for OAuth callbacks)")
+	}
 
 	// Validate SIEM webhook URL against SSRF if configured.
 	if c.SIEMWebhookURL != "" {
@@ -320,14 +332,15 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate FrontendURL if set: must be a valid HTTPS URL in production.
+	// Validate FrontendURL if set: must be HTTPS in production (localhost exempt).
 	if c.FrontendURL != "" {
 		parsed, err := url.Parse(c.FrontendURL)
 		if err != nil || parsed.Host == "" {
 			return errors.New("FRONTEND_URL must be a valid URL (e.g. https://proxy.example.com)")
 		}
-		if parsed.Scheme != "https" {
-			return errors.New("FRONTEND_URL must use HTTPS in production")
+		isLocalhost := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1"
+		if parsed.Scheme != "https" && !isLocalhost {
+			return errors.New("FRONTEND_URL must use HTTPS in production (localhost is exempt)")
 		}
 	}
 

@@ -887,6 +887,10 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 			"10.0.0.0/8",
 			"100.64.0.0/10",
 		}
+		// Append custom CIDRs from TRUSTED_INTERNAL_CIDRS env var
+		if s.config != nil {
+			allowedCIDRs = append(allowedCIDRs, s.config.TrustedInternalCIDRs...)
+		}
 
 		isAllowed := false
 		for _, cidr := range allowedCIDRs {
