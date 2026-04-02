@@ -92,7 +92,7 @@ services:
     image: gatewayfm/privacy-proxy-frontend:${PRIVACY_PROXY_VERSION:-latest}
     restart: unless-stopped
     ports:
-      - "${HOST_PORT_UI:-5173}:5173"
+      - "${HOST_PORT_UI:-5173}:80"
     depends_on:
       proxy-backend:
         condition: service_started
