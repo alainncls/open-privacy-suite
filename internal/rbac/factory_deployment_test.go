@@ -92,6 +92,16 @@ func (s *mockAccessControllerStore) GetGroupAccess(ctx context.Context, groupID 
 	return s.groupAccess[groupID], nil
 }
 
+func (s *mockAccessControllerStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) {
+	result := make(map[string]*GroupAccess)
+	for _, id := range groupIDs {
+		if a, ok := s.groupAccess[id]; ok {
+			result[id] = a
+		}
+	}
+	return result, nil
+}
+
 func (s *mockAccessControllerStore) GetContract(ctx context.Context, id string) (*Contract, error) {
 	// Check all orgs for a contract with this ID
 	for _, contracts := range s.contracts {
@@ -626,6 +636,10 @@ func (s *mockAccessControllerStore) GetManagedProxy(ctx context.Context, address
 
 func (s *mockAccessControllerStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
 	return nil, nil
+}
+
+func (s *mockAccessControllerStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) {
+	return make(map[string][]*ContractGrant), nil
 }
 
 func (s *mockAccessControllerStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {

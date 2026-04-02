@@ -298,17 +298,29 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		Claims:  nil,
 	}
 
+	// Collect all group IDs for batch queries
+	groupIDs := make([]string, len(hierarchy))
+	for i, group := range hierarchy {
+		groupIDs[i] = group.ID
+	}
+
+	// Batch load all group access settings and contract grants (2 queries instead of 2*N)
+	allAccess, err := r.store.GetGroupAccessBatch(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	allGrants, err := r.store.ListContractGrantsBatch(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	// Track contract data for batch loading
-	contractAddresses := make(map[string]string)     // contractID -> address
-	groupGrants := make(map[string][]*ContractGrant) // groupID -> grants
-	var contractIDs []string                         // IDs to batch load
+	contractAddresses := make(map[string]string) // contractID -> address
+	var contractIDs []string                     // IDs to batch load
 
 	for _, group := range hierarchy {
-		// Get group access settings
-		access, err := r.store.GetGroupAccess(ctx, group.ID)
-		if err != nil {
-			return nil, err
-		}
+		access := allAccess[group.ID]
 
 		if access != nil {
 			// Apply INTERSECTION for allowed methods (restrictive inheritance).
@@ -334,15 +346,8 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			result.RateLimitDaily = minIntPtr(result.RateLimitDaily, access.RateLimitDaily)
 		}
 
-		// Get contract grants for this group
-		grants, err := r.store.ListContractGrantsByGroup(ctx, group.ID)
-		if err != nil {
-			return nil, err
-		}
-		groupGrants[group.ID] = grants
-
 		// Collect contract IDs we need to load
-		for _, grant := range grants {
+		for _, grant := range allGrants[group.ID] {
 			if _, ok := contractAddresses[grant.ContractID]; !ok {
 				contractIDs = append(contractIDs, grant.ContractID)
 			}
@@ -360,16 +365,12 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 		}
 	}
 
-	// Now process grants using pre-loaded contract addresses
+	// Now process grants using pre-loaded data (no additional DB queries)
 	// Claims come from the GROUP (via GroupAccess), not from the grant itself.
 	// The grant just establishes that the group has access to the contract,
 	// with optional function restrictions from the grant.
 	for _, group := range hierarchy {
-		// Get the group's claims from its access settings
-		access, err := r.store.GetGroupAccess(ctx, group.ID)
-		if err != nil {
-			return nil, err
-		}
+		access := allAccess[group.ID]
 
 		// Get the claims to use for this group's grants
 		// If group has no access settings, use empty claims
@@ -378,8 +379,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			groupClaims = access.Claims
 		}
 
-		grants := groupGrants[group.ID]
-		for _, grant := range grants {
+		for _, grant := range allGrants[group.ID] {
 			address, ok := contractAddresses[grant.ContractID]
 			if !ok {
 				continue // Contract deleted, skip

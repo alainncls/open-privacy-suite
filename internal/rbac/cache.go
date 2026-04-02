@@ -32,7 +32,7 @@ type CacheConfig struct {
 func DefaultCacheConfig() CacheConfig {
 	return CacheConfig{
 		TTL:        5 * time.Minute,
-		MaxEntries: 10000,
+		MaxEntries: 50000,
 	}
 }
 

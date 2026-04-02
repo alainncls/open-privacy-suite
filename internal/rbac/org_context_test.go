@@ -91,6 +91,7 @@ func (m *MockOrgContextStore) GetContractGrant(ctx context.Context, id string) (
 func (m *MockOrgContextStore) UpdateContractGrant(ctx context.Context, grant *ContractGrant) error { return nil }
 func (m *MockOrgContextStore) ListContractGrants(ctx context.Context, contractID string) ([]*ContractGrant, error) { return nil, nil }
 func (m *MockOrgContextStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) { return nil, nil }
+func (m *MockOrgContextStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) { return make(map[string][]*ContractGrant), nil }
 func (m *MockOrgContextStore) DeleteContractGrant(ctx context.Context, id string) error { return nil }
 func (m *MockOrgContextStore) GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error) { return nil, nil }
 func (m *MockOrgContextStore) CreateUser(ctx context.Context, user *User) error { return nil }
@@ -110,6 +111,7 @@ func (m *MockOrgContextStore) DeleteMembership(ctx context.Context, id string) e
 func (m *MockOrgContextStore) DeleteExpiredMemberships(ctx context.Context) (int64, error) { return 0, nil }
 func (m *MockOrgContextStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
 func (m *MockOrgContextStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error) { return nil, nil }
+func (m *MockOrgContextStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) { return make(map[string]*GroupAccess), nil }
 func (m *MockOrgContextStore) UpdateGroupAccess(ctx context.Context, access *GroupAccess) error { return nil }
 func (m *MockOrgContextStore) DeleteGroupAccess(ctx context.Context, groupID string) error { return nil }
 func (m *MockOrgContextStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) { return nil, nil }
