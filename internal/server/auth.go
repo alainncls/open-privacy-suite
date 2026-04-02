@@ -111,10 +111,8 @@ func (s *Server) readTunnelURL() string {
 // getPublicURL extracts the public-facing URL for callbacks.
 // Priority: explicit BASE_URL config > dynamic detection from headers
 func (s *Server) getPublicURL(c *gin.Context) string {
-	// If BASE_URL is explicitly configured (not the default), use it directly.
-	// This is the most reliable way to configure external access (ngrok, etc.)
-	defaultBaseURL := "http://localhost:8080"
-	if s.config.BaseURL != "" && s.config.BaseURL != defaultBaseURL {
+	// If BASE_URL is configured, use it directly.
+	if s.config.BaseURL != "" {
 		return s.config.BaseURL
 	}
 

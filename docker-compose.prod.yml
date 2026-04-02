@@ -1,33 +1,72 @@
-# Production overrides — use with:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Production compose — pulls pre-built images from DockerHub.
 #
-# What this changes vs the base file:
-#   - Backend/frontend use production build targets (no mock auth, compiled frontend)
-#   - Internal services (postgres, anvil) lose their host port bindings
-#   - Caddy is added as the sole public-facing service (TLS via Let's Encrypt)
-#   - Dev-only flags (MOCK_SIGNATURES, ALLOW_MOCK_LOGIN) are disabled
-#   - Secrets (JWT_SECRET, DATABASE_URL, VERIFIER_ID) must be provided via environment — no defaults
+# Usage (without TLS — direct port access):
+#   PRIVACY_PROXY_VERSION=v0.5.0 docker compose -f docker-compose.prod.yml up -d
 #
-# Required environment variables (Compose will hard-fail if any are unset):
+# Usage (with Caddy TLS — production):
+#   PRIVACY_PROXY_VERSION=v0.5.0 docker compose -f docker-compose.prod.yml --profile tls up -d
+#
+# Recommended: use a .env file instead of inline env vars.
+#   cp .env.production.example .env && $EDITOR .env
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml down -v   # works without repeating vars
+#
+# What this provides:
+#   - Backend/frontend from DockerHub (no local build needed)
+#   - Postgres included (can use external DB instead — see below)
+#   - No Anvil — NODE_URL must point to your real Ethereum node
+#   - Caddy for TLS (optional, enable with --profile tls)
+#   - Dev-only flags (MOCK_SIGNATURES, ALLOW_MOCK_LOGIN) disabled
+#   - Required config validated at backend startup (not in compose)
+#
+# External database:
+#   Set DATABASE_URL to your external postgres and skip the built-in one:
+#   docker compose -f docker-compose.prod.yml up -d proxy-backend proxy-frontend
+#
+# Required environment variables (backend fails on startup if missing):
+#   PRIVACY_PROXY_VERSION   Docker image tag (e.g. v0.5.0, latest)
 #   BASE_URL                e.g. https://proxy.yourdomain.com
 #   JWT_SECRET              openssl rand -hex 32
 #   JWT_REFRESH_SECRET      openssl rand -hex 32
 #   ADMIN_API_TOKEN         openssl rand -hex 32
 #   VERIFIER_ID             your Privado verifier DID
 #   DATABASE_URL            postgres://user:pass@host:5432/privacy_proxy?sslmode=require
-#   NODE_URL                http(s)://your-ethereum-node:8545  (replaces bundled Anvil)
+#   NODE_URL                http(s)://your-ethereum-node:8545
+#
+# Optional:
+#   TRUSTED_INTERNAL_CIDRS  Additional CIDRs for internal API access (comma-separated)
+#                           e.g. 10.100.0.0/16,fd00::/8 for Kubernetes pod networks
+#                           Appended to defaults (localhost, Docker, RFC1918, Tailscale)
 
 services:
+  # Built-in postgres — started by default.
+  # To use an external DB instead, set DATABASE_URL to your external postgres
+  # and start with: docker compose -f docker-compose.prod.yml up -d proxy-backend proxy-frontend
   postgres:
-    ports: !reset []   # Internal only — accessed by backend via Docker network
-
-  anvil:
-    ports: !reset []   # Internal only — accessed by backend via Docker network
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=privacy_proxy
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   proxy-backend:
-    build:
-      target: prod     # Production binary (no mockauth build tag)
-    ports: !reset []   # Accessed by Caddy via Docker network only
+    image: gatewayfm/privacy-proxy-backend:${PRIVACY_PROXY_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT_PROXY:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - ENVIRONMENT=production
       - MOCK_SIGNATURES=false
@@ -35,55 +74,58 @@ services:
       - DEMO_AUTO_AUTH_DELAY=
       - ENABLE_RUNTIME_TRACING=true
       - ENABLE_TRAVEL_RULE=true
-      # Secrets — Compose hard-fails if any of these are unset
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required}
-      - VERIFIER_ID=${VERIFIER_ID:?VERIFIER_ID is required}
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required (use sslmode=require)}
-      # NODE_URL must point at a real node — base compose default is bundled Anvil
-      - NODE_URL=${NODE_URL:?NODE_URL is required}
-      # BASE_URL drives OAuth callbacks and must match the public Caddy domain
-      - BASE_URL=${BASE_URL:?BASE_URL is required}
-      # FRONTEND_URL must be HTTPS in production — config.Validate() enforces this.
-      # With Caddy serving both frontend and backend on the same domain, set to BASE_URL.
-      - FRONTEND_URL=${BASE_URL:?BASE_URL is required}
-      # Restrict CORS to the actual frontend origin
+      - JWT_SECRET=${JWT_SECRET:-}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-}
+      - VERIFIER_ID=${VERIFIER_ID:-}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable}
+      - NODE_URL=${NODE_URL:-}
+      - BASE_URL=${BASE_URL:-}
+      - FRONTEND_URL=${BASE_URL:-}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-${BASE_URL}}
+      - TRUSTED_INTERNAL_CIDRS=${TRUSTED_INTERNAL_CIDRS:-}
+    networks:
+      - internal
 
   proxy-frontend:
-    build:
-      target: prod     # Compiled React app served by nginx
-    ports: !reset []   # Accessed by Caddy via Docker network only
-    volumes: !reset [] # No hot-reload mounts in production
-    environment:
-      - VITE_API_TARGET=   # Not used in prod (nginx doesn't proxy; Caddy does)
-      - VITE_BACKEND_URL=  # Not used in prod (all calls are relative /api/...)
-      - VITE_ALLOW_MOCK_LOGIN=false
+    image: gatewayfm/privacy-proxy-frontend:${PRIVACY_PROXY_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT_UI:-5173}:5173"
+    depends_on:
+      proxy-backend:
+        condition: service_started
+    networks:
+      - internal
 
-  # TLS-terminating reverse proxy — the only service that binds public ports
+  # TLS-terminating reverse proxy — optional, enable with --profile tls
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    profiles: ["tls"]
     ports:
-      - "80:80"          # HTTP (ACME HTTP-01 challenge + redirect to HTTPS)
-      - "443:443"        # HTTPS
-      - "443:443/udp"    # HTTP/3 (QUIC)
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data         # Persists Let's Encrypt certs
+      - caddy-data:/data
       - caddy-config:/config
     environment:
-      # BASE_URL must be set — Caddy provisions a cert for this domain via ACME
-      - BASE_URL=${BASE_URL:?BASE_URL is required}
+      - BASE_URL=${BASE_URL:-}
     depends_on:
       proxy-backend:
         condition: service_started
       proxy-frontend:
         condition: service_started
     networks:
-      - proxy-network
+      - internal
 
 volumes:
+  postgres-data:
   caddy-data:
   caddy-config:
+
+networks:
+  internal:
+    driver: bridge
