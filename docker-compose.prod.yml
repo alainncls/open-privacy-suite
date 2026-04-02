@@ -93,6 +93,8 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_PORT_UI:-5173}:80"
+    environment:
+      - BACKEND_URL=http://proxy-backend:8080
     depends_on:
       proxy-backend:
         condition: service_started
