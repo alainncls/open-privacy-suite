@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
@@ -88,6 +89,7 @@ type Server struct {
 	azureStateStore    *AzureStateStore
 	metrics            *metrics.Metrics
 	explorerStore    *explorer.Store
+	explorerMu       sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
 	explorerRedactor *explorer.RedactionEngine
 	siemForwarder    *audit.SIEMForwarder
 	retentionCleaner              *audit.RetentionCleaner
@@ -144,6 +146,27 @@ func (s *Server) Stop() {
 	}
 }
 
+// explorerReconnectLoop retries connecting to the explorer database every 30 seconds.
+// Once connected, it sets the explorer store and redaction engine so explorer endpoints become available.
+func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		store, err := explorer.NewStore(dbURL)
+		if err != nil {
+			slog.Debug("explorer DB reconnect attempt failed", "error", err)
+			continue
+		}
+		s.explorerMu.Lock()
+		s.explorerStore = store
+		s.explorerRedactor = explorer.NewRedactionEngine(store, rbacDB)
+		s.explorerMu.Unlock()
+		slog.Info("explorer database connected — explorer endpoints now available")
+		return
+	}
+}
+
 // PrivadoVerifier interface for Privado ID operations
 type PrivadoVerifier interface {
 	CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
@@ -169,8 +192,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if cfg.ExplorerDatabaseURL != "" {
 		explorerStore, err = explorer.NewStore(cfg.ExplorerDatabaseURL)
 		if err != nil {
-			database.Close()
-			return nil, fmt.Errorf("failed to create explorer store: %w", err)
+			slog.Warn("explorer database unavailable — explorer endpoints will return 503 until connected", "error", err)
+			// Don't crash — background retry will connect when the DB is ready.
 		}
 	}
 
@@ -322,6 +345,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.governanceEngine = governance.NewEngine(database, s, webhookNotifier)
 	s.escalationWorker = governance.NewEscalationWorker(database, webhookNotifier, 5*time.Minute)
 	s.escalationWorker.Start()
+
+	// Start background explorer DB reconnection if initial connection failed
+	if cfg.ExplorerDatabaseURL != "" && explorerStore == nil {
+		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database)
+	}
 
 	// Initialize JSON-RPC processor with dependencies
 	if runtimeTracer != nil {
