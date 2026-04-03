@@ -65,6 +65,14 @@ func TestResilience_AdminRoutes_AllRequireAuth(t *testing.T) {
 		{"POST", "/api/v1/admin/azure-tenants"},
 		{"POST", "/api/v1/admin/access/check"},
 		{"GET", "/api/v1/admin/cache/stats"},
+		// Governance (landed post-audit)
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/settings"},
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/requests"},
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/approvers"},
+		// Disclosure (landed post-audit)
+		{"GET", "/api/v1/admin/disclosure/requests"},
+		{"GET", "/api/v1/admin/disclosure/grants"},
+		{"GET", "/api/v1/admin/disclosure/check-access"},
 	}
 
 	for _, route := range routes {
@@ -156,6 +164,124 @@ func TestResilience_DeletePreregisteredAddress_RequiresAuth(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestResilience_Governance_AllEndpointsRequireAuth(t *testing.T) {
+	router := setupAuthOnlyRouter(t, "test-token")
+	fakeOrg := uuid.New().String()
+	fakeReq := uuid.New().String()
+	fakeGroup := uuid.New().String()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/settings"},
+		{"PUT", "/api/v1/admin/orgs/" + fakeOrg + "/governance/settings"},
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/requests"},
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq},
+		{"POST", "/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq + "/approve"},
+		{"POST", "/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq + "/reject"},
+		{"GET", "/api/v1/admin/orgs/" + fakeOrg + "/governance/approvers"},
+		{"POST", "/api/v1/admin/orgs/" + fakeOrg + "/governance/approvers"},
+		{"DELETE", "/api/v1/admin/orgs/" + fakeOrg + "/governance/approvers/" + fakeGroup},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			var body *bytes.Reader
+			if route.method == "POST" || route.method == "PUT" {
+				body = bytes.NewReader([]byte("{}"))
+			} else {
+				body = bytes.NewReader(nil)
+			}
+
+			req := httptest.NewRequest(route.method, route.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code,
+				"%s %s must require admin auth, got %d", route.method, route.path, w.Code)
+		})
+	}
+}
+
+func TestResilience_Disclosure_AllEndpointsRequireAuth(t *testing.T) {
+	router := setupAuthOnlyRouter(t, "test-token")
+	fakeGrant := uuid.New().String()
+	fakeReq := uuid.New().String()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{"POST", "/api/v1/admin/disclosure/requests"},
+		{"GET", "/api/v1/admin/disclosure/requests"},
+		{"GET", "/api/v1/admin/disclosure/requests/" + fakeReq},
+		{"DELETE", "/api/v1/admin/disclosure/requests/" + fakeReq},
+		{"GET", "/api/v1/admin/disclosure/grants"},
+		{"POST", "/api/v1/admin/disclosure/grants/" + fakeGrant + "/revoke"},
+		{"GET", "/api/v1/admin/disclosure/check-access"},
+		{"GET", "/api/v1/admin/disclosure/grants/" + fakeGrant + "/logs"},
+		{"GET", "/api/v1/admin/disclosure/grants/" + fakeGrant + "/summary"},
+		{"GET", "/api/v1/admin/disclosure/grants/" + fakeGrant + "/report/pdf"},
+		{"GET", "/api/v1/admin/disclosure/grants/" + fakeGrant + "/events"},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			var body *bytes.Reader
+			if route.method == "POST" {
+				body = bytes.NewReader([]byte("{}"))
+			} else {
+				body = bytes.NewReader(nil)
+			}
+
+			req := httptest.NewRequest(route.method, route.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code,
+				"%s %s must require admin auth, got %d", route.method, route.path, w.Code)
+		})
+	}
+}
+
+func TestResilience_ContractGrants_RequireAuth(t *testing.T) {
+	router := setupAuthOnlyRouter(t, "test-token")
+	fakeOrg := uuid.New().String()
+	fakeAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	fakeGroup := uuid.New().String()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{"POST", "/api/v1/admin/orgs/" + fakeOrg + "/contracts/" + fakeAddr + "/grants"},
+		{"PUT", "/api/v1/admin/orgs/" + fakeOrg + "/contracts/" + fakeAddr + "/grants/" + fakeGroup},
+		{"DELETE", "/api/v1/admin/orgs/" + fakeOrg + "/contracts/" + fakeAddr + "/grants/" + fakeGroup},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			var body *bytes.Reader
+			if route.method == "POST" || route.method == "PUT" {
+				body = bytes.NewReader([]byte("{}"))
+			} else {
+				body = bytes.NewReader(nil)
+			}
+
+			req := httptest.NewRequest(route.method, route.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code,
+				"%s %s must require admin auth, got %d", route.method, route.path, w.Code)
+		})
+	}
 }
 
 func TestResilience_Compliance_AllEndpointsRequireAuth(t *testing.T) {

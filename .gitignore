@@ -122,3 +122,5 @@ TODO_*.md
 # Loadtest binary (not the cmd/loadtest/ source)
 /loadtest
 mcp/mcp
+docs/TEST-MAP.md
+docs/BUG-FIXES.md

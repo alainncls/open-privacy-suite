@@ -105,6 +105,7 @@ func setupResilienceServer(t *testing.T, adminToken string) (*Server, *gin.Engin
 	admin.Use(srv.adminAuthMiddleware())
 	srv.registerRBACRoutes(admin)
 	srv.registerComplianceRoutes(admin)
+	srv.registerDisclosureRoutes(admin)
 
 	t.Cleanup(func() { srv.db.Close() })
 
@@ -146,6 +147,7 @@ func setupAuthOnlyRouter(t *testing.T, adminToken string) *gin.Engine {
 	admin.Use(srv.adminAuthMiddleware())
 	srv.registerRBACRoutes(admin)
 	srv.registerComplianceRoutes(admin)
+	srv.registerDisclosureRoutes(admin)
 
 	return router
 }

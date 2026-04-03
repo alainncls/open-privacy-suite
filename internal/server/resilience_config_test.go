@@ -242,3 +242,22 @@ func TestResilience_IPFS_DocumentedBehavior(t *testing.T) {
 	t.Log("IPFS gateway timeout: controlled by iden3 auth library, not privacy-proxy")
 	t.Log("Mitigation: Privado runs a caching proxy; schemas are pinned")
 }
+
+// Post-rebase findings — new code that landed with the same patterns.
+
+func TestResilience_Governance_ErrorLeakage(t *testing.T) {
+	t.Log("admin_governance.go: 12 instances of err.Error() in HTTP responses")
+	t.Log("governance_middleware.go: 5 instances of err.Error() in HTTP responses")
+	t.Log("admin_governance.go:110: println('[CRITICAL E2E DEBUG]') left in production code — stdout leak")
+	t.Log("admin_governance_approvers.go:68: brittle err.Error() == 'not found' string comparison")
+}
+
+func TestResilience_Disclosure_ErrorLeakage(t *testing.T) {
+	t.Log("disclosure.go: 20+ instances of err.Error() in HTTP responses")
+	t.Log("Same pattern as explorer_api.go Bug #4 — respondInternalError(c, err.Error())")
+}
+
+func TestResilience_ComplianceChecker_NilRisk(t *testing.T) {
+	t.Log("server.go:1097: s.complianceChecker.Check() called without nil check")
+	t.Log("If compliance is not configured, this panics on any transaction that triggers compliance")
+}

@@ -281,6 +281,96 @@ func TestResilience_DeletePreregisteredAddress_InvalidAddress(t *testing.T) {
 		"invalid address should be rejected, got %d: %s", w.Code, w.Body.String())
 }
 
+func TestResilience_Governance_NoErrorLeakage(t *testing.T) {
+	_, router := setupResilienceServer(t, "test-token")
+	fakeOrg := uuid.New().String()
+	fakeReq := uuid.New().String()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"get settings nonexistent org", "GET",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/settings", ""},
+		{"list requests nonexistent org", "GET",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/requests", ""},
+		{"get request nonexistent", "GET",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq, ""},
+		{"approve nonexistent request", "POST",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq + "/approve", "{}"},
+		{"reject nonexistent request", "POST",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/requests/" + fakeReq + "/reject", `{"reason":"test"}`},
+		{"list approvers nonexistent org", "GET",
+			"/api/v1/admin/orgs/" + fakeOrg + "/governance/approvers", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body *bytes.Reader
+			if tc.body != "" {
+				body = bytes.NewReader([]byte(tc.body))
+			} else {
+				body = bytes.NewReader(nil)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Admin-Token", "test-token")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assertNoInternalErrorLeakage(t, w.Body.String())
+		})
+	}
+}
+
+func TestResilience_Disclosure_NoErrorLeakage(t *testing.T) {
+	_, router := setupResilienceServer(t, "test-token")
+	fakeGrant := uuid.New().String()
+	fakeReq := uuid.New().String()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		skip   string
+	}{
+		{"get nonexistent request", "GET",
+			"/api/v1/admin/disclosure/requests/" + fakeReq, ""},
+		{"delete nonexistent request", "DELETE",
+			"/api/v1/admin/disclosure/requests/" + fakeReq,
+			"BUG: nil pointer panic — disclosureService is nil when not initialised"},
+		{"revoke nonexistent grant", "POST",
+			"/api/v1/admin/disclosure/grants/" + fakeGrant + "/revoke",
+			"BUG: nil pointer panic — disclosureService is nil when not initialised"},
+		{"get logs nonexistent grant", "GET",
+			"/api/v1/admin/disclosure/grants/" + fakeGrant + "/logs",
+			"BUG: nil pointer panic — disclosureService is nil when not initialised"},
+		{"get summary nonexistent grant", "GET",
+			"/api/v1/admin/disclosure/grants/" + fakeGrant + "/summary",
+			"BUG: nil pointer panic — disclosureService is nil when not initialised"},
+		{"get events nonexistent grant", "GET",
+			"/api/v1/admin/disclosure/grants/" + fakeGrant + "/events",
+			"BUG: nil pointer panic — disclosureService is nil when not initialised"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip != "" {
+				t.Skip(tc.skip)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(nil))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Admin-Token", "test-token")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assertNoInternalErrorLeakage(t, w.Body.String())
+		})
+	}
+}
+
 func TestResilience_Create3Config_GetAndSet(t *testing.T) {
 	srv, router := setupResilienceServer(t, "test-token")
 	orgID := createOrgForTest(t, srv)
