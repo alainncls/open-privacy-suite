@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -338,13 +339,39 @@ func (c *Config) Validate() error {
 		if err != nil || parsed.Host == "" {
 			return errors.New("FRONTEND_URL must be a valid URL (e.g. https://proxy.example.com)")
 		}
-		isLocalhost := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1"
-		if parsed.Scheme != "https" && !isLocalhost {
-			return errors.New("FRONTEND_URL must use HTTPS in production (localhost is exempt)")
+		isLocal := isPrivateOrLocalhost(parsed.Hostname())
+		if parsed.Scheme != "https" && !isLocal {
+			return errors.New("FRONTEND_URL must use HTTPS in production (localhost and private networks are exempt)")
 		}
 	}
 
 	return nil
+}
+
+// isPrivateOrLocalhost returns true if the hostname is localhost, loopback, or a private network IP.
+// HTTP is safe on these networks — no public internet transit.
+func isPrivateOrLocalhost(hostname string) bool {
+	if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	if ip == nil {
+		return false
+	}
+	// RFC1918 + RFC4193 (IPv6 ULA) + link-local
+	privateRanges := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"100.64.0.0/10", // Tailscale / CGNAT
+		"fc00::/7",      // IPv6 ULA
+		"fe80::/10",     // IPv6 link-local
+	}
+	for _, cidr := range privateRanges {
+		_, subnet, _ := net.ParseCIDR(cidr)
+		if subnet != nil && subnet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func getEnv(key, defaultValue string) string {

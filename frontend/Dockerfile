@@ -34,9 +34,14 @@ RUN npm run build
 FROM nginx:alpine AS prod
 
 COPY --from=builder-prod /app/dist /usr/share/nginx/html
-COPY nginx.prod.conf /etc/nginx/conf.d/default.conf
+COPY nginx.prod.conf /etc/nginx/templates/default.conf.template
+
+# BACKEND_URL is substituted into the nginx config at container startup.
+# Default: http://proxy-backend:8080 (Docker service name from compose)
+ENV BACKEND_URL=http://proxy-backend:8080
 
 EXPOSE 80
+# nginx:alpine uses docker-entrypoint.sh which runs envsubst on /etc/nginx/templates/*.template
 CMD ["nginx", "-g", "daemon off;"]
 
 # ── E2E image (prod build + API proxy to backend) ────────────────────────────
