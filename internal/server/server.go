@@ -536,7 +536,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	router.POST("/oauth/callback", authRL, s.handleOAuthCallback)
 	router.POST("/oauth/token", authRL, s.handleOAuthToken)
 	router.GET("/oauth/session/:id/info", authRL, s.handleOAuthSessionInfo)
-	router.GET("/oauth/session/:id/status", authRL, s.handleOAuthSessionStatus)
+	router.GET("/oauth/session/:id/status", s.handleOAuthSessionStatus) // no rate limit: read-only polling during QR scan
 	router.POST("/oauth/session/:id/mock-complete", authRL, s.handleOAuthMockComplete)
 
 	// ETH address linking endpoints - available at multiple paths for flexibility:
