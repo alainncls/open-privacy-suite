@@ -73,7 +73,7 @@ type ResolveAddressResponse struct {
 	RealAddress     *string  `json:"real_address,omitempty"`
 	DisclosureLevel string   `json:"disclosure_level"`
 	GrantID         string   `json:"grant_id"`
-	Pseudonym       string   `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	Pseudonym       string   `json:"pseudonym,omitempty"`     // For pseudonymous, the display name to use
 	ScopeMethods    []string `json:"scope_methods,omitempty"` // Methods from grant scope (e.g. "transaction_history", "activity_logs")
 }
 
@@ -220,7 +220,7 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 		viewerDID, err = s.db.GetDIDByEthAddress(ctx, wallet)
 		if err != nil {
 			slog.Error("failed to look up DID", "error", err)
-		respondInternalError(c, "request failed")
+			respondInternalError(c, "request failed")
 			return
 		}
 	}
@@ -1637,7 +1637,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
 				filtered = append(filtered, b)
-			// VisibilityHidden, VisibilityRedacted: drop this balance entry
+				// VisibilityHidden, VisibilityRedacted: drop this balance entry
 			}
 		}
 		balances = filtered
@@ -1983,7 +1983,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-			// VisibilityFull or unrecognized: return as-is
+				// VisibilityFull or unrecognized: return as-is
 			}
 			filtered = append(filtered, t)
 		}
@@ -2237,7 +2237,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				a.Address = explorer.GeneratePseudonym(a.Address)
 				filtered = append(filtered, a)
-			// VisibilityHidden, VisibilityRedacted: drop this account
+				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered

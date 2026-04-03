@@ -97,6 +97,7 @@ func (s *Server) approveGovernanceRequest(c *gin.Context) {
 	}
 
 	if s.governanceEngine == nil {
+		slog.Error("governance engine not initialized")
 		respondInternalError(c, "request failed")
 		return
 	}

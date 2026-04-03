@@ -1,7 +1,9 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -242,7 +244,7 @@ func (s *Server) deletePreregisteredAddress(c *gin.Context) {
 
 	err = s.db.DeletePreregisteredAddress(c.Request.Context(), orgID, address)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			respondNotFound(c, "preregistered address not found")
 			return
 		}
@@ -313,7 +315,7 @@ func (s *Server) updatePreregisteredAddressABI(c *gin.Context) {
 
 	err = s.db.UpdateConstructorABI(c.Request.Context(), orgID, address, input.ConstructorABI)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			respondNotFound(c, "preregistered address not found")
 			return
 		}
