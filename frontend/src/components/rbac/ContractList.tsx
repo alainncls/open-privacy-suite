@@ -542,7 +542,7 @@ export default function ContractList() {
 
       {/* Grants Manager Dialog */}
       <Dialog open={!!managingGrants} onOpenChange={open => !open && setManagingGrants(null)}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Contract Permissions</DialogTitle>
           </DialogHeader>
