@@ -64,10 +64,27 @@ const isValidSelector = (selector: string): boolean => {
   return /^0x[a-fA-F0-9]{8}$/.test(selector);
 };
 
-// Validate hex value for custom param constraints
+// Validate hex value for custom param constraints — accepts any 0x-prefixed hex
 const isValidHexValue = (value: string): boolean => {
-  return /^0x[a-fA-F0-9]{2,64}$/.test(value) && value.length % 2 === 0;
+  return /^0x[a-fA-F0-9]+$/.test(value);
 };
+
+// Pad a hex value to the correct byte length for the ABI type.
+// address → 20 bytes, uint*/int* → 32 bytes, bytes32 → 32 bytes, etc.
+// Left-pads with zeros for numeric types, right-pads for bytesN.
+function padHexForType(hex: string, paramType: string): string {
+  const raw = hex.slice(2); // strip 0x
+  const targetBytes = paramType === 'address' ? 20
+    : paramType.startsWith('bytes') ? parseInt(paramType.replace('bytes', '')) || 32
+    : 32; // uint*, int*, bool, fallback
+  const targetChars = targetBytes * 2;
+  if (raw.length >= targetChars) return '0x' + raw.slice(0, targetChars);
+  // Left-pad for numbers/addresses, right-pad for bytesN
+  if (paramType.startsWith('bytes') && paramType !== 'bytes') {
+    return '0x' + raw.padEnd(targetChars, '0');
+  }
+  return '0x' + raw.padStart(targetChars, '0');
+}
 
 // Get constraint dropdown options based on ABI type
 function getConstraintOptions(paramType: string): { value: string; label: string }[] {
@@ -92,11 +109,11 @@ function getConstraintOptions(paramType: string): { value: string; label: string
 
 // Get placeholder text for custom value input based on ABI type
 function getCustomPlaceholder(paramType: string): string {
-  if (paramType === 'address') return '0x1234...abcd (20-byte address)';
-  if (paramType.startsWith('uint')) return '0x (hex-encoded number, e.g. 0x2a for 42)';
-  if (paramType === 'bytes32') return '0x (32-byte hex value)';
-  if (paramType.startsWith('bytes')) return '0x (hex-encoded bytes)';
-  return '0x (hex-encoded value)';
+  if (paramType === 'address') return '0x address (e.g. 0xd8dA6BF...)';
+  if (paramType.startsWith('uint')) return '0x hex number (e.g. 0x2a for 42)';
+  if (paramType === 'bytes32') return '0x hex (auto-padded to 32 bytes)';
+  if (paramType.startsWith('bytes')) return '0x hex bytes';
+  return '0x hex value';
 }
 
 // Inline component for a single event parameter constraint
@@ -151,11 +168,11 @@ function EventParamConstraint({
       return;
     }
     if (!isValidHexValue(val)) {
-      setCustomError('Must be a valid 0x-prefixed hex value (even number of chars, max 32 bytes)');
+      setCustomError('Must be a 0x-prefixed hex value (e.g. 0x1, 0xabcd)');
       return;
     }
     setCustomError('');
-    onChange(val);
+    onChange(padHexForType(val, param.type));
   };
 
   return (
