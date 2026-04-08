@@ -23,10 +23,6 @@ func (s *Server) listGroups(c *gin.Context) {
 	filter := db.GroupListFilter{
 		Search: c.Query("search"),
 	}
-	if ac := c.Query("auto_created"); ac != "" {
-		val := ac == "true"
-		filter.AutoCreated = &val
-	}
 
 	groups, total, err := s.db.ListGroupsWithAccessFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
@@ -147,7 +143,6 @@ func (s *Server) updateGroup(c *gin.Context) {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
 		IsOrgAdmin  *bool   `json:"is_org_admin"`
-		AutoCreated *bool   `json:"auto_created"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -162,9 +157,6 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.IsOrgAdmin != nil {
 		group.IsOrgAdmin = *input.IsOrgAdmin
-	}
-	if input.AutoCreated != nil {
-		group.AutoCreated = *input.AutoCreated
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
@@ -358,7 +350,6 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		ID            string   `json:"id"`
 		Name          string   `json:"name"`
 		Slug          string   `json:"slug"`
-		AutoCreated   bool     `json:"auto_created"`
 		ContractCount int      `json:"contract_count"`
 		MemberCount   int      `json:"member_count"`
 		Contracts     []string `json:"contracts"` // contract addresses
@@ -410,7 +401,6 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 			ID:            group.ID,
 			Name:          group.Name,
 			Slug:          group.Slug,
-			AutoCreated:   group.AutoCreated,
 			ContractCount: len(grants),
 			MemberCount:   len(members),
 			Contracts:     contractAddresses,

@@ -155,7 +155,7 @@ type Group struct {
 	Depth       int       `json:"depth"`
 	Path        string    `json:"path"`          // Materialized path (e.g., "root.engineering.devops")
 	IsOrgAdmin  bool      `json:"is_org_admin"`  // If true, members get all claims on all contracts in the org
-	AutoCreated bool      `json:"auto_created"`  // True for groups auto-created by deployer auto-grants
+	AutoCreated bool      `json:"auto_created"`  // Deprecated: always false for new groups. Column retained in DB for expand-only migration policy.
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

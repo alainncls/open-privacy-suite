@@ -455,17 +455,15 @@ func TestBatchDeletePreview(t *testing.T) {
 		previews[gm["id"].(string)] = gm
 	}
 
-	// Auto group: 1 contract, 1 member, auto_created=true
+	// Auto group: 1 contract, 1 member
 	autoPreview := previews[autoGroup.ID]
 	require.NotNil(t, autoPreview)
-	assert.Equal(t, true, autoPreview["auto_created"])
 	assert.Equal(t, float64(1), autoPreview["contract_count"])
 	assert.Equal(t, float64(1), autoPreview["member_count"])
 
-	// Manual group: 1 contract, 0 members, auto_created=false
+	// Manual group: 1 contract, 0 members
 	manualPreview := previews[manualGroup.ID]
 	require.NotNil(t, manualPreview)
-	assert.Equal(t, false, manualPreview["auto_created"])
 	assert.Equal(t, float64(1), manualPreview["contract_count"])
 	assert.Equal(t, float64(0), manualPreview["member_count"])
 }
@@ -494,69 +492,6 @@ func TestBatchDeleteCrossOrgRejection(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Contains(t, result["error"], "not found")
-}
-
-func TestGroupListFilterByAutoCreated(t *testing.T) {
-	server := setupTestServerForRBAC(t)
-	ctx := context.Background()
-
-	org := createTestOrganization(t, server, "filter-auto-org")
-
-	// Create 2 auto-created groups via direct DB
-	for i := 1; i <= 2; i++ {
-		slug := fmt.Sprintf("auto-filter-%d", i)
-		require.NoError(t, server.db.CreateGroup(ctx, &rbac.Group{
-			ID:          uuid.New().String(),
-			OrgID:       org.ID,
-			Slug:        slug,
-			Name:        fmt.Sprintf("Auto Filter %d", i),
-			Depth:       0,
-			Path:        slug,
-			AutoCreated: true,
-		}))
-	}
-
-	// Create 1 manual group via API
-	createTestGroup(t, server, org.ID, "manual-filter")
-
-	t.Run("FilterAutoCreatedTrue", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups?auto_created=true", org.ID), nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var result map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-		data := result["data"].([]any)
-		assert.Equal(t, 2, len(data))
-	})
-
-	t.Run("FilterAutoCreatedFalse", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups?auto_created=false", org.ID), nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var result map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-		data := result["data"].([]any)
-		assert.Equal(t, 1, len(data))
-	})
-
-	t.Run("NoFilter", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups", org.ID), nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var result map[string]any
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-		data := result["data"].([]any)
-		assert.Equal(t, 3, len(data))
-	})
 }
 
 func TestGrantContractToDeployerGroup(t *testing.T) {
