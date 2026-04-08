@@ -247,17 +247,14 @@ memberships, the **maximum** value applies.
 
 ## Per-Group RPC API Keys
 
-Each group can optionally have an `rpc_api_key` configured via the admin API or admin dashboard. When a user's request is forwarded to the upstream RPC node, the proxy attaches the group's API key as a `Bearer` token in the `Authorization` header. This enables per-group rate limiting and usage tracking on the upstream RPC proxy side.
+Each group can have an `rpc_api_key` configured via the admin dashboard. This key is used when forwarding requests to the upstream RPC node, enabling per-group rate limiting and usage tracking.
 
-**Key behavior:**
+- If a group has an API key, it is used for all requests from members of that group
+- If no group-specific key is set, the global `RPC_API_KEY` is used as a fallback
+- Keys are encrypted at rest in production (`RPC_API_KEY_ENCRYPTION_KEY` required)
+- API keys are masked in API responses (only last 4 characters visible)
 
-- If a group has an `rpc_api_key`, it is used for all requests from members of that group
-- If no group-specific key is set, the global `RPC_API_KEY` environment variable is used as a fallback
-- Keys are encrypted at rest using AES-256-GCM when `RPC_API_KEY_ENCRYPTION_KEY` is configured (required in production)
-- API keys are masked in admin API responses (only last 4 characters shown, e.g., `****c123`)
-- When a user belongs to multiple groups, the key from the group that grants access to the target contract is used
-
-**Circuit breaker protection:** If the upstream RPC node returns HTTP 429 (Too Many Requests) for a given API key, the proxy trips a per-key circuit breaker with a 1-second cooldown. During cooldown, all requests using that key are rejected immediately without forwarding, preventing cascade overload. See [Configuration](/docs/configuration#rpc-api-keys-and-upstream-rate-limiting) for details.
+See [Configuration](/docs/configuration) for setup.
 
 ---
 
