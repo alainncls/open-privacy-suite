@@ -230,6 +230,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		Claims  []rbac.Claim `json:"claims"`
 		RateLimitRPS   *int         `json:"rate_limit_rps"`
 		RateLimitDaily *int         `json:"rate_limit_daily"`
+		RPCAPIKey      *string      `json:"rpc_api_key"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -259,6 +260,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		Claims:  input.Claims,
 		RateLimitRPS:   input.RateLimitRPS,
 		RateLimitDaily: input.RateLimitDaily,
+		RPCAPIKey:      input.RPCAPIKey,
 	}
 
 	if existing != nil {

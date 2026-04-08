@@ -167,6 +167,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	var finalClaims []Claim
 	var finalRateLimitRPS *int
 	var finalRateLimitDaily *int
+	var finalRPCAPIKey string
 	firstMembership := true
 
 	for _, m := range memberships {
@@ -189,6 +190,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			finalClaims = membershipPerms.Claims
 			finalRateLimitRPS = membershipPerms.RateLimitRPS
 			finalRateLimitDaily = membershipPerms.RateLimitDaily
+			finalRPCAPIKey = membershipPerms.RPCAPIKey
 			firstMembership = false
 		} else {
 			// Subsequent memberships - UNION the permissions (user benefits from all groups)
@@ -199,6 +201,11 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			// For rate limits across memberships, take the MAXIMUM (most permissive)
 			finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
 			finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
+
+			// RPC API key: use first non-empty key found across memberships
+			if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
+				finalRPCAPIKey = membershipPerms.RPCAPIKey
+			}
 		}
 	}
 
@@ -211,6 +218,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 		Claims:         ExpandClaims(finalClaims), // expand so admin→deploy etc. are included
 		RateLimitRPS:   finalRateLimitRPS,
 		RateLimitDaily: finalRateLimitDaily,
+		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(r.cacheTTL),
 	}, nil
@@ -235,10 +243,11 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		}
 	}
 
-	// Still compute rate limits from memberships (take the most permissive)
+	// Still compute rate limits and API key from memberships (take the most permissive)
 	var finalRateLimitRPS *int
 	var finalRateLimitDaily *int
 	var finalMethods []string
+	var finalRPCAPIKey string
 
 	for _, m := range memberships {
 		// Get the group hierarchy for this membership to get rate limits
@@ -255,6 +264,9 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		finalMethods = unionStrings(finalMethods, membershipPerms.AllowedMethods)
 		finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
 		finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
+		if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
+			finalRPCAPIKey = membershipPerms.RPCAPIKey
+		}
 	}
 
 	return &EffectivePermissions{
@@ -266,6 +278,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		Claims:  allClaims, // Org admins get all default claims too
 		RateLimitRPS:   finalRateLimitRPS,
 		RateLimitDaily: finalRateLimitDaily,
+		RPCAPIKey:      finalRPCAPIKey,
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(r.cacheTTL),
 	}, nil
@@ -278,6 +291,7 @@ type hierarchyPerms struct {
 	Claims  []Claim
 	RateLimitRPS   *int
 	RateLimitDaily *int
+	RPCAPIKey      string // First non-empty key found in hierarchy (deepest group wins)
 }
 
 // computeHierarchyPermissions computes permissions by traversing the group hierarchy
@@ -344,6 +358,11 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			// Apply MINIMUM for rate limits (most restrictive wins within hierarchy)
 			result.RateLimitRPS = minIntPtr(result.RateLimitRPS, access.RateLimitRPS)
 			result.RateLimitDaily = minIntPtr(result.RateLimitDaily, access.RateLimitDaily)
+
+			// RPC API key: deepest group in hierarchy wins (last non-empty value)
+			if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
+				result.RPCAPIKey = *access.RPCAPIKey
+			}
 		}
 
 		// Collect contract IDs we need to load

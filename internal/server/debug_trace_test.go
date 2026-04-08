@@ -32,6 +32,9 @@ func setupProcessorWithoutTracing(t *testing.T) (*JSONRPCProcessor, *testServerR
 		&noopRateLimiter{},
 		nil, // no proxy needed for negative path tests
 		ts.db,
+		NewCircuitBreaker(),
+		NewConcurrencyLimiter(50),
+		"",
 	)
 	return proc, ts
 }
@@ -58,6 +61,9 @@ func setupProcessorWithTracing(t *testing.T) (*JSONRPCProcessor, *testServerRBAC
 		ts.db,
 		rt,
 		tv,
+		NewCircuitBreaker(),
+		NewConcurrencyLimiter(50),
+		"",
 	)
 	return proc, ts
 }

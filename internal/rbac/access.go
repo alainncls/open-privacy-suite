@@ -551,6 +551,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			UserID:         user.ID,
 			RateLimitRPS:   perms.RateLimitRPS,
 			RateLimitDaily: perms.RateLimitDaily,
+			RPCAPIKey:      perms.RPCAPIKey,
 			Claims:         allClaims,
 		}, nil
 	}
@@ -589,6 +590,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					UserID:         user.ID,
 					RateLimitRPS:   perms.RateLimitRPS,
 					RateLimitDaily: perms.RateLimitDaily,
+					RPCAPIKey:      perms.RPCAPIKey,
 					Claims:         allClaims,
 				}, nil
 			}
@@ -620,6 +622,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						UserID:         user.ID,
 						RateLimitRPS:   perms.RateLimitRPS,
 						RateLimitDaily: perms.RateLimitDaily,
+						RPCAPIKey:      perms.RPCAPIKey,
 						Claims:         allClaims,
 					}, nil
 				}
@@ -954,6 +957,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				UserID:         user.ID,
 				RateLimitRPS:   perms.RateLimitRPS,
 				RateLimitDaily: perms.RateLimitDaily,
+				RPCAPIKey:      perms.RPCAPIKey,
 				Claims:         allClaims,
 				DeploymentInfo: &DeploymentInfo{
 					OrgID:     org.ID,
@@ -991,6 +995,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		UserID:            user.ID,
 		RateLimitRPS:      perms.RateLimitRPS,
 		RateLimitDaily:    perms.RateLimitDaily,
+		RPCAPIKey:         perms.RPCAPIKey,
 		Claims:            allClaims,
 		FactoryDeployInfo: factoryDeployInfo, // Set if this was a factory deploy
 	}, nil

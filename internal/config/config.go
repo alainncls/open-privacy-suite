@@ -85,6 +85,10 @@ type Config struct {
 	// When set, /oauth/authorize redirects browsers to the React login page instead of serving inline HTML.
 	FrontendURL string
 
+	// RPC API key for upstream RPC proxy authentication
+	RPCAPIKey             string // RPC_API_KEY — global fallback when no group-specific key is set
+	MaxConcurrentRequests int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
+
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
 	AzureADClientSecret string // AZURE_AD_CLIENT_SECRET
@@ -218,6 +222,14 @@ func Load() *Config {
 	}
 	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
 
+	// Per-user concurrency cap (default 50)
+	maxConcurrentRequests := 50
+	if mcStr := getEnv("MAX_CONCURRENT_REQUESTS", ""); mcStr != "" {
+		if n, err := strconv.Atoi(mcStr); err == nil && n > 0 {
+			maxConcurrentRequests = n
+		}
+	}
+
 	return &Config{
 		NodeURL:                  getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:              getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -264,6 +276,8 @@ func Load() *Config {
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
 		TrustedInternalCIDRs:    getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
 		FrontendURL:              getEnv("FRONTEND_URL", ""),
+		RPCAPIKey:                getEnv("RPC_API_KEY", ""),
+		MaxConcurrentRequests:    maxConcurrentRequests,
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:          getEnv("AZURE_AD_TENANT_ID", "common"),

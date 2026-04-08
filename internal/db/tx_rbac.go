@@ -226,8 +226,8 @@ func (t *Tx) DeleteGroup(ctx context.Context, id string) error {
 // Group Access operations on transaction
 
 func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily)
-	          VALUES ($1, $2, $3, $4, $5, $6)
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -238,7 +238,7 @@ func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 	return t.tx.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
-		access.RateLimitRPS, access.RateLimitDaily,
+		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 
