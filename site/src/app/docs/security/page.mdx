@@ -28,9 +28,10 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | `les_*` | Light client protocol |
 | `eth_sign` | Arbitrary message signing |
 | `eth_signTransaction` | Transaction signing |
-| `eth_getStorageAt` | Raw storage slot access bypasses all contract privacy controls |
 | `eth_subscribe` | WebSocket subscriptions (bypasses filtering) |
 | `eth_unsubscribe` | WebSocket subscriptions |
+
+**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, users with the read claim can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
 
 ### eth\_sendRawTransaction Support
 
@@ -123,7 +124,7 @@ The proxy applies per-method response filters **after** receiving the node's res
 
 | Method | Filtering behavior |
 |--------|-------------------|
-| `eth_getStorageAt` | Permanently blocked (global blocklist) |
+| `eth_getStorageAt` | Tiered access: admin (all slots), read (EIP-1967 proxy slots only), no claim (blocked) |
 | `eth_getTransactionByHash` | Returns `null` if user is not a participant (`from`/`to` match) |
 | `eth_getTransactionReceipt` | Strips `logs` and `logsBloom` for non-participants; preserves execution metadata |
 | `eth_getLogs` | Per-log-entry filtering based on indexed topic address matching |
@@ -232,7 +233,7 @@ All methods that accept a target address enforce cross-org isolation at the addr
 | `eth_createAccessList` | Storage slots and addresses accessed | Contract internals |
 | `eth_sendTransaction` | Submits transaction | Write access |
 
-`eth_getStorageAt` is **globally blocked** (raw storage access bypasses all contract-level privacy controls).
+`eth_getStorageAt` uses **tiered access based on claims** (admin: all slots, read: EIP-1967 proxy slots only, no claim: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
 
 ### Plain CREATE Pre-registration
 
@@ -468,15 +469,24 @@ Even if the network boundary is misconfigured (backend port exposed, reverse pro
 - **Explorer endpoints**: Accessible without auth from the allowed network, but all data is redacted per the viewer's identity (anonymous viewers see almost nothing with all-contracts-private).
 - **RPC endpoint**: Always requires JWT for sensitive methods. Anonymous access is limited to claim-free methods (block number, chain ID, gas price).
 
+## Supply Chain Security
+
+All GitHub Actions used in CI/CD workflows are pinned to full commit SHAs rather than mutable tags (e.g., `actions/checkout@<sha>` instead of `actions/checkout@v4`). This prevents a compromised or hijacked upstream action from injecting malicious code into the build pipeline.
+
+Dependabot is configured to monitor GitHub Actions dependencies weekly and open pull requests when new versions are available. This was motivated by the Trivy supply chain attack (March 2026), where a widely-used action tag was force-pushed with malicious content -- SHA pinning would have prevented the compromise from propagating.
+
+---
+
 ## Production Checklist
 
 - [ ] Set strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`
-- [ ] Set `ENVIRONMENT=production`
+- [ ] Set `ENVIRONMENT=production` and `GIN_MODE=release`
 - [ ] Set `NODE_URL` to your Ethereum node endpoint
 - [ ] Set `BASE_URL` to public HTTPS URL (used for OAuth callbacks)
 - [ ] Configure `VERIFIER_ID` with your Privado DID
 - [ ] Set `ADMIN_API_TOKEN` to a strong random secret (32+ chars)
 - [ ] Set `CORS_ALLOWED_ORIGINS` to the block explorer's origin
+- [ ] Set `RPC_API_KEY_ENCRYPTION_KEY` if using per-group RPC API keys (generate with `openssl rand -hex 32`)
 - [ ] Configure PostgreSQL with SSL (`sslmode=require`)
 - [ ] Place behind reverse proxy with TLS termination (Caddy included in prod compose)
 - [ ] Verify backend port 8080 is NOT publicly accessible (only via reverse proxy)

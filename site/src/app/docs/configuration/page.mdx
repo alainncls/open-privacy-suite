@@ -35,6 +35,8 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
   { name: "DATABASE_URL", default: "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable", description: "PostgreSQL connection string" },
   { name: "ENVIRONMENT", default: "development", description: "Set to production or development" },
   { name: "BASE_URL", default: "http://localhost:8080", description: "Public URL for auth callbacks" },
+  { name: "GIN_MODE", default: "debug", description: "Set to release in production to disable debug logging and stack traces in error responses" },
+  { name: "TRUSTED_INTERNAL_CIDRS", default: "(none)", description: "Comma-separated CIDRs appended to the default internal network list (localhost, Docker, RFC1918, Tailscale) for localhostOnlyMiddleware. Use when the block explorer or monitoring runs outside default networks (e.g., Kubernetes pod CIDRs, cloud VPCs)." },
 ]} />
 
 ---
@@ -261,6 +263,7 @@ Adjust in `internal/server/server.go` if your deployment requires additional tru
 ```bash
 # Required for production
 ENVIRONMENT=production
+GIN_MODE=release
 JWT_SECRET=your-secure-secret-here
 JWT_REFRESH_SECRET=your-refresh-secret-here
 VERIFIER_ID=did:polygonid:polygon:main:your-verifier-did

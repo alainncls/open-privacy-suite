@@ -35,13 +35,28 @@ Response filtering uses these linked addresses to determine what the user is all
 
 ---
 
-## eth\_getStorageAt -- Permanently Blocked
+## eth\_getStorageAt -- Tiered Access
 
-`eth_getStorageAt` is added to the global method blocklist and is rejected before reaching the node.
+`eth_getStorageAt` uses claim-based tiered access instead of a blanket block. Raw storage slot reads bypass contract-level privacy controls (ABI restrictions, parameter rules, method allowlists), so access is restricted based on the user's claims on the target contract.
 
-**Why:** This method reads arbitrary storage slots by index. Smart contract access control (ABI restrictions, parameter rules, method allowlists) operates at the function-call level. Raw storage slot access bypasses all of these controls entirely, allowing any reader to extract private state variables, mapping entries, and internal balances directly from the contract's storage trie.
+| Claim level | Access |
+|-------------|--------|
+| **Admin** | Unrestricted access to all storage slots |
+| **Read** (or any claim implying read) | Allowed only for well-known proxy infrastructure slots (see below) |
+| **No claim** | Blocked |
 
-Blocking this method is the only safe option. Unlike transaction or log data, there is no concept of "participant" for a storage slot -- the data is either fully exposed or fully hidden.
+### Well-known proxy infrastructure slots
+
+Users with the `read` claim can query only the following four slots. These are standard EIP-1967 and EIP-2535 proxy infrastructure slots that expose implementation/admin addresses, not user data:
+
+| Slot | Standard | Purpose |
+|------|----------|---------|
+| `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc` | EIP-1967 | Implementation address |
+| `0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103` | EIP-1967 | Admin address |
+| `0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50` | EIP-1967 | Beacon address |
+| `0x4910fdfa16fed3260ed0e7147f7cc6da11a60208b5b9406d12a635614ffd9143` | EIP-1967 | Rollback test flag |
+
+Any other slot returns an error for non-admin users. This allows standard proxy introspection tools (e.g., OpenZeppelin Upgrades) to function while preventing raw state extraction of private contract data.
 
 ---
 
@@ -173,7 +188,7 @@ These response-filtering features implement core privacy requirements for regula
 |-------------|----------------|
 | **Intra-org transaction confidentiality** | `eth_getTransactionByHash` returns `null` for non-participants, preventing co-members from reading each other's calldata and transfer details |
 | **Event log visibility restrictions** | `eth_getLogs` filters entries by indexed address topics, ensuring users see only events involving their own addresses |
-| **Raw state access prevention** | `eth_getStorageAt` is permanently blocked, closing the storage-slot bypass that would defeat all contract-level privacy controls |
+| **Raw state access prevention** | `eth_getStorageAt` uses tiered access based on claims: admin users get unrestricted slot access, read-claim users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked entirely |
 | **Receipt log redaction** | `eth_getTransactionReceipt` strictly filters inner logs and zeros bloom filters, ensuring even participants cannot see unrelated logs |
 
 These controls ensure that even within a shared private network where all participants have read access to the same contracts, individual transaction privacy is maintained at the response level.
@@ -232,7 +247,7 @@ The proxy strips the `logVisibleTo` field before forwarding the transaction to t
 
 | Method | Participant behavior | Non-participant behavior |
 |--------|---------------------|--------------------------|
-| `eth_getStorageAt` | Blocked (globally) | Blocked (globally) |
+| `eth_getStorageAt` | Admin: all slots; Read: EIP-1967 proxy slots only | Blocked (no claim) |
 | `eth_getTransactionByHash` | Full transaction | `null` |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` |

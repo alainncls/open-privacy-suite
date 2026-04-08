@@ -208,7 +208,7 @@ Function rules can include `param_rules` to enforce constraints on individual ca
 
 <Callout variant="warning" title="Known limitations">
 
-- `eth_getStorageAt` can bypass param constraints by reading raw storage slots
+- `eth_getStorageAt` uses tiered access (admin: all slots, read: EIP-1967 proxy infrastructure slots only, no claim: blocked) which limits but does not fully prevent storage-level reads for users with the read claim -- the four allowed proxy slots expose implementation/admin addresses only
 - Internal calls within contracts cannot be intercepted
 - `eth_getLogs` topic filtering is not yet addressed
 - Users without a linked ETH address cannot access functions with param constraints
@@ -242,6 +242,22 @@ Each group can define rate limits:
 
 Within a group chain, the **minimum** (most restrictive) value applies. Across multiple
 memberships, the **maximum** value applies.
+
+---
+
+## Per-Group RPC API Keys
+
+Each group can optionally have an `rpc_api_key` configured via the admin API or admin dashboard. When a user's request is forwarded to the upstream RPC node, the proxy attaches the group's API key as a `Bearer` token in the `Authorization` header. This enables per-group rate limiting and usage tracking on the upstream RPC proxy side.
+
+**Key behavior:**
+
+- If a group has an `rpc_api_key`, it is used for all requests from members of that group
+- If no group-specific key is set, the global `RPC_API_KEY` environment variable is used as a fallback
+- Keys are encrypted at rest using AES-256-GCM when `RPC_API_KEY_ENCRYPTION_KEY` is configured (required in production)
+- API keys are masked in admin API responses (only last 4 characters shown, e.g., `****c123`)
+- When a user belongs to multiple groups, the key from the group that grants access to the target contract is used
+
+**Circuit breaker protection:** If the upstream RPC node returns HTTP 429 (Too Many Requests) for a given API key, the proxy trips a per-key circuit breaker with a 1-second cooldown. During cooldown, all requests using that key are rejected immediately without forwarding, preventing cascade overload. See [Configuration](/docs/configuration#rpc-api-keys-and-upstream-rate-limiting) for details.
 
 ---
 
