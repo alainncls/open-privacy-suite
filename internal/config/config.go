@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/url"
@@ -84,6 +85,11 @@ type Config struct {
 	// Frontend URL for OAuth redirect (e.g., http://localhost:5173)
 	// When set, /oauth/authorize redirects browsers to the React login page instead of serving inline HTML.
 	FrontendURL string
+
+	// RPC API key for upstream RPC proxy authentication
+	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
+	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
+	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
 
 	// Azure AD / Microsoft Entra ID authentication
 	AzureADClientID     string // AZURE_AD_CLIENT_ID
@@ -218,6 +224,23 @@ func Load() *Config {
 	}
 	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
 
+	// Per-user concurrency cap (default 50)
+	maxConcurrentRequests := 50
+	if mcStr := getEnv("MAX_CONCURRENT_REQUESTS", ""); mcStr != "" {
+		if n, err := strconv.Atoi(mcStr); err == nil && n > 0 {
+			maxConcurrentRequests = n
+		}
+	}
+
+	// RPC API key encryption key (hex-encoded 32 bytes for AES-256)
+	var rpcAPIKeyEncKey []byte
+	if hexKey := getEnv("RPC_API_KEY_ENCRYPTION_KEY", ""); hexKey != "" {
+		decoded, err := hex.DecodeString(hexKey)
+		if err == nil && len(decoded) == 32 {
+			rpcAPIKeyEncKey = decoded
+		}
+	}
+
 	return &Config{
 		NodeURL:                  getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:              getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -264,6 +287,9 @@ func Load() *Config {
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
 		TrustedInternalCIDRs:    getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
 		FrontendURL:              getEnv("FRONTEND_URL", ""),
+		RPCAPIKey:                getEnv("RPC_API_KEY", ""),
+		RPCAPIKeyEncryptionKey:   rpcAPIKeyEncKey,
+		MaxConcurrentRequests:    maxConcurrentRequests,
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),
 		AzureADClientSecret:      getEnv("AZURE_AD_CLIENT_SECRET", ""),
 		AzureADTenantID:          getEnv("AZURE_AD_TENANT_ID", "common"),

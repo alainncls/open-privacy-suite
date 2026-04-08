@@ -234,6 +234,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
 	}
 
+	// Configure RPC API key encryption for decrypting keys from the database
+	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
+		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
+	}
+
 	// Load additional trusted factory hashes from config
 	if len(cfg.TrustedFactoryHashes) > 0 {
 		for _, hash := range cfg.TrustedFactoryHashes {
@@ -351,11 +356,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database)
 	}
 
+	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy
+	circuitBreaker := NewCircuitBreaker()
+	concurrencyLimiter := NewConcurrencyLimiter(cfg.MaxConcurrentRequests)
+
 	// Initialize JSON-RPC processor with dependencies
 	if runtimeTracer != nil {
-		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, database, runtimeTracer, traceValidator)
+		s.jsonrpcProcessor = NewJSONRPCProcessorWithTracing(rbacAccessCtrl, rateLimiter, proxySvc, database, runtimeTracer, traceValidator, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	} else {
-		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
+		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetLogVisibilityStore(database)

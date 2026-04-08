@@ -26,6 +26,7 @@ export default function GroupAccessForm({
   const [claims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
+  const [rpcApiKey, setRpcApiKey] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<{ [key in 'read' | 'write' | 'deploy']: boolean }>({
@@ -68,6 +69,7 @@ export default function GroupAccessForm({
         setDefaultClaims(access.claims || []);
         setRateLimitRPS(access.rate_limit_rps?.toString() || '');
         setRateLimitDaily(access.rate_limit_daily?.toString() || '');
+        setRpcApiKey(access.rpc_api_key || '');
       }
     } catch {
       // No access settings yet, that's OK
@@ -172,6 +174,7 @@ export default function GroupAccessForm({
         claims: claims,
         rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
         rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
+        rpc_api_key: rpcApiKey || null,
       };
 
       await rbacApi.groups.setAccess(orgId, groupId, input);
@@ -473,6 +476,22 @@ export default function GroupAccessForm({
           />
           <p className="text-xs text-neutral-400">Requests per day</p>
         </div>
+      </div>
+
+      {/* RPC API Key */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-neutral-700">
+          RPC API Key
+        </label>
+        <Input
+          type="text"
+          value={rpcApiKey}
+          onChange={e => setRpcApiKey(e.target.value)}
+          placeholder="Optional — overrides global RPC_API_KEY for this group"
+        />
+        <p className="text-xs text-neutral-400">
+          Bearer token sent to the upstream RPC proxy. Leave empty to use the global default.
+        </p>
       </div>
 
       <div className="flex justify-end gap-3 pt-2">

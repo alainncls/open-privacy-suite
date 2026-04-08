@@ -83,6 +83,11 @@ type Metrics struct {
 	// Rate limiting
 	RateLimitHitsTotal *prometheus.CounterVec
 
+	// Circuit breaker & concurrency
+	CircuitBreakerTripsTotal   *prometheus.CounterVec // label: api_key_masked (last 4 chars only)
+	ConcurrencyRejectionsTotal prometheus.Counter
+	UpstreamRateLimitTotal     *prometheus.CounterVec // label: api_key_masked (last 4 chars only)
+
 	// Pricing (CoinGecko)
 	PricingFetchesTotal        *prometheus.CounterVec
 	PricingFetchDuration       prometheus.Histogram
@@ -175,6 +180,22 @@ func New(version string) *Metrics {
 			Help:      "Total rate limit rejections by type.",
 		}, []string{"limit_type"}),
 
+		CircuitBreakerTripsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "circuit_breaker_trips_total",
+			Help:      "Total circuit breaker trip events (request rejected because upstream was rate-limited).",
+		}, []string{"api_key_masked"}),
+		ConcurrencyRejectionsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "concurrency_rejections_total",
+			Help:      "Total requests rejected due to per-user concurrency limit.",
+		}),
+		UpstreamRateLimitTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "upstream_rate_limit_total",
+			Help:      "Total HTTP 429 responses received from the upstream RPC node.",
+		}, []string{"api_key_masked"}),
+
 		PricingFetchesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "pricing_fetches_total",
@@ -224,6 +245,7 @@ func New(version string) *Metrics {
 		m.ComplianceDecisionsTotal, m.ComplianceCheckDuration,
 		m.AuthAttemptsTotal, m.AuthTokenRefreshesTotal,
 		m.RateLimitHitsTotal,
+		m.CircuitBreakerTripsTotal, m.ConcurrencyRejectionsTotal, m.UpstreamRateLimitTotal,
 		m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures,
 		m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal,
 		m.PendingDeployments,

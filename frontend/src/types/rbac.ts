@@ -183,6 +183,7 @@ export interface GroupAccess {
   claims: Claim[]; // Group capabilities - applies to public contracts directly, registered via grants
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
+  rpc_api_key?: string | null;
   created_at: string;
   updated_at: string;
   // Computed fields (populated by backend for child groups)
@@ -298,6 +299,7 @@ export interface SetGroupAccessInput {
   claims?: Claim[];
   rate_limit_rps?: number | null;
   rate_limit_daily?: number | null;
+  rpc_api_key?: string | null;
 }
 
 export interface UpdateUserInput {

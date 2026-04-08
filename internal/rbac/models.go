@@ -219,8 +219,9 @@ type GroupAccess struct {
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
 	Claims         []Claim   `json:"claims"` // Capabilities: read, write, deploy, admin, upgrade
-	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"`
+	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
+	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
+	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"`      // API key for upstream RPC proxy authentication
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 
@@ -274,6 +275,7 @@ type EffectivePermissions struct {
 	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
 	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
+	RPCAPIKey      string                    `json:"-"` // Per-group upstream RPC API key (excluded from JSON — sensitive)
 	ComputedAt     time.Time                 `json:"computed_at"`
 	ExpiresAt      time.Time                 `json:"expires_at"`
 }
@@ -313,8 +315,9 @@ type AccessCheckResult struct {
 	Reason            string             `json:"reason,omitempty"`
 	OrgID             string             `json:"org_id,omitempty"`              // Resolved organization ID
 	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)
-	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`
+	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`      // Deprecated: rate limiting moved to RPC proxy
+	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`    // Deprecated: rate limiting moved to RPC proxy
+	RPCAPIKey         string             `json:"-"`                             // API key for upstream RPC proxy (excluded from JSON — sensitive)
 	Claims            []Claim            `json:"claims,omitempty"`
 	DeploymentInfo    *DeploymentInfo    `json:"deployment_info,omitempty"`     // Set for allowed deployments
 	FactoryDeployInfo *FactoryDeployInfo `json:"factory_deploy_info,omitempty"` // Set for CREATE3 factory deploys
