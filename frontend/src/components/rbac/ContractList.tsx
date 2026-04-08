@@ -570,7 +570,7 @@ export default function ContractList() {
 
       {/* Sync Results Dialog */}
       <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Sync with Chain Results</DialogTitle>
           </DialogHeader>

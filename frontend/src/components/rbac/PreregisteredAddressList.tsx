@@ -412,7 +412,7 @@ export default function PreregisteredAddressList() {
 
       {/* Pre-register Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Pre-register CREATE3 Addresses</DialogTitle>
           </DialogHeader>

@@ -446,7 +446,7 @@ export default function GroupList() {
         open={!!editingAccess}
         onOpenChange={open => !open && setEditingAccess(null)}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               Edit Access for "{editingAccess?.name}"

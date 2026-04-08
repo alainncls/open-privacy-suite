@@ -670,7 +670,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {selectedRequest ? 'Request Details' : 'Grant Details'}
