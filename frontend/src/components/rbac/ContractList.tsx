@@ -478,7 +478,7 @@ export default function ContractList() {
 
       {/* Create Contract Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Register Contract</DialogTitle>
           </DialogHeader>
@@ -492,7 +492,7 @@ export default function ContractList() {
 
       {/* Edit Contract Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Contract</DialogTitle>
           </DialogHeader>
@@ -542,7 +542,7 @@ export default function ContractList() {
 
       {/* Grants Manager Dialog */}
       <Dialog open={!!managingGrants} onOpenChange={open => !open && setManagingGrants(null)}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Contract Permissions</DialogTitle>
           </DialogHeader>
@@ -570,7 +570,7 @@ export default function ContractList() {
 
       {/* Sync Results Dialog */}
       <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Sync with Chain Results</DialogTitle>
           </DialogHeader>

@@ -352,7 +352,7 @@ export default function TravelRuleRecordList() {
 
       {/* Detail Dialog */}
       <Dialog open={!!selectedRecord} onOpenChange={open => { if (!open) setSelectedRecord(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Travel Rule Record</DialogTitle>
           </DialogHeader>
@@ -495,7 +495,7 @@ export default function TravelRuleRecordList() {
 
       {/* Create Dialog */}
       <Dialog open={showForm} onOpenChange={open => { if (!open) setShowForm(false); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create Travel Rule Record</DialogTitle>
           </DialogHeader>

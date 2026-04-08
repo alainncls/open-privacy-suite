@@ -260,7 +260,7 @@ export default function AddressThresholdList() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editMode ? 'Edit' : 'Add'} Address Threshold Override</DialogTitle>
           </DialogHeader>

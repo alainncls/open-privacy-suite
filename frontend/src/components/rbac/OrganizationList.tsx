@@ -194,7 +194,7 @@ export default function OrganizationList() {
 
       {/* Create Organization Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Organization</DialogTitle>
           </DialogHeader>
@@ -207,7 +207,7 @@ export default function OrganizationList() {
 
       {/* Edit Organization Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Organization</DialogTitle>
           </DialogHeader>

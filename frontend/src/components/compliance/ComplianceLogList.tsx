@@ -241,7 +241,7 @@ export default function ComplianceLogList() {
 
       {/* Detail Dialog */}
       <Dialog open={!!selectedLog} onOpenChange={open => { if (!open) setSelectedLog(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Compliance Log Detail</DialogTitle>
           </DialogHeader>
