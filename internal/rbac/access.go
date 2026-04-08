@@ -127,8 +127,9 @@ var GlobalBlockedMethods = map[string]bool{
 	"txpool_inspect":     true,
 	"txpool_status":      true,
 
-	// eth_getStorageAt - raw storage access bypasses all contract-level privacy controls
-	strings.ToLower(MethodGetStorageAt): true,
+	// NOTE: eth_getStorageAt is NOT globally blocked — it uses tiered access control
+	// in CheckAccess: admin-claim users get all slots, read-claim users get only
+	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
 	// Signing methods - key exposure risk
 	"eth_sign":            true,
@@ -599,8 +600,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
 	//   - eth_getBalance: wallet balance display
 	//   - eth_getCode: EOA vs contract detection
-	// Only eth_getStorageAt and eth_getProof need strict contract-level gating since
-	// they access contract-internal state that could leak sensitive data.
+	// eth_getStorageAt has tiered access (admin=all slots, read=well-known only)
+	// enforced in CheckAccess. eth_getProof needs strict contract-level gating since
+	// both methods access contract-internal state that could leak sensitive data.
 	if req.TargetAddress != "" && isBasicAddressQuery(req.Method) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
@@ -747,6 +749,26 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				Allowed: false,
 				Reason:  ErrContractAccessDenied,
 			}, nil
+		}
+
+		// Tiered eth_getStorageAt access: admin-claim users get all slots,
+		// read-claim users get only well-known infrastructure slots (EIP-1967, EIP-2535).
+		// This runs AFTER the requiredClaim check (so we know the user has at least
+		// the read claim on the contract) but BEFORE function selector checks
+		// (which don't apply to storage reads).
+		if req.Method == MethodGetStorageAt {
+			if !containsClaim(access.Claims, ClaimAdmin) {
+				slot := extractStorageSlot(req.Params)
+				if !IsWellKnownStorageSlot(slot) {
+					slog.Debug("access denied: non-admin user accessing non-well-known storage slot",
+						"slot", slot, "contract", req.TargetAddress, "user", req.UserExternalID)
+					return &AccessCheckResult{
+						Allowed: false,
+						Reason:  ErrContractAccessDenied,
+					}, nil
+				}
+			}
+			// Admin users pass through — all slots allowed
 		}
 
 		// Check function selector if specified.
@@ -1447,7 +1469,7 @@ func (c *AccessController) getOrgContextForTarget(ctx context.Context, userOrgID
 //
 // NOT included:
 //   - eth_getCode: reveals whether an address has deployed code (contract existence oracle)
-//   - eth_getStorageAt: accesses contract-internal state
+//   - eth_getStorageAt: tiered access enforced in CheckAccess (admin=all, read=well-known only)
 //   - eth_getProof: returns balance + storage hash
 func isBasicAddressQuery(method string) bool {
 	switch method {
