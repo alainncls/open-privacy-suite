@@ -67,7 +67,6 @@ export interface Group {
   depth: number;
   path: string; // Materialized path (e.g., "root.engineering.devops")
   is_org_admin?: boolean; // If true, members get all claims on all contracts in the org
-  auto_created?: boolean; // True for groups auto-created by deployer auto-grants
   created_at: string;
   updated_at: string;
 }
@@ -78,7 +77,6 @@ export interface BatchMoveRequest {
   contract_ids: string[];
   target_group_id?: string;
   new_group?: { slug: string; name: string };
-  delete_empty_auto_groups?: boolean;
 }
 
 export interface BatchMoveResponse {
@@ -103,7 +101,6 @@ export interface BatchDeletePreviewGroup {
   id: string;
   name: string;
   slug: string;
-  auto_created: boolean;
   contract_count: number;
   member_count: number;
   contracts: string[];

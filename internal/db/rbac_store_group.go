@@ -220,8 +220,7 @@ func escapeILIKE(s string) string {
 
 // GroupListFilter contains optional filters for listing groups.
 type GroupListFilter struct {
-	AutoCreated *bool  // Filter by auto_created status
-	Search      string // ILIKE filter on name or slug
+	Search string // ILIKE filter on name or slug
 }
 
 // ListGroupsWithAccessFiltered lists groups with access settings, applying optional filters.
@@ -231,11 +230,6 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 	args := []any{orgID}
 	argIdx := 2
 
-	if filter.AutoCreated != nil {
-		where += fmt.Sprintf(" AND g.auto_created = $%d", argIdx)
-		args = append(args, *filter.AutoCreated)
-		argIdx++
-	}
 	if filter.Search != "" {
 		where += fmt.Sprintf(" AND (g.name ILIKE $%d OR g.slug ILIKE $%d)", argIdx, argIdx)
 		args = append(args, "%"+escapeILIKE(filter.Search)+"%")

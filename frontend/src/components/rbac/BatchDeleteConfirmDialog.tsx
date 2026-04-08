@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { BatchDeletePreviewGroup } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Loader2, AlertTriangle, Trash2 } from 'lucide-react';
 
@@ -62,7 +61,6 @@ export function BatchDeleteConfirmDialog({
 
   const totalContracts = preview.reduce((sum, g) => sum + g.contract_count, 0);
   const totalMembers = preview.reduce((sum, g) => sum + g.member_count, 0);
-  const hasManualGroups = preview.some((g) => !g.auto_created);
 
   const handleConfirm = async () => {
     setDeleting(true);
@@ -111,9 +109,6 @@ export function BatchDeleteConfirmDialog({
                       <span className="text-sm font-medium text-neutral-900 truncate">
                         {group.name}
                       </span>
-                      {group.auto_created && (
-                        <Badge variant="secondary">auto</Badge>
-                      )}
                     </div>
                     <div className="flex items-center gap-3 text-xs text-neutral-500 shrink-0">
                       <span>{group.contract_count} {group.contract_count === 1 ? 'contract' : 'contracts'}</span>
@@ -122,16 +117,6 @@ export function BatchDeleteConfirmDialog({
                   </li>
                 ))}
               </ul>
-
-              {hasManualGroups && (
-                <div className="flex items-start gap-2 rounded-lg border border-warning-dark/20 bg-warning-light px-3 py-2 text-sm text-warning-dark">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>
-                    Some selected groups were created manually and may have been
-                    configured intentionally.
-                  </span>
-                </div>
-              )}
 
               {totalContracts > 0 && (
                 <p id="batch-delete-description" className="text-sm text-neutral-600">

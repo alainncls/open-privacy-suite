@@ -75,7 +75,7 @@ export const rbacApi = {
 
   // Groups
   groups: {
-    list: (orgId: string, params?: { limit?: number; offset?: number; auto_created?: boolean; search?: string }) =>
+    list: (orgId: string, params?: { limit?: number; offset?: number; search?: string }) =>
       api.get<PaginatedResponse<GroupWithAccess>>(`/orgs/${orgId}/groups`, { params }),
     get: (orgId: string, groupId: string) =>
       api.get<Group>(`/orgs/${orgId}/groups/${groupId}`),

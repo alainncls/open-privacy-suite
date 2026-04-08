@@ -27,7 +27,6 @@ import {
   Loader2,
   ChevronRight,
   Shield,
-  Bot,
   X,
   Search,
 } from 'lucide-react';
@@ -47,9 +46,6 @@ export default function GroupList() {
   const [parentForNew, setParentForNew] = useState<Group | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
-
-  // Filter state: 'all' | 'auto' | 'manual'
-  const [filterMode, setFilterMode] = useState<'all' | 'auto' | 'manual'>('all');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,18 +81,16 @@ export default function GroupList() {
     if (orgId) {
       loadGroups(0);
     }
-  }, [orgId, filterMode, debouncedSearch]);
+  }, [orgId, debouncedSearch]);
 
   const loadGroups = async (newOffset: number = offset) => {
     if (!orgId) return;
     try {
       setLoading(true);
-      const params: { limit: number; offset: number; auto_created?: boolean; search?: string } = {
+      const params: { limit: number; offset: number; search?: string } = {
         limit: PAGE_SIZE,
         offset: newOffset,
       };
-      if (filterMode === 'auto') params.auto_created = true;
-      if (filterMode === 'manual') params.auto_created = false;
       if (debouncedSearch) params.search = debouncedSearch;
       const response = await rbacApi.groups.list(orgId, params);
       const page = response.data;
@@ -184,12 +178,6 @@ export default function GroupList() {
                 <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
                   {gwa.group.slug}
                 </Badge>
-                {gwa.group.auto_created && (
-                  <Badge data-testid="auto-badge" variant="warning" className="gap-1 flex-shrink-0">
-                    <Bot className="w-3 h-3" />
-                    Auto
-                  </Badge>
-                )}
                 {gwa.group.is_org_admin && (
                   <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
                     <Shield className="w-3 h-3" />
@@ -289,22 +277,6 @@ export default function GroupList() {
             Clear
           </Button>
         )}
-        <div className="flex rounded-lg border border-neutral-200 overflow-hidden">
-          {(['all', 'auto', 'manual'] as const).map(mode => (
-            <button
-              key={mode}
-              data-testid={`group-filter-${mode}`}
-              onClick={() => { setFilterMode(mode); setSelectedIds(new Set()); }}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                filterMode === mode
-                  ? 'bg-primary text-white'
-                  : 'bg-white text-neutral-600 hover:bg-neutral-50'
-              }`}
-            >
-              {mode === 'all' ? 'All' : mode === 'auto' ? 'Auto-created' : 'Manual'}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Selection toolbar */}
@@ -359,33 +331,17 @@ export default function GroupList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <FolderTree className="w-8 h-8 text-neutral-400" />
           </div>
-          {filterMode === 'auto' ? (
-            <p className="text-neutral-500">No auto-created groups. These are generated automatically when deployers deploy contracts.</p>
-          ) : filterMode === 'manual' ? (
-            <>
-              <p className="text-neutral-500 mb-4">No manually created groups</p>
-              <Button
-                variant="outline"
-                onClick={() => setShowForm(true)}
-                className="gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Create a group
-              </Button>
-            </>
-          ) : (
-            <>
-              <p className="text-neutral-500 mb-4">No groups found</p>
-              <Button
-                variant="outline"
-                onClick={() => setShowForm(true)}
-                className="gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                Create your first group
-              </Button>
-            </>
-          )}
+          <>
+            <p className="text-neutral-500 mb-4">No groups found</p>
+            <Button
+              variant="outline"
+              onClick={() => setShowForm(true)}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Create your first group
+            </Button>
+          </>
         </div>
       ) : (
         <div className="space-y-2">{getRootGroups().map(g => renderGroup(g))}</div>

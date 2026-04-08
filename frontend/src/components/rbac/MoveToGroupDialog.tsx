@@ -4,7 +4,6 @@ import type { GroupWithAccess } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, ArrowRight } from 'lucide-react';
 
@@ -39,7 +38,6 @@ export default function MoveToGroupDialog({
   const [newName, setNewName] = useState('');
   const [newSlug, setNewSlug] = useState('');
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
-  const [deleteEmptyAutoGroups, setDeleteEmptyAutoGroups] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,9 +51,7 @@ export default function MoveToGroupDialog({
     rbacApi.groups
       .list(orgId, { limit: 200 })
       .then((res) => {
-        const allGroups = res.data.data || [];
-        const manual = allGroups.filter((g: GroupWithAccess) => !g.group.auto_created);
-        setGroups(manual);
+        setGroups(res.data.data || []);
       })
       .catch((err) => {
         console.error('Failed to load groups:', err);
@@ -72,7 +68,6 @@ export default function MoveToGroupDialog({
       setNewName('');
       setNewSlug('');
       setSlugManuallyEdited(false);
-      setDeleteEmptyAutoGroups(true);
       setSubmitting(false);
       setError(null);
     }
@@ -101,7 +96,6 @@ export default function MoveToGroupDialog({
         ...(mode === 'existing'
           ? { target_group_id: selectedGroupId }
           : { new_group: { name: newName.trim(), slug: newSlug.trim() } }),
-        delete_empty_auto_groups: deleteEmptyAutoGroups,
       });
       onSuccess();
       onOpenChange(false);
@@ -228,20 +222,6 @@ export default function MoveToGroupDialog({
             </div>
           )}
 
-          {/* Cleanup option */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              data-testid="move-delete-empty-checkbox"
-              id="deleteEmpty"
-              checked={deleteEmptyAutoGroups}
-              onCheckedChange={(checked) =>
-                setDeleteEmptyAutoGroups(checked === true)
-              }
-            />
-            <label htmlFor="deleteEmpty" className="text-sm cursor-pointer">
-              Delete empty auto-created groups after move
-            </label>
-          </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
