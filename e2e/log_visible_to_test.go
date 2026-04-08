@@ -13,6 +13,7 @@ import (
 
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
+	"privacy-proxy/internal/server"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -237,6 +238,264 @@ func TestLogVisibleToE2E_FilterIntegration(t *testing.T) {
 	}
 	resultUnlisted := rbac.FilterEventLogs(logs, perms, []string{"0xcccccccccccccccccccccccccccccccccccccccc"}, nil, unlistedVisCtx)
 	assert.Len(t, resultUnlisted, 0, "unlisted user should not see log even with visCtx")
+}
+
+// TestLogVisibleToE2E_TxNotVisibleToListedDID verifies the critical security
+// property: logVisibleTo grants access to LOGS ONLY, not the transaction itself.
+// The viewer (settlement bank) should see event logs via eth_getLogs but NOT the
+// transaction via eth_getTransactionReceipt — because they are not a participant
+// in the from/to fields of the receipt.
+func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
+	dbURL, cleanup := db.SetupTestContainer(t)
+	defer cleanup()
+
+	database, err := db.New(dbURL)
+	require.NoError(t, err)
+	defer database.Close()
+
+	ctx := context.Background()
+	setup := setupLogVisibleToTest(t, database)
+
+	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000aa01"
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	senderTopic := "0x000000000000000000000000" + setup.senderAddr[2:]
+
+	// Save logVisibleTo rule: viewer DID can see logs from this tx.
+	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	require.NoError(t, err)
+
+	// Build effective permissions for the viewer.
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			setup.contractAddr: {
+				Claims: []rbac.Claim{rbac.ClaimRead},
+				EventRules: []rbac.EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []rbac.ParamRule{
+							{Index: 0, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Build visibility context from DB.
+	visibility, err := database.GetBatchTxLogVisibility(ctx, []string{txHash})
+	require.NoError(t, err)
+	visCtx := &rbac.LogVisibilityContext{
+		ViewerDID:    setup.viewerDID,
+		TxVisibility: visibility,
+	}
+
+	// --- Test FilterReceiptLogsWithEventRules ---
+	// Build a fake receipt where from=senderAddr, to=contractAddr.
+	// The viewer (0xBBB) is NOT a participant (not from, not to).
+	receiptBody := buildReceiptResponse(t, setup.senderAddr, setup.contractAddr, txHash, transferTopic0, senderTopic)
+
+	receiptResult := server.FilterReceiptLogsWithEventRules(
+		receiptBody,
+		[]string{setup.viewerAddr}, // viewer's addresses
+		perms,
+		nil,    // no ABI provider
+		visCtx, // has logVisibleTo
+	)
+
+	// Viewer is NOT a participant in from/to, so receipt must be null.
+	var receiptResp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(receiptResult, &receiptResp))
+	assert.Equal(t, "null", string(receiptResp.Result),
+		"receipt should be null for viewer who is not a from/to participant, even with logVisibleTo")
+
+	// --- Test FilterLogsWithEventRules (eth_getLogs path) ---
+	// Build a fake eth_getLogs response with the same Transfer log.
+	logsBody := buildLogsResponse(t, setup.contractAddr, txHash, transferTopic0, senderTopic)
+
+	// Viewer WITH logVisibleTo: should see the log via eth_getLogs.
+	logsResult := server.FilterLogsWithEventRules(
+		logsBody,
+		[]string{setup.viewerAddr},
+		perms,
+		nil,
+		visCtx,
+	)
+
+	var logsResp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(logsResult, &logsResp))
+	assert.Len(t, logsResp.Result, 1,
+		"viewer should see log via eth_getLogs because their DID is in logVisibleTo")
+}
+
+// TestLogVisibleToE2E_GetLogsWithVisibleTo tests the full filter pipeline for
+// eth_getLogs: listed DID sees logs, unlisted DID does not.
+func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
+	dbURL, cleanup := db.SetupTestContainer(t)
+	defer cleanup()
+
+	database, err := db.New(dbURL)
+	require.NoError(t, err)
+	defer database.Close()
+
+	ctx := context.Background()
+	setup := setupLogVisibleToTest(t, database)
+
+	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000bb02"
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	senderTopic := "0x000000000000000000000000" + setup.senderAddr[2:]
+
+	// Save logVisibleTo for viewer.
+	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	require.NoError(t, err)
+
+	// Build permissions for viewer with Transfer event rule (must_be=self on from).
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			setup.contractAddr: {
+				Claims: []rbac.Claim{rbac.ClaimRead},
+				EventRules: []rbac.EventRule{
+					{
+						Topic0: transferTopic0,
+						Name:   "Transfer",
+						ParamRules: []rbac.ParamRule{
+							{Index: 0, MustBe: "self"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Build mock eth_getLogs response with a Transfer log where topic1 = sender address.
+	logsBody := buildLogsResponse(t, setup.contractAddr, txHash, transferTopic0, senderTopic)
+
+	// Viewer with logVisibleTo context: should see the log.
+	visibility, err := database.GetBatchTxLogVisibility(ctx, []string{txHash})
+	require.NoError(t, err)
+
+	viewerVisCtx := &rbac.LogVisibilityContext{
+		ViewerDID:    setup.viewerDID,
+		TxVisibility: visibility,
+	}
+
+	resultListed := server.FilterLogsWithEventRules(
+		logsBody,
+		[]string{setup.viewerAddr},
+		perms,
+		nil,
+		viewerVisCtx,
+	)
+	var listedResp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(resultListed, &listedResp))
+	assert.Len(t, listedResp.Result, 1,
+		"listed viewer DID should see the log via logVisibleTo")
+
+	// Unlisted DID: should NOT see the log even though visibility data exists.
+	unlistedVisCtx := &rbac.LogVisibilityContext{
+		ViewerDID:    "did:privado:unlisted_stranger",
+		TxVisibility: visibility,
+	}
+	unlistedAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	resultUnlisted := server.FilterLogsWithEventRules(
+		logsBody,
+		[]string{unlistedAddr},
+		perms,
+		nil,
+		unlistedVisCtx,
+	)
+	var unlistedResp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(resultUnlisted, &unlistedResp))
+	assert.Len(t, unlistedResp.Result, 0,
+		"unlisted DID should not see the log — logVisibleTo only applies to listed DIDs")
+
+	// No visCtx at all: should also NOT see the log (backward compat).
+	resultNone := server.FilterLogsWithEventRules(
+		logsBody,
+		[]string{setup.viewerAddr},
+		perms,
+		nil,
+		nil, // no visCtx
+	)
+	var noneResp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(resultNone, &noneResp))
+	assert.Len(t, noneResp.Result, 0,
+		"viewer without visCtx should not see the log (param rule self check fails)")
+}
+
+// buildReceiptResponse constructs a JSON-RPC response body for eth_getTransactionReceipt.
+func buildReceiptResponse(t *testing.T, from, to, txHash, topic0, topic1 string) []byte {
+	t.Helper()
+	receipt := map[string]any{
+		"from":            from,
+		"to":              to,
+		"status":          "0x1",
+		"gasUsed":         "0x5208",
+		"blockHash":       "0x0000000000000000000000000000000000000000000000000000000000000001",
+		"blockNumber":     "0x1",
+		"transactionHash": txHash,
+		"logsBloom":       "0x" + strings.Repeat("0", 512),
+		"logs": []map[string]any{
+			{
+				"address":          to,
+				"topics":           []string{topic0, topic1},
+				"data":             "0x",
+				"transactionHash":  txHash,
+				"logIndex":         "0x0",
+				"blockNumber":      "0x1",
+				"transactionIndex": "0x0",
+			},
+		},
+	}
+	receiptJSON, err := json.Marshal(receipt)
+	require.NoError(t, err)
+
+	resp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result":  json.RawMessage(receiptJSON),
+	}
+	body, err := json.Marshal(resp)
+	require.NoError(t, err)
+	return body
+}
+
+// buildLogsResponse constructs a JSON-RPC response body for eth_getLogs.
+func buildLogsResponse(t *testing.T, contractAddr, txHash, topic0, topic1 string) []byte {
+	t.Helper()
+	logs := []map[string]any{
+		{
+			"address":          contractAddr,
+			"topics":           []string{topic0, topic1},
+			"data":             "0x",
+			"transactionHash":  txHash,
+			"logIndex":         "0x0",
+			"blockNumber":      "0x1",
+			"transactionIndex": "0x0",
+		},
+	}
+	logsJSON, err := json.Marshal(logs)
+	require.NoError(t, err)
+
+	resp := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result":  json.RawMessage(logsJSON),
+	}
+	body, err := json.Marshal(resp)
+	require.NoError(t, err)
+	return body
 }
 
 // rpcCall is a helper for tests that makes a JSON-RPC call.
