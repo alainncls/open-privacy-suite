@@ -275,7 +275,7 @@ type EffectivePermissions struct {
 	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
 	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
 	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
-	RPCAPIKey      string                    `json:"rpc_api_key,omitempty"` // Per-group upstream RPC API key
+	RPCAPIKey      string                    `json:"-"` // Per-group upstream RPC API key (excluded from JSON — sensitive)
 	ComputedAt     time.Time                 `json:"computed_at"`
 	ExpiresAt      time.Time                 `json:"expires_at"`
 }
@@ -317,7 +317,7 @@ type AccessCheckResult struct {
 	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)
 	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`      // Deprecated: rate limiting moved to RPC proxy
 	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`    // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey         string             `json:"rpc_api_key,omitempty"`         // API key for upstream RPC proxy
+	RPCAPIKey         string             `json:"-"`                             // API key for upstream RPC proxy (excluded from JSON — sensitive)
 	Claims            []Claim            `json:"claims,omitempty"`
 	DeploymentInfo    *DeploymentInfo    `json:"deployment_info,omitempty"`     // Set for allowed deployments
 	FactoryDeployInfo *FactoryDeployInfo `json:"factory_deploy_info,omitempty"` // Set for CREATE3 factory deploys
