@@ -469,14 +469,6 @@ Even if the network boundary is misconfigured (backend port exposed, reverse pro
 - **Explorer endpoints**: Accessible without auth from the allowed network, but all data is redacted per the viewer's identity (anonymous viewers see almost nothing with all-contracts-private).
 - **RPC endpoint**: Always requires JWT for sensitive methods. Anonymous access is limited to claim-free methods (block number, chain ID, gas price).
 
-## Supply Chain Security
-
-All GitHub Actions used in CI/CD workflows are pinned to full commit SHAs rather than mutable tags (e.g., `actions/checkout@<sha>` instead of `actions/checkout@v4`). This prevents a compromised or hijacked upstream action from injecting malicious code into the build pipeline.
-
-Dependabot is configured to monitor GitHub Actions dependencies weekly and open pull requests when new versions are available. This was motivated by the Trivy supply chain attack (March 2026), where a widely-used action tag was force-pushed with malicious content -- SHA pinning would have prevented the compromise from propagating.
-
----
-
 ## Production Checklist
 
 - [ ] Set strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`
