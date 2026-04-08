@@ -1036,6 +1036,86 @@ func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
 	}
 }
 
+func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
+	// Verify that short-form hex values (0x1) match the same as fully-padded
+	// values (0x000...001). The backend uses big.Int comparison for uint types,
+	// so these must be treated as equal — not as different byte strings.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	erc20ABI := `[{
+		"anonymous": false,
+		"inputs": [
+			{"indexed": true, "name": "from", "type": "address"},
+			{"indexed": true, "name": "to", "type": "address"},
+			{"indexed": false, "name": "value", "type": "uint256"}
+		],
+		"name": "Transfer",
+		"type": "event"
+	}]`
+
+	fromTopic := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	toTopic := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	// Data field: uint256 value = 42 (0x2a), ABI-encoded as 32 bytes
+	data := "0x000000000000000000000000000000000000000000000000000000000000002a"
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + fromTopic + `","` + toTopic + `"],"data":"` + data + `"}`
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
+
+	// All these short-form values should match the same uint256 value 42
+	shortForms := []string{
+		"0x2a",                                                               // minimal
+		"0x002a",                                                             // extra leading zero byte
+		"0x000000000000000000000000000000000000000000000000000000000000002a", // fully padded 32 bytes
+	}
+
+	for _, mustBe := range shortForms {
+		t.Run("must_be="+mustBe, func(t *testing.T) {
+			perms := &EffectivePermissions{
+				ContractAccess: map[string]ContractAccess{
+					"0xcontract1": {
+						Claims: []Claim{ClaimRead},
+						EventRules: []EventRule{
+							{
+								Topic0:     transferTopic0,
+								Name:       "Transfer",
+								ParamRules: []ParamRule{{Index: 2, MustBe: mustBe}},
+							},
+						},
+					},
+				},
+			}
+			result := FilterEventLogs(logs, perms, []string{"0xunrelated"}, abiProvider, nil)
+			if len(result) != 1 {
+				t.Errorf("must_be=%s: expected 1 log (value=42 should match), got %d", mustBe, len(result))
+			}
+		})
+	}
+
+	// And a non-matching value to confirm the filter actually works
+	t.Run("must_be=0x2b_should_not_match", func(t *testing.T) {
+		perms := &EffectivePermissions{
+			ContractAccess: map[string]ContractAccess{
+				"0xcontract1": {
+					Claims: []Claim{ClaimRead},
+					EventRules: []EventRule{
+						{
+							Topic0:     transferTopic0,
+							Name:       "Transfer",
+							ParamRules: []ParamRule{{Index: 2, MustBe: "0x2b"}},
+						},
+					},
+				},
+			},
+		}
+		result := FilterEventLogs(logs, perms, []string{"0xunrelated"}, abiProvider, nil)
+		if len(result) != 0 {
+			t.Errorf("must_be=0x2b: expected 0 logs (value=42 should NOT match 43), got %d", len(result))
+		}
+	})
+}
+
 func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
 	// Custom bool matching on an indexed bool param.
 	eventABI := `[{
