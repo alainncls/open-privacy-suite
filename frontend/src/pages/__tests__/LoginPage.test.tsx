@@ -35,7 +35,7 @@ describe('LoginPage', () => {
     it('should render login page with title', async () => {
       renderLoginPage();
 
-      expect(screen.getByText('Privacy Proxy')).toBeInTheDocument();
+      expect(screen.getByText('Open Privacy Suite')).toBeInTheDocument();
       expect(
         screen.getByText('Sign In')
       ).toBeInTheDocument();
@@ -302,7 +302,7 @@ describe('LoginPage', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-          'Privacy Proxy'
+          'Open Privacy Suite'
         );
       });
     });

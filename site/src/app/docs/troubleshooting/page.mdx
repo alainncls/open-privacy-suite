@@ -3,12 +3,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Troubleshooting",
   description:
-    "Common issues and solutions for the Privacy Proxy: Docker, database, authentication, RBAC, port conflicts, and build problems.",
+    "Common issues and solutions for the Open Privacy Suite: Docker, database, authentication, RBAC, port conflicts, and build problems.",
 };
 
 # Troubleshooting
 
-This page consolidates common issues and solutions across the Privacy Proxy stack.
+This page consolidates common issues and solutions across the Open Privacy Suite stack.
 
 ---
 
@@ -49,7 +49,7 @@ The backend waits for both PostgreSQL and the Ethereum node to be reachable befo
 If port bindings fail, check for other services using the same ports:
 
 ```bash
-lsof -i :8080  # Privacy Proxy
+lsof -i :8080  # Open Privacy Suite
 lsof -i :5173  # Frontend
 lsof -i :5432  # PostgreSQL
 lsof -i :8545  # Anvil / Ethereum node
@@ -192,7 +192,7 @@ When runtime tracing is enabled, all internal calls are validated regardless of 
 
 | Port | Service | Resolution |
 |------|---------|------------|
-| 8080 | Privacy Proxy | Stop other HTTP servers or change `PORT` env var |
+| 8080 | Open Privacy Suite | Stop other HTTP servers or change `PORT` env var |
 | 5173 | Frontend (Vite) | Stop other Vite instances or change Vite config port |
 | 5432 | PostgreSQL | Stop local PostgreSQL: `brew services stop postgresql` (macOS) or `sudo systemctl stop postgresql` (Linux) |
 | 8545 | Anvil / Ethereum node | Stop other Anvil or Hardhat instances |

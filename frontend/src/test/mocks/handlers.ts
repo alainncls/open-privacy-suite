@@ -27,7 +27,7 @@ export const mockAuthRequest: AuthRequestResponse = {
     type: 'https://iden3-communication.io/authorization/1.0/request',
     body: {
       callbackUrl: 'http://localhost:8080/api/auth/callback',
-      reason: 'Privacy Proxy Authentication',
+      reason: 'Open Privacy Suite Authentication',
       scope: [],
     },
     from: 'did:polygonid:polygon:main:verifier123',

@@ -28,7 +28,7 @@ const wallets: WalletList = [
 
 // Explicitly define wallets to exclude Coinbase (which pulls in LGPL dependencies)
 const connectors = connectorsForWallets(wallets, {
-  appName: 'Privacy Proxy',
+  appName: 'Open Privacy Suite',
   projectId: projectId || 'placeholder', // RainbowKit requires a non-empty string
 });
 
@@ -67,7 +67,7 @@ export function getAddNetworkParams() {
 
   return {
     chainId: '0x1', // Mainnet - adjust based on actual chain
-    chainName: 'Privacy Proxy (Mainnet)',
+    chainName: 'Open Privacy Suite (Mainnet)',
     nativeCurrency: {
       name: 'Ether',
       symbol: 'ETH',

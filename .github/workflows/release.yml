@@ -40,7 +40,7 @@ jobs:
             type=ref,event=pr
           labels: |
             org.opencontainers.image.title=privacy-proxy-backend
-            org.opencontainers.image.description=Privacy Proxy Backend
+            org.opencontainers.image.description=Open Privacy Suite Backend
             org.opencontainers.image.url=${{ github.event.repository.html_url }}
             org.opencontainers.image.source=${{ github.repositoryUrl }}
             org.opencontainers.image.version=${{ github.ref_name }}
@@ -90,7 +90,7 @@ jobs:
             type=ref,event=pr
           labels: |
             org.opencontainers.image.title=privacy-proxy-frontend
-            org.opencontainers.image.description=Privacy Proxy Frontend
+            org.opencontainers.image.description=Open Privacy Suite Frontend
             org.opencontainers.image.url=${{ github.event.repository.html_url }}
             org.opencontainers.image.source=${{ github.repositoryUrl }}
             org.opencontainers.image.version=${{ github.ref_name }}

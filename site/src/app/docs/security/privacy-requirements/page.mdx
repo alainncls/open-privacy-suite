@@ -3,12 +3,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Privacy Requirements & Guarantees",
   description:
-    "What Privacy Proxy protects, what it does not, and what operators must do to achieve full coverage.",
+    "What Open Privacy Suite protects, what it does not, and what operators must do to achieve full coverage.",
 };
 
 # Privacy Requirements & Guarantees
 
-This page describes what the Privacy Proxy system guarantees about data visibility, what its current limitations are, and what operators must configure to achieve full protection.
+This page describes what the Open Privacy Suite system guarantees about data visibility, what its current limitations are, and what operators must configure to achieve full protection.
 
 ---
 
@@ -18,7 +18,7 @@ Private addresses and their transaction activity are hidden from unauthorized vi
 
 1. **JSON-RPC proxy layer** — when a client queries the Ethereum node directly through the proxy (e.g. `eth_getTransactionByHash`), responses are filtered based on whether the caller is a participant in the transaction. Non-participants receive `null` or have individual entries removed from arrays.
 
-2. **Explorer API layer** — when the block explorer fetches structured data through the Privacy Proxy's Explorer API, each entity (transaction, log, token transfer, etc.) is individually processed through the redaction engine. Addresses are replaced with `[PRIVATE]`, values zeroed, and entries dropped according to the viewer's permission level and the [disclosure level](/docs/disclosure) assigned to each address.
+2. **Explorer API layer** — when the block explorer fetches structured data through the Open Privacy Suite's Explorer API, each entity (transaction, log, token transfer, etc.) is individually processed through the redaction engine. Addresses are replaced with `[PRIVATE]`, values zeroed, and entries dropped according to the viewer's permission level and the [disclosure level](/docs/disclosure) assigned to each address.
 
 Both layers work in concert. A viewer who bypasses the block explorer and queries the JSON-RPC endpoint directly will receive the same privacy enforcement — the proxy is the sole gateway.
 
