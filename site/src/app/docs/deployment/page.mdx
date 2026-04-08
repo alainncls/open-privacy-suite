@@ -193,9 +193,7 @@ In production, the admin frontend is served by **nginx** (not the Vite developme
 
 ### Explorer Database Graceful Degradation
 
-The backend starts successfully even if the explorer database is unavailable. When the explorer DB connection fails at startup, the backend logs a warning and continues serving all non-explorer endpoints. A background goroutine retries the explorer DB connection every 30 seconds. Explorer API endpoints return appropriate errors until the connection is established.
+The backend starts successfully even if the explorer database is unavailable. It logs a warning and continues serving all non-explorer endpoints, retrying the connection in the background. Explorer API endpoints return errors until the connection is established.
 
-This prevents the entire proxy from failing to start due to an optional dependency and supports deployment scenarios where the explorer database is provisioned after the proxy.
-
-### GIN\_MODE
+This supports deployment scenarios where the explorer database is provisioned after the proxy.
 
