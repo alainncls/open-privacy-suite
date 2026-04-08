@@ -170,3 +170,30 @@ export ETH_RPC_HEADERS="Authorization: Bearer NEW_ACCESS_TOKEN"
 - **Intra-org calls**: Contracts within the same org can call each other freely.
 - **Shared infrastructure**: Approved shared contracts accessible to all orgs.
 - **Precompiles**: Standard EVM precompiles (`0x01`--`0x09`) are always allowed.
+
+---
+
+## Production Deployment
+
+This section covers production hardening considerations beyond contract deployment. For the full production checklist, see [Security](/docs/security#production-checklist). For environment variable reference, see [Configuration](/docs/configuration).
+
+### HTTPS and Private Networks
+
+The proxy enforces HTTPS for the `BASE_URL` in production (`ENVIRONMENT=production`). However, **private network addresses are exempt** from this requirement -- HTTP is allowed when the proxy is accessed over:
+
+- RFC1918 private addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
+- Tailscale addresses (`100.64.0.0/10`)
+- IPv6 Unique Local Addresses (ULA, `fd00::/8`)
+
+This allows local and VPN-based development/staging environments to run without TLS while still enforcing HTTPS for internet-facing deployments.
+
+### Frontend in Production
+
+In production, the admin frontend is served by **nginx** (not the Vite development server). The nginx container listens on port 80 internally and serves the pre-built static assets. The production Docker Compose file configures this automatically. Do not use the Vite dev server (`proxy-frontend` on port 5173) in production -- it is not designed for production traffic and exposes debugging features.
+
+### Explorer Database Graceful Degradation
+
+The backend starts successfully even if the explorer database is unavailable. It logs a warning and continues serving all non-explorer endpoints, retrying the connection in the background. Explorer API endpoints return errors until the connection is established.
+
+This supports deployment scenarios where the explorer database is provisioned after the proxy.
+

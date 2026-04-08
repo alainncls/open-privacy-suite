@@ -60,3 +60,21 @@ docker-compose -f ../explorer/docker-compose.privacy-proxy.yml up -d
 ## Documentation Site
 
 The docs site lives in `site/` (Next.js + MDX). When changing auth, RBAC, security, compliance, or other user-facing logic, update the corresponding docs page in `site/src/app/docs/`. Docs should be updated in the same PR as the code change.
+
+### Docs-only changes
+
+For PRs that only touch `site/` (no Go or frontend code), use `--no-verify` on `git push` to skip the pre-push test suite. The tests don't cover docs and add unnecessary wait time.
+
+### What belongs in user-facing docs
+
+The docs site is for **operators deploying the product**. Document:
+- What to configure (env vars, settings)
+- What behavior to expect (features, access control rules)
+- How to deploy (production requirements)
+
+Do NOT document internal implementation details:
+- Algorithm internals (encryption ciphers, circuit breaker cooldown values, semaphore design)
+- Prometheus metric names (those are for the monitoring/infra team, not docs readers)
+- Code-level patterns (how the resolver caches, how forwarding works internally)
+
+Keep it operator-focused: "Set X to enable Y." Not "X uses AES-256-GCM with a 12-byte nonce to encrypt Y before writing to the database."
