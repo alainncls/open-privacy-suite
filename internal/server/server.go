@@ -234,6 +234,11 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
 	}
 
+	// Configure RPC API key encryption for decrypting keys from the database
+	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
+		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
+	}
+
 	// Load additional trusted factory hashes from config
 	if len(cfg.TrustedFactoryHashes) > 0 {
 		for _, hash := range cfg.TrustedFactoryHashes {

@@ -109,12 +109,25 @@ attach a per-group API key as a `Bearer` token in the `Authorization` header.
 
 <EnvTable vars={[
   { name: "RPC_API_KEY", default: "(none)", description: "Global fallback API key sent to the upstream RPC node. Used when no group-specific key is configured." },
+  { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for AES-256-GCM encryption of per-group RPC API keys at rest. When set, keys are encrypted before writing to the database and decrypted on read. When empty (dev mode), keys are stored in plaintext." },
   { name: "MAX_CONCURRENT_REQUESTS", default: "50", description: "Maximum concurrent in-flight requests per user. Protects proxy resources from being exhausted by a single user." },
 ]} />
 
 **Per-group keys** can be configured via the admin API (`rpc_api_key` field on group access settings)
 or the admin dashboard. When a user belongs to a group with an `rpc_api_key`, that key is used
 instead of the global fallback.
+
+**Encryption at rest:** When `RPC_API_KEY_ENCRYPTION_KEY` is set, per-group API keys are encrypted
+with AES-256-GCM before storage and decrypted transparently when resolved for forwarding. Generate
+a key with `openssl rand -hex 32`. Legacy plaintext values are handled gracefully during the
+transition period (decryption falls back to passthrough for non-encrypted values).
+
+**Masked in API responses:** API keys are never returned in full from the admin API. Responses show
+only the last 4 characters (e.g., `****c123`). The frontend should treat an empty `rpc_api_key`
+field as "keep existing" when editing.
+
+**IP forwarding:** The client's IP address is forwarded to the upstream RPC node via
+the `X-Forwarded-For` header, enabling upstream rate limiting and audit logging per client.
 
 **Circuit breaker:** If the upstream returns HTTP 429 (Too Many Requests), the proxy trips a
 per-key circuit breaker with a 1-second cooldown. During cooldown, requests using that key are
@@ -124,6 +137,15 @@ node.
 **Concurrency limiter:** Each user is capped at `MAX_CONCURRENT_REQUESTS` in-flight requests.
 Excess requests are rejected with HTTP 429 `"too many concurrent requests"`. This protects
 the proxy's own resources (DB connections, memory) from being exhausted by a single user.
+
+**Prometheus metrics:** The following metrics are exposed for monitoring:
+- `privacyproxy_circuit_breaker_trips_total` (label: `api_key_masked`) -- circuit breaker rejections
+- `privacyproxy_concurrency_rejections_total` -- per-user concurrency limit rejections
+- `privacyproxy_upstream_rate_limit_total` (label: `api_key_masked`) -- HTTP 429 from upstream
+
+<Callout variant="warning" title="API key label safety">
+  Metric labels use masked API keys (last 4 characters only). Full keys are never exposed in metrics.
+</Callout>
 
 ---
 
@@ -261,6 +283,9 @@ ENABLE_RUNTIME_TRACING=true
 
 # Admin API
 ADMIN_API_TOKEN=your-admin-token-here
+
+# RPC API key encryption (generate with: openssl rand -hex 32)
+RPC_API_KEY_ENCRYPTION_KEY=your-64-char-hex-string-here
 
 # Public URL
 BASE_URL=https://your-domain.com

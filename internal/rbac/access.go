@@ -326,6 +326,12 @@ func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
 	c.factoryCallValidator.SetRuntimeTracingEnabled(enabled)
 }
 
+// SetEncryptionKey configures the AES-256 key used by the resolver to decrypt
+// RPC API keys stored in the database.
+func (c *AccessController) SetEncryptionKey(key []byte) {
+	c.resolver.SetEncryptionKey(key)
+}
+
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)

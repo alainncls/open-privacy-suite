@@ -109,3 +109,49 @@ func TestIsSimpleValueTransfer(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskAPIKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"short 1 char", "a", "****"},
+		{"short 3 chars", "abc", "****"},
+		{"exactly 4 chars", "abcd", "****abcd"},
+		{"normal key", "sk-live-abc123", "****c123"},
+		{"long key", "very-long-api-key-that-goes-on-and-on-1234", "****1234"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := maskAPIKey(tt.key)
+			if result != tt.expected {
+				t.Errorf("maskAPIKey(%q) = %q, expected %q", tt.key, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMaskAPIKeyStr(t *testing.T) {
+	// maskAPIKeyStr (admin handler version) should behave identically
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+	}{
+		{"empty", "", ""},
+		{"short", "ab", "****"},
+		{"normal", "sk-live-test-key", "****-key"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := maskAPIKeyStr(tt.key)
+			if result != tt.expected {
+				t.Errorf("maskAPIKeyStr(%q) = %q, expected %q", tt.key, result, tt.expected)
+			}
+		})
+	}
+}

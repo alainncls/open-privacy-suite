@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"privacy-proxy/internal/crypto"
 )
 
 // Resolver computes effective permissions for users.
 type Resolver struct {
-	store    Store
-	cacheTTL time.Duration
+	store         Store
+	cacheTTL      time.Duration
+	encryptionKey []byte // AES-256 key for decrypting stored RPC API keys (nil = no encryption)
 
 	// inFlight tracks computations that are in progress to prevent cache stampede
 	inFlight   map[string]*inFlightEntry
@@ -35,6 +38,12 @@ func NewResolver(store Store, cacheTTL time.Duration) *Resolver {
 		cacheTTL: cacheTTL,
 		inFlight: make(map[string]*inFlightEntry),
 	}
+}
+
+// SetEncryptionKey configures the AES-256 key used to decrypt RPC API keys
+// stored in the database. If nil, API keys are assumed to be plaintext.
+func (r *Resolver) SetEncryptionKey(key []byte) {
+	r.encryptionKey = key
 }
 
 // ResolvePermissions computes the effective permissions for a user in an organization.
@@ -359,9 +368,16 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 			result.RateLimitRPS = minIntPtr(result.RateLimitRPS, access.RateLimitRPS)
 			result.RateLimitDaily = minIntPtr(result.RateLimitDaily, access.RateLimitDaily)
 
-			// RPC API key: deepest group in hierarchy wins (last non-empty value)
+			// RPC API key: deepest group in hierarchy wins (last non-empty value).
+			// Decrypt stored value (no-op if encryption is disabled or value is plaintext).
 			if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
-				result.RPCAPIKey = *access.RPCAPIKey
+				decrypted, err := crypto.Decrypt(*access.RPCAPIKey, r.encryptionKey)
+				if err != nil {
+					// Decryption failed — use the raw value (may be legacy plaintext)
+					result.RPCAPIKey = *access.RPCAPIKey
+				} else {
+					result.RPCAPIKey = decrypted
+				}
 			}
 		}
 

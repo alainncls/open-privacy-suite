@@ -362,6 +362,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Check concurrency limit
 	if p.concurrencyLimiter != nil && !p.concurrencyLimiter.TryAcquire(req.UserID) {
+		if p.metrics != nil {
+			p.metrics.ConcurrencyRejectionsTotal.Inc()
+		}
 		p.recordRPCOutcome(req.Method, "concurrent_limit", start)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
@@ -383,6 +386,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
+		if p.metrics != nil {
+			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
+		}
 		p.recordRPCOutcome(req.Method, "circuit_open", start)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
@@ -443,7 +449,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Forward to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(forwardBody, apiKey)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(forwardBody, apiKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -451,6 +457,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// Circuit breaker: track upstream 429s
 	if p.circuitBreaker != nil {
 		if statusCode == http.StatusTooManyRequests {
+			if p.metrics != nil {
+				p.metrics.UpstreamRateLimitTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
+			}
 			p.circuitBreaker.Trip(apiKey)
 		} else if statusCode == http.StatusOK {
 			p.circuitBreaker.Reset(apiKey)
@@ -1077,6 +1086,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Check concurrency limit
 	if p.concurrencyLimiter != nil && !p.concurrencyLimiter.TryAcquire(req.UserID) {
+		if p.metrics != nil {
+			p.metrics.ConcurrencyRejectionsTotal.Inc()
+		}
 		p.recordRPCOutcome(req.Method, "concurrent_limit", start)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
@@ -1098,6 +1110,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
+		if p.metrics != nil {
+			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
+		}
 		p.recordRPCOutcome(req.Method, "circuit_open", start)
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{
@@ -1130,7 +1145,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Forward the original raw transaction to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, apiKey)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, apiKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -1138,6 +1153,9 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Circuit breaker: track upstream 429s
 	if p.circuitBreaker != nil {
 		if statusCode == http.StatusTooManyRequests {
+			if p.metrics != nil {
+				p.metrics.UpstreamRateLimitTotal.WithLabelValues(maskAPIKey(apiKey)).Inc()
+			}
 			p.circuitBreaker.Trip(apiKey)
 		} else if statusCode == http.StatusOK {
 			p.circuitBreaker.Reset(apiKey)
@@ -1339,16 +1357,22 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// (Since we used internal tracers like callTracer, but they might want struct logs or memory dumps)
 	traceAPIKey := p.defaultRPCAPIKey
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(traceAPIKey) {
+		if p.metrics != nil {
+			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(traceAPIKey)).Inc()
+		}
 		p.logAccess(ctx, req, http.StatusTooManyRequests)
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusTooManyRequests, Message: "upstream rate limited, retry in 1s"}}
 	}
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, traceAPIKey)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, traceAPIKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
 	if p.circuitBreaker != nil {
 		if statusCode == http.StatusTooManyRequests {
+			if p.metrics != nil {
+				p.metrics.UpstreamRateLimitTotal.WithLabelValues(maskAPIKey(traceAPIKey)).Inc()
+			}
 			p.circuitBreaker.Trip(traceAPIKey)
 		} else if statusCode == http.StatusOK {
 			p.circuitBreaker.Reset(traceAPIKey)
@@ -2056,4 +2080,17 @@ func extractTxHashFromResult(responseBody []byte) string {
 		return ""
 	}
 	return resp.Result
+}
+
+// maskAPIKey returns a masked version of an API key for safe use in logs and
+// metrics labels. Shows only the last 4 characters prefixed with "****".
+// Returns "" for empty keys, "****" for keys shorter than 4 characters.
+func maskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) < 4 {
+		return "****"
+	}
+	return "****" + key[len(key)-4:]
 }

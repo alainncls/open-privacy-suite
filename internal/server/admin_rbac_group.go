@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"privacy-proxy/internal/crypto"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
 )
@@ -30,10 +31,13 @@ func (s *Server) listGroups(c *gin.Context) {
 		return
 	}
 
-	// Populate effective claims for child groups
+	// Populate effective claims for child groups and mask API keys
 	for i := range groups {
 		if groups[i].Group != nil && groups[i].Group.ParentID != nil && groups[i].Access != nil {
 			s.populateEffectiveClaims(c.Request.Context(), groups[i].Group, groups[i].Access)
+		}
+		if groups[i].Access != nil {
+			maskGroupAccessAPIKey(groups[i].Access)
 		}
 	}
 
@@ -208,6 +212,9 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 		s.populateEffectiveClaims(c.Request.Context(), group, access)
 	}
 
+	// Mask API key in response
+	maskGroupAccessAPIKey(access)
+
 	c.JSON(http.StatusOK, access)
 }
 
@@ -247,6 +254,16 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		return
 	}
 
+	// Encrypt API key before storing (if encryption key is configured)
+	if input.RPCAPIKey != nil && *input.RPCAPIKey != "" {
+		encrypted, err := crypto.Encrypt(*input.RPCAPIKey, s.config.RPCAPIKeyEncryptionKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt API key"})
+			return
+		}
+		input.RPCAPIKey = &encrypted
+	}
+
 	// Check if access already exists
 	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
@@ -279,6 +296,9 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 
 	// Invalidate cache for group members
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
+
+	// Mask API key in response
+	maskGroupAccessAPIKey(access)
 
 	c.JSON(http.StatusOK, access)
 }
@@ -477,4 +497,28 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"deleted_count": len(input.GroupIDs)})
+}
+
+// maskGroupAccessAPIKey replaces the API key in a GroupAccess with a masked
+// version showing only the last 4 characters. This prevents full API keys
+// from being exposed in API responses.
+func maskGroupAccessAPIKey(access *rbac.GroupAccess) {
+	if access == nil || access.RPCAPIKey == nil || *access.RPCAPIKey == "" {
+		return
+	}
+	masked := maskAPIKeyStr(*access.RPCAPIKey)
+	access.RPCAPIKey = &masked
+}
+
+// maskAPIKeyStr returns a masked version of an API key for safe display.
+// Shows only the last 4 characters prefixed with "****".
+// Returns "" for empty keys, "****" for keys shorter than 4 characters.
+func maskAPIKeyStr(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) < 4 {
+		return "****"
+	}
+	return "****" + key[len(key)-4:]
 }

@@ -47,13 +47,14 @@ type RPCError struct {
 
 // Forward forwards a JSON-RPC request to the target node.
 func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
-	return p.ForwardWithAPIKey(reqBody, "")
+	return p.ForwardWithAPIKey(reqBody, "", "")
 }
 
 // ForwardWithAPIKey forwards a JSON-RPC request with an optional API key
 // for upstream RPC proxy authentication. If apiKey is non-empty, it is
-// sent as a Bearer token in the Authorization header.
-func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string) ([]byte, int, error) {
+// sent as a Bearer token in the Authorization header. If clientIP is
+// non-empty, it is forwarded as an X-Forwarded-For header.
+func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string, clientIP string) ([]byte, int, error) {
 	req, err := http.NewRequest("POST", p.targetURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
@@ -62,6 +63,9 @@ func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string) ([]byte, int, e
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	if clientIP != "" {
+		req.Header.Set("X-Forwarded-For", clientIP)
 	}
 
 	resp, err := p.client.Do(req)
