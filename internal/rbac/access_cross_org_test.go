@@ -206,6 +206,15 @@ func (m *MockCrossOrgStore) GetGroupHierarchy(ctx context.Context, groupID strin
 func (m *MockCrossOrgStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error) {
 	return m.groupAccess[groupID], nil
 }
+func (m *MockCrossOrgStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) {
+	result := make(map[string]*GroupAccess)
+	for _, id := range groupIDs {
+		if a, ok := m.groupAccess[id]; ok {
+			result[id] = a
+		}
+	}
+	return result, nil
+}
 func (m *MockCrossOrgStore) CreateGroupAccess(ctx context.Context, access *GroupAccess) error {
 	return nil
 }
@@ -232,6 +241,15 @@ func (m *MockCrossOrgStore) ListContractGrantsByContract(ctx context.Context, co
 }
 func (m *MockCrossOrgStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
 	return m.contractGrants[groupID], nil
+}
+func (m *MockCrossOrgStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) {
+	result := make(map[string][]*ContractGrant)
+	for _, id := range groupIDs {
+		if grants, ok := m.contractGrants[id]; ok {
+			result[id] = grants
+		}
+	}
+	return result, nil
 }
 func (m *MockCrossOrgStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {
 	return nil, nil

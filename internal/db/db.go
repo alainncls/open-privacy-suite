@@ -43,8 +43,8 @@ func New(databaseURL string) (*DB, error) {
 	}
 
 	// Configure connection pool
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(25)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	// Test connection
@@ -73,8 +73,8 @@ func NewWithoutMigrate(databaseURL string) (*DB, error) {
 	}
 
 	// Configure connection pool
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(25)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	// Test connection

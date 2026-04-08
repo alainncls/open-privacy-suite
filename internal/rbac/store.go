@@ -30,6 +30,7 @@ type Store interface {
 	// Group Access operations (replaces roles.allow_methods and group_permissions)
 	CreateGroupAccess(ctx context.Context, access *GroupAccess) error
 	GetGroupAccess(ctx context.Context, groupID string) (*GroupAccess, error)
+	GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error)
 	UpdateGroupAccess(ctx context.Context, access *GroupAccess) error
 	DeleteGroupAccess(ctx context.Context, groupID string) error
 
@@ -68,6 +69,7 @@ type Store interface {
 	UpdateContractGrant(ctx context.Context, grant *ContractGrant) error
 	ListContractGrantsByContract(ctx context.Context, contractID string) ([]*ContractGrant, error)
 	ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error)
+	ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error)
 	ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error)
 	DeleteContractGrant(ctx context.Context, id string) error
 	GetContractGrantSummary(ctx context.Context, orgID string) (map[string]*ContractGrantSummary, error)

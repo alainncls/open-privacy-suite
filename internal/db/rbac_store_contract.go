@@ -531,6 +531,48 @@ func (d *DB) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*
 	return scanContractGrants(rows)
 }
 
+func (d *DB) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*rbac.ContractGrant, error) {
+	if len(groupIDs) == 0 {
+		return make(map[string][]*rbac.ContractGrant), nil
+	}
+
+	query := `SELECT id, contract_id, group_id, functions, created_at, updated_at
+	          FROM contract_grants WHERE group_id = ANY($1) ORDER BY created_at`
+
+	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch list contract grants: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]*rbac.ContractGrant)
+	for rows.Next() {
+		grant := &rbac.ContractGrant{}
+		var functionsJSON []byte
+
+		if err := rows.Scan(
+			&grant.ID, &grant.ContractID, &grant.GroupID,
+			&functionsJSON, &grant.CreatedAt, &grant.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan contract grant: %w", err)
+		}
+
+		if len(functionsJSON) > 0 {
+			if err := json.Unmarshal(functionsJSON, &grant.Functions); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
+			}
+		}
+
+		result[grant.GroupID] = append(result[grant.GroupID], grant)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating contract grants batch: %w", err)
+	}
+
+	return result, nil
+}
+
 func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*rbac.ContractGrantWithGroup, error) {
 	query := `SELECT cg.id, cg.contract_id, cg.group_id, cg.functions, cg.event_rules, cg.created_at, cg.updated_at,
 	                 g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.created_at, g.updated_at

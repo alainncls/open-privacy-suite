@@ -95,6 +95,16 @@ func (m *MockStore) GetGroupAccess(ctx context.Context, groupID string) (*GroupA
 	return m.groupAccess[groupID], nil
 }
 
+func (m *MockStore) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*GroupAccess, error) {
+	result := make(map[string]*GroupAccess)
+	for _, id := range groupIDs {
+		if a, ok := m.groupAccess[id]; ok {
+			result[id] = a
+		}
+	}
+	return result, nil
+}
+
 func (m *MockStore) ListUserMembershipsInOrg(ctx context.Context, userID, orgID string) ([]*MembershipWithDetails, error) {
 	key := userID + ":" + orgID
 	return m.groupsByOrg[key], nil
@@ -137,6 +147,16 @@ func (m *MockStore) InvalidateCacheForGroup(ctx context.Context, groupID string)
 
 func (m *MockStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
 	return m.contractGrants[groupID], nil
+}
+
+func (m *MockStore) ListContractGrantsBatch(ctx context.Context, groupIDs []string) (map[string][]*ContractGrant, error) {
+	result := make(map[string][]*ContractGrant)
+	for _, id := range groupIDs {
+		if grants, ok := m.contractGrants[id]; ok {
+			result[id] = grants
+		}
+	}
+	return result, nil
 }
 
 func (m *MockStore) ListContractGrantsByGroupWithContract(ctx context.Context, groupID string) ([]*ContractGrantWithGroup, error) {

@@ -468,6 +468,60 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	return access, nil
 }
 
+func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[string]*rbac.GroupAccess, error) {
+	if len(groupIDs) == 0 {
+		return make(map[string]*rbac.GroupAccess), nil
+	}
+
+	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, created_at, updated_at
+	          FROM group_access WHERE group_id = ANY($1)`
+
+	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch get group access: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*rbac.GroupAccess)
+	for rows.Next() {
+		access := &rbac.GroupAccess{}
+		var allowedMethods, defaultClaims pq.StringArray
+		var rateLimitRPS, rateLimitDaily sql.NullInt32
+
+		if err := rows.Scan(
+			&access.ID, &access.GroupID,
+			&allowedMethods, &defaultClaims,
+			&rateLimitRPS, &rateLimitDaily,
+			&access.CreatedAt, &access.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan group access: %w", err)
+		}
+
+		access.AllowedMethods = allowedMethods
+		access.Claims = make([]rbac.Claim, len(defaultClaims))
+		for i, c := range defaultClaims {
+			access.Claims[i] = rbac.Claim(c)
+		}
+
+		if rateLimitRPS.Valid {
+			val := int(rateLimitRPS.Int32)
+			access.RateLimitRPS = &val
+		}
+		if rateLimitDaily.Valid {
+			val := int(rateLimitDaily.Int32)
+			access.RateLimitDaily = &val
+		}
+
+		result[access.GroupID] = access
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating group access batch: %w", err)
+	}
+
+	return result, nil
+}
+
 func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
 	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily)
 	          VALUES ($1, $2, $3, $4, $5, $6)
