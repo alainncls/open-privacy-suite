@@ -436,7 +436,7 @@ export default function TokenPriceList() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={showForm} onOpenChange={open => { if (!open) setShowForm(false); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit Token Price' : 'Add Token Price'}</DialogTitle>
           </DialogHeader>

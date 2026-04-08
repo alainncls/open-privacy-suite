@@ -478,7 +478,7 @@ export default function ContractList() {
 
       {/* Create Contract Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Register Contract</DialogTitle>
           </DialogHeader>
@@ -492,7 +492,7 @@ export default function ContractList() {
 
       {/* Edit Contract Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Contract</DialogTitle>
           </DialogHeader>

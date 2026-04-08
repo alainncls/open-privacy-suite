@@ -401,7 +401,7 @@ export default function GroupList() {
           if (!open) setParentForNew(null);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {parentForNew
@@ -424,7 +424,7 @@ export default function GroupList() {
 
       {/* Edit Group Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Group</DialogTitle>
           </DialogHeader>

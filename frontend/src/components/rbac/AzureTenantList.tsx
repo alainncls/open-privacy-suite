@@ -192,7 +192,7 @@ export default function AzureTenantList() {
 
       {/* Create Tenant Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Azure AD Tenant</DialogTitle>
           </DialogHeader>
@@ -205,7 +205,7 @@ export default function AzureTenantList() {
 
       {/* Edit Tenant Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Azure AD Tenant</DialogTitle>
           </DialogHeader>
