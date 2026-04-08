@@ -545,6 +545,10 @@ func TestIsMethodBlocked(t *testing.T) {
 		// Should be blocked - les namespace
 		{"les_serverInfo", "les_serverInfo", true},
 
+		// Should NOT be blocked - eth_getStorageAt uses tiered access control in CheckAccess
+		// (admin=all slots, read=well-known only) instead of a global block
+		{"eth_getStorageAt", "eth_getStorageAt", false},
+
 		// Should NOT be blocked - normal read operations
 		{"eth_call", "eth_call", false},
 		{"eth_getBalance", "eth_getBalance", false},
@@ -1669,7 +1673,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 
 	t.Run("all read ops require read claim", func(t *testing.T) {
 		// Read methods that work without params
-		// Note: eth_getStorageAt is now globally blocked, not a read op
+		// Note: eth_getStorageAt has tiered access (admin=all, read=well-known only) in CheckAccess
 		simpleReadMethods := []string{
 			"eth_call",
 			"eth_getCode",

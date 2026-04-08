@@ -1788,7 +1788,7 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 		{"eth_getBalance on EOA allowed", "eth_getBalance", true},
 		{"eth_getTransactionCount on EOA allowed", "eth_getTransactionCount", true},
 		{"eth_getCode on EOA denied (all unregistered private)", "eth_getCode", false},
-		{"eth_getStorageAt on EOA denied (globally blocked)", "eth_getStorageAt", false},
+		{"eth_getStorageAt on EOA denied (not a basic address query)", "eth_getStorageAt", false},
 		{"eth_getProof on EOA denied (all unregistered private)", "eth_getProof", false},
 	}
 
