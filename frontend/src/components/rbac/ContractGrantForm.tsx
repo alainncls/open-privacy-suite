@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Group, ContractGrant, CreateContractGrantInput, FunctionRule, EventRule, ParamRule, EventSignature } from '@/types/rbac';
@@ -232,6 +232,7 @@ export default function ContractGrantForm({
   const [eventsLoading, setEventsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const isEditing = !!grant;
 
@@ -437,6 +438,9 @@ export default function ContractGrantForm({
       } else {
         setError('Failed to save grant. Please try again.');
       }
+      if (typeof formRef.current?.scrollTo === 'function') {
+        formRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } finally {
       setSaving(false);
     }
@@ -452,7 +456,7 @@ export default function ContractGrantForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
       {error && (
         <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
@@ -905,6 +909,13 @@ export default function ContractGrantForm({
           </div>
         )}
       </div>
+
+      {error && (
+        <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-error-dark flex-shrink-0 mt-0.5" />
+          <span className="text-error-dark text-sm">{error}</span>
+        </div>
+      )}
 
       <div className="flex justify-end gap-3 pt-2">
         <Button
