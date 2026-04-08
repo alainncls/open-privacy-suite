@@ -104,7 +104,7 @@ function App() {
                   <Shield className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold text-neutral-900">Privacy Proxy</h1>
+                  <h1 className="text-lg font-semibold text-neutral-900">Open Privacy Suite</h1>
                   <p className="text-xs text-neutral-500">Node Access Control</p>
                 </div>
               </div>

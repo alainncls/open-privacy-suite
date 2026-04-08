@@ -394,7 +394,7 @@ export function LoginPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary-300 shadow-lg shadow-primary">
             <Shield className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-neutral-900">Privacy Proxy</h1>
+          <h1 className="text-2xl font-bold text-neutral-900">Open Privacy Suite</h1>
           <p className="mt-1 text-neutral-500">Authenticated RPC Access</p>
         </div>
 

@@ -3,12 +3,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Response-Level Privacy Filtering",
   description:
-    "Per-method response filtering for transactions, receipts, event logs, and raw storage access in the Privacy Proxy.",
+    "Per-method response filtering for transactions, receipts, event logs, and raw storage access in the Open Privacy Suite.",
 };
 
 # Response-Level Privacy Filtering
 
-The Privacy Proxy enforces privacy at two distinct layers. **Request filtering** (covered in the [Security](/docs/security) page) determines which methods and contracts a user can access. **Response filtering**, described here, controls what data a user sees within allowed responses.
+The Open Privacy Suite enforces privacy at two distinct layers. **Request filtering** (covered in the [Security](/docs/security) page) determines which methods and contracts a user can access. **Response filtering**, described here, controls what data a user sees within allowed responses.
 
 Request filtering alone is insufficient for financial privacy. Consider a contract with ten participants who all have `read` access: without response filtering, every participant can read every other participant's transaction calldata, nonces, and event log parameters. Response filtering closes this gap by restricting response data to information that involves the requesting user's own addresses.
 

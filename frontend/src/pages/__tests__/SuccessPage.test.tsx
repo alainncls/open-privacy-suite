@@ -12,7 +12,7 @@ vi.mock('@/config/wagmi', () => ({
   getRpcEndpoint: () => 'http://localhost:3000/rpc',
   getAddNetworkParams: () => ({
     chainId: '0x1',
-    chainName: 'Privacy Proxy (Mainnet)',
+    chainName: 'Open Privacy Suite (Mainnet)',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
     rpcUrls: ['http://localhost:3000/rpc'],
     blockExplorerUrls: ['https://etherscan.io'],
@@ -260,7 +260,7 @@ describe('SuccessPage', () => {
           method: 'wallet_addEthereumChain',
           params: [expect.objectContaining({
             chainId: '0x1',
-            chainName: 'Privacy Proxy (Mainnet)',
+            chainName: 'Open Privacy Suite (Mainnet)',
           })],
         });
       });

@@ -3,19 +3,19 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Architecture",
   description:
-    "System architecture overview of the Privacy Proxy, a privacy-preserving JSON-RPC proxy for Ethereum nodes.",
+    "System architecture overview of the Open Privacy Suite, a privacy-preserving JSON-RPC proxy for Ethereum nodes.",
 };
 
 # Architecture
 
-Privacy Proxy is a privacy-preserving JSON-RPC proxy that sits between clients and an Ethereum node, enforcing ZK-proof authentication and hierarchical RBAC.
+Open Privacy Suite is a privacy-preserving JSON-RPC proxy that sits between clients and an Ethereum node, enforcing ZK-proof authentication and hierarchical RBAC.
 
 ## System Overview
 
 ```mermaid
 graph TD
     Client["Client (Wallet)<br/><small>MetaMask, ethers.js, any JSON-RPC client</small>"]
-    Proxy["Privacy Proxy<br/><small>Auth → RBAC → Trace → Forward</small>"]
+    Proxy["Open Privacy Suite<br/><small>Auth → RBAC → Trace → Forward</small>"]
     Eth["Ethereum Node<br/><small>JSON-RPC execution layer (Erigon)</small>"]
     DB["PostgreSQL<br/><small>Policies, RBAC, audit logs</small>"]
     Privado["Privado RPC<br/><small>Identity state verification</small>"]
@@ -80,7 +80,7 @@ graph TD
 
 | Service | Default Port | Description |
 |---------|-------------|-------------|
-| Privacy Proxy (API + RPC) | `8080` | JSON-RPC proxy and admin REST API |
+| Open Privacy Suite (API + RPC) | `8080` | JSON-RPC proxy and admin REST API |
 | Frontend (Admin UI) | `5173` | Vite dev server for the admin dashboard |
 | PostgreSQL | `5432` | Policy storage, RBAC, audit logs |
 | Ethereum Node (Anvil/Erigon) | `8545` | JSON-RPC execution layer |

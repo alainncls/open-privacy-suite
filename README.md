@@ -1,4 +1,4 @@
-# Privacy Proxy
+# Open Privacy Suite
 
 A privacy-preserving JSON-RPC proxy for Ethereum nodes with ZK-proof authentication and hierarchical RBAC.
 
@@ -17,18 +17,18 @@ In development mode, click the flask icon on the login page for instant mock aut
 ## Architecture
 
 ```
-┌─────────────┐     ┌───────────────────────────────────────┐     ┌──────────────┐
-│   Client    │────>│            Privacy Proxy              │────>│  Ethereum    │
-│  (Wallet)   │     │                                       │     │    Node      │
-└─────────────┘     │  ┌─────────┐  ┌──────┐  ┌─────────┐  │     └──────────────┘
-                    │  │  Auth   │  │ RBAC │  │  Proxy  │  │
-                    │  │ (ZK/JWT)│  │      │  │         │  │
-                    │  └─────────┘  └──────┘  └─────────┘  │
-                    │                  │                    │
-                    │           ┌──────▼──────┐            │
-                    │           │  PostgreSQL │            │
-                    │           └─────────────┘            │
-                    └───────────────────────────────────────┘
+┌─────────────┐     ┌───────────────────────────────────────────┐     ┌──────────────┐
+│   Client    │────>│            Open Privacy Suite             │────>│  Ethereum    │
+│  (Wallet)   │     │                                           │     │    Node      │
+└─────────────┘     │  ┌─────────┐  ┌──────┐  ┌─────────┐      │     └──────────────┘
+                    │  │  Auth   │  │ RBAC │  │  Proxy  │      │
+                    │  │ (ZK/JWT)│  │      │  │         │      │
+                    │  └─────────┘  └──────┘  └─────────┘      │
+                    │                  │                        │
+                    │           ┌──────▼──────┐                │
+                    │           │  PostgreSQL │                │
+                    │           └─────────────┘                │
+                    └───────────────────────────────────────────┘
 ```
 
 ## Services

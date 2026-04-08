@@ -8,17 +8,17 @@ export const metadata = {
 
 # Block Explorer Integration
 
-The Privacy Proxy provides a centralized, privacy-governed data gateway for the Block Explorer. This architecture ensures that all blockchain data indexed and displayed by the explorer is subject to the same RBAC and privacy policies as direct JSON-RPC traffic.
+The Open Privacy Suite provides a centralized, privacy-governed data gateway for the Block Explorer. This architecture ensures that all blockchain data indexed and displayed by the explorer is subject to the same RBAC and privacy policies as direct JSON-RPC traffic.
 
 ## Architecture Overview
 
-The integration uses a **Dual-Mode** architecture, allowing the Block Explorer to operate either as a standalone tool or as a privacy-enhanced component of the Privacy Proxy ecosystem.
+The integration uses a **Dual-Mode** architecture, allowing the Block Explorer to operate either as a standalone tool or as a privacy-enhanced component of the Open Privacy Suite ecosystem.
 
 ```mermaid
 graph TD
     User["User / Frontend"]
     BE["Block Explorer Backend<br/><small>DataProvider Abstraction</small>"]
-    Proxy["Privacy Proxy<br/><small>Explorer API + RBAC</small>"]
+    Proxy["Open Privacy Suite<br/><small>Explorer API + RBAC</small>"]
     DB["Explorer Database<br/><small>Blocks, Txs, Stats</small>"]
     Eth["Ethereum Node<br/><small>Erigon / Anvil</small>"]
 
@@ -40,7 +40,7 @@ The Block Explorer backend implements a `DataProvider` interface that abstracts 
 In this mode, the explorer connects directly to its own PostgreSQL database and the Ethereum node. This is suitable for development or deployments where centralized privacy enforcement is not required.
 
 ### 2. Proxy-Mediated Mode (Centralized)
-In this mode, the explorer backend acts as a client to the Privacy Proxy. It fetches all processed blockchain data via the **Explorer Data API**.
+In this mode, the explorer backend acts as a client to the Open Privacy Suite. It fetches all processed blockchain data via the **Explorer Data API**.
 
 <Callout type="important">
   **Proxy Mode benefits**: All data is filtered according to the user's RBAC
@@ -50,7 +50,7 @@ In this mode, the explorer backend acts as a client to the Privacy Proxy. It fet
 
 ## Explorer Data API
 
-The Privacy Proxy exposes a set of internal REST endpoints specifically for the explorer. These endpoints are typically protected and intended for use by the explorer backend.
+The Open Privacy Suite exposes a set of internal REST endpoints specifically for the explorer. These endpoints are typically protected and intended for use by the explorer backend.
 
 | Endpoint | Description |
 |----------|-------------|
@@ -62,7 +62,7 @@ The Privacy Proxy exposes a set of internal REST endpoints specifically for the 
 
 ## Identity Forwarding
 
-When operating in Proxy Mode, the Block Explorer forwards the user's **JWT Identity** to the Privacy Proxy. This allows the Proxy to:
+When operating in Proxy Mode, the Block Explorer forwards the user's **JWT Identity** to the Open Privacy Suite. This allows the Proxy to:
 
 1. **Identify the User**: Determine which organization and group the user belongs to.
 2. **Apply Policies**: Filter transactions or blocks that the user is not authorized to see.
@@ -78,27 +78,27 @@ DATA_PROVIDER_MODE=proxy
 PRIVACY_PROXY_URL=http://privacy-proxy:8080
 ```
 
-To enable the Explorer API in the Privacy Proxy:
+To enable the Explorer API in the Open Privacy Suite:
 
 ```bash
-# In Privacy Proxy environment
+# In Open Privacy Suite environment
 EXPLORER_DATABASE_URL=postgres://user:pass@explorer-db:5432/explorer
 ```
 
 ## Authentication / Login Flow
 
-When Privacy Mode is enabled, the Block Explorer uses Privacy Proxy as its **Identity Provider** via an OAuth 2.0 authorization code flow. There is only one login page — hosted by Privacy Proxy — and the Block Explorer simply redirects users to it.
+When Privacy Mode is enabled, the Block Explorer uses Open Privacy Suite as its **Identity Provider** via an OAuth 2.0 authorization code flow. There is only one login page — hosted by Open Privacy Suite — and the Block Explorer simply redirects users to it.
 
 ```mermaid
 sequenceDiagram
     participant U as User Browser
     participant BE as Block Explorer
-    participant PP as Privacy Proxy
+    participant PP as Open Privacy Suite
 
     U->>BE: Click "Sign In"
-    BE->>U: 302 → GET /oauth/authorize (Privacy Proxy)
+    BE->>U: 302 → GET /oauth/authorize (Open Privacy Suite)
     U->>PP: GET /oauth/authorize?client_id=...&redirect_uri=...
-    PP->>U: 302 → /login?oauth_session=XXX (Privacy Proxy frontend)
+    PP->>U: 302 → /login?oauth_session=XXX (Open Privacy Suite frontend)
     U->>PP: Loads login page (QR code or Mock Login in dev)
     Note over U,PP: User scans QR with Privado wallet,<br/>or clicks Mock Login in dev mode
     PP->>U: 302 → {redirect_uri}?code=YYY&state=ZZZ (Block Explorer callback)
@@ -107,13 +107,13 @@ sequenceDiagram
     BE->>U: Set JWT cookie, redirect to explorer
 ```
 
-The Block Explorer never handles authentication directly — all credential verification happens inside Privacy Proxy.
+The Block Explorer never handles authentication directly — all credential verification happens inside Open Privacy Suite.
 
 ### Configuration
 
-| Variable (Privacy Proxy) | Description |
+| Variable (Open Privacy Suite) | Description |
 |--------------------------|-------------|
-| `FRONTEND_URL` | URL of the Privacy Proxy frontend (e.g. `http://localhost:5173`). When set, browser OAuth requests redirect to the React login page instead of serving inline HTML. Must be HTTPS in production. |
+| `FRONTEND_URL` | URL of the Open Privacy Suite frontend (e.g. `http://localhost:5173`). When set, browser OAuth requests redirect to the React login page instead of serving inline HTML. Must be HTTPS in production. |
 | `ALLOW_MOCK_LOGIN` | Set `true` in development to show a "Mock Login (Skip Wallet)" button on the login page. **Never enable in production.** |
 
 | Variable (Block Explorer) | Description |
@@ -126,10 +126,10 @@ The Block Explorer never handles authentication directly — all credential veri
 
 ### Development Setup
 
-Start Privacy Proxy first, then Block Explorer:
+Start Open Privacy Suite first, then Block Explorer:
 
 ```bash
-# Privacy Proxy (with mock login enabled)
+# Open Privacy Suite (with mock login enabled)
 docker compose -p privacy-proxy up -d
 
 # Block Explorer (joins privacy-proxy network)

@@ -3,12 +3,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Travel Rule Compliance",
   description:
-    "FATF Recommendation 16 travel rule enforcement, sanctions screening, threshold-based controls, and immutable audit logging in the Privacy Proxy.",
+    "FATF Recommendation 16 travel rule enforcement, sanctions screening, threshold-based controls, and immutable audit logging in the Open Privacy Suite.",
 };
 
 # Travel Rule Compliance
 
-The Privacy Proxy enforces FATF Recommendation 16, known as the "travel rule," for value transfers through the network. When a transfer's USD value meets or exceeds a configured threshold, the system requires pre-submitted documentation identifying both the originator (sender) and beneficiary (recipient) before allowing the transaction to proceed.
+The Open Privacy Suite enforces FATF Recommendation 16, known as the "travel rule," for value transfers through the network. When a transfer's USD value meets or exceeds a configured threshold, the system requires pre-submitted documentation identifying both the originator (sender) and beneficiary (recipient) before allowing the transaction to proceed.
 
 This regulatory requirement applies to Virtual Asset Service Providers (VASPs) and similar entities moving customer funds across blockchain networks.
 
@@ -149,7 +149,7 @@ Typical use cases: OFAC SDN List compliance, addresses associated with known fra
 
 ### Token Prices
 
-Since the Privacy Proxy operates on a private network without external oracle access, token prices must be manually configured by administrators.
+Since the Open Privacy Suite operates on a private network without external oracle access, token prices must be manually configured by administrators.
 
 - Price expressed in USD per token unit (e.g., $2,000 per ETH)
 - Prices can be updated at any time; changes apply immediately to new transfers
@@ -169,7 +169,7 @@ An immutable, append-only audit trail of every compliance decision.
 - Timestamp
 
 <Callout variant="info" title="Compliance vs. transaction outcome">
-  Logs record the compliance decision made by the Privacy Proxy before forwarding the transaction. The transaction may later fail at the node level (invalid nonce, revert, insufficient gas). The compliance log records the gate decision, not the final transaction outcome.
+  Logs record the compliance decision made by the Open Privacy Suite before forwarding the transaction. The transaction may later fail at the node level (invalid nonce, revert, insufficient gas). The compliance log records the gate decision, not the final transaction outcome.
 </Callout>
 
 **Immutability guarantees:**

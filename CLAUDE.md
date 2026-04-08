@@ -1,4 +1,4 @@
-# Privacy Proxy - Project Conventions
+# Open Privacy Suite - Project Conventions
 
 ## Database
 

@@ -3,12 +3,12 @@ import { Step } from "@/components/mdx/step";
 export const metadata = {
   title: "Contract Deployment",
   description:
-    "How to deploy smart contracts through the Privacy Proxy using runtime tracing.",
+    "How to deploy smart contracts through the Open Privacy Suite using runtime tracing.",
 };
 
 # Contract Deployment
 
-This guide describes how to deploy smart contracts through the Privacy Proxy. The proxy validates all transactions at runtime using `debug_traceCall`, so deploying is nearly identical to deploying on any public chain.
+This guide describes how to deploy smart contracts through the Open Privacy Suite. The proxy validates all transactions at runtime using `debug_traceCall`, so deploying is nearly identical to deploying on any public chain.
 
 ### Prerequisites
 
@@ -20,7 +20,7 @@ This guide describes how to deploy smart contracts through the Privacy Proxy. Th
 
 <Step number={1} title="Get Your Access Token">
 
-Open the Privacy Proxy web UI (e.g., `http://localhost:5173`), authenticate with your Privado ID wallet (scan QR code), then go to **Settings** > **Developer** > **Copy Access Token**.
+Open the Open Privacy Suite web UI (e.g., `http://localhost:5173`), authenticate with your Privado ID wallet (scan QR code), then go to **Settings** > **Developer** > **Copy Access Token**.
 
 </Step>
 
@@ -99,7 +99,7 @@ graph TD
     TX["Your Transaction"]
     TX --> V
 
-    subgraph V["Privacy Proxy"]
+    subgraph V["Open Privacy Suite"]
         direction TB
         S1["1. Validate JWT token"]
         S2["2. Check user has 'deploy' claim"]

@@ -5,12 +5,12 @@ import { EnvTable } from "@/components/mdx/env-table";
 export const metadata = {
   title: "Azure AD / SSO",
   description:
-    "Azure AD / Microsoft Entra ID SSO integration for the Privacy Proxy. Setup, bootstrap, and testing guide.",
+    "Azure AD / Microsoft Entra ID SSO integration for the Open Privacy Suite. Setup, bootstrap, and testing guide.",
 };
 
 # Azure AD / SSO
 
-The Privacy Proxy supports Azure AD (Microsoft Entra ID) as an authentication provider alongside Privado ID ZK proofs. This enables enterprise SSO login for organizations using Microsoft identity.
+The Open Privacy Suite supports Azure AD (Microsoft Entra ID) as an authentication provider alongside Privado ID ZK proofs. This enables enterprise SSO login for organizations using Microsoft identity.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ Go to [Azure Portal](https://portal.azure.com) > **Microsoft Entra ID** > **App 
 
 <Step number={2} title="Configure Basic Settings">
 
-- **Name**: anything (e.g., "Privacy Proxy Dev")
+- **Name**: anything (e.g., "Open Privacy Suite Dev")
 - **Supported account types**: "Single tenant" (your org only) or "Any org + personal" for testing
 - **Redirect URI**: select **Web** and enter `http://localhost:5173/auth/azure/callback`
 

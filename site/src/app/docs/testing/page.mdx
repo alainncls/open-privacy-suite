@@ -2,12 +2,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Testing",
   description:
-    "Testing infrastructure for the Privacy Proxy: unit tests with testcontainers, Go-based E2E tests, and Playwright API tests.",
+    "Testing infrastructure for the Open Privacy Suite: unit tests with testcontainers, Go-based E2E tests, and Playwright API tests.",
 };
 
 # Testing
 
-The Privacy Proxy testbed supports two testing modes:
+The Open Privacy Suite testbed supports two testing modes:
 
 1. **Unit / Integration Tests (Go)** -- Use mock servers and testcontainers for fast, deterministic testing.
 2. **E2E Tests (Go-based and Playwright)** -- Use real Anvil node for comprehensive API testing.
@@ -27,7 +27,7 @@ The Privacy Proxy testbed supports two testing modes:
 |---------|-------|------|---------|
 | `postgres` | postgres:15-alpine | 5432 | Policy and token storage |
 | `anvil` | foundry | 8545 | Local Ethereum node |
-| `proxy-backend` | Go binary | 8080 | Privacy proxy server |
+| `proxy-backend` | Go binary | 8080 | Open Privacy Suite server |
 | `proxy-frontend` | Node.js | 5173 | Admin UI (Vite dev server) |
 
 Service dependency chain:
@@ -327,7 +327,7 @@ go test -v -run TestE2E_AuthorizedRequest ./e2e/...
 
 | Service | URL |
 |---------|-----|
-| Privacy Proxy API | `http://localhost:8080` |
+| Open Privacy Suite API | `http://localhost:8080` |
 | Admin UI | `http://localhost:5173` |
 | Anvil (Ethereum Node) | `http://localhost:8545` |
 | PostgreSQL | `localhost:5432` |
