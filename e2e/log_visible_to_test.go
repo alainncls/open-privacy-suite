@@ -66,8 +66,10 @@ func setupLogVisibleToTest(t *testing.T, database *db.DB) *logVisibleToTestSetup
 	}
 	require.NoError(t, database.CreateGroup(ctx, group))
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
-		GroupID: setup.groupID,
-		Claims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		ID:             uuid.New().String(),
+		GroupID:        setup.groupID,
+		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		AllowedMethods: []string{},
 	}))
 
 	// 3. Create sender user
