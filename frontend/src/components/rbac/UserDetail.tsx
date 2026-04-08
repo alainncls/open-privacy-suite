@@ -556,7 +556,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
 
       {/* Add Membership Dialog */}
       <Dialog open={showMembershipForm} onOpenChange={setShowMembershipForm}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Group Membership</DialogTitle>
           </DialogHeader>

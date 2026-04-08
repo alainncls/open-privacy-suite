@@ -401,7 +401,7 @@ export default function GroupList() {
           if (!open) setParentForNew(null);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {parentForNew
@@ -424,7 +424,7 @@ export default function GroupList() {
 
       {/* Edit Group Dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Group</DialogTitle>
           </DialogHeader>
@@ -446,7 +446,7 @@ export default function GroupList() {
         open={!!editingAccess}
         onOpenChange={open => !open && setEditingAccess(null)}
       >
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               Edit Access for "{editingAccess?.name}"

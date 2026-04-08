@@ -209,7 +209,7 @@ export default function SanctionsList() {
 
       {/* Add Dialog */}
       <Dialog open={showForm} onOpenChange={open => { if (!open) setShowForm(false); }}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Sanctioned Address</DialogTitle>
           </DialogHeader>
