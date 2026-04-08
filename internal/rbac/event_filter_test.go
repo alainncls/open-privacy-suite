@@ -42,7 +42,7 @@ func TestFilterEventLogs_NoEventRules_DefaultAddressFilter(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + eventSig + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (only where user address in topic), got %d", len(result))
 	}
@@ -66,7 +66,7 @@ func TestFilterEventLogs_AllowlistMode(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["0xdef0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log, got %d", len(result))
 	}
@@ -89,7 +89,7 @@ func TestFilterEventLogs_AnonymousEventsBlocked(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (anonymous blocked), got %d", len(result))
 	}
@@ -107,7 +107,7 @@ func TestFilterEventLogs_NoContractAccess(t *testing.T) {
 		json.RawMessage(`{"address":"0xunknown","topics":["0xabc"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (no access), got %d", len(result))
 	}
@@ -164,7 +164,7 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 	}
 
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (user is sender), got %d", len(result))
@@ -193,7 +193,7 @@ func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
 	}
 	result := FilterEventLogs(
 		[]json.RawMessage{logWithUser, logWithoutUser},
-		permsNil, []string{userAddr}, nil,
+		permsNil, []string{userAddr}, nil, nil,
 	)
 	if len(result) != 1 {
 		t.Errorf("nil EventRules: expected 1 log (address-based filter), got %d", len(result))
@@ -210,7 +210,7 @@ func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
 	}
 	result = FilterEventLogs(
 		[]json.RawMessage{logWithUser, logWithoutUser},
-		permsEmpty, []string{userAddr}, nil,
+		permsEmpty, []string{userAddr}, nil, nil,
 	)
 	if len(result) != 0 {
 		t.Errorf("empty EventRules: expected 0 logs (allowlist with nothing), got %d", len(result))
@@ -234,7 +234,7 @@ func TestFilterEventLogs_EmptyTopicsArray(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs for empty topics array, got %d", len(result))
 	}
@@ -281,7 +281,7 @@ func TestFilterEventLogs_MalformedDataWithParamRules(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs for malformed data with param_rules (fail-closed), got %d", len(result))
 	}
@@ -331,7 +331,7 @@ func TestFilterEventLogs_MultipleParamRules_OneMatches(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (OR semantic, user matches to), got %d", len(result))
 	}
@@ -380,7 +380,7 @@ func TestFilterEventLogs_MultipleParamRules_NoneMatch(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (neither param matches), got %d", len(result))
 	}
@@ -426,7 +426,7 @@ func TestFilterEventLogs_ParamRuleIndexOutOfRange(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (param index out of range, fail-closed), got %d", len(result))
 	}
@@ -476,7 +476,7 @@ func TestFilterEventLogs_CaseInsensitiveAddressMatching(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (case-insensitive address match), got %d", len(result))
 	}
@@ -503,7 +503,7 @@ func TestFilterEventLogs_UnionAcrossGrants(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["0x1110000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("expected 2 logs, got %d", len(result))
 	}
@@ -537,7 +537,7 @@ func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
 	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic1 + `","` + otherTopic2 + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
 
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (event rules widen access beyond address-based), got %d", len(result))
 	}
@@ -594,7 +594,7 @@ func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 		json.RawMessage(logNoUser),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (self constraint filters non-participant), got %d", len(result))
 	}
@@ -606,7 +606,7 @@ func TestFilterEventLogs_NilPerms_FailClosed(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, nil, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, nil, []string{"0xuser"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("nil perms: expected 0 logs (fail-closed), got %d", len(result))
 	}
@@ -755,7 +755,7 @@ func TestFilterEventLogs_CustomHex_IndexedAddress_Match(t *testing.T) {
 	}
 
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (custom address match on indexed param), got %d", len(result))
@@ -808,7 +808,7 @@ func TestFilterEventLogs_CustomHex_IndexedUint256_Match(t *testing.T) {
 	}
 
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (custom uint256 match on indexed param), got %d", len(result))
@@ -857,7 +857,7 @@ func TestFilterEventLogs_CustomHex_Mismatch(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (custom value mismatch), got %d", len(result))
 	}
@@ -919,7 +919,7 @@ func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
 		json.RawMessage(log3),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 2 {
 		t.Errorf("expected 2 logs (mixed self+custom rules, OR semantics), got %d", len(result))
 	}
@@ -968,7 +968,7 @@ func TestFilterEventLogs_CustomHex_CaseInsensitive(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (case-insensitive custom address match), got %d", len(result))
 	}
@@ -1029,7 +1029,7 @@ func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
 	}
 
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (custom address match on non-indexed param), got %d", len(result))
@@ -1078,7 +1078,7 @@ func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
 	}
 
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": eventABI}}
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, abiProvider, nil)
 
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (bool=true match), got %d", len(result))
@@ -1117,7 +1117,7 @@ func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
 	}
 
 	// No ABI provider
-	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xunrelateduser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 log (no-ABI fallback topic compare), got %d", len(result))
 	}
@@ -1210,7 +1210,7 @@ func TestFilterEventLogs_UnknownMustBe_FailClosed(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("U08: unknown MustBe should fail-closed, expected 0 logs, got %d", len(result))
 	}
@@ -1256,7 +1256,7 @@ func TestFilterEventLogs_NegativeParamIndex_FailClosed(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("U07: negative param index should fail-closed, expected 0 logs, got %d", len(result))
 	}
@@ -1344,7 +1344,7 @@ func TestFilterEventLogs_Allowlist_MixedLogs(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("U21: expected 1 log (only Transfer), got %d", len(result))
 	}
@@ -1412,7 +1412,7 @@ func TestFilterEventLogs_NonIndexedParam_Match(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": customEventABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("U28: non-indexed address param matches user, expected 1 log, got %d", len(result))
 	}
@@ -1463,7 +1463,7 @@ func TestFilterEventLogs_NonIndexedParam_NoMatch(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": customEventABI}}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("U29: non-indexed param doesn't match user, expected 0 logs, got %d", len(result))
 	}
@@ -1504,7 +1504,7 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	// No ABI provider
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("U30: no ABI with non-indexed param rule should fail-closed, expected 0 logs, got %d", len(result))
 	}
@@ -1812,7 +1812,7 @@ func TestFilterEventLogs_AdminClaim_Bypass(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 
 	// Admin bypass: both logs should be visible regardless of event rules.
 	if len(result) != 2 {
@@ -1847,7 +1847,7 @@ func TestFilterEventLogs_OrgAdmin_Bypass(t *testing.T) {
 	}
 
 	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("I29: org admin should see all logs via admin bypass, expected 2, got %d", len(result))
 	}
@@ -1874,7 +1874,7 @@ func TestFilterEventLogs_ReadClaim_NoByppass(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("I30: read claim should not bypass event_rules, expected 1 log, got %d", len(result))
 	}
@@ -1906,7 +1906,7 @@ func TestFilterEventLogs_CrossOrg_NoAccess(t *testing.T) {
 		json.RawMessage(`{"address":"` + betaContractAddr + `","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xaaaa"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xaaaa"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("I25: cross-org contract should be invisible, expected 0 logs, got %d", len(result))
 	}
@@ -1938,7 +1938,7 @@ func TestFilterEventLogs_MultipleContracts_PartialAccess(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontractz","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("I26: expected 2 logs (X and Z), got %d", len(result))
 	}
@@ -1991,7 +1991,7 @@ func TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{senderAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{senderAddr}, abiProvider, nil)
 	if len(result) != 1 {
 		t.Errorf("ViewerDimension: sender should see Transfer they sent, expected 1, got %d", len(result))
 	}
@@ -2040,7 +2040,7 @@ func TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom(t *testing.T
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{receiverAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{receiverAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("ViewerDimension: receiver should NOT see Transfer (from != self), expected 0, got %d", len(result))
 	}
@@ -2089,7 +2089,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	abiProvider := &testABIProvider{abis: map[string]string{"0xcontract1": erc20ABI}}
 
-	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, abiProvider)
+	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, abiProvider, nil)
 	if len(result) != 0 {
 		t.Errorf("ViewerDimension: 3rd party with no param match should be blocked, expected 0, got %d", len(result))
 	}
@@ -2118,7 +2118,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules(t *testing.T) {
 	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + senderTopic + `","` + receiverTopic + `"],"data":"0x"}`
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 
-	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{thirdPartyAddr}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("ViewerDimension: 3rd party with no param rules should see allowed event, expected 1, got %d", len(result))
 	}
@@ -2152,7 +2152,7 @@ func TestFilterEventLogs_UnionGrants_UnrestrictedWins(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `","` + userTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("Union unrestricted: expected 2 logs (all with user address), got %d", len(result))
 	}
@@ -2183,7 +2183,7 @@ func TestFilterEventLogs_UnionGrants_BothRestricted(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("Union both restricted: expected 2 logs (Transfer + Approval), got %d", len(result))
 	}
@@ -2238,7 +2238,7 @@ func TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 3 {
 		t.Errorf("admin should see all 3 logs without address in topics, got %d", len(result))
 	}
@@ -2267,7 +2267,7 @@ func TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("read user without address in topics should see 0 logs, got %d", len(result))
 	}
@@ -2298,7 +2298,7 @@ func TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + customTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 3 {
 		t.Errorf("admin should bypass event rules and see all 3 logs, got %d", len(result))
 	}
@@ -2322,7 +2322,7 @@ func TestFilterEventLogs_AdminBypassWithEmptyEventRules(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("admin should bypass empty event rules, expected 1, got %d", len(result))
 	}
@@ -2363,7 +2363,7 @@ func TestFilterEventLogs_AdminOnOneContract_ReadOnAnother(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract_read","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 2 {
 		t.Errorf("expected 2 logs (admin contract + allowed event on read contract), got %d", len(result))
 	}
@@ -2395,7 +2395,7 @@ func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract_other_org","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{userAddr}, nil)
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("cross-org isolation: expected 1 log (own contract only), got %d", len(result))
 	}
@@ -2420,7 +2420,7 @@ func TestFilterEventLogs_AdminBypassWithAnonymousEvent(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0xdeadbeef"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("admin should bypass and see anonymous events, expected 1, got %d", len(result))
 	}
@@ -2448,8 +2448,238 @@ func TestFilterEventLogs_DeployWriteClaims_NoBypass(t *testing.T) {
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + approvalTopic0 + `"],"data":"0x"}`),
 	}
 
-	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil)
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
 	if len(result) != 1 {
 		t.Errorf("deploy/write user should NOT get admin bypass, expected 1 log, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// logVisibleTo extension tests
+// ---------------------------------------------------------------------------
+
+func TestFilterEventLogs_LogVisibleTo_ParamRulesFail_ViewerInList(t *testing.T) {
+	// Viewer DID is in logVisibleTo list → event visible despite must_be=self failure.
+	contractAddr := "0xcontract1"
+	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	viewerDID := "did:privado:viewer1"
+	txHash := "0xdeadbeef"
+
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	// Topic1 = from addr (not the viewer's address)
+	otherTopic := "0x000000000000000000000000" + otherAddr[2:]
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
+						{Index: 0, MustBe: "self"},
+					}},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+
+	visCtx := &LogVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			txHash: {viewerDID, "did:privado:other"},
+		},
+	}
+
+	// Without visCtx: should be filtered (must_be=self fails)
+	resultWithout := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
+	if len(resultWithout) != 0 {
+		t.Errorf("without visCtx: expected 0 logs (self check fails), got %d", len(resultWithout))
+	}
+
+	// With visCtx: should pass (viewer in logVisibleTo)
+	resultWith := FilterEventLogs(logs, perms, []string{userAddr}, nil, visCtx)
+	if len(resultWith) != 1 {
+		t.Errorf("with visCtx: expected 1 log (viewer in logVisibleTo), got %d", len(resultWith))
+	}
+}
+
+func TestFilterEventLogs_LogVisibleTo_ViewerNotInList(t *testing.T) {
+	// Viewer DID NOT in logVisibleTo list → event still filtered.
+	contractAddr := "0xcontract1"
+	viewerDID := "did:privado:not_listed"
+	txHash := "0xdeadbeef"
+
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	otherTopic := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
+						{Index: 0, MustBe: "self"},
+					}},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+
+	visCtx := &LogVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			txHash: {"did:privado:someone_else"},
+		},
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xnotinanylog"}, nil, visCtx)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (viewer not in logVisibleTo list), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_LogVisibleTo_NilContext_BackwardCompat(t *testing.T) {
+	// nil visCtx → backward compat, no change in behavior.
+	contractAddr := "0xcontract1"
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	otherTopic := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
+						{Index: 0, MustBe: "self"},
+					}},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x","transactionHash":"0xabc"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xnotinanylog"}, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("nil visCtx: expected 0 logs (backward compat), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_LogVisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T) {
+	// logVisibleTo should NOT bypass topic0 allowlist — only param rules.
+	contractAddr := "0xcontract1"
+	viewerDID := "did:privado:viewer1"
+	txHash := "0xdeadbeef"
+
+	allowedTopic0 := "0xaaa0000000000000000000000000000000000000000000000000000000000000"
+	disallowedTopic0 := "0xbbb0000000000000000000000000000000000000000000000000000000000000"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: allowedTopic0, Name: "AllowedEvent"},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		// Disallowed topic0 — logVisibleTo should NOT make this pass.
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + disallowedTopic0 + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+
+	visCtx := &LogVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			txHash: {viewerDID},
+		},
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, visCtx)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (logVisibleTo must not bypass topic0 allowlist), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_LogVisibleTo_AdminStillBypasses(t *testing.T) {
+	// Admin users bypass everything — logVisibleTo doesn't change this.
+	contractAddr := "0xcontract1"
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims: []Claim{ClaimAdmin},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
+						{Index: 0, MustBe: "self"},
+					}},
+				},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","0x0000000000000000000000000000000000000000000000000000000000000000"],"data":"0x","transactionHash":"0xabc"}`),
+	}
+
+	// Admin sees everything regardless of visCtx.
+	result := FilterEventLogs(logs, perms, []string{"0xadmin"}, nil, nil)
+	if len(result) != 1 {
+		t.Errorf("admin should see all logs, expected 1, got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_LogVisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *testing.T) {
+	// When no event rules are configured (default address filtering),
+	// logVisibleTo extends the filter: if user address is NOT in topics
+	// but viewer DID IS in logVisibleTo, the log should be visible.
+	contractAddr := "0xcontract1"
+	viewerDID := "did:privado:viewer1"
+	txHash := "0xdeadbeef"
+	eventSig := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	otherTopic := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contractAddr: {
+				Claims:     []Claim{ClaimRead},
+				EventRules: nil, // default address filtering
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + eventSig + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+
+	// Without visCtx: should be hidden (address not in topics)
+	resultWithout := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, nil)
+	if len(resultWithout) != 0 {
+		t.Errorf("without visCtx: expected 0 logs, got %d", len(resultWithout))
+	}
+
+	// With visCtx: should be visible (viewer in logVisibleTo)
+	visCtx := &LogVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			txHash: {viewerDID},
+		},
+	}
+	resultWith := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, visCtx)
+	if len(resultWith) != 1 {
+		t.Errorf("with visCtx: expected 1 log (viewer in logVisibleTo), got %d", len(resultWith))
 	}
 }

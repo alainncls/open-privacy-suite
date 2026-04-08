@@ -358,6 +358,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database)
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
+	s.jsonrpcProcessor.SetLogVisibilityStore(database)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {

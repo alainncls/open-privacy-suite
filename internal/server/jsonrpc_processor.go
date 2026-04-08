@@ -42,8 +42,16 @@ type JSONRPCProcessor struct {
 	siemForwarder  *audit.SIEMForwarder
 	logParams      bool
 
+	// Per-tx log visibility store (logVisibleTo feature)
+	logVisibilityStore rbac.LogVisibilityProvider
+
 	// Prometheus metrics
 	metrics *metrics.Metrics
+}
+
+// TxLogVisibilitySaver saves per-tx logVisibleTo rules. Implemented by db.DB.
+type TxLogVisibilitySaver interface {
+	SaveTxLogVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -117,6 +125,13 @@ func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashCha
 // SetMetrics configures Prometheus metrics for the processor.
 func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
 	p.metrics = m
+}
+
+// SetLogVisibilityStore configures the per-tx log visibility provider for
+// logVisibleTo feature. When set, the processor resolves logVisibleTo rules
+// from the DB during response filtering and stores them during send.
+func (p *JSONRPCProcessor) SetLogVisibilityStore(store rbac.LogVisibilityProvider) {
+	p.logVisibilityStore = store
 }
 
 // logAccess logs an access entry using enhanced logging (with hash chain + SIEM) if available,
@@ -322,6 +337,12 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
+	// Extract and strip logVisibleTo from eth_sendTransaction before forwarding.
+	var logVisibleTo []string
+	if req.Method == "eth_sendTransaction" {
+		logVisibleTo = extractAndStripLogVisibleTo(req)
+	}
+
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
@@ -465,6 +486,18 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// could forge any unlocked address as `from`. System-linking is only safe for
 	// eth_sendRawTransaction where the sender is recovered from the signature.
 
+	// Store logVisibleTo rule if provided. The tx hash comes from the node response.
+	// Non-fatal: the tx is already sent, so we log errors but don't fail the response.
+	if len(logVisibleTo) > 0 && statusCode == http.StatusOK {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			if saver, ok := p.logVisibilityStore.(TxLogVisibilitySaver); ok {
+				if err := saver.SaveTxLogVisibility(ctx, txHash, logVisibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("failed to save logVisibleTo", "tx", txHash, "error", err)
+				}
+			}
+		}
+	}
+
 	// Apply response-level privacy filtering based on method.
 	// This filters responses to prevent cross-participant data leakage
 	// within the same organization.
@@ -510,7 +543,8 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			return FilterTransactionReceipt(responseBody, nil)
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
+		visCtx := p.buildLogVisibilityContext(ctx, req.UserID, responseBody)
+		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -520,7 +554,8 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
-		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx))
+		visCtx := p.buildLogVisibilityContext(ctx, req.UserID, responseBody)
+		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
@@ -993,6 +1028,10 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		return compErr
 	}
 
+	// Extract and strip logVisibleTo from second param (if present) before forwarding.
+	var rawTxLogVisibleTo []string
+	rawTxLogVisibleTo = extractAndStripRawTxLogVisibleTo(req)
+
 	// Check rate limits
 	allowed, rateLimitReason := p.rateLimiter.CheckAndIncrement(req.UserID, result.RateLimitRPS, result.RateLimitDaily)
 	if !allowed {
@@ -1113,6 +1152,17 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if statusCode == http.StatusOK && from != "" && req.UserID != "" {
 		if err := p.rbacAccessCtrl.Store().SystemLinkEthAddress(ctx, req.UserID, from); err != nil {
 			slog.Warn("failed to system-link eth address", "user", req.UserID, "address", from, "error", err)
+		}
+	}
+
+	// Store logVisibleTo rule if provided (raw tx). Non-fatal.
+	if len(rawTxLogVisibleTo) > 0 && statusCode == http.StatusOK {
+		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
+			if saver, ok := p.logVisibilityStore.(TxLogVisibilitySaver); ok {
+				if err := saver.SaveTxLogVisibility(ctx, txHash, rawTxLogVisibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("failed to save logVisibleTo for raw tx", "tx", txHash, "error", err)
+				}
+			}
 		}
 	}
 
@@ -1806,4 +1856,122 @@ func (p *JSONRPCProcessor) recordRBACDecision(decision string) {
 		return
 	}
 	p.metrics.RBACDecisionsTotal.WithLabelValues(decision).Inc()
+}
+
+// extractAndStripLogVisibleTo extracts the logVisibleTo field from the tx object
+// in eth_sendTransaction params[0], removes it so it's not forwarded to the node,
+// and rebuilds req.Body. Returns the DID list (nil if not present).
+func extractAndStripLogVisibleTo(req *ProcessRequest) []string {
+	if len(req.Params) == 0 {
+		return nil
+	}
+	txObj, ok := req.Params[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, exists := txObj["logVisibleTo"]
+	if !exists {
+		return nil
+	}
+	// Remove from params so it's not forwarded.
+	delete(txObj, "logVisibleTo")
+
+	// Rebuild request body without the field.
+	req.Body = rebuildRequestBody(req.Body, req.Params)
+
+	// Parse the DID list.
+	switch v := raw.(type) {
+	case []any:
+		dids := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				dids = append(dids, s)
+			}
+		}
+		if len(dids) > 0 {
+			return dids
+		}
+	case []string:
+		if len(v) > 0 {
+			return v
+		}
+	}
+	return nil
+}
+
+// extractAndStripRawTxLogVisibleTo extracts logVisibleTo from the second param
+// of eth_sendRawTransaction: {"method": "eth_sendRawTransaction", "params": ["0xf86c...", {"logVisibleTo": ["did:..."]}]}
+// Strips the second param from req.Params and req.Body.
+func extractAndStripRawTxLogVisibleTo(req *ProcessRequest) []string {
+	if len(req.Params) < 2 {
+		return nil
+	}
+	opts, ok := req.Params[1].(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, exists := opts["logVisibleTo"]
+	if !exists {
+		return nil
+	}
+
+	// Strip the second param entirely (only the raw tx hex goes to the node).
+	req.Params = req.Params[:1]
+	req.Body = rebuildRequestBody(req.Body, req.Params)
+
+	switch v := raw.(type) {
+	case []any:
+		dids := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				dids = append(dids, s)
+			}
+		}
+		if len(dids) > 0 {
+			return dids
+		}
+	case []string:
+		if len(v) > 0 {
+			return v
+		}
+	}
+	return nil
+}
+
+// rebuildRequestBody reconstructs the JSON-RPC request body from the modified params.
+func rebuildRequestBody(originalBody []byte, params []any) []byte {
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  []any           `json:"params"`
+		ID      json.RawMessage `json:"id"`
+	}
+	if err := json.Unmarshal(originalBody, &env); err != nil {
+		return originalBody // can't rebuild, pass through
+	}
+	env.Params = params
+	rebuilt, err := json.Marshal(env)
+	if err != nil {
+		return originalBody
+	}
+	return rebuilt
+}
+
+// extractTxHashFromResult extracts the tx hash from a JSON-RPC response result field.
+// Used after eth_sendTransaction / eth_sendRawTransaction to get the hash for
+// logVisibleTo storage.
+func extractTxHashFromResult(responseBody []byte) string {
+	var resp struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(responseBody, &resp); err != nil {
+		return ""
+	}
+	if resp.Error != nil || resp.Result == "" {
+		return ""
+	}
+	return resp.Result
 }
