@@ -535,6 +535,26 @@ func validateEventRulesWithABI(rules []rbac.EventRule, abiJSON string) string {
 	return ""
 }
 
+// rejectCustomParamRulesWithoutABI checks if any event rules contain custom hex
+// param constraints (must_be != "self") when no ABI is available. Without ABI,
+// we cannot validate byte length/type, and the rule will silently fail at runtime.
+func rejectCustomParamRulesWithoutABI(rules []rbac.EventRule, abiJSON string) string {
+	if abiJSON != "" {
+		return "" // ABI available — full validation handled by validateEventRulesWithABI
+	}
+	for _, rule := range rules {
+		for _, pr := range rule.ParamRules {
+			if pr.MustBe != "self" && strings.HasPrefix(pr.MustBe, "0x") {
+				return fmt.Sprintf(
+					"event %s: custom param constraints require a contract ABI — upload one or set token_type for built-in ABI fallback",
+					rule.Name,
+				)
+			}
+		}
+	}
+	return ""
+}
+
 // expectedByteLength returns the expected byte length for common ABI types used
 // in param_rule hex value validation. Returns 0 for types where length is variable
 // or unknown (which means length validation is skipped).
@@ -613,6 +633,12 @@ func (s *Server) createContractGrant(c *gin.Context) {
 		// Validate param_rules against ABI if available
 		abiJSON := resolveContractABI(contract)
 		if errMsg := validateEventRulesWithABI(input.EventRules, abiJSON); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+
+		// Reject custom hex param rules if no ABI is available
+		if errMsg := rejectCustomParamRulesWithoutABI(input.EventRules, abiJSON); errMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
@@ -717,6 +743,12 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 			// Validate param_rules against ABI if available
 			abiJSON := resolveContractABI(contract)
 			if errMsg := validateEventRulesWithABI(rules, abiJSON); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
+
+			// Reject custom hex param rules if no ABI is available
+			if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}

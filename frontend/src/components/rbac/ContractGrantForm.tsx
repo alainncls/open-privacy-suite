@@ -111,12 +111,19 @@ function EventParamConstraint({
   customValue: string;
   onChange: (mustBe: string) => void; // '' to remove, 'self' or '0x...' to set
 }) {
+  const [localMode, setLocalMode] = useState(constraintMode);
   const [localCustom, setLocalCustom] = useState(customValue);
   const [customError, setCustomError] = useState('');
   const options = getConstraintOptions(param.type);
 
+  // Sync from parent prop only when the parent's saved value actually changes
+  useEffect(() => {
+    setLocalMode(constraintMode);
+  }, [constraintMode]);
+
   const handleModeChange = (mode: string) => {
     setCustomError('');
+    setLocalMode(mode);
     switch (mode) {
       case 'any':
         onChange('');
@@ -131,7 +138,7 @@ function EventParamConstraint({
         onChange('0x00');
         break;
       case 'custom':
-        // Don't call onChange yet — wait for user to enter a value
+        // Don't call onChange yet — wait for user to enter a value and click Set
         setLocalCustom('');
         break;
     }
@@ -162,7 +169,7 @@ function EventParamConstraint({
         )}
         <span className="text-[10px] text-neutral-400">{param.type}</span>
         <select
-          value={constraintMode}
+          value={localMode}
           onChange={e => handleModeChange(e.target.value)}
           className="ml-auto px-1.5 py-1 text-xs border border-neutral-200 rounded focus:outline-none focus:ring-1 focus:ring-primary max-w-[160px]"
         >
@@ -171,7 +178,7 @@ function EventParamConstraint({
           ))}
         </select>
       </div>
-      {constraintMode === 'custom' && (
+      {localMode === 'custom' && (
         <div className="pl-2 space-y-1">
           <div className="flex items-center gap-1.5">
             <input

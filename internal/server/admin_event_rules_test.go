@@ -587,6 +587,66 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	})
 
+	// V05b: no ABI -> custom hex param rule rejected (RD-808)
+	t.Run("V05b_NoABI_RejectsCustomHexParam", func(t *testing.T) {
+		// Create a contract without uploading any ABI (no token_type either)
+		noABIAddr2 := "0x7777777777777777777777777777777777777778"
+		createEventRulesContract(t, f.server, f.orgID, noABIAddr2, "NoABIToken2")
+
+		groupForHex := createEventRulesGroup(t, f.server, f.orgID, "group-hex-noabi", "Group Hex NoABI")
+
+		// Custom hex param rule should be rejected — no ABI to validate against
+		body, _ := json.Marshal(map[string]any{
+			"group_id": groupForHex,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 0, "must_be": "0x000000000000000000000000deadbeefdeadbeef"},
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr2 + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "custom param constraints require a contract ABI")
+	})
+
+	// V05c: no ABI -> "self" constraint still allowed (RD-808)
+	t.Run("V05c_NoABI_SelfConstraintAllowed", func(t *testing.T) {
+		noABIAddr3 := "0x7777777777777777777777777777777777777779"
+		createEventRulesContract(t, f.server, f.orgID, noABIAddr3, "NoABIToken3")
+
+		groupForSelf := createEventRulesGroup(t, f.server, f.orgID, "group-self-noabi", "Group Self NoABI")
+
+		body, _ := json.Marshal(map[string]any{
+			"group_id": groupForSelf,
+			"event_rules": []map[string]any{
+				{
+					"topic0": transferTopic0,
+					"name":   "Transfer",
+					"param_rules": []map[string]any{
+						{"index": 0, "must_be": "self"},
+					},
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr3 + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		// Should succeed — "self" is allowed without ABI
+		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	})
+
 	// V06: update grant with invalid param rules -> 400
 	t.Run("V06_UpdateGrant_InvalidParamRules", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
