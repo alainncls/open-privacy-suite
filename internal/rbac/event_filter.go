@@ -406,15 +406,14 @@ func topicMatchesHexTyped(topic string, mustBe string, abiType string) bool {
 		return topicInt.Cmp(mustBeInt) == 0
 
 	case abiType == "bool":
-		// Bool: topic is 0-padded 0 or 1. mustBe is "0x01"/"0x00" or similar.
-		topicBool := t == strings.Repeat("0", 63)+"1"
-		mustBool := m == "01" || m == strings.Repeat("0", 63)+"1"
-		if topicBool && mustBool {
-			return true
-		}
-		topicFalse := t == strings.Repeat("0", 64)
-		mustFalse := m == "00" || m == strings.Repeat("0", 64)
-		return topicFalse && mustFalse
+		// Normalize: strip leading zeros, then compare.
+		topicStripped := strings.TrimLeft(t, "0")
+		mustStripped := strings.TrimLeft(m, "0")
+		topicBool := topicStripped == "1"
+		mustBool := mustStripped == "1"
+		topicFalse := topicStripped == ""
+		mustFalse := mustStripped == ""
+		return (topicBool && mustBool) || (topicFalse && mustFalse)
 
 	default:
 		// bytes32, bytes, or unknown: pad mustBe to 64 hex chars (right-pad for
@@ -490,10 +489,13 @@ func compareDecodedValue(decoded interface{}, mustBe string, abiType string) boo
 		return v.Cmp(mustBeInt) == 0
 
 	case bool:
-		switch m {
-		case "01", strings.Repeat("0", 63) + "1":
+		// Normalize: strip leading zeros, then compare.
+		// "1", "01", "000...001" all mean true. "0", "00", "000...000" all mean false.
+		stripped := strings.TrimLeft(m, "0")
+		if stripped == "1" {
 			return v
-		case "00", strings.Repeat("0", 64):
+		}
+		if stripped == "" { // all zeros
 			return !v
 		}
 		return false

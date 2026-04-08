@@ -123,9 +123,9 @@ describe('ContractGrantForm', () => {
     await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
     await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
-    expect(
-      screen.getByText('Please add at least one function selector, or select "All functions"')
-    ).toBeInTheDocument();
+    const msgs = screen.getAllByText('Please add at least one function selector, or select "All functions"');
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+    expect(msgs[0]).toBeInTheDocument();
   });
 
   it('creates a grant with selected function rules', async () => {
@@ -216,6 +216,27 @@ describe('ContractGrantForm', () => {
         { functions: null, event_rules: null }
       );
       expect(onSave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('displays backend error message when createGrant returns 400', async () => {
+    const user = userEvent.setup();
+    stubListEvents();
+    vi.spyOn(rbacApi.contracts, 'createGrant').mockRejectedValue({
+      response: {
+        status: 400,
+        data: { error: 'event Transfer: custom param constraints require a contract ABI' },
+      },
+    });
+    renderForm();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+    await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+
+    await waitFor(() => {
+      const msgs = screen.getAllByText('event Transfer: custom param constraints require a contract ABI');
+      expect(msgs.length).toBe(2); // Error shown at top and bottom of form
+      expect(msgs[0]).toBeInTheDocument();
     });
   });
 
@@ -353,9 +374,9 @@ describe('ContractGrantForm', () => {
       // Don't add any events
       await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
-      expect(
-        screen.getByText('Please add at least one event, or select "All events visible" or "No events visible"')
-      ).toBeInTheDocument();
+      const msgs = screen.getAllByText('Please add at least one event, or select "All events visible" or "No events visible"');
+      expect(msgs.length).toBeGreaterThanOrEqual(1);
+      expect(msgs[0]).toBeInTheDocument();
     });
 
     it('submits event_rules as null when "All events visible" is selected', async () => {
