@@ -180,6 +180,54 @@ These controls ensure that even within a shared private network where all partic
 
 ---
 
+## Per-Transaction Log Visibility (`logVisibleTo`)
+
+The `logVisibleTo` feature allows a transaction sender to specify additional DIDs (decentralized identifiers) that can see event logs for that specific transaction. This is useful for multi-party workflows where a third party needs to observe events they are not a direct participant of (e.g., an auditor, a settlement bank, or a compliance officer).
+
+### How it works
+
+The sender includes a `logVisibleTo` array when submitting the transaction:
+
+**`eth_sendTransaction`** -- `logVisibleTo` is a field in the transaction object (params\[0\]):
+
+```json
+{
+  "method": "eth_sendTransaction",
+  "params": [{
+    "from": "0xabc...",
+    "to": "0xdef...",
+    "data": "0x...",
+    "logVisibleTo": ["did:privado:auditor1", "did:privado:bank2"]
+  }]
+}
+```
+
+**`eth_sendRawTransaction`** -- `logVisibleTo` is passed as a second parameter (since the raw transaction bytes cannot be modified):
+
+```json
+{
+  "method": "eth_sendRawTransaction",
+  "params": ["0xf86c...", {"logVisibleTo": ["did:privado:auditor1"]}]
+}
+```
+
+The proxy strips the `logVisibleTo` field before forwarding the transaction to the node, stores the rule in the database, and applies it during response filtering.
+
+### Interaction with static event rules
+
+`logVisibleTo` is **purely additive** -- it never restricts existing access:
+
+- If a viewer already has access to an event through normal event rules or address-based filtering, `logVisibleTo` has no effect.
+- If a viewer is denied an event because `must_be=self` param rules fail, `logVisibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list.
+- `logVisibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `logVisibleTo`.
+- Admin users always see all events -- `logVisibleTo` does not change admin behavior.
+
+### Scope
+
+`logVisibleTo` applies to **event logs only**, not to transaction calldata, values, or other fields. It affects `eth_getTransactionReceipt` (logs within the receipt) and `eth_getLogs` responses.
+
+---
+
 ## Summary Table
 
 | Method | Participant behavior | Non-participant behavior |

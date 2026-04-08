@@ -57,11 +57,13 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 //
 // If perms is nil (user/org resolution failed), FilterEventLogs returns empty
 // (fail-closed).
+// visCtx provides optional per-tx logVisibleTo data (may be nil).
 func FilterLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
 	abiProvider rbac.ABIProvider,
+	visCtx *rbac.LogVisibilityContext,
 ) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -89,7 +91,7 @@ func FilterLogsWithEventRules(
 
 	// Single-pass: FilterEventLogs handles both event-rule and default
 	// address-based filtering depending on whether EventRules is configured.
-	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider)
+	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider, visCtx)
 
 	filteredJSON, err := json.Marshal(finalLogs)
 	if err != nil {
@@ -115,11 +117,13 @@ func FilterLogsWithEventRules(
 // FilterReceiptLogsWithEventRules filters receipt logs using the unified
 // event filtering logic. Participants get their receipt with filtered logs;
 // non-participants get null.
+// visCtx provides optional per-tx logVisibleTo data (may be nil).
 func FilterReceiptLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
 	abiProvider rbac.ABIProvider,
+	visCtx *rbac.LogVisibilityContext,
 ) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -159,7 +163,7 @@ func FilterReceiptLogsWithEventRules(
 
 		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
 		// handles both event-rule and default address-based filtering.
-		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider)
+		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx)
 
 		if id != "" {
 			wrapped, _ := json.Marshal(struct {
@@ -188,6 +192,7 @@ func applyEventRulesToReceipt(
 	perms *rbac.EffectivePermissions,
 	userAddresses []string,
 	abiProvider rbac.ABIProvider,
+	visCtx *rbac.LogVisibilityContext,
 ) json.RawMessage {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
@@ -204,7 +209,7 @@ func applyEventRulesToReceipt(
 		return receiptWithEmptyLogs(rawReceipt) // fail-closed
 	}
 
-	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider)
+	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider, visCtx)
 
 	newLogs, err := json.Marshal(filtered)
 	if err != nil {

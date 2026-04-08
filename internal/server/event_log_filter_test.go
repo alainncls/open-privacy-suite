@@ -78,6 +78,7 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -154,6 +155,7 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_AddressFilter(t *testing.T
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -210,6 +212,7 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -251,6 +254,7 @@ func TestFilterReceiptLogsWithEventRules_NilPerms_FailClosed(t *testing.T) {
 		[]string{userAddr},
 		nil, // nil perms = resolution failed
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -320,6 +324,7 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -382,6 +387,7 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -440,6 +446,7 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -488,6 +495,7 @@ func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {
 		[]string{userAddr},
 		perms,
 		&testABIProviderServer{},
+		nil,
 	)
 
 	var resp struct {
@@ -633,7 +641,7 @@ func TestFilterLogs_I14_NoRules_Fallback(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -662,7 +670,7 @@ func TestFilterLogs_I15_AllowTransferOnly(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -707,7 +715,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, paddedUser, otherPadded}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -743,7 +751,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded, otherPadded}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -771,7 +779,7 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0, paddedUser}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -797,7 +805,7 @@ func TestFilterLogs_I19_NoGrant_NoLogs(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -839,7 +847,7 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 		{"address": contractZ, "topics": []string{integApprovalTopic0, "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -870,7 +878,7 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 		{"address": orgBContract, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -900,7 +908,7 @@ func TestFilterLogs_I26_PartialContractAccess(t *testing.T) {
 		{"address": contractZ, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -939,7 +947,7 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 	}
 
 	got := FilterReceiptLogsWithEventRules(
-		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{},
+		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -975,7 +983,7 @@ func TestFilterLogs_I28_AdminClaim_Bypass(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xadmin"}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xadmin"}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	// Admin bypass: both logs should be visible regardless of event rules.
@@ -1008,7 +1016,7 @@ func TestFilterLogs_I29_OrgAdmin_Bypass(t *testing.T) {
 	}
 
 	userAddr := "0xabc1234567890123456789012345678901234567"
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1036,7 +1044,7 @@ func TestFilterLogs_I30_ReadClaim_NoBypass(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1072,7 +1080,7 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integApprovalTopic0}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{"0xuser"}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 2 {
@@ -1102,7 +1110,7 @@ func TestFilterLogs_I32_OneUnrestricted(t *testing.T) {
 		{"address": contractAddr, "topics": []string{"0x1111111111111111111111111111111111111111111111111111111111111111", paddedUser}, "data": "0x"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{})
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 3 {
@@ -1143,7 +1151,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 		{"address": contractAddr, "topics": []string{integTransferTopic0, otherPadded, paddedUser}, "data": "0x0000000000000000000000000000000000000000000000000000000000000064"},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1194,7 +1202,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + userAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 1 {
@@ -1239,7 +1247,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + otherAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, abiProv, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1281,7 +1289,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 		{"address": contractAddr, "topics": []string{customTopic0, idTopic}, "data": "0x" + userAddrPadded},
 	}
 
-	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, nil)
+	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, nil, nil)
 	result := parseLogsResult(t, got)
 
 	if len(result) != 0 {
@@ -1321,7 +1329,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 	}
 	rpcResp := buildLogsRPCResponse(t, logs)
 
-	got1 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms1, &testABIProviderServer{})
+	got1 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms1, &testABIProviderServer{}, nil)
 	result1 := parseLogsResult(t, got1)
 	if len(result1) != 1 {
 		t.Errorf("I37 first call: expected 1 (Transfer only), got %d", len(result1))
@@ -1340,7 +1348,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		},
 	}
 
-	got2 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms2, &testABIProviderServer{})
+	got2 := FilterLogsWithEventRules(rpcResp, []string{"0xuser"}, perms2, &testABIProviderServer{}, nil)
 	result2 := parseLogsResult(t, got2)
 	if len(result2) != 2 {
 		t.Errorf("I37 second call: expected 2 (Transfer+Approval), got %d", len(result2))
@@ -1379,7 +1387,7 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 	}
 
 	got := FilterReceiptLogsWithEventRules(
-		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{},
+		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1417,7 +1425,7 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 	}
 
 	got := FilterReceiptLogsWithEventRules(
-		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{},
+		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
 	)
 
 	var resp struct {
@@ -1459,7 +1467,7 @@ func TestFilterReceipt_I23_NoRules_CurrentBehavior(t *testing.T) {
 	}
 
 	got := FilterReceiptLogsWithEventRules(
-		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{},
+		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {
@@ -1510,7 +1518,7 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 	}
 
 	got := FilterReceiptLogsWithEventRules(
-		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{},
+		buildReceiptRPCResponse(t, receipt), []string{userAddr}, perms, &testABIProviderServer{}, nil,
 	)
 	logs := parseReceiptLogs(t, got)
 	if logs == nil {

@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
@@ -14,6 +15,20 @@ import (
 // the ABI is not available. Addresses are lowercase with 0x prefix.
 type ABIProvider interface {
 	GetContractABI(address string) string
+}
+
+// LogVisibilityProvider looks up per-tx logVisibleTo rules from the database.
+type LogVisibilityProvider interface {
+	GetBatchTxLogVisibility(ctx context.Context, txHashes []string) (map[string][]string, error)
+}
+
+// LogVisibilityContext provides per-tx logVisibleTo data for the current filter pass.
+// When non-nil, it extends (never restricts) the existing event rule filtering:
+// if a log's topic0 matches an event rule but param rules fail, the viewer's DID
+// is checked against the tx's logVisibleTo list as a fallback.
+type LogVisibilityContext struct {
+	ViewerDID    string              // The DID of the user viewing the logs
+	TxVisibility map[string][]string // tx_hash (lowercase) -> visible_to_dids
 }
 
 // logEntry is the minimal structure needed to inspect an Ethereum log for
@@ -34,15 +49,20 @@ type logEntry struct {
 //     the caller's address in the constrained parameter positions (OR semantics
 //     across multiple ParamRules on the same event).
 //   - Union semantics across grants: if any grant allows the event, it passes.
+//   - Per-tx logVisibleTo: if topic0 matches an event rule but param rules fail,
+//     the viewer's DID is checked against the tx's logVisibleTo list as a fallback.
+//     This is purely additive — it never restricts existing access.
 //
 // userAddresses are the caller's linked ETH addresses (lowercase 0x-prefixed).
 // perms contains the resolved effective permissions with ContractAccess and EventRules.
 // abiProvider supplies contract ABIs for param rule decoding (may be nil).
+// visCtx provides optional per-tx logVisibleTo data (may be nil for backward compat).
 func FilterEventLogs(
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
 	userAddresses []string,
 	abiProvider ABIProvider,
+	visCtx *LogVisibilityContext,
 ) []json.RawMessage {
 	if len(logs) == 0 {
 		return logs
@@ -88,6 +108,9 @@ func FilterEventLogs(
 		if access.EventRules == nil {
 			if logHasUserAddress(entry, addrSet) {
 				filtered = append(filtered, rawLog)
+			} else if isViewerInLogVisibleTo(visCtx, rawLog) {
+				// logVisibleTo extends default address filtering too.
+				filtered = append(filtered, rawLog)
 			}
 			continue
 		}
@@ -101,10 +124,50 @@ func FilterEventLogs(
 		topic0 := strings.ToLower(entry.Topics[0])
 		if eventAllowed(topic0, entry, access.EventRules, addrSet, contractAddr, abiProvider) {
 			filtered = append(filtered, rawLog)
+		} else if eventTopic0Matches(topic0, access.EventRules) && isViewerInLogVisibleTo(visCtx, rawLog) {
+			// Topic0 is in the allowlist but param rules failed.
+			// logVisibleTo extends param rule checks as a fallback.
+			filtered = append(filtered, rawLog)
 		}
 	}
 
 	return filtered
+}
+
+// isViewerInLogVisibleTo checks if the viewer's DID appears in the logVisibleTo
+// list for the transaction that produced this log entry.
+func isViewerInLogVisibleTo(visCtx *LogVisibilityContext, rawLog json.RawMessage) bool {
+	if visCtx == nil || visCtx.ViewerDID == "" || len(visCtx.TxVisibility) == 0 {
+		return false
+	}
+	var logMeta struct {
+		TransactionHash string `json:"transactionHash"`
+	}
+	if err := json.Unmarshal(rawLog, &logMeta); err != nil || logMeta.TransactionHash == "" {
+		return false
+	}
+	dids, ok := visCtx.TxVisibility[strings.ToLower(logMeta.TransactionHash)]
+	if !ok {
+		return false
+	}
+	for _, did := range dids {
+		if did == visCtx.ViewerDID {
+			return true
+		}
+	}
+	return false
+}
+
+// eventTopic0Matches checks if the given topic0 matches any event rule's Topic0,
+// without checking param rules. Used to determine if logVisibleTo should be
+// considered as a fallback (topic0 must be in the allowlist).
+func eventTopic0Matches(topic0 string, rules []EventRule) bool {
+	for _, rule := range rules {
+		if strings.EqualFold(rule.Topic0, topic0) {
+			return true
+		}
+	}
+	return false
 }
 
 // logHasUserAddress checks if any topic in the log entry encodes one of the
