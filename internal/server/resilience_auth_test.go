@@ -14,9 +14,7 @@ import (
 // These use setupAuthOnlyRouter — no DB needed, middleware rejects before handler runs.
 
 func TestResilience_EmptyAdminToken_RejectsRequests(t *testing.T) {
-	t.Skip("BUG: empty ADMIN_API_TOKEN allows unauthenticated admin access (server.go:805-809)")
-
-	router := setupAuthOnlyRouter(t, "")
+	router := setupProductionAuthRouter(t, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orgs", nil)
 	w := httptest.NewRecorder()
@@ -27,9 +25,7 @@ func TestResilience_EmptyAdminToken_RejectsRequests(t *testing.T) {
 }
 
 func TestResilience_EmptyAdminToken_EmptyHeaderDenied(t *testing.T) {
-	t.Skip("BUG: empty ADMIN_API_TOKEN allows unauthenticated admin access (server.go:805-809)")
-
-	router := setupAuthOnlyRouter(t, "")
+	router := setupProductionAuthRouter(t, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orgs", nil)
 	req.Header.Set("X-Admin-Token", "")

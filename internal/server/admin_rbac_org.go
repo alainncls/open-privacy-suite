@@ -1,9 +1,9 @@
 package server
 
 import (
+	"log/slog"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -53,7 +53,8 @@ func (s *Server) listOrganizations(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
 	orgs, total, err := s.db.ListOrganizationsPaginated(c.Request.Context(), limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to list organizations", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if s.config.HideDevAdminOrg {
@@ -76,7 +77,7 @@ func (s *Server) createOrganization(c *gin.Context) {
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -97,12 +98,12 @@ func (s *Server) createOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.CreateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if isUniqueViolation(err) {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("failed to create organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -113,7 +114,8 @@ func (s *Server) getOrganization(c *gin.Context) {
 	orgID := c.Param("org_id")
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -128,7 +130,8 @@ func (s *Server) updateOrganization(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -142,7 +145,7 @@ func (s *Server) updateOrganization(c *gin.Context) {
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -162,12 +165,12 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if isUniqueViolation(err) {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("failed to update organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -186,7 +189,8 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	// Check if organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if org == nil {
@@ -196,7 +200,8 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 
 	// Delete the organization (cascades to groups, contracts, etc. via DB constraints)
 	if err := s.db.DeleteOrganization(c.Request.Context(), orgID); err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to delete organization", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 

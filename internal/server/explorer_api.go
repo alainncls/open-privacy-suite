@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,7 +73,7 @@ type ResolveAddressResponse struct {
 	RealAddress     *string  `json:"real_address,omitempty"`
 	DisclosureLevel string   `json:"disclosure_level"`
 	GrantID         string   `json:"grant_id"`
-	Pseudonym       string   `json:"pseudonym,omitempty"` // For pseudonymous, the display name to use
+	Pseudonym       string   `json:"pseudonym,omitempty"`     // For pseudonymous, the display name to use
 	ScopeMethods    []string `json:"scope_methods,omitempty"` // Methods from grant scope (e.g. "transaction_history", "activity_logs")
 }
 
@@ -218,7 +219,8 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	if viewerDID == "" && wallet != "" {
 		viewerDID, err = s.db.GetDIDByEthAddress(ctx, wallet)
 		if err != nil {
-			respondInternalError(c, "failed to look up DID: "+err.Error())
+			slog.Error("failed to look up DID", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 	}
@@ -235,7 +237,8 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	// 2. Get viewer's own addresses
 	ownLinks, err := s.db.GetEthAddressesByDID(ctx, viewerDID)
 	if err != nil {
-		respondInternalError(c, "failed to get own addresses: "+err.Error())
+		slog.Error("failed to get own addresses", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -250,7 +253,8 @@ func (s *Server) getViewableAddresses(c *gin.Context) {
 	// We need to find all grants where requester_did = viewerDID
 	grants, err := s.getDisclosedAddressesForViewer(ctx, viewerDID)
 	if err != nil {
-		respondInternalError(c, "failed to get disclosed addresses: "+err.Error())
+		slog.Error("failed to get disclosed addresses", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	response.DisclosedAddresses = grants
@@ -917,7 +921,8 @@ func (s *Server) getExplorerStats(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	stats, err := s.explorerStore.GetChainStatsFiltered(c.Request.Context(), filter)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get chain stats", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, stats)
@@ -941,7 +946,8 @@ func (s *Server) getExplorerBlocks(c *gin.Context) {
 
 	blocks, err := s.explorerStore.GetBlocksFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get blocks", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, blocks)
@@ -959,7 +965,8 @@ func (s *Server) getExplorerBlock(c *gin.Context) {
 	}
 	block, err := s.explorerStore.GetBlock(c.Request.Context(), num)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get block", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if block == nil {
@@ -986,7 +993,8 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 	hash := c.Param("hash")
 	block, err := s.explorerStore.GetBlockByHash(c.Request.Context(), hash)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get block by hash", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if block == nil {
@@ -1107,7 +1115,8 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 		txs, err = s.explorerStore.GetTransactionsFiltered(c.Request.Context(), limit, beforeBlock, filter)
 	}
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1115,7 +1124,8 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 	// stripping values, etc.) — the SQL filter only drops entire rows.
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1137,7 +1147,8 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 		tx, err = s.explorerStore.GetTransaction(c.Request.Context(), hash)
 	}
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transaction", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if tx == nil {
@@ -1148,7 +1159,8 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), []explorer.Transaction{*tx}, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if len(redactedTxs) == 0 {
@@ -1176,7 +1188,8 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 
 	stats, err := s.explorerStore.GetAddressStats(c.Request.Context(), address)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get address stats", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1226,13 +1239,15 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 
 	txs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, limit, beforeBlock)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get address transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
 	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1246,7 +1261,8 @@ func (s *Server) getExplorerSyncStatus(c *gin.Context) {
 	}
 	status, err := s.explorerStore.GetSyncStatus(c.Request.Context())
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get sync status", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, status)
@@ -1271,7 +1287,8 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	}
 	txs, err := s.explorerStore.GetTransactionsByBlock(c.Request.Context(), num)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get block transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if txs == nil {
@@ -1280,7 +1297,8 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1301,7 +1319,8 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	}
 	itxs, err := s.explorerStore.GetInternalTransactionsByBlock(c.Request.Context(), num)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get block internal transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if itxs == nil {
@@ -1310,7 +1329,8 @@ func (s *Server) getExplorerBlockInternalTxs(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1326,7 +1346,8 @@ func (s *Server) getExplorerLatestBlockNumber(c *gin.Context) {
 	}
 	num, err := s.explorerStore.GetLatestBlockNumber(c.Request.Context())
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get latest block number", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"number": num})
@@ -1367,7 +1388,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 		txs, total, err = s.explorerStore.GetTransactionsPaginatedFiltered(c.Request.Context(), page, pageSize, filter)
 	}
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get paginated transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if txs == nil {
@@ -1377,7 +1399,8 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	// Field-level redaction still needed for address masking and value stripping.
 	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1395,7 +1418,8 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	hash := c.Param("hash")
 	itxs, err := s.explorerStore.GetInternalTransactionsByTx(c.Request.Context(), hash)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get internal transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if itxs == nil {
@@ -1404,7 +1428,8 @@ func (s *Server) getExplorerTransactionInternal(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1421,7 +1446,8 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	hash := c.Param("hash")
 	transfers, err := s.explorerStore.GetTransfersByTransaction(c.Request.Context(), hash)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transaction transfers", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if transfers == nil {
@@ -1430,7 +1456,8 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1447,7 +1474,8 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 	hash := c.Param("hash")
 	logs, err := s.explorerStore.GetLogsByTransaction(c.Request.Context(), hash)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transaction logs", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if logs == nil {
@@ -1467,7 +1495,8 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 
 	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID, participantAddrs...)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1506,7 +1535,8 @@ func (s *Server) getExplorerAddressBalance(c *gin.Context) {
 	reqBody, _ := json.Marshal(rpcReq)
 	respBody, _, err := s.proxy.Forward(reqBody)
 	if err != nil {
-		respondInternalError(c, "failed to get balance: "+err.Error())
+		slog.Error("failed to get balance", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1543,7 +1573,8 @@ func (s *Server) getExplorerAddressCode(c *gin.Context) {
 	reqBody, _ := json.Marshal(rpcReq)
 	respBody, _, err := s.proxy.Forward(reqBody)
 	if err != nil {
-		respondInternalError(c, "failed to get code: "+err.Error())
+		slog.Error("failed to get code", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -1575,7 +1606,8 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 
 	balances, err := s.explorerStore.GetTokenBalances(c.Request.Context(), address)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get token balances", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if balances == nil {
@@ -1592,7 +1624,8 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 		}
 		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, tokenAddrs)
 		if err != nil {
-			respondInternalError(c, err.Error())
+			slog.Error("failed to check token visibility", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 		filtered := balances[:0]
@@ -1604,7 +1637,7 @@ func (s *Server) getExplorerAddressTokenBalances(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				b.TokenAddress = explorer.GeneratePseudonym(b.TokenAddress)
 				filtered = append(filtered, b)
-			// VisibilityHidden, VisibilityRedacted: drop this balance entry
+				// VisibilityHidden, VisibilityRedacted: drop this balance entry
 			}
 		}
 		balances = filtered
@@ -1636,7 +1669,8 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 
 	transfers, err := s.explorerStore.GetTransfersByAddress(c.Request.Context(), address, limit, beforeBlock)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get address transfers", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if transfers == nil {
@@ -1645,7 +1679,8 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1672,7 +1707,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 
 	itxs, _, err := s.explorerStore.GetInternalTransactionsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get address internal transactions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if itxs == nil {
@@ -1681,7 +1717,8 @@ func (s *Server) getExplorerAddressInternal(c *gin.Context) {
 	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactInternalTransactions(c.Request.Context(), itxs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1709,7 +1746,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 
 	logs, _, err := s.explorerStore.GetLogsByAddress(c.Request.Context(), address, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get address logs", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if logs == nil {
@@ -1718,7 +1756,8 @@ func (s *Server) getExplorerAddressLogs(c *gin.Context) {
 	viewerDID = s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1743,7 +1782,8 @@ func (s *Server) getExplorerAddressContract(c *gin.Context) {
 
 	contract, err := s.explorerStore.GetContract(c.Request.Context(), address)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get contract", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if contract == nil {
@@ -1776,7 +1816,8 @@ func (s *Server) getExplorerAddressIsContract(c *gin.Context) {
 
 	isContract, err := s.explorerStore.IsContract(c.Request.Context(), address)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to check contract status", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"is_contract": isContract})
@@ -1800,12 +1841,13 @@ func (s *Server) updateExplorerAddressABI(c *gin.Context) {
 
 	var body json.RawMessage
 	if err := c.ShouldBindJSON(&body); err != nil {
-		respondBadRequest(c, "invalid request body: "+err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
 	if err := s.explorerStore.SetContractABI(c.Request.Context(), address, body); err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to set contract ABI", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "address": address})
@@ -1849,7 +1891,8 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 
 	logs, err := s.explorerStore.GetLogs(c.Request.Context(), address, topic0, fromBlock, toBlock, limit)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get logs", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if logs == nil {
@@ -1858,7 +1901,8 @@ func (s *Server) getExplorerLogs(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -1886,7 +1930,8 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 
 	tokens, _, err := s.explorerStore.GetTokens(c.Request.Context(), limit, offset, tokenType)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get tokens", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if tokens == nil {
@@ -1903,7 +1948,8 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 		}
 		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, tokenAddrs)
 		if err != nil {
-			respondInternalError(c, "visibility check failed: "+err.Error())
+			slog.Error("visibility check failed", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 
@@ -1937,7 +1983,7 @@ func (s *Server) getExplorerTokens(c *gin.Context) {
 				t.L1Address = nil
 				t.USDPrice = nil
 				t.IconURL = nil
-			// VisibilityFull or unrecognized: return as-is
+				// VisibilityFull or unrecognized: return as-is
 			}
 			filtered = append(filtered, t)
 		}
@@ -1969,7 +2015,8 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 
 	token, err := s.explorerStore.GetToken(c.Request.Context(), address)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get token", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if token == nil {
@@ -2031,7 +2078,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 
 	holders, _, err := s.explorerStore.GetTokenHolders(c.Request.Context(), address, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get token holders", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if holders == nil {
@@ -2040,7 +2088,8 @@ func (s *Server) getExplorerTokenHolders(c *gin.Context) {
 	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
 	redacted, err := s.explorerRedactor.RedactTokenHolders(c.Request.Context(), holders, resolvedDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -2075,7 +2124,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 
 	transfers, _, err := s.explorerStore.GetTransfersByToken(c.Request.Context(), address, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get token transfers", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if transfers == nil {
@@ -2084,7 +2134,8 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -2112,7 +2163,8 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 
 	transfers, _, err := s.explorerStore.GetAllTransfers(c.Request.Context(), limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transfers", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if transfers == nil {
@@ -2121,7 +2173,8 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 	viewerDID := s.getViewerDIDFromRequest(c)
 	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
 	if err != nil {
-		respondInternalError(c, "redaction failed: "+err.Error())
+		slog.Error("redaction failed", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if redacted == nil {
@@ -2154,7 +2207,8 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 
 	accounts, _, err := s.explorerStore.GetAccountsPaginated(c.Request.Context(), page, pageSize)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get accounts", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if accounts == nil {
@@ -2170,7 +2224,8 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 		}
 		visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, addrs)
 		if err != nil {
-			respondInternalError(c, err.Error())
+			slog.Error("failed to check account visibility", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 		filtered := accounts[:0]
@@ -2182,7 +2237,7 @@ func (s *Server) getExplorerAccounts(c *gin.Context) {
 			case explorer.VisibilityPseudonymous:
 				a.Address = explorer.GeneratePseudonym(a.Address)
 				filtered = append(filtered, a)
-			// VisibilityHidden, VisibilityRedacted: drop this account
+				// VisibilityHidden, VisibilityRedacted: drop this account
 			}
 		}
 		accounts = filtered
@@ -2215,7 +2270,8 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 
 	suggestions, err := s.explorerStore.SearchSuggestions(c.Request.Context(), q, limit)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get search suggestions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if suggestions == nil {
@@ -2236,7 +2292,8 @@ func (s *Server) getExplorerSearchSuggestions(c *gin.Context) {
 			viewerDID := s.getViewerDIDFromRequest(c)
 			visMap, err := s.db.GetBatchVisibility(c.Request.Context(), viewerDID, addrValues)
 			if err != nil {
-				respondInternalError(c, err.Error())
+				slog.Error("failed to check search suggestion visibility", "error", err)
+				respondInternalError(c, "request failed")
 				return
 			}
 			filtered := suggestions[:0]
@@ -2287,7 +2344,8 @@ func (s *Server) getExplorerTransactionHistory(c *gin.Context) {
 	filter := s.buildVisibilityFilter(c.Request.Context(), viewerDID)
 	history, err := s.explorerStore.GetTransactionHistoryFiltered(c.Request.Context(), interval, limit, filter)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get transaction history", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if history == nil {
@@ -2305,7 +2363,8 @@ func (s *Server) getExplorerIndexerProgress(c *gin.Context) {
 	}
 	progress, err := s.explorerStore.GetIndexerProgress(c.Request.Context())
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to get indexer progress", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if progress == nil {

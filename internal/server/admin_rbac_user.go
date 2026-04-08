@@ -36,7 +36,8 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 	}
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list users", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": users, "total": total, "limit": limit, "offset": offset})
@@ -46,7 +47,8 @@ func (s *Server) getRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if user == nil {
@@ -61,7 +63,8 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if user == nil {
@@ -76,7 +79,7 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 		Metadata map[string]any `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -94,7 +97,8 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateUser(c.Request.Context(), user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to update user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -120,7 +124,8 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	// Get user to find their external ID (DID)
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if user == nil {
@@ -131,7 +136,8 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	// Get linked ETH addresses
 	links, err := s.db.GetEthAddressesByDID(c.Request.Context(), user.ExternalID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get linked addresses", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -161,7 +167,8 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 	// Check if user exists
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if user == nil {
@@ -172,19 +179,22 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 	// Delete all memberships for this user first
 	memberships, err := s.db.ListUserMemberships(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list user memberships", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	for _, membership := range memberships {
 		if err := s.db.DeleteMembership(c.Request.Context(), membership.ID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership: " + err.Error()})
+			slog.Error("failed to delete membership", "membership_id", membership.ID, "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 	}
 
 	// Delete the user
 	if err := s.db.DeleteUser(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to delete user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -200,7 +210,8 @@ func (s *Server) listUserMemberships(c *gin.Context) {
 	userID := c.Param("user_id")
 	memberships, err := s.db.ListUserMembershipsWithDetails(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list user memberships", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, memberships)
@@ -213,7 +224,7 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		GroupID string `json:"group_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -225,7 +236,8 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	}
 
 	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to create membership", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -243,7 +255,8 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
 
 	if err := s.db.DeleteMembership(c.Request.Context(), membershipID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to delete membership", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -257,7 +270,8 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get user", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if user == nil {
@@ -273,7 +287,8 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 
 	perms, err := s.rbacAccessCtrl.GetEffectivePermissions(c.Request.Context(), user.ExternalID, orgSlug)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get effective permissions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -283,13 +298,14 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 func (s *Server) checkAccessAPI(c *gin.Context) {
 	var req rbac.AccessCheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to check access", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -306,7 +322,8 @@ func (s *Server) getCacheStats(c *gin.Context) {
 func (s *Server) getEthAddressCollisions(c *gin.Context) {
 	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get address collisions", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"collisions": collisions, "count": len(collisions)})

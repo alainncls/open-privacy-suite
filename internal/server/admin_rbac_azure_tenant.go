@@ -2,7 +2,6 @@ package server
 
 import (
 	"log/slog"
-	"strings"
 
 	"privacy-proxy/internal/db"
 
@@ -31,7 +30,7 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 		AutoProvision  *bool   `json:"auto_provision"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -75,12 +74,12 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 
 	result, err := s.db.CreateAllowedAzureTenant(c.Request.Context(), tenant)
 	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if isUniqueViolation(err) {
 			respondConflict(c, "tenant with this tenant_id already exists")
 			return
 		}
 		slog.Error("failed to create Azure tenant", "error", err)
-		respondInternalError(c, "internal server error")
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -124,7 +123,7 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 		AutoProvision  *bool   `json:"auto_provision"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -177,12 +176,12 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 
 	result, err := s.db.UpdateAllowedAzureTenant(c.Request.Context(), tenant)
 	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if isUniqueViolation(err) {
 			respondConflict(c, "tenant with this tenant_id already exists")
 			return
 		}
 		slog.Error("failed to update Azure tenant", "id", id, "error", err)
-		respondInternalError(c, "internal server error")
+		respondInternalError(c, "request failed")
 		return
 	}
 

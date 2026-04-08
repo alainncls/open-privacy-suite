@@ -99,7 +99,7 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		ThresholdFiat *float64 `json:"threshold_fiat"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -169,7 +169,7 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		CoingeckoID *string            `json:"coingecko_id"`          // null = manual, "ethereum"/"tether"/"usd-coin" = CoinGecko
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -351,7 +351,7 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 		AmountWei          string         `json:"amount_wei" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -421,7 +421,7 @@ func (s *Server) createTravelRuleRecord(c *gin.Context) {
 
 	amountFiat, err := compliance.WeiToFiat(amountWei, decimals, priceFiat)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to compute fiat value: " + err.Error()})
+		respondBadRequest(c, "failed to compute fiat value")
 		return
 	}
 	if amountFiat <= 0 {
@@ -537,7 +537,7 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 		Source  string  `json:"source"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -617,7 +617,7 @@ func (s *Server) upsertAddressThresholdOverride(c *gin.Context) {
 		Note          string  `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 	if input.ThresholdFiat < 0 {
@@ -824,7 +824,7 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 		Force    bool   `json:"force"` // set true to switch even if manual tokens lack prices for this currency
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 

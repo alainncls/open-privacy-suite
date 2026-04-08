@@ -21,6 +21,10 @@ type sessionInfoResponse struct {
 }
 
 func (s *Server) listSessions(c *gin.Context) {
+	if s.sessionStore == nil {
+		respondOK(c, SessionListResponse{Sessions: []*sessionInfoResponse{}, Total: 0})
+		return
+	}
 	sessions := s.sessionStore.ListSessions()
 	count := s.sessionStore.Count()
 
@@ -46,6 +50,10 @@ func (s *Server) listSessions(c *gin.Context) {
 }
 
 func (s *Server) deleteSession(c *gin.Context) {
+	if s.sessionStore == nil {
+		respondNotFound(c, "session management not available")
+		return
+	}
 	sessionID := c.Param("session_id")
 
 	// Check if session exists

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -45,7 +46,8 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	if actorID != "" {
 		logs, err := s.db.ListAuditLogsByActor(ctx, actorID, limit, offset)
 		if err != nil {
-			respondInternalError(c, err.Error())
+			slog.Error("failed to list audit logs by actor", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 		respondOK(c, logs)
@@ -55,7 +57,8 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 	// Use resource type filter
 	logs, err := s.db.ListAuditLogs(ctx, resourceType, resourceIDPtr, limit, offset)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("failed to list audit logs", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	respondOK(c, logs)

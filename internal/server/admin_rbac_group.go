@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -30,7 +31,8 @@ func (s *Server) listGroups(c *gin.Context) {
 
 	groups, total, err := s.db.ListGroupsWithAccessFiltered(c.Request.Context(), orgID, limit, offset, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to list groups", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -56,7 +58,7 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 	// Note: auto_created is intentionally NOT accepted from API input.
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -73,7 +75,8 @@ func (s *Server) createGroup(c *gin.Context) {
 	if input.ParentID != nil {
 		parent, err := s.db.GetGroup(c.Request.Context(), *input.ParentID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to get parent group", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 		if parent == nil {
@@ -104,12 +107,16 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
-		// Check for unique constraint violation (duplicate slug in org)
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			c.JSON(http.StatusConflict, gin.H{"error": "group with this slug already exists in this organization"})
+		if isForeignKeyViolation(err) {
+			respondBadRequest(c, "referenced organization does not exist")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if isUniqueViolation(err) {
+			respondConflict(c, "group already exists")
+			return
+		}
+		slog.Error("failed to create group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -120,7 +127,8 @@ func (s *Server) getGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if group == nil {
@@ -135,7 +143,8 @@ func (s *Server) updateGroup(c *gin.Context) {
 
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if group == nil {
@@ -150,7 +159,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 		AutoCreated *bool   `json:"auto_created"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -168,7 +177,8 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to update group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -185,7 +195,8 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
 
 	if err := s.db.DeleteGroup(c.Request.Context(), groupID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to delete group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -198,7 +209,8 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
 	access, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get group access", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if access == nil {
@@ -225,7 +237,8 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// Verify group exists
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get group", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 	if group == nil {
@@ -240,7 +253,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		RateLimitDaily *int         `json:"rate_limit_daily"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -250,14 +263,15 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// Validate that allowed_methods match the claims
 	// e.g., eth_call requires "read" claim, eth_sendTransaction requires "write" claim
 	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 
 	// Check if access already exists
 	existing, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to get group access", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
@@ -272,13 +286,15 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	if existing != nil {
 		access.ID = existing.ID
 		if err := s.db.UpdateGroupAccess(c.Request.Context(), access); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to update group access", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 	} else {
 		access.ID = uuid.New().String()
 		if err := s.db.CreateGroupAccess(c.Request.Context(), access); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to create group access", "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 	}
@@ -341,7 +357,7 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		GroupIDs []string `json:"group_ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -368,7 +384,8 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 	for _, gid := range input.GroupIDs {
 		group, err := s.db.GetGroup(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to get group", "group_id", gid, "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 		if group == nil || group.OrgID != orgID {
@@ -379,7 +396,8 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		// Count grants and get contract addresses
 		grants, err := s.db.ListContractGrantsByGroup(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to list contract grants", "group_id", gid, "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 
@@ -391,7 +409,8 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 			}
 			contracts, err := s.db.GetContractsByIDs(c.Request.Context(), contractIDs)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				slog.Error("failed to get contracts", "error", err)
+				respondInternalError(c, "request failed")
 				return
 			}
 			for _, contract := range contracts {
@@ -402,7 +421,8 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 		// Count members
 		members, err := s.db.ListGroupMembers(c.Request.Context(), gid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("failed to list group members", "group_id", gid, "error", err)
+			respondInternalError(c, "request failed")
 			return
 		}
 
@@ -429,7 +449,7 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 		GroupIDs []string `json:"group_ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -477,10 +497,11 @@ func (s *Server) batchDeleteGroups(c *gin.Context) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, "one or more groups not found in this organization")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("failed to batch delete groups", "error", err)
+		respondInternalError(c, "request failed")
 		return
 	}
 
