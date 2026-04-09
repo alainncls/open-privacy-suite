@@ -362,7 +362,7 @@ export default function ContractGrantsManager({
                       {grant.functions.map((rule: FunctionRule) => {
                         const name = getSelectorName(rule.selector);
                         const paramLabels = (rule.param_rules || []).map(
-                          pr => getEventParamLabel(rule.name, pr.index, pr.must_be)
+                          pr => `param[${pr.index}]=${pr.must_be}`
                         );
                         return (
                           <span
