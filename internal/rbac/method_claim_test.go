@@ -180,3 +180,111 @@ func TestGetAllWriteMethods(t *testing.T) {
 	// Check that the count matches the map
 	assert.Equal(t, len(WriteMethods), len(methods))
 }
+
+func TestGetAllDeployMethods(t *testing.T) {
+	methods := GetAllDeployMethods()
+	assert.NotEmpty(t, methods)
+
+	for _, m := range methods {
+		assert.True(t, DeployMethods[m], "method %s should be a deploy method", m)
+	}
+
+	assert.Equal(t, len(DeployMethods), len(methods))
+}
+
+func TestAllAllowedMethods(t *testing.T) {
+	methods := AllAllowedMethods()
+	assert.NotEmpty(t, methods)
+
+	// Every returned method must NOT be globally blocked
+	for _, m := range methods {
+		assert.False(t, IsMethodBlocked(m), "method %s is globally blocked and should not be in AllAllowedMethods()", m)
+	}
+
+	// Every returned method must come from ReadMethods, WriteMethods, or DeployMethods
+	for _, m := range methods {
+		inRead := ReadMethods[m]
+		inWrite := WriteMethods[m]
+		inDeploy := DeployMethods[m]
+		assert.True(t, inRead || inWrite || inDeploy,
+			"method %s is not in ReadMethods, WriteMethods, or DeployMethods", m)
+	}
+
+	// The list should be sorted
+	for i := 1; i < len(methods); i++ {
+		assert.True(t, methods[i-1] < methods[i],
+			"AllAllowedMethods() not sorted: %s >= %s", methods[i-1], methods[i])
+	}
+
+	// Verify no duplicates
+	seen := make(map[string]bool, len(methods))
+	for _, m := range methods {
+		assert.False(t, seen[m], "duplicate method %s in AllAllowedMethods()", m)
+		seen[m] = true
+	}
+
+	// Sanity: known allowed methods should be present
+	assert.Contains(t, methods, "eth_call")
+	assert.Contains(t, methods, "eth_getBalance")
+	assert.Contains(t, methods, "eth_blockNumber")
+	assert.Contains(t, methods, "eth_sendRawTransaction")
+	assert.Contains(t, methods, "debug_traceTransaction")
+	assert.Contains(t, methods, "debug_traceCall")
+
+	// Sanity: globally blocked methods should NOT be present
+	assert.NotContains(t, methods, "admin_peers")
+	assert.NotContains(t, methods, "debug_dumpblock")
+	assert.NotContains(t, methods, "miner_start")
+	assert.NotContains(t, methods, "txpool_content")
+}
+
+func TestExpandWildcardMethods(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expanded bool // true if we expect expansion to AllAllowedMethods()
+	}{
+		{
+			name:     "wildcard alone",
+			input:    []string{"*"},
+			expanded: true,
+		},
+		{
+			name:     "wildcard with other methods",
+			input:    []string{"eth_call", "*", "eth_getBalance"},
+			expanded: true,
+		},
+		{
+			name:     "no wildcard",
+			input:    []string{"eth_call", "eth_getBalance"},
+			expanded: false,
+		},
+		{
+			name:     "empty list",
+			input:    []string{},
+			expanded: false,
+		},
+		{
+			name:     "nil list",
+			input:    nil,
+			expanded: false,
+		},
+	}
+
+	allMethods := AllAllowedMethods()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExpandWildcardMethods(tt.input)
+			if tt.expanded {
+				assert.Equal(t, allMethods, result)
+				// Verify none of the expanded methods are globally blocked
+				for _, m := range result {
+					assert.False(t, IsMethodBlocked(m), "expanded method %s is globally blocked", m)
+				}
+			} else {
+				assert.Equal(t, tt.input, result)
+			}
+		})
+	}
+}

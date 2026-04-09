@@ -23,6 +23,7 @@ export default function GroupAccessForm({
 }: GroupAccessFormProps) {
   const [loading, setLoading] = useState(true);
   const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
+
   const [claims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
@@ -65,7 +66,8 @@ export default function GroupAccessForm({
       const response = await rbacApi.groups.getAccess(orgId, groupId);
       const access = response.data;
       if (access) {
-        setAllowedMethods(access.allowed_methods || []);
+        const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
+        setAllowedMethods(methods);
         setDefaultClaims(access.claims || []);
         setRateLimitRPS(access.rate_limit_rps?.toString() || '');
         setRateLimitDaily(access.rate_limit_daily?.toString() || '');
@@ -423,6 +425,7 @@ export default function GroupAccessForm({
           <p className="text-xs text-error mt-1">Select at least one claim.</p>
         )}
       </div>
+
 
       {/* RPC Methods section - now grouped by claim */}
       <div className="space-y-2">

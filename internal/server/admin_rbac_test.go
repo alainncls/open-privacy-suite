@@ -583,6 +583,99 @@ func TestGroupAccessValidation(t *testing.T) {
 	})
 }
 
+func TestWildcardMethodExpansion(t *testing.T) {
+	server := setupTestServerForRBAC(t)
+
+	org := createTestOrganization(t, server, "wildcard-test-org")
+	group := createTestGroup(t, server, org.ID, "wildcard-group")
+
+	t.Run("WildcardExpandedToExplicitMethods", func(t *testing.T) {
+		// Send wildcard with admin claim (which implies read, write, deploy, upgrade)
+		body := map[string]any{
+			"allowed_methods": []string{"*"},
+			"claims":          []string{"admin"},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Now GET the access and verify wildcard was expanded
+		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), nil)
+		w = httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		methods := response["allowed_methods"].([]any)
+
+		// Should have been expanded: no "*" in the stored list
+		for _, m := range methods {
+			assert.NotEqual(t, "*", m.(string), "wildcard should have been expanded")
+		}
+
+		// Should contain the expected explicit methods
+		allAllowed := rbac.AllAllowedMethods()
+		assert.Equal(t, len(allAllowed), len(methods),
+			"expanded wildcard should match AllAllowedMethods() count")
+
+		// Verify a few specific methods are present
+		methodSet := make(map[string]bool, len(methods))
+		for _, m := range methods {
+			methodSet[m.(string)] = true
+		}
+		assert.True(t, methodSet["eth_call"], "should contain eth_call")
+		assert.True(t, methodSet["eth_blockNumber"], "should contain eth_blockNumber")
+		assert.True(t, methodSet["eth_sendRawTransaction"], "should contain eth_sendRawTransaction")
+
+		// Verify no globally blocked methods
+		for _, m := range methods {
+			assert.False(t, rbac.IsMethodBlocked(m.(string)),
+				"expanded method %s should not be globally blocked", m.(string))
+		}
+	})
+
+	t.Run("NoWildcardPassesThrough", func(t *testing.T) {
+		// Explicit methods should be stored as-is
+		body := map[string]any{
+			"allowed_methods": []string{"eth_call", "eth_getBalance"},
+			"claims":          []string{"read"},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// GET and verify exactly the 2 methods
+		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), nil)
+		w = httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		var response map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+
+		methods := response["allowed_methods"].([]any)
+		assert.Equal(t, 2, len(methods))
+	})
+}
+
 func TestUserAPI(t *testing.T) {
 	server := setupTestServerForRBAC(t)
 

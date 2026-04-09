@@ -1,5 +1,7 @@
 package rbac
 
+import "sort"
+
 // ReadMethods are RPC methods that require the "read" claim.
 // These methods only read blockchain state and don't modify it.
 var ReadMethods = map[string]bool{
@@ -147,6 +149,59 @@ func GetAllWriteMethods() []string {
 	methods := make([]string, 0, len(WriteMethods))
 	for method := range WriteMethods {
 		methods = append(methods, method)
+	}
+	return methods
+}
+
+// GetAllDeployMethods returns a slice of all deploy method names.
+func GetAllDeployMethods() []string {
+	methods := make([]string, 0, len(DeployMethods))
+	for method := range DeployMethods {
+		methods = append(methods, method)
+	}
+	return methods
+}
+
+// AllAllowedMethods returns every RPC method that can legitimately appear in a
+// group's allowed_methods list. This is the union of ReadMethods, WriteMethods,
+// and DeployMethods, minus any method that is globally blocked.
+// Used to expand a wildcard "*" into an explicit method list.
+func AllAllowedMethods() []string {
+	seen := make(map[string]bool)
+	var methods []string
+
+	for method := range ReadMethods {
+		if !IsMethodBlocked(method) && !seen[method] {
+			seen[method] = true
+			methods = append(methods, method)
+		}
+	}
+	for method := range WriteMethods {
+		if !IsMethodBlocked(method) && !seen[method] {
+			seen[method] = true
+			methods = append(methods, method)
+		}
+	}
+	for method := range DeployMethods {
+		if !IsMethodBlocked(method) && !seen[method] {
+			seen[method] = true
+			methods = append(methods, method)
+		}
+	}
+
+	// Sort for deterministic output
+	sort.Strings(methods)
+	return methods
+}
+
+// ExpandWildcardMethods replaces a wildcard "*" entry in the given method list
+// with the full explicit set from AllAllowedMethods(). If no wildcard is present,
+// the input is returned unchanged.
+func ExpandWildcardMethods(methods []string) []string {
+	for _, m := range methods {
+		if m == "*" {
+			return AllAllowedMethods()
+		}
 	}
 	return methods
 }
