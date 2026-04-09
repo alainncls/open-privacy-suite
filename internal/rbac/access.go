@@ -301,7 +301,7 @@ func DetectMulticall(method string, params []any) (bool, string) {
 type AccessController struct {
 	store                Store
 	resolver             *Resolver
-	cache                *Cache
+	cache                PermissionCache
 	deployValidator      *DeploymentValidator
 	upgradeValidator     *UpgradeValidator
 	factoryCallValidator *FactoryCallValidator
@@ -339,6 +339,21 @@ func NewAccessController(store Store, cacheTTL time.Duration) *AccessController 
 		store:                store,
 		resolver:             NewResolver(store, cacheTTL),
 		cache:                NewCache(CacheConfig{TTL: cacheTTL}),
+		deployValidator:      deployValidator,
+		upgradeValidator:     NewUpgradeValidator(store),
+		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),
+		pendingTracker:       NewPendingDeploymentTracker(1 * time.Hour),
+	}
+}
+
+// NewAccessControllerWithCache creates a new access controller with a custom cache implementation.
+// This allows injecting alternative cache backends (e.g., Redis) for horizontal scaling.
+func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache PermissionCache) *AccessController {
+	deployValidator := NewDeploymentValidator(store)
+	return &AccessController{
+		store:                store,
+		resolver:             NewResolver(store, cacheTTL),
+		cache:                cache,
 		deployValidator:      deployValidator,
 		upgradeValidator:     NewUpgradeValidator(store),
 		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),

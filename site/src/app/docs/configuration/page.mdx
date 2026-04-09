@@ -36,6 +36,7 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
   { name: "ENVIRONMENT", default: "development", description: "Set to production or development" },
   { name: "BASE_URL", default: "http://localhost:8080", description: "Public URL for auth callbacks" },
   { name: "TRUSTED_INTERNAL_CIDRS", default: "(none)", description: "Comma-separated CIDRs for internal API access. Appended to the default list (localhost, Docker, RFC1918, Tailscale). Set when the block explorer or monitoring runs outside default networks (e.g., Kubernetes pod CIDRs, cloud VPCs)." },
+  { name: "REDIS_URL", default: "(none)", description: "Redis connection URL for distributed state stores (sessions, caches, rate limiting). When not set, in-memory stores are used (single-instance only). Example: redis://:password@redis:6379/0" },
 ]} />
 
 ---

@@ -17,18 +17,20 @@ const DefaultMaxSessions = 10000
 // ErrSessionStoreFull is returned when the session store is at capacity.
 var ErrSessionStoreFull = errors.New("session store is at capacity")
 
-// Session represents an authentication session
+// Session represents an authentication session.
+// JSON tags are used for Redis serialization. The unexported mu field is
+// automatically excluded by encoding/json.
 type Session struct {
-	mu          sync.Mutex
-	ID          string
-	AuthRequest *protocol.AuthorizationRequestMessage
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
+	mu          sync.Mutex `json:"-"`
+	ID          string     `json:"id"`
+	AuthRequest *protocol.AuthorizationRequestMessage `json:"auth_request,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
 	// Completion fields - set when wallet callback succeeds
-	Completed    bool
-	AccessToken  string
-	RefreshToken string
-	CompletedAt  time.Time
+	Completed    bool      `json:"completed"`
+	AccessToken  string    `json:"access_token,omitempty"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	CompletedAt  time.Time `json:"completed_at,omitempty"`
 }
 
 // SessionStore manages authentication sessions
