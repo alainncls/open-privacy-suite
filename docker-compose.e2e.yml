@@ -22,7 +22,7 @@ services:
     networks:
       - e2e-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d privacy_proxy"]
       interval: 5s
       timeout: 5s
       retries: 5
