@@ -408,7 +408,7 @@ create_membership() {
 
     # Check existing memberships
     local existing
-    existing=$(admin_get "/users/${user_id}/memberships" | jq -r ".[].membership.group_id // empty" 2>/dev/null)
+    existing=$(admin_get "/users/${user_id}/memberships" | jq -r ".data[]?.membership.group_id // empty" 2>/dev/null)
     if echo "$existing" | grep -q "$group_id"; then
         ok "$label already a member"
         return 0
