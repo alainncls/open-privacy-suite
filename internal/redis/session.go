@@ -63,6 +63,13 @@ return 1
 // It GETs the session, decodes it, sets the completion fields, and writes it
 // back with a new TTL — all in a single Lua script to eliminate TOCTOU races.
 //
+// SECURITY: Tokens are stored in plaintext in Redis for a maximum of 2 minutes
+// (the completed-session TTL). This window is required because the frontend polls
+// GET /auth/status/{id} to retrieve tokens after wallet callback completion.
+// Stripping tokens before storage would break the polling flow. The 2-minute
+// exposure window is acceptable for MVP; a future improvement could encrypt the
+// session payload with a per-instance key.
+//
 // KEYS[1] = session key (pp:session:{id})
 // ARGV[1] = access_token
 // ARGV[2] = refresh_token

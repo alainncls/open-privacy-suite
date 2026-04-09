@@ -263,7 +263,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 		sessionStore = privacyredis.NewSessionStore(redisClient, SessionTTL, auth.DefaultMaxSessions)
 		challengeStore = privacyredis.NewChallengeStore(redisClient, ChallengeTTL)
-		rateLimiter = privacyredis.NewRateLimiter(redisClient)
+		// Rate limiter is always in-memory: per-user RPC rate limiting was removed
+		// in PR #120 (moved to the upstream RPC proxy). The remaining rate limiter
+		// is only used for trace-endpoint throttling, which is single-instance safe.
+		rateLimiter = NewRateLimiter(RateLimiterCleanupInterval)
 		oauthSessionStore = privacyredis.NewOAuthSessionStore(redisClient, OAuthSessionTTL, DefaultMaxOAuthSessions)
 		rbacCache := privacyredis.NewPermissionCache(redisClient, RBACCacheTTL)
 		rbacAccessCtrl = rbac.NewAccessControllerWithCache(database, RBACCacheTTL, rbacCache)

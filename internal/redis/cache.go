@@ -13,6 +13,14 @@ import (
 // Verify that PermissionCache implements the rbac.PermissionCache interface.
 var _ rbac.PermissionCache = (*PermissionCache)(nil)
 
+// cachedPermissions is a wrapper for serialization that preserves the RPCAPIKey
+// field. EffectivePermissions uses `json:"-"` on RPCAPIKey to prevent accidental
+// exposure in API responses, but we need it to survive the Redis cache roundtrip.
+type cachedPermissions struct {
+	*rbac.EffectivePermissions
+	RPCAPIKey string `json:"_rpc_api_key,omitempty"`
+}
+
 // PermissionCache is a Redis-backed implementation of rbac.PermissionCache.
 type PermissionCache struct {
 	client *goredis.Client
@@ -36,11 +44,15 @@ func (c *PermissionCache) Get(userID, orgID string) *rbac.EffectivePermissions {
 	if err != nil {
 		return nil
 	}
-	var perms rbac.EffectivePermissions
-	if err := json.Unmarshal(data, &perms); err != nil {
+	var cached cachedPermissions
+	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil
 	}
-	return &perms
+	// Restore the RPCAPIKey that was preserved in the wrapper.
+	if cached.EffectivePermissions != nil {
+		cached.EffectivePermissions.RPCAPIKey = cached.RPCAPIKey
+	}
+	return cached.EffectivePermissions
 }
 
 // Set stores permissions in the cache with the default TTL.
@@ -54,7 +66,12 @@ func (c *PermissionCache) SetWithTTL(perms *rbac.EffectivePermissions, ttl time.
 		return
 	}
 	ctx := context.Background()
-	data, err := json.Marshal(perms)
+	// Wrap with cachedPermissions to preserve RPCAPIKey through serialization.
+	cached := cachedPermissions{
+		EffectivePermissions: perms,
+		RPCAPIKey:            perms.RPCAPIKey,
+	}
+	data, err := json.Marshal(cached)
 	if err != nil {
 		return
 	}
