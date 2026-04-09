@@ -23,7 +23,7 @@ export default function GroupAccessForm({
 }: GroupAccessFormProps) {
   const [loading, setLoading] = useState(true);
   const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
-  const [hasLegacyWildcard, setHasLegacyWildcard] = useState(false);
+
   const [claims, setDefaultClaims] = useState<Claim[]>([]);
   const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
   const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
@@ -66,19 +66,8 @@ export default function GroupAccessForm({
       const response = await rbacApi.groups.getAccess(orgId, groupId);
       const access = response.data;
       if (access) {
-        const methods = access.allowed_methods || [];
-        // Detect legacy wildcard stored in DB and expand to all known methods
-        if (methods.includes('*')) {
-          setHasLegacyWildcard(true);
-          const allMethods = [
-            ...RPC_METHODS_BY_CLAIM.read,
-            ...RPC_METHODS_BY_CLAIM.write,
-            ...RPC_METHODS_BY_CLAIM.deploy,
-          ];
-          setAllowedMethods([...allMethods]);
-        } else {
-          setAllowedMethods(methods);
-        }
+        const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
+        setAllowedMethods(methods);
         setDefaultClaims(access.claims || []);
         setRateLimitRPS(access.rate_limit_rps?.toString() || '');
         setRateLimitDaily(access.rate_limit_daily?.toString() || '');
@@ -437,18 +426,6 @@ export default function GroupAccessForm({
         )}
       </div>
 
-      {/* Legacy wildcard warning */}
-      {hasLegacyWildcard && (
-        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-amber-800">
-            <p>
-              <strong>All methods (*)</strong> — This group had a legacy wildcard granting access to all methods.
-              All methods have been pre-selected below. Save to replace the wildcard with explicit selections.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* RPC Methods section - now grouped by claim */}
       <div className="space-y-2">
