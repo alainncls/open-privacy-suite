@@ -75,8 +75,7 @@ export interface Group {
 
 export interface BatchMoveRequest {
   contract_ids: string[];
-  target_group_id?: string;
-  new_group?: { slug: string; name: string };
+  target_group_id: string;
 }
 
 export interface BatchMoveResponse {

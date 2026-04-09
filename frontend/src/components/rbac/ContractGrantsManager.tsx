@@ -183,6 +183,34 @@ export default function ContractGrantsManager({
     return abiFunctions[normalized] || COMMON_SELECTORS[normalized] || null;
   };
 
+  // Parse ABI to map event name -> { paramIndex -> paramName }
+  const abiEventParams = useMemo(() => {
+    if (!contract.abi) return {};
+    try {
+      const parsed = JSON.parse(contract.abi);
+      if (!Array.isArray(parsed)) return {};
+      const map: Record<string, Record<number, string>> = {};
+      for (const item of parsed) {
+        if (item.type !== 'event') continue;
+        const paramMap: Record<number, string> = {};
+        (item.inputs || []).forEach((input: { name: string }, idx: number) => {
+          paramMap[idx] = input.name;
+        });
+        map[item.name] = paramMap;
+      }
+      return map;
+    } catch {
+      return {};
+    }
+  }, [contract.abi]);
+
+  // Get event param name: "from", "to", "value" instead of "param[0]", "param[1]", "param[2]"
+  const getEventParamLabel = (eventName: string, paramIndex: number, mustBe: string) => {
+    const paramName = abiEventParams[eventName]?.[paramIndex];
+    const label = paramName || `param[${paramIndex}]`;
+    return `${label}=${mustBe}`;
+  };
+
   return (
     <div className="space-y-4">
       {/* Contract header */}
@@ -367,7 +395,7 @@ export default function ContractGrantsManager({
                     <div className="flex flex-wrap items-center gap-1.5">
                       {grant.event_rules.map((rule: EventRule) => {
                         const paramLabels = (rule.param_rules || []).map(
-                          pr => `param[${pr.index}]=${pr.must_be}`
+                          pr => getEventParamLabel(rule.name, pr.index, pr.must_be)
                         );
                         return (
                           <span

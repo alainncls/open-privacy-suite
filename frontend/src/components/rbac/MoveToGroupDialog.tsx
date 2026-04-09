@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { GroupWithAccess } from '@/types/rbac';
+import GroupForm from './GroupForm';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ArrowRight } from 'lucide-react';
+import { Loader2, ArrowRight, Plus } from 'lucide-react';
+
+type Mode = 'existing' | 'new';
 
 interface MoveToGroupDialogProps {
   open: boolean;
@@ -15,15 +17,6 @@ interface MoveToGroupDialogProps {
   onSuccess: () => void;
 }
 
-type TargetMode = 'existing' | 'new';
-
-function toSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '');
-}
-
 export default function MoveToGroupDialog({
   open,
   onOpenChange,
@@ -31,60 +24,65 @@ export default function MoveToGroupDialog({
   selectedContractIds,
   onSuccess,
 }: MoveToGroupDialogProps) {
-  const [mode, setMode] = useState<TargetMode>('existing');
+  const [mode, setMode] = useState<Mode>('existing');
   const [groups, setGroups] = useState<GroupWithAccess[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newSlug, setNewSlug] = useState('');
-  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load non-auto-created groups when dialog opens
-  useEffect(() => {
-    if (!open) return;
-
-    setError(null);
+  const fetchGroups = useCallback(() => {
     setLoadingGroups(true);
 
-    rbacApi.groups
+    return rbacApi.groups
       .list(orgId, { limit: 200 })
       .then((res) => {
-        setGroups(res.data.data || []);
+        const fetched = res.data.data || [];
+        setGroups(fetched);
+        return fetched;
       })
       .catch((err) => {
         console.error('Failed to load groups:', err);
         setError('Failed to load groups');
+        return [] as GroupWithAccess[];
       })
       .finally(() => setLoadingGroups(false));
-  }, [open, orgId]);
+  }, [orgId]);
+
+  // Load groups when dialog opens
+  useEffect(() => {
+    if (!open) return;
+    fetchGroups();
+  }, [open, fetchGroups]);
 
   // Reset form state when dialog opens
   useEffect(() => {
     if (open) {
       setMode('existing');
       setSelectedGroupId('');
-      setNewName('');
-      setNewSlug('');
-      setSlugManuallyEdited(false);
       setSubmitting(false);
       setError(null);
     }
   }, [open]);
 
-  // Auto-generate slug from name
-  useEffect(() => {
-    if (!slugManuallyEdited) {
-      setNewSlug(toSlug(newName));
+  // After GroupForm creates the group, re-fetch groups, auto-select the newest, switch to existing mode
+  async function handleGroupCreated() {
+    const fetched = await fetchGroups();
+    if (fetched.length > 0) {
+      // The most recently created group will be the one just made.
+      // Sort by created_at descending and pick the first.
+      const sorted = [...fetched].sort(
+        (a, b) => new Date(b.group.created_at).getTime() - new Date(a.group.created_at).getTime()
+      );
+      setSelectedGroupId(sorted[0].group.id);
     }
-  }, [newName, slugManuallyEdited]);
+    setMode('existing');
+  }
 
   const canSubmit =
     !submitting &&
     selectedContractIds.length > 0 &&
-    ((mode === 'existing' && selectedGroupId !== '') ||
-      (mode === 'new' && newName.trim() !== '' && newSlug.trim() !== ''));
+    selectedGroupId !== '';
 
   async function handleSubmit() {
     setError(null);
@@ -93,9 +91,7 @@ export default function MoveToGroupDialog({
     try {
       await rbacApi.contracts.batchMove(orgId, {
         contract_ids: selectedContractIds,
-        ...(mode === 'existing'
-          ? { target_group_id: selectedGroupId }
-          : { new_group: { name: newName.trim(), slug: newSlug.trim() } }),
+        target_group_id: selectedGroupId,
       });
       onSuccess();
       onOpenChange(false);
@@ -111,129 +107,107 @@ export default function MoveToGroupDialog({
     }
   }
 
+  const selectedGroup = selectedGroupId
+    ? groups.find((g) => g.group.id === selectedGroupId)
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="move-dialog" className="max-w-2xl">
+      <DialogContent data-testid="move-dialog" className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ArrowRight className="h-5 w-5" />
-            Move Contracts to Group
+            {mode === 'new' ? 'Create Group & Move Contracts' : 'Move Contracts to Group'}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <p className="text-sm text-neutral-500">
-            Moving {selectedContractIds.length} contract
-            {selectedContractIds.length !== 1 ? 's' : ''} to a group.
-          </p>
-
-          {error && (
-            <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          {/* Target mode selection */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Destination</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  data-testid="move-existing-radio"
-                  type="radio"
-                  name="targetMode"
-                  checked={mode === 'existing'}
-                  onChange={() => setMode('existing')}
-                  className="accent-primary"
-                />
-                Existing group
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  data-testid="move-new-radio"
-                  type="radio"
-                  name="targetMode"
-                  checked={mode === 'new'}
-                  onChange={() => setMode('new')}
-                  className="accent-primary"
-                />
-                Create new group
-              </label>
-            </div>
+        {mode === 'new' ? (
+          /* ── Create new group mode ── */
+          <div className="space-y-4">
+            <p className="text-sm text-neutral-500">
+              Create a new group, then move {selectedContractIds.length} contract
+              {selectedContractIds.length !== 1 ? 's' : ''} into it.
+            </p>
+            <GroupForm
+              orgId={orgId}
+              groups={groups.map((g) => g.group)}
+              onSave={handleGroupCreated}
+              onClose={() => setMode('existing')}
+            />
           </div>
+        ) : (
+          /* ── Select existing group mode ── */
+          <>
+            <div className="space-y-4">
+              <p className="text-sm text-neutral-500">
+                Moving {selectedContractIds.length} contract
+                {selectedContractIds.length !== 1 ? 's' : ''} to a group.
+              </p>
 
-          {/* Existing group selector */}
-          {mode === 'existing' && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Target group</label>
-              {loadingGroups ? (
-                <div className="flex items-center gap-2 text-sm text-neutral-500 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading groups...
+              {error && (
+                <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+                  {error}
                 </div>
-              ) : groups.length === 0 ? (
-                <p className="text-xs text-neutral-500">
-                  No manually created groups found. Create a new group instead.
-                </p>
-              ) : (
-                <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                  <SelectTrigger data-testid="move-group-select">
-                    <SelectValue placeholder="Select a group" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groups.map((g) => (
-                      <SelectItem key={g.group.id} value={g.group.id}>
-                        {g.group.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               )}
-            </div>
-          )}
 
-          {/* New group form */}
-          {mode === 'new' && (
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Group name</label>
-                <Input
-                  data-testid="move-new-name"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g. DeFi Contracts"
-                />
+              {/* Group selector */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Target group</label>
+                {loadingGroups ? (
+                  <div className="flex items-center gap-2 text-sm text-neutral-500 py-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading groups...
+                  </div>
+                ) : (
+                  <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                    <SelectTrigger data-testid="move-group-select">
+                      <SelectValue placeholder="Select a group" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groups.map((g) => (
+                        <SelectItem key={g.group.id} value={g.group.id}>
+                          {g.group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {selectedGroup && (
+                  <p className="text-xs text-neutral-400">
+                    Path: <code className="font-mono">{selectedGroup.group.path}</code>
+                  </p>
+                )}
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Slug</label>
-                <Input
-                  data-testid="move-new-slug"
-                  value={newSlug}
-                  onChange={(e) => {
-                    setNewSlug(e.target.value);
-                    setSlugManuallyEdited(true);
-                  }}
-                  placeholder="e.g. defi-contracts"
-                />
-                <p className="text-xs text-neutral-500">
-                  Auto-generated from name. Edit to customize.
-                </p>
-              </div>
+
+              {/* Create new group link */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-primary"
+                onClick={() => {
+                  setError(null);
+                  setMode('new');
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                Create new group
+              </Button>
             </div>
-          )}
 
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button data-testid="move-cancel-btn" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button data-testid="move-confirm-btn" onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Move {selectedContractIds.length} Contract
-            {selectedContractIds.length !== 1 ? 's' : ''}
-          </Button>
-        </DialogFooter>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button data-testid="move-cancel-btn" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button data-testid="move-confirm-btn" onClick={handleSubmit} disabled={!canSubmit}>
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Move {selectedContractIds.length} Contract
+                {selectedContractIds.length !== 1 ? 's' : ''}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
