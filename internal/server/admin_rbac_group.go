@@ -244,6 +244,10 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 		return
 	}
 
+	// Expand wildcard "*" in allowed_methods to the full explicit method list.
+	// The UI should never send "*" but the API accepts it for programmatic use.
+	input.AllowedMethods = rbac.ExpandWildcardMethods(input.AllowedMethods)
+
 	// Expand claims according to hierarchy (e.g., admin → read, write, deploy, upgrade)
 	input.Claims = rbac.ExpandClaims(input.Claims)
 
