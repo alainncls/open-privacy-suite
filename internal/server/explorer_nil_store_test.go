@@ -69,6 +69,7 @@ func buildNilStoreRouter() *gin.Engine {
 	g.GET("/tokens/:address/transfers", srv.getExplorerTokenTransfers)
 
 	g.GET("/transfers", srv.getExplorerAllTransfers)
+	g.GET("/shared-logs", srv.getSharedLogs)
 	g.GET("/accounts", srv.getExplorerAccounts)
 	g.GET("/search/suggestions", srv.getExplorerSearchSuggestions)
 
@@ -144,6 +145,7 @@ func TestExplorerHandlers_NilStore_Returns503(t *testing.T) {
 		{http.MethodGet, "/api/v1/explorer/tokens/" + addr + "/holders"},
 		{http.MethodGet, "/api/v1/explorer/tokens/" + addr + "/transfers"},
 		{http.MethodGet, "/api/v1/explorer/transfers"},
+		{http.MethodGet, "/api/v1/explorer/shared-logs"},
 		{http.MethodGet, "/api/v1/explorer/accounts"},
 		{http.MethodGet, "/api/v1/explorer/search/suggestions"},
 		{http.MethodGet, "/api/v1/explorer/sync/status"},

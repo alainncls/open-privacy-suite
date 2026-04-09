@@ -75,3 +75,59 @@ func (d *DB) GetBatchTxLogVisibility(ctx context.Context, txHashes []string) (ma
 	}
 	return result, nil
 }
+
+// SharedLogEntry represents a transaction whose logs are shared with a viewer via logVisibleTo.
+type SharedLogEntry struct {
+	TxHash    string
+	SenderDID string
+	OrgID     string
+	CreatedAt string // RFC3339 timestamp
+}
+
+// GetSharedLogsForDID returns tx hashes where the given DID appears in visible_to_dids,
+// ordered by created_at descending, with pagination.
+// Returns the entries, total count, and any error.
+func (d *DB) GetSharedLogsForDID(ctx context.Context, viewerDID string, limit, offset int) ([]SharedLogEntry, int, error) {
+	if viewerDID == "" {
+		return nil, 0, nil
+	}
+
+	// Count total matching rows.
+	var total int
+	countQuery := `SELECT COUNT(*) FROM tx_log_visible_to WHERE $1 = ANY(visible_to_dids)`
+	if err := d.conn.QueryRowContext(ctx, countQuery, viewerDID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count shared logs: %w", err)
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+
+	query := `SELECT tx_hash, sender_did, org_id, created_at
+	           FROM tx_log_visible_to
+	           WHERE $1 = ANY(visible_to_dids)
+	           ORDER BY created_at DESC
+	           LIMIT $2 OFFSET $3`
+	rows, err := d.conn.QueryContext(ctx, query, viewerDID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query shared logs: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []SharedLogEntry
+	for rows.Next() {
+		var e SharedLogEntry
+		var createdAt sql.NullTime
+		if err := rows.Scan(&e.TxHash, &e.SenderDID, &e.OrgID, &createdAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan shared log entry: %w", err)
+		}
+		if createdAt.Valid {
+			e.CreatedAt = createdAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate shared log entries: %w", err)
+	}
+
+	return entries, total, nil
+}
