@@ -2382,7 +2382,8 @@ func (s *Server) getSharedLogs(c *gin.Context) {
 	// Query the RBAC DB for tx hashes shared with this viewer.
 	entries, total, err := s.db.GetSharedLogsForDID(ctx, viewerDID, limit, offset)
 	if err != nil {
-		respondInternalError(c, "failed to query shared logs: "+err.Error())
+		slog.Error("failed to query shared logs", "error", err, "viewer", viewerDID)
+		respondInternalError(c, "failed to query shared logs")
 		return
 	}
 
