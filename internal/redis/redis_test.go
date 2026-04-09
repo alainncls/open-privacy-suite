@@ -629,6 +629,54 @@ func TestAzureStateStore_NonexistentState(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// ---------------------------------------------------------------------------
+// Regression: cjson corruption of empty arrays
+// ---------------------------------------------------------------------------
+
+func TestSessionStore_Iden3ScopeRoundtrip(t *testing.T) {
+	// This test catches the cjson corruption bug:
+	// Redis Lua cjson converts [] to {} on roundtrip, breaking iden3 scope field.
+	client := setupRedis(t)
+	store := NewSessionStore(client, 10*time.Minute, 100)
+
+	// Create a session with iden3 AuthRequest containing scope: []
+	authReq := &protocol.AuthorizationRequestMessage{
+		ID:   "test-id",
+		Typ:  "application/iden3comm-plain-json",
+		Type: "https://iden3-communication.io/authorization/1.0/request",
+		Body: protocol.AuthorizationRequestMessageBody{
+			CallbackURL: "http://localhost/callback",
+			Scope:       []protocol.ZeroKnowledgeProofRequest{},
+		},
+		From: "did:test:verifier",
+	}
+
+	sessionID := store.CreateSession(authReq)
+	require.NotEmpty(t, sessionID)
+
+	// Update the session (this triggers the Lua script roundtrip)
+	err := store.UpdateSession(sessionID, authReq)
+	require.NoError(t, err)
+
+	// Read back — this is where the cjson bug would strike
+	session := store.GetSession(sessionID)
+	require.NotNil(t, session)
+	require.NotNil(t, session.AuthRequest)
+
+	// The critical assertion: scope must be an empty slice, not nil or corrupted
+	assert.NotNil(t, session.AuthRequest.Body.Scope, "scope must not be nil after roundtrip")
+	assert.Len(t, session.AuthRequest.Body.Scope, 0, "scope must be empty after roundtrip")
+
+	// Also test CompleteSession roundtrip
+	err = store.CompleteSession(sessionID, "access-token", "refresh-token")
+	require.NoError(t, err)
+
+	completed := store.GetSession(sessionID)
+	require.NotNil(t, completed)
+	assert.True(t, completed.Completed)
+	assert.NotNil(t, completed.AuthRequest.Body.Scope, "scope must survive CompleteSession roundtrip")
+}
+
 // Ensure types are used to avoid unused import errors.
 var _ *types.LinkChallenge
 var _ *auth.Session
