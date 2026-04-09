@@ -58,6 +58,7 @@ The Open Privacy Suite exposes a set of internal REST endpoints specifically for
 | `GET /api/explorer/blocks/:number` | Get detailed block information |
 | `GET /api/explorer/transactions` | List recent transactions |
 | `GET /api/explorer/addresses/:addr/stats` | Get address-specific activity stats |
+| `GET /api/explorer/shared-logs` | List logs shared with the authenticated user via `logVisibleTo` |
 | `GET /api/explorer/sync/status` | Get indexer synchronization levels |
 
 ## Identity Forwarding
@@ -231,6 +232,53 @@ All of `balance`, `gas_used`, and `gas_price` are accessible through the explore
   hiding the public address's balance history, which conflicts with a block
   explorer's core purpose.
 </Callout>
+
+---
+
+## Shared Logs ("Shared with me")
+
+When a transaction is submitted with the `logVisibleTo` parameter, the specified DIDs are stored alongside the transaction hash. This allows the block explorer to show a "Shared with me" view: a list of transactions whose event logs have been explicitly shared with the current user, even though the user is not a direct participant (sender or receiver).
+
+### Endpoint
+
+```
+GET /api/v1/explorer/shared-logs?limit=20&offset=0
+```
+
+**Authentication:** Requires a valid JWT. The viewer's DID is extracted from the token.
+
+**Response:**
+
+```json
+{
+  "shared_logs": [
+    {
+      "tx_hash": "0x...",
+      "block_number": 8,
+      "timestamp": 1234567890,
+      "contract_address": "0x...",
+      "logs": [
+        { "address": "0x...", "topic0": "0x...", "data": "0x..." }
+      ],
+      "shared_at": "2026-04-09T..."
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+The endpoint returns only log data. Full transaction details (from, to, value, calldata) are not included -- the viewer was granted access to the logs, not the transaction itself.
+
+### How it works
+
+1. A transaction sender includes `logVisibleTo: ["did:example:bob"]` in their transaction metadata.
+2. The proxy stores the mapping before forwarding the transaction to the node.
+3. When Bob queries `/shared-logs`, the proxy looks up all transaction hashes where Bob's DID appears in the `logVisibleTo` list.
+4. For each matching transaction, the event logs are fetched from the explorer database and returned.
+
+This is purely additive -- it never restricts existing event rule access. If Bob already has access to the logs via RBAC event rules, `logVisibleTo` simply provides an additional discovery path.
 
 ---
 

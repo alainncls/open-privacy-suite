@@ -94,3 +94,79 @@ func TestGetBatchTxLogVisibility(t *testing.T) {
 		assert.Nil(t, got)
 	})
 }
+
+func TestGetSharedLogsForDID(t *testing.T) {
+	database := setupLogVisibilityDB(t)
+	ctx := context.Background()
+
+	viewerDID := "did:privado:viewer"
+	otherDID := "did:privado:other"
+
+	tx1 := "0xaaaa111111111111111111111111111111111111111111111111111111111111"
+	tx2 := "0xaaaa222222222222222222222222222222222222222222222222222222222222"
+	tx3 := "0xaaaa333333333333333333333333333333333333333333333333333333333333"
+
+	// Save visibility entries: tx1 and tx2 visible to viewerDID, tx3 only to otherDID.
+	require.NoError(t, database.SaveTxLogVisibility(ctx, tx1, []string{viewerDID, otherDID}, "did:sender1", "org-1"))
+	require.NoError(t, database.SaveTxLogVisibility(ctx, tx2, []string{viewerDID}, "did:sender2", "org-2"))
+	require.NoError(t, database.SaveTxLogVisibility(ctx, tx3, []string{otherDID}, "did:sender3", "org-1"))
+
+	t.Run("returns entries for viewer", func(t *testing.T) {
+		entries, total, err := database.GetSharedLogsForDID(ctx, viewerDID, 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		require.Len(t, entries, 2)
+
+		// Ordered by created_at DESC — tx2 was inserted after tx1.
+		assert.Equal(t, tx2, entries[0].TxHash)
+		assert.Equal(t, "did:sender2", entries[0].SenderDID)
+		assert.Equal(t, "org-2", entries[0].OrgID)
+		assert.NotEmpty(t, entries[0].CreatedAt)
+
+		assert.Equal(t, tx1, entries[1].TxHash)
+		assert.Equal(t, "did:sender1", entries[1].SenderDID)
+	})
+
+	t.Run("returns entries for other viewer", func(t *testing.T) {
+		entries, total, err := database.GetSharedLogsForDID(ctx, otherDID, 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total) // tx1 and tx3
+		require.Len(t, entries, 2)
+	})
+
+	t.Run("non-viewer gets empty result", func(t *testing.T) {
+		entries, total, err := database.GetSharedLogsForDID(ctx, "did:privado:nobody", 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 0, total)
+		assert.Nil(t, entries)
+	})
+
+	t.Run("empty DID returns nil", func(t *testing.T) {
+		entries, total, err := database.GetSharedLogsForDID(ctx, "", 20, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 0, total)
+		assert.Nil(t, entries)
+	})
+
+	t.Run("pagination works", func(t *testing.T) {
+		// Limit 1 — should return only the most recent entry.
+		entries, total, err := database.GetSharedLogsForDID(ctx, viewerDID, 1, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total) // total is still 2
+		require.Len(t, entries, 1)
+		assert.Equal(t, tx2, entries[0].TxHash)
+
+		// Offset 1, limit 1 — should return the second entry.
+		entries, total, err = database.GetSharedLogsForDID(ctx, viewerDID, 1, 1)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		require.Len(t, entries, 1)
+		assert.Equal(t, tx1, entries[0].TxHash)
+
+		// Offset beyond total — empty.
+		entries, total, err = database.GetSharedLogsForDID(ctx, viewerDID, 20, 10)
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		assert.Empty(t, entries)
+	})
+}
