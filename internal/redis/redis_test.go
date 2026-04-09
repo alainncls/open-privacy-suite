@@ -22,9 +22,11 @@ func setupRedis(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
 
+	const testPassword = "testpass123"
 	req := testcontainers.ContainerRequest{
 		Image:        "redis:7-alpine",
 		ExposedPorts: []string{"6379/tcp"},
+		Cmd:          []string{"redis-server", "--requirepass", testPassword},
 		WaitingFor:   wait.ForLog("Ready to accept connections"),
 	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -40,7 +42,7 @@ func setupRedis(t *testing.T) *Client {
 	port, err := container.MappedPort(ctx, "6379")
 	require.NoError(t, err)
 
-	client, err := NewClient(fmt.Sprintf("redis://%s:%s/0", host, port.Port()))
+	client, err := NewClient(fmt.Sprintf("redis://:%s@%s:%s/0", testPassword, host, port.Port()))
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 
