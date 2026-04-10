@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -99,24 +98,6 @@ type GrantTransaction struct {
 	Status         int     `json:"status"`
 }
 
-// SharedLogEntry is a single log-sharing record in the shared-logs response.
-type SharedLogEntry struct {
-	TxHash          string        `json:"tx_hash"`
-	BlockNumber     uint64        `json:"block_number"`
-	Timestamp       *uint64       `json:"timestamp,omitempty"`
-	ContractAddress string        `json:"contract_address"`
-	Logs            []explorer.Log `json:"logs"`
-	SharedAt        string        `json:"shared_at"`
-}
-
-// SharedLogsResponse is the response for GET /api/v1/explorer/shared-logs.
-type SharedLogsResponse struct {
-	SharedLogs []SharedLogEntry `json:"shared_logs"`
-	Total      int              `json:"total"`
-	Limit      int              `json:"limit"`
-	Offset     int              `json:"offset"`
-}
-
 // registerExplorerRoutes registers the explorer API endpoints
 // These endpoints are designed to be called by the explorer backend (internal).
 // Network boundary: localhost-only. JWT: optional — if present it is validated and the
@@ -139,9 +120,6 @@ func (s *Server) registerExplorerRoutes(router *gin.Engine) {
 		explorer.GET("/grant/:grant_id/:address_id/transactions", s.getGrantTransactions)
 		// Grant-scoped activity logs (user-facing, JWT required)
 		explorer.GET("/grant/:grant_id/activity", s.getGrantActivityLogs)
-
-		// Shared logs — txs where the viewer appears in logVisibleTo
-		explorer.GET("/shared-logs", s.getSharedLogs)
 
 		// Data Retrieval Endpoints
 		explorer.GET("/chain-id", s.getExplorerChainID)
@@ -869,10 +847,9 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 // full-disclosure grant on the target address. This is used by address-specific
 // endpoints to allow full disclosure recipients to view address pages.
 //
-// NOTE: This does NOT modify GetBatchVisibility (G17 preserved). The check is
-// performed only in address-specific endpoint handlers where the target address
-// is already known from the URL path — no information is leaked because the
-// viewer explicitly navigated to that address.
+// NOTE: GetBatchVisibility now includes disclosure grants (G17 reverted), so this
+// check is a secondary fallback for address-specific endpoints where the target
+// address is already known from the URL path.
 func (s *Server) viewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) bool {
 	if viewerDID == "" || targetAddress == "" {
 		return false
@@ -892,9 +869,9 @@ func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerWallet, vi
 	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
 		return true
 	}
-	// G17-safe: Only check disclosure grants for the specific address the viewer
-	// navigated to. This cannot leak grant existence to attackers because the
-	// viewer already knows the address (it's in the URL they requested).
+	// Fallback: check disclosure grants for the specific address the viewer
+	// navigated to. GetBatchVisibility should already handle this, but this
+	// ensures coverage for edge cases.
 	resolvedDID := s.resolveViewerDID(ctx, viewerWallet, viewerDID)
 	return s.viewerHasFullDisclosureGrant(ctx, resolvedDID, address)
 }
@@ -1092,6 +1069,16 @@ func (s *Server) buildVisibilityFilter(ctx context.Context, viewerDID string) *e
 		}
 	}
 	filter.VisibleAddresses = visible
+
+	// Add visibleTo tx hashes: txs shared with the viewer via the visibleTo param
+	// should appear in regular explorer views.
+	if viewerDID != "" {
+		visibleTxHashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
+		if err == nil && len(visibleTxHashes) > 0 {
+			filter.VisibleTxHashes = visibleTxHashes
+		}
+	}
+
 	return filter
 }
 
@@ -2348,82 +2335,3 @@ func (s *Server) getExplorerCatchupProgress(c *gin.Context) {
 	})
 }
 
-// getSharedLogs returns logs from transactions where the viewer's DID appears in logVisibleTo.
-// GET /api/v1/explorer/shared-logs?limit=20&offset=0
-// Requires JWT auth — the viewer DID is extracted from the JWT.
-func (s *Server) getSharedLogs(c *gin.Context) {
-	if s.explorerStore == nil {
-		respondServiceUnavailable(c, "explorer store not configured")
-		return
-	}
-
-	// Require authenticated viewer (JWT).
-	viewerDID := s.getViewerDIDFromRequest(c)
-	if viewerDID == "" {
-		respondUnauthorized(c, "JWT authentication required")
-		return
-	}
-
-	// Parse pagination params.
-	limit := 20
-	if l := c.Query("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
-			limit = v
-		}
-	}
-	offset := 0
-	if o := c.Query("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
-
-	ctx := c.Request.Context()
-
-	// Query the RBAC DB for tx hashes shared with this viewer.
-	entries, total, err := s.db.GetSharedLogsForDID(ctx, viewerDID, limit, offset)
-	if err != nil {
-		slog.Error("failed to query shared logs", "error", err, "viewer", viewerDID)
-		respondInternalError(c, "failed to query shared logs")
-		return
-	}
-
-	// Build response by fetching logs from the explorer DB for each tx hash.
-	sharedLogs := make([]SharedLogEntry, 0, len(entries))
-	for _, entry := range entries {
-		logs, err := s.explorerStore.GetLogsByTransaction(ctx, entry.TxHash)
-		if err != nil {
-			// Log fetch failed — skip this entry rather than failing the whole request.
-			continue
-		}
-		if logs == nil {
-			logs = []explorer.Log{}
-		}
-
-		// Determine block number, timestamp, and contract address from the logs.
-		var blockNumber uint64
-		var timestamp *uint64
-		contractAddress := ""
-		if len(logs) > 0 {
-			blockNumber = logs[0].BlockNumber
-			timestamp = logs[0].Timestamp
-			contractAddress = logs[0].Address
-		}
-
-		sharedLogs = append(sharedLogs, SharedLogEntry{
-			TxHash:          entry.TxHash,
-			BlockNumber:     blockNumber,
-			Timestamp:       timestamp,
-			ContractAddress: contractAddress,
-			Logs:            logs,
-			SharedAt:        entry.CreatedAt,
-		})
-	}
-
-	c.JSON(http.StatusOK, SharedLogsResponse{
-		SharedLogs: sharedLogs,
-		Total:      total,
-		Limit:      limit,
-		Offset:     offset,
-	})
-}

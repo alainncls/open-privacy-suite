@@ -201,11 +201,20 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 		}
 	}
 
-	// NOTE: Disclosure grants are intentionally NOT checked here.
-	// Grants only affect the dedicated grant endpoint (/grant/{id}/{addr_id}/transactions),
-	// not the general explorer views. This prevents grants from leaking disclosed address
-	// visibility into block pages, tx lists, and other explorer views.
-	// See GetBatchVisibilityDetailed for the grant-aware version (used by privacy dashboard).
+	// Check disclosure grants: viewer may have active full-disclosure grants on some
+	// addresses. Disclosed addresses should appear in regular explorer views, labeled
+	// "Disclosed" via addressMetadata. (G17 reverted — grants now upgrade visibility.)
+	if viewerDID != "" {
+		grantedAddrs, err := d.getDisclosedAddressesForViewer(ctx, viewerDID)
+		if err == nil {
+			for _, addr := range grantedAddrs {
+				addr = strings.ToLower(addr)
+				if current, exists := result[addr]; exists && current != explorer.VisibilityFull {
+					result[addr] = explorer.VisibilityFull
+				}
+			}
+		}
+	}
 
 	return result, nil
 }
@@ -418,14 +427,63 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		}
 	}
 
-	// NOTE: Disclosure grants are intentionally NOT checked here (G17).
-	// Per REDACTION_SPEC.md: "GetBatchVisibilityDetailed retains grant metadata
-	// but no longer upgrades visibility level." Visibility endpoints must not
-	// reveal grant existence — that would create a new oracle (attacker learns which
-	// addresses have grants). The privacy dashboard discovers grants via the
-	// viewable-addresses endpoint.
+	// Check disclosure grants: viewer may have active full-disclosure grants on some
+	// addresses. Disclosed addresses appear in regular explorer views with the
+	// "disclosure_grant" reason in addressMetadata. (G17 reverted.)
+	if viewerDID != "" {
+		grantedAddrs, err := d.getDisclosedAddressesForViewer(ctx, viewerDID)
+		if err == nil {
+			for _, addr := range grantedAddrs {
+				addr = strings.ToLower(addr)
+				if current, exists := result[addr]; exists && current.Level != explorer.VisibilityFull {
+					result[addr] = explorer.AddressVisibility{
+						Address: addr,
+						Visible: true,
+						Level:   explorer.VisibilityFull,
+						Reason:  explorer.ReasonDisclosureGrant,
+					}
+				}
+			}
+		}
+	}
 
 	return result, nil
+}
+
+// getDisclosedAddressesForViewer returns ETH addresses that the viewer has an
+// active full-disclosure grant on. Used by GetBatchVisibility to upgrade
+// disclosed addresses to VisibilityFull in regular explorer views.
+func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]string, error) {
+	if viewerDID == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT DISTINCT LOWER(eal.eth_address)
+		FROM disclosure_grants g
+		JOIN disclosure_requests r ON g.request_id = r.id
+		JOIN users u ON r.target_user_id = u.id
+		JOIN eth_address_links eal ON eal.did = u.external_id
+		WHERE r.requester_did = $1
+		  AND eal.revoked = false
+		  AND g.revoked_at IS NULL
+		  AND g.expires_at > NOW()`
+
+	rows, err := d.conn.QueryContext(ctx, query, viewerDID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var addrs []string
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, addr)
+	}
+	return addrs, rows.Err()
 }
 
 // GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.

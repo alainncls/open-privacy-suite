@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"testing"
+	"time"
 
 	"privacy-proxy/internal/explorer"
 
@@ -891,5 +892,402 @@ func TestViewerHasContractAccess(t *testing.T) {
 		ok, err := database.ViewerHasContractAccess(ctx, memberDID, uuid.New().String())
 		require.NoError(t, err)
 		assert.False(t, ok, "member of one contract must not access a different contract")
+	})
+}
+
+// ============================================================================
+// Disclosure Grant Visibility — getDisclosedAddressesForViewer
+// ============================================================================
+
+// setupDisclosureGrant creates the full disclosure chain:
+//   org → user (target) → eth_address_link → disclosure_request → disclosure_grant
+// Returns (orgID, viewerDID, targetUserID, targetEthAddr, grantID).
+func setupDisclosureGrant(t *testing.T, database *DB, viewerDID, targetDID, targetEthAddr string, expiresAt time.Time) (orgID, targetUserID, grantID string) {
+	t.Helper()
+	ctx := context.Background()
+	conn := database.Conn()
+
+	orgID = uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "disc-org-"+orgID[:8], "Disclosure Test Org")
+	require.NoError(t, err)
+
+	// Create target user
+	targetUserID = uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		targetUserID, targetDID)
+	require.NoError(t, err)
+
+	// Link ETH address to target user
+	err = database.SystemLinkEthAddress(ctx, targetDID, targetEthAddr)
+	require.NoError(t, err)
+
+	// Create disclosure request (viewer → target)
+	requestID := uuid.New().String()
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_requests
+			(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, '{}', 'Integration test', 'approved', NOW())`,
+		requestID, viewerDID, targetUserID, orgID)
+	require.NoError(t, err)
+
+	// Create disclosure grant
+	grantID = uuid.New().String()
+	tokenHash := "testhash_" + grantID[:8]
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_grants
+			(id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		grantID, requestID, tokenHash, expiresAt)
+	require.NoError(t, err)
+
+	return orgID, targetUserID, grantID
+}
+
+func TestDisclosedAddressesForViewer(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:disclosure_viewer"
+	const targetDID = "did:test:disclosure_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000001"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	_, _, grantID := setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	t.Run("viewer with active grant sees target address", func(t *testing.T) {
+		addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+		require.NoError(t, err)
+		assert.Contains(t, addrs, targetEthAddr,
+			"viewer with active disclosure grant must see target's ETH address")
+	})
+
+	t.Run("different viewer sees nothing", func(t *testing.T) {
+		addrs, err := database.getDisclosedAddressesForViewer(ctx, "did:test:unrelated_viewer")
+		require.NoError(t, err)
+		assert.Empty(t, addrs,
+			"viewer without any grant must get empty result")
+	})
+
+	t.Run("empty DID returns nil", func(t *testing.T) {
+		addrs, err := database.getDisclosedAddressesForViewer(ctx, "")
+		require.NoError(t, err)
+		assert.Nil(t, addrs,
+			"empty DID must return nil without hitting the database")
+	})
+
+	t.Run("revoked grant returns empty", func(t *testing.T) {
+		err := database.RevokeDisclosureGrant(ctx, grantID, "test revocation")
+		require.NoError(t, err)
+
+		addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+		require.NoError(t, err)
+		assert.Empty(t, addrs,
+			"revoked grant must not return target address")
+	})
+}
+
+func TestDisclosedAddressesForViewer_ExpiredGrant(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:expired_grant_viewer"
+	const targetDID = "did:test:expired_grant_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000002"
+
+	// Grant that already expired
+	pastExpiry := time.Now().Add(-1 * time.Hour)
+	setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, pastExpiry)
+
+	addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	assert.Empty(t, addrs,
+		"expired grant must not return target address")
+}
+
+func TestDisclosedAddressesForViewer_RevokedEthLink(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:revoked_link_viewer"
+	const targetDID = "did:test:revoked_link_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000003"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	// Verify grant works first
+	addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	require.Contains(t, addrs, targetEthAddr)
+
+	// Revoke the ETH address link
+	_, err = database.Conn().ExecContext(ctx,
+		"UPDATE eth_address_links SET revoked = true, revoked_at = NOW() WHERE did = $1 AND eth_address = $2",
+		targetDID, targetEthAddr)
+	require.NoError(t, err)
+
+	// Grant is still active, but the eth link is revoked
+	addrs, err = database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	assert.Empty(t, addrs,
+		"revoked eth_address_link must prevent disclosure even if grant is active")
+}
+
+// ============================================================================
+// GetBatchVisibility — disclosure grant upgrade to Full
+// ============================================================================
+
+func TestGetBatchVisibility_DisclosureGrant(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:disc_batch_viewer"
+	const targetDID = "did:test:disc_batch_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000010"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	t.Run("viewer with disclosure grant sees Full", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{targetEthAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[targetEthAddr],
+			"disclosure grant must upgrade target EOA to VisibilityFull for the viewer")
+	})
+
+	t.Run("different viewer sees Hidden (EOA with no grant)", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, "did:test:disc_other_viewer", []string{targetEthAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityHidden, visMap[targetEthAddr],
+			"viewer without disclosure grant must see other user's EOA as Hidden")
+	})
+
+	t.Run("anonymous sees Hidden (EOA)", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, "", []string{targetEthAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityHidden, visMap[targetEthAddr],
+			"anonymous viewer must see owned EOA as Hidden")
+	})
+}
+
+// ============================================================================
+// GetBatchVisibilityDetailed — disclosure grant reason
+// ============================================================================
+
+func TestGetBatchVisibilityDetailed_DisclosureGrant(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:disc_detailed_viewer"
+	const targetDID = "did:test:disc_detailed_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000020"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	t.Run("disclosure grant returns Full with disclosure_grant reason", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, viewerDID, []string{targetEthAddr})
+		require.NoError(t, err)
+		vis := visMap[targetEthAddr]
+		assert.Equal(t, explorer.VisibilityFull, vis.Level,
+			"disclosure grant must upgrade to VisibilityFull in detailed view")
+		assert.True(t, vis.Visible)
+		assert.Equal(t, explorer.ReasonDisclosureGrant, vis.Reason,
+			"reason must be disclosure_grant, not own_address or rbac_group_member")
+	})
+
+	t.Run("different viewer sees Hidden with no_access reason", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, "did:test:disc_detail_other", []string{targetEthAddr})
+		require.NoError(t, err)
+		vis := visMap[targetEthAddr]
+		assert.Equal(t, explorer.VisibilityHidden, vis.Level)
+		assert.False(t, vis.Visible)
+		assert.Equal(t, explorer.ReasonNoAccess, vis.Reason)
+	})
+
+	t.Run("own address takes precedence over disclosure grant", func(t *testing.T) {
+		// The target viewing their own address should get own_address, not disclosure_grant
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, targetDID, []string{targetEthAddr})
+		require.NoError(t, err)
+		vis := visMap[targetEthAddr]
+		assert.Equal(t, explorer.VisibilityFull, vis.Level)
+		assert.True(t, vis.Visible)
+		assert.Equal(t, explorer.ReasonOwnAddress, vis.Reason,
+			"own_address must take precedence over disclosure_grant")
+	})
+}
+
+// ============================================================================
+// GetVisibleTxHashesForDID — tx_visible_to integration with disclosure context
+// ============================================================================
+
+func TestGetVisibleTxHashesForDID_DisclosureContext(t *testing.T) {
+	database := setupVisibilityDB(t)
+	ctx := context.Background()
+
+	const viewerDID = "did:test:disc_txvis_viewer"
+	const otherDID = "did:test:disc_txvis_other"
+
+	// Simulate disclosure-related tx visibility:
+	// When a disclosure grant is active, the system inserts tx hashes that the
+	// viewer should be able to see into tx_visible_to.
+	tx1 := "0xd15c111111111111111111111111111111111111111111111111111111111111"
+	tx2 := "0xd15c222222222222222222222222222222222222222222222222222222222222"
+	tx3 := "0xd15c333333333333333333333333333333333333333333333333333333333333"
+
+	// tx1 and tx2 visible to the disclosure viewer
+	require.NoError(t, database.SaveTxVisibility(ctx, tx1, []string{viewerDID}, "did:sender", "org-1"))
+	require.NoError(t, database.SaveTxVisibility(ctx, tx2, []string{viewerDID, otherDID}, "did:sender", "org-1"))
+	// tx3 only visible to other
+	require.NoError(t, database.SaveTxVisibility(ctx, tx3, []string{otherDID}, "did:sender", "org-1"))
+
+	t.Run("viewer sees their disclosed tx hashes", func(t *testing.T) {
+		hashes, err := database.GetVisibleTxHashesForDID(ctx, viewerDID)
+		require.NoError(t, err)
+		assert.Len(t, hashes, 2)
+		assert.Contains(t, hashes, tx1)
+		assert.Contains(t, hashes, tx2)
+	})
+
+	t.Run("other viewer sees their tx hashes only", func(t *testing.T) {
+		hashes, err := database.GetVisibleTxHashesForDID(ctx, otherDID)
+		require.NoError(t, err)
+		assert.Len(t, hashes, 2)
+		assert.Contains(t, hashes, tx2)
+		assert.Contains(t, hashes, tx3)
+	})
+
+	t.Run("unrelated DID gets empty", func(t *testing.T) {
+		hashes, err := database.GetVisibleTxHashesForDID(ctx, "did:test:disc_txvis_nobody")
+		require.NoError(t, err)
+		assert.Nil(t, hashes)
+	})
+
+	t.Run("empty DID returns nil", func(t *testing.T) {
+		hashes, err := database.GetVisibleTxHashesForDID(ctx, "")
+		require.NoError(t, err)
+		assert.Nil(t, hashes)
+	})
+}
+
+// ============================================================================
+// Disclosure grant does NOT leak into non-granted viewers (G17 security)
+// ============================================================================
+
+func TestDisclosureGrant_NoLeakToOtherViewers(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+
+	const viewer1DID = "did:test:disc_leak_viewer1"
+	const viewer2DID = "did:test:disc_leak_viewer2"
+	const targetDID = "did:test:disc_leak_target"
+	const targetEthAddr = "0xd15c000000000000000000000000000000000030"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+
+	// Only viewer1 has a disclosure grant on the target
+	setupDisclosureGrant(t, database, viewer1DID, targetDID, targetEthAddr, futureExpiry)
+
+	t.Run("granted viewer sees Full", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, viewer1DID, []string{targetEthAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[targetEthAddr])
+	})
+
+	t.Run("non-granted viewer sees Hidden", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, viewer2DID, []string{targetEthAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityHidden, visMap[targetEthAddr],
+			"disclosure grant for viewer1 must NOT leak to viewer2 — G17 security boundary")
+	})
+
+	t.Run("detailed: non-granted viewer sees Hidden with no_access", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibilityDetailed(ctx, viewer2DID, []string{targetEthAddr})
+		require.NoError(t, err)
+		vis := visMap[targetEthAddr]
+		assert.Equal(t, explorer.VisibilityHidden, vis.Level)
+		assert.Equal(t, explorer.ReasonNoAccess, vis.Reason,
+			"non-granted viewer must get no_access reason — grant must not leak")
+	})
+}
+
+// ============================================================================
+// Disclosure grant on multiple addresses
+// ============================================================================
+
+func TestDisclosureGrant_MultipleAddresses(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	const viewerDID = "did:test:disc_multi_viewer"
+	const targetDID = "did:test:disc_multi_target"
+	const addr1 = "0xd15c000000000000000000000000000000000041"
+	const addr2 = "0xd15c000000000000000000000000000000000042"
+	const unlinkedAddr = "0xd15c000000000000000000000000000000000043"
+
+	orgID := uuid.New().String()
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgID, "disc-multi-"+orgID[:8], "Disclosure Multi Org")
+	require.NoError(t, err)
+
+	// Create target user with TWO linked ETH addresses
+	targetUserID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}')",
+		targetUserID, targetDID)
+	require.NoError(t, err)
+
+	err = database.SystemLinkEthAddress(ctx, targetDID, addr1)
+	require.NoError(t, err)
+	err = database.SystemLinkEthAddress(ctx, targetDID, addr2)
+	require.NoError(t, err)
+
+	// Create disclosure grant
+	requestID := uuid.New().String()
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_requests
+			(id, requester_did, target_user_id, org_id, scope, reason, status, requested_at)
+		VALUES ($1, $2, $3, $4, '{}', 'Multi-address test', 'approved', NOW())`,
+		requestID, viewerDID, targetUserID, orgID)
+	require.NoError(t, err)
+
+	grantID := uuid.New().String()
+	tokenHash := "testhash_multi_" + grantID[:8]
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO disclosure_grants
+			(id, request_id, grant_token_hash, scope, granted_at, expires_at)
+		VALUES ($1, $2, $3, '{}', NOW(), $4)`,
+		grantID, requestID, tokenHash, time.Now().Add(24*time.Hour))
+	require.NoError(t, err)
+
+	t.Run("grant covers all linked addresses", func(t *testing.T) {
+		addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+		require.NoError(t, err)
+		assert.Len(t, addrs, 2)
+		assert.Contains(t, addrs, addr1)
+		assert.Contains(t, addrs, addr2)
+	})
+
+	t.Run("batch visibility: both addresses Full, unlinked Hidden", func(t *testing.T) {
+		visMap, err := database.GetBatchVisibility(ctx, viewerDID, []string{addr1, addr2, unlinkedAddr})
+		require.NoError(t, err)
+		assert.Equal(t, explorer.VisibilityFull, visMap[addr1],
+			"first linked address must be Full via disclosure grant")
+		assert.Equal(t, explorer.VisibilityFull, visMap[addr2],
+			"second linked address must be Full via disclosure grant")
+		assert.Equal(t, explorer.VisibilityHidden, visMap[unlinkedAddr],
+			"unlinked address must remain Hidden")
 	})
 }

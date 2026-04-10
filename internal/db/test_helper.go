@@ -89,7 +89,7 @@ func ResetTestDatabase(database *DB) error {
 	// Delete data from tables in correct order to respect foreign keys
 	// This is safer than TRUNCATE which can cause deadlocks in concurrent tests
 	tables := []string{
-		"tx_log_visible_to",
+		"tx_visible_to",
 		"rbac_audit_log",
 		"effective_permissions_cache",
 		"contract_grants",

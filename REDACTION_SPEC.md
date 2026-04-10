@@ -313,11 +313,11 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G16, G22 are reso
 - **G16 (resolved): `check-address` enumeration vector closed**
   The `/check-address/:address` and `/check-addresses` endpoints were removed entirely. Address visibility is now communicated inline via `addressMetadata` fields in explorer API responses (PR #96), eliminating the enumeration oracle.
 
-- **G17 (resolved): Disclosure grants leaked into regular explorer views (RD-774)**
-  `GetBatchVisibility` checked disclosure grants and upgraded address visibility for the grant recipient across all explorer views. Fixed: grants removed from `GetBatchVisibility`. `GetBatchVisibilityDetailed` retains grant metadata (for privacy dashboard) but no longer upgrades visibility level.
+- **G17 (resolved): Disclosure grants now visible in regular explorer views**
+  `GetBatchVisibility` and `GetBatchVisibilityDetailed` check active full-disclosure grants for the viewer. Disclosed addresses are upgraded to `VisibilityFull` with reason `"disclosure_grant"` in `addressMetadata`. The block explorer renders this as a "Disclosed" label (purple badge). This replaces the previous design where grants were hidden from regular views.
 
-- **G18 (resolved): Disclosure grant label/visibility consistency across explorer views**
-  When a viewer has a disclosure grant AND is a participant in a transaction, the participant override reveals the real address. The "Disclosed" label should NOT appear on regular explorer pages (tx detail, block page) — only on the grant page and privacy dashboard. The `check-addresses` endpoint (which leaked `reason: disclosure_grant`) has been removed. Address visibility is now communicated inline via `addressMetadata` in explorer API responses, which does not include grant metadata on regular pages.
+- **G18 (resolved): "Disclosed" label appears in regular pages for disclosure grant recipients**
+  Disclosure grant recipients see disclosed addresses labeled "Disclosed" in regular Transactions, Token Transfers, and address pages. The `addressMetadata` includes `"disclosure_grant"` as the reason, which the frontend renders as a purple "Disclosed" badge.
 
 - **G19: Grant page should show viewer's own address as "Mine" not External-XXXX**
   On the pseudonymous grant page, the viewer's own address is pseudonymized as `External-XXXX` like any other external address. The proxy should detect when an external address in a grant transaction matches the viewer's linked address and label it as "You" or "Mine" instead of generating a pseudonym.
@@ -403,3 +403,54 @@ for _, tt := range tests {
 ```
 
 Tests live alongside the redaction code in `internal/explorer/redaction/*_test.go`.
+
+---
+
+## 7. visibleTo — Per-Transaction Visibility Grants
+
+The `visibleTo` parameter (renamed from `logVisibleTo`) allows a transaction sender to grant full transaction and log visibility to specific DIDs.
+
+### Usage
+
+When sending a transaction via `eth_sendTransaction` or `eth_sendRawTransaction`, include a `visibleTo` field with an array of DIDs:
+
+```json
+{
+  "method": "eth_sendTransaction",
+  "params": [{
+    "from": "0x...",
+    "to": "0x...",
+    "data": "0x...",
+    "visibleTo": ["did:privado:alice", "did:privado:bob"]
+  }]
+}
+```
+
+For raw transactions, pass it as a second parameter:
+
+```json
+{
+  "method": "eth_sendRawTransaction",
+  "params": ["0xf86c...", {"visibleTo": ["did:privado:alice"]}]
+}
+```
+
+### Behavior
+
+- The `visibleTo` field is stripped before forwarding to the node (never sent on-chain).
+- The DID list is stored in `tx_visible_to` with the resulting tx hash.
+- **Explorer views**: Transactions with `visibleTo` grants appear in regular Transactions and Token Transfers pages for the listed DIDs. The `buildVisibilityFilter` includes these tx hashes as an override to address-based filtering.
+- **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs`, even when `must_be=self` param rules would otherwise filter them. This extends (never restricts) existing access.
+- **Receipt filtering**: `visibleTo` does NOT override receipt participant checks. A listed DID still receives `null` from `eth_getTransactionReceipt` if they are not a from/to participant. This is intentional — receipts contain financial data that should only be visible to participants.
+
+### Storage
+
+Table: `tx_visible_to` (migration 040, renamed from `tx_log_visible_to`)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| tx_hash | TEXT | Transaction hash (lowercase) |
+| visible_to_dids | TEXT[] | Array of DIDs granted visibility |
+| sender_did | TEXT | DID of the transaction sender |
+| org_id | TEXT | Organization ID of the sender |
+| created_at | TIMESTAMPTZ | When the rule was created |

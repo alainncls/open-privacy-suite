@@ -195,15 +195,15 @@ These controls ensure that even within a shared private network where all partic
 
 ---
 
-## Per-Transaction Log Visibility (`logVisibleTo`)
+## Per-Transaction Visibility (`visibleTo`)
 
-The `logVisibleTo` feature allows a transaction sender to specify additional DIDs (decentralized identifiers) that can see event logs for that specific transaction. This is useful for multi-party workflows where a third party needs to observe events they are not a direct participant of (e.g., an auditor, a settlement bank, or a compliance officer).
+The `visibleTo` feature (renamed from `logVisibleTo`) allows a transaction sender to specify additional DIDs (decentralized identifiers) that can see the transaction and its event logs. This is useful for multi-party workflows where a third party needs to observe events they are not a direct participant of (e.g., an auditor, a settlement bank, or a compliance officer).
 
 ### How it works
 
-The sender includes a `logVisibleTo` array when submitting the transaction:
+The sender includes a `visibleTo` array when submitting the transaction:
 
-**`eth_sendTransaction`** -- `logVisibleTo` is a field in the transaction object (params\[0\]):
+**`eth_sendTransaction`** -- `visibleTo` is a field in the transaction object (params\[0\]):
 
 ```json
 {
@@ -212,34 +212,37 @@ The sender includes a `logVisibleTo` array when submitting the transaction:
     "from": "0xabc...",
     "to": "0xdef...",
     "data": "0x...",
-    "logVisibleTo": ["did:privado:auditor1", "did:privado:bank2"]
+    "visibleTo": ["did:privado:auditor1", "did:privado:bank2"]
   }]
 }
 ```
 
-**`eth_sendRawTransaction`** -- `logVisibleTo` is passed as a second parameter (since the raw transaction bytes cannot be modified):
+**`eth_sendRawTransaction`** -- `visibleTo` is passed as a second parameter (since the raw transaction bytes cannot be modified):
 
 ```json
 {
   "method": "eth_sendRawTransaction",
-  "params": ["0xf86c...", {"logVisibleTo": ["did:privado:auditor1"]}]
+  "params": ["0xf86c...", {"visibleTo": ["did:privado:auditor1"]}]
 }
 ```
 
-The proxy strips the `logVisibleTo` field before forwarding the transaction to the node, stores the rule in the database, and applies it during response filtering.
+The proxy strips the `visibleTo` field before forwarding the transaction to the node, stores the rule in the database, and applies it during response filtering and explorer visibility.
 
 ### Interaction with static event rules
 
-`logVisibleTo` is **purely additive** -- it never restricts existing access:
+`visibleTo` is **purely additive** -- it never restricts existing access:
 
-- If a viewer already has access to an event through normal event rules or address-based filtering, `logVisibleTo` has no effect.
-- If a viewer is denied an event because `must_be=self` param rules fail, `logVisibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list.
-- `logVisibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `logVisibleTo`.
-- Admin users always see all events -- `logVisibleTo` does not change admin behavior.
+- If a viewer already has access to an event through normal event rules or address-based filtering, `visibleTo` has no effect.
+- If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list.
+- `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
+- Admin users always see all events -- `visibleTo` does not change admin behavior.
 
 ### Scope
 
-`logVisibleTo` applies to **event logs only**, not to transaction calldata, values, or other fields. It affects `eth_getTransactionReceipt` (logs within the receipt) and `eth_getLogs` responses.
+`visibleTo` grants visibility at two layers:
+
+1. **Explorer views**: Transactions with `visibleTo` grants appear in the regular Transactions and Token Transfers pages for listed DIDs, alongside their own activity.
+2. **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs` and in `eth_getTransactionReceipt` logs. However, `visibleTo` does NOT override receipt participant checks -- a listed DID still receives `null` from `eth_getTransactionReceipt` if they are not a from/to participant.
 
 ---
 

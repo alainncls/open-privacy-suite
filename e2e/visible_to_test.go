@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// logVisibleToTestSetup holds IDs created during test setup.
-type logVisibleToTestSetup struct {
+// visibleToTestSetup holds IDs created during test setup.
+type visibleToTestSetup struct {
 	orgID         string
 	groupID       string
 	senderUserID  string
@@ -33,13 +33,13 @@ type logVisibleToTestSetup struct {
 	viewerAddr    string
 }
 
-// setupLogVisibleToTest creates the full RBAC hierarchy for testing logVisibleTo:
+// setupVisibleToTest creates the full RBAC hierarchy for testing visibleTo:
 // org -> group -> sender user + viewer user -> contract with event rules -> grants.
-func setupLogVisibleToTest(t *testing.T, database *db.DB) *logVisibleToTestSetup {
+func setupVisibleToTest(t *testing.T, database *db.DB) *visibleToTestSetup {
 	t.Helper()
 	ctx := context.Background()
 
-	setup := &logVisibleToTestSetup{
+	setup := &visibleToTestSetup{
 		orgID:        uuid.New().String(),
 		groupID:      uuid.New().String(),
 		senderDID:    "did:privado:log_vis_sender",
@@ -132,9 +132,9 @@ func setupLogVisibleToTest(t *testing.T, database *db.DB) *logVisibleToTestSetup
 	return setup
 }
 
-// TestLogVisibleToE2E_SaveAndQuery tests that logVisibleTo rules are stored
+// TestVisibleToE2E_SaveAndQuery tests that visibleTo rules are stored
 // and queried correctly at the database level.
-func TestLogVisibleToE2E_SaveAndQuery(t *testing.T) {
+func TestVisibleToE2E_SaveAndQuery(t *testing.T) {
 	dbURL, cleanup := db.SetupTestContainer(t)
 	defer cleanup()
 
@@ -143,21 +143,21 @@ func TestLogVisibleToE2E_SaveAndQuery(t *testing.T) {
 	defer database.Close()
 
 	ctx := context.Background()
-	setup := setupLogVisibleToTest(t, database)
+	setup := setupVisibleToTest(t, database)
 
 	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000abcd"
 
-	// Save a logVisibleTo rule
-	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	// Save a visibleTo rule
+	err = database.SaveTxVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
 	require.NoError(t, err)
 
 	// Query single
-	dids, err := database.GetTxLogVisibility(ctx, txHash)
+	dids, err := database.GetTxVisibility(ctx, txHash)
 	require.NoError(t, err)
 	assert.Equal(t, []string{setup.viewerDID}, dids)
 
 	// Query batch
-	batch, err := database.GetBatchTxLogVisibility(ctx, []string{txHash, "0xnonexistent"})
+	batch, err := database.GetBatchTxVisibility(ctx, []string{txHash, "0xnonexistent"})
 	require.NoError(t, err)
 	assert.Len(t, batch, 1)
 	assert.Equal(t, []string{setup.viewerDID}, batch[strings.ToLower(txHash)])
@@ -167,9 +167,9 @@ func TestLogVisibleToE2E_SaveAndQuery(t *testing.T) {
 	assert.NotContains(t, dids, setup.senderDID)
 }
 
-// TestLogVisibleToE2E_FilterIntegration tests that the event filter uses
-// logVisibleTo to extend access when param rules fail.
-func TestLogVisibleToE2E_FilterIntegration(t *testing.T) {
+// TestVisibleToE2E_FilterIntegration tests that the event filter uses
+// visibleTo to extend access when param rules fail.
+func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 	dbURL, cleanup := db.SetupTestContainer(t)
 	defer cleanup()
 
@@ -178,12 +178,12 @@ func TestLogVisibleToE2E_FilterIntegration(t *testing.T) {
 	defer database.Close()
 
 	ctx := context.Background()
-	setup := setupLogVisibleToTest(t, database)
+	setup := setupVisibleToTest(t, database)
 
 	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000def0"
 
-	// Save logVisibleTo for viewer
-	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	// Save visibleTo for viewer
+	err = database.SaveTxVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
 	require.NoError(t, err)
 
 	// Query permissions for viewer (resolve effective permissions)
@@ -215,24 +215,24 @@ func TestLogVisibleToE2E_FilterIntegration(t *testing.T) {
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 
 	// Build visibility context
-	visibility, err := database.GetBatchTxLogVisibility(ctx, []string{txHash})
+	visibility, err := database.GetBatchTxVisibility(ctx, []string{txHash})
 	require.NoError(t, err)
 
-	visCtx := &rbac.LogVisibilityContext{
+	visCtx := &rbac.TxVisibilityContext{
 		ViewerDID:    setup.viewerDID,
 		TxVisibility: visibility,
 	}
 
-	// Viewer without logVisibleTo: should not see the log (not "self")
+	// Viewer without visibleTo: should not see the log (not "self")
 	resultWithout := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, nil)
-	assert.Len(t, resultWithout, 0, "viewer should not see log without logVisibleTo")
+	assert.Len(t, resultWithout, 0, "viewer should not see log without visibleTo")
 
-	// Viewer with logVisibleTo: should see the log
+	// Viewer with visibleTo: should see the log
 	resultWith := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, visCtx)
-	assert.Len(t, resultWith, 1, "viewer should see log with logVisibleTo")
+	assert.Len(t, resultWith, 1, "viewer should see log with visibleTo")
 
-	// Unlisted user with logVisibleTo context: should NOT see the log
-	unlistedVisCtx := &rbac.LogVisibilityContext{
+	// Unlisted user with visibleTo context: should NOT see the log
+	unlistedVisCtx := &rbac.TxVisibilityContext{
 		ViewerDID:    "did:privado:unlisted",
 		TxVisibility: visibility,
 	}
@@ -240,12 +240,12 @@ func TestLogVisibleToE2E_FilterIntegration(t *testing.T) {
 	assert.Len(t, resultUnlisted, 0, "unlisted user should not see log even with visCtx")
 }
 
-// TestLogVisibleToE2E_TxNotVisibleToListedDID verifies the critical security
-// property: logVisibleTo grants access to LOGS ONLY, not the transaction itself.
-// The viewer (settlement bank) should see event logs via eth_getLogs but NOT the
-// transaction via eth_getTransactionReceipt — because they are not a participant
-// in the from/to fields of the receipt.
-func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
+// TestVisibleToE2E_TxNotVisibleToListedDID verifies the critical security
+// property: visibleTo grants access to LOGS ONLY via JSON-RPC, not the
+// transaction receipt. The viewer (settlement bank) should see event logs via
+// eth_getLogs but NOT the transaction via eth_getTransactionReceipt — because
+// they are not a participant in the from/to fields of the receipt.
+func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	dbURL, cleanup := db.SetupTestContainer(t)
 	defer cleanup()
 
@@ -254,14 +254,14 @@ func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	defer database.Close()
 
 	ctx := context.Background()
-	setup := setupLogVisibleToTest(t, database)
+	setup := setupVisibleToTest(t, database)
 
 	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000aa01"
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	senderTopic := "0x000000000000000000000000" + setup.senderAddr[2:]
 
-	// Save logVisibleTo rule: viewer DID can see logs from this tx.
-	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	// Save visibleTo rule: viewer DID can see logs from this tx.
+	err = database.SaveTxVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
 	require.NoError(t, err)
 
 	// Build effective permissions for the viewer.
@@ -283,9 +283,9 @@ func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	}
 
 	// Build visibility context from DB.
-	visibility, err := database.GetBatchTxLogVisibility(ctx, []string{txHash})
+	visibility, err := database.GetBatchTxVisibility(ctx, []string{txHash})
 	require.NoError(t, err)
-	visCtx := &rbac.LogVisibilityContext{
+	visCtx := &rbac.TxVisibilityContext{
 		ViewerDID:    setup.viewerDID,
 		TxVisibility: visibility,
 	}
@@ -300,7 +300,7 @@ func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 		[]string{setup.viewerAddr}, // viewer's addresses
 		perms,
 		nil,    // no ABI provider
-		visCtx, // has logVisibleTo
+		visCtx, // has visibleTo
 	)
 
 	// Viewer is NOT a participant in from/to, so receipt must be null.
@@ -309,13 +309,13 @@ func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(receiptResult, &receiptResp))
 	assert.Equal(t, "null", string(receiptResp.Result),
-		"receipt should be null for viewer who is not a from/to participant, even with logVisibleTo")
+		"receipt should be null for viewer who is not a from/to participant, even with visibleTo")
 
 	// --- Test FilterLogsWithEventRules (eth_getLogs path) ---
 	// Build a fake eth_getLogs response with the same Transfer log.
 	logsBody := buildLogsResponse(t, setup.contractAddr, txHash, transferTopic0, senderTopic)
 
-	// Viewer WITH logVisibleTo: should see the log via eth_getLogs.
+	// Viewer WITH visibleTo: should see the log via eth_getLogs.
 	logsResult := server.FilterLogsWithEventRules(
 		logsBody,
 		[]string{setup.viewerAddr},
@@ -329,12 +329,12 @@ func TestLogVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(logsResult, &logsResp))
 	assert.Len(t, logsResp.Result, 1,
-		"viewer should see log via eth_getLogs because their DID is in logVisibleTo")
+		"viewer should see log via eth_getLogs because their DID is in visibleTo")
 }
 
-// TestLogVisibleToE2E_GetLogsWithVisibleTo tests the full filter pipeline for
+// TestVisibleToE2E_GetLogsWithVisibleTo tests the full filter pipeline for
 // eth_getLogs: listed DID sees logs, unlisted DID does not.
-func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
+func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	dbURL, cleanup := db.SetupTestContainer(t)
 	defer cleanup()
 
@@ -343,14 +343,14 @@ func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	defer database.Close()
 
 	ctx := context.Background()
-	setup := setupLogVisibleToTest(t, database)
+	setup := setupVisibleToTest(t, database)
 
 	txHash := "0xfeedface0000000000000000000000000000000000000000000000000000bb02"
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	senderTopic := "0x000000000000000000000000" + setup.senderAddr[2:]
 
-	// Save logVisibleTo for viewer.
-	err = database.SaveTxLogVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
+	// Save visibleTo for viewer.
+	err = database.SaveTxVisibility(ctx, txHash, []string{setup.viewerDID}, setup.senderDID, setup.orgID)
 	require.NoError(t, err)
 
 	// Build permissions for viewer with Transfer event rule (must_be=self on from).
@@ -374,11 +374,11 @@ func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	// Build mock eth_getLogs response with a Transfer log where topic1 = sender address.
 	logsBody := buildLogsResponse(t, setup.contractAddr, txHash, transferTopic0, senderTopic)
 
-	// Viewer with logVisibleTo context: should see the log.
-	visibility, err := database.GetBatchTxLogVisibility(ctx, []string{txHash})
+	// Viewer with visibleTo context: should see the log.
+	visibility, err := database.GetBatchTxVisibility(ctx, []string{txHash})
 	require.NoError(t, err)
 
-	viewerVisCtx := &rbac.LogVisibilityContext{
+	viewerVisCtx := &rbac.TxVisibilityContext{
 		ViewerDID:    setup.viewerDID,
 		TxVisibility: visibility,
 	}
@@ -395,10 +395,10 @@ func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(resultListed, &listedResp))
 	assert.Len(t, listedResp.Result, 1,
-		"listed viewer DID should see the log via logVisibleTo")
+		"listed viewer DID should see the log via visibleTo")
 
 	// Unlisted DID: should NOT see the log even though visibility data exists.
-	unlistedVisCtx := &rbac.LogVisibilityContext{
+	unlistedVisCtx := &rbac.TxVisibilityContext{
 		ViewerDID:    "did:privado:unlisted_stranger",
 		TxVisibility: visibility,
 	}
@@ -416,7 +416,7 @@ func TestLogVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(resultUnlisted, &unlistedResp))
 	assert.Len(t, unlistedResp.Result, 0,
-		"unlisted DID should not see the log — logVisibleTo only applies to listed DIDs")
+		"unlisted DID should not see the log — visibleTo only applies to listed DIDs")
 
 	// No visCtx at all: should also NOT see the log (backward compat).
 	resultNone := server.FilterLogsWithEventRules(

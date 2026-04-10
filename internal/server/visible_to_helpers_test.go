@@ -5,30 +5,30 @@ import (
 	"testing"
 )
 
-func TestExtractAndStripLogVisibleTo(t *testing.T) {
+func TestExtractAndStripVisibleTo(t *testing.T) {
 	tests := []struct {
 		name         string
 		method       string
 		params       []any
 		body         string
 		wantDIDs     []string
-		wantStripped bool // logVisibleTo should be absent from params and body after call
+		wantStripped bool // visibleTo should be absent from params and body after call
 	}{
 		{
-			name:   "normal: params with logVisibleTo returns DIDs and strips field",
+			name:   "normal: params with visibleTo returns DIDs and strips field",
 			method: "eth_sendTransaction",
 			params: []any{map[string]any{
-				"from":         "0xaaa",
-				"to":           "0xbbb",
-				"data":         "0x",
-				"logVisibleTo": []any{"did:example:alice", "did:example:bob"},
+				"from":      "0xaaa",
+				"to":        "0xbbb",
+				"data":      "0x",
+				"visibleTo": []any{"did:example:alice", "did:example:bob"},
 			}},
-			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","to":"0xbbb","data":"0x","logVisibleTo":["did:example:alice","did:example:bob"]}],"id":1}`,
+			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","to":"0xbbb","data":"0x","visibleTo":["did:example:alice","did:example:bob"]}],"id":1}`,
 			wantDIDs:     []string{"did:example:alice", "did:example:bob"},
 			wantStripped: true,
 		},
 		{
-			name:   "no logVisibleTo field returns nil and body unchanged",
+			name:   "no visibleTo field returns nil and body unchanged",
 			method: "eth_sendTransaction",
 			params: []any{map[string]any{
 				"from": "0xaaa",
@@ -40,14 +40,14 @@ func TestExtractAndStripLogVisibleTo(t *testing.T) {
 			wantStripped: false,
 		},
 		{
-			name:   "empty logVisibleTo array returns nil",
+			name:   "empty visibleTo array returns nil",
 			method: "eth_sendTransaction",
 			params: []any{map[string]any{
-				"from":         "0xaaa",
-				"to":           "0xbbb",
-				"logVisibleTo": []any{},
+				"from":      "0xaaa",
+				"to":        "0xbbb",
+				"visibleTo": []any{},
 			}},
-			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","to":"0xbbb","logVisibleTo":[]}],"id":1}`,
+			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","to":"0xbbb","visibleTo":[]}],"id":1}`,
 			wantDIDs:     nil,
 			wantStripped: true, // field is still removed even if empty
 		},
@@ -55,10 +55,10 @@ func TestExtractAndStripLogVisibleTo(t *testing.T) {
 			name:   "non-string items in array are skipped",
 			method: "eth_sendTransaction",
 			params: []any{map[string]any{
-				"from":         "0xaaa",
-				"logVisibleTo": []any{"did:example:alice", 42, nil, "", "did:example:bob"},
+				"from":      "0xaaa",
+				"visibleTo": []any{"did:example:alice", 42, nil, "", "did:example:bob"},
 			}},
-			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","logVisibleTo":["did:example:alice",42,null,"","did:example:bob"]}],"id":1}`,
+			body:         `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","visibleTo":["did:example:alice",42,null,"","did:example:bob"]}],"id":1}`,
 			wantDIDs:     []string{"did:example:alice", "did:example:bob"},
 			wantStripped: true,
 		},
@@ -87,7 +87,7 @@ func TestExtractAndStripLogVisibleTo(t *testing.T) {
 			}
 
 			originalBody := string(req.Body)
-			got := extractAndStripLogVisibleTo(req)
+			got := extractAndStripVisibleTo(req)
 
 			// Check returned DIDs.
 			if tt.wantDIDs == nil {
@@ -105,16 +105,16 @@ func TestExtractAndStripLogVisibleTo(t *testing.T) {
 				}
 			}
 
-			// Check that logVisibleTo is stripped from params and body.
+			// Check that visibleTo is stripped from params and body.
 			if tt.wantStripped {
 				if txObj, ok := req.Params[0].(map[string]any); ok {
-					if _, exists := txObj["logVisibleTo"]; exists {
-						t.Error("logVisibleTo should have been removed from params[0]")
+					if _, exists := txObj["visibleTo"]; exists {
+						t.Error("visibleTo should have been removed from params[0]")
 					}
 				}
 				bodyStr := string(req.Body)
-				if containsSubstring(bodyStr, "logVisibleTo") {
-					t.Errorf("logVisibleTo should have been removed from body, got: %s", bodyStr)
+				if containsSubstring(bodyStr, "visibleTo") {
+					t.Errorf("visibleTo should have been removed from body, got: %s", bodyStr)
 				}
 			} else if tt.wantDIDs == nil {
 				// Body should be unchanged when nothing was extracted.
@@ -126,7 +126,7 @@ func TestExtractAndStripLogVisibleTo(t *testing.T) {
 	}
 }
 
-func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
+func TestExtractAndStripRawTxVisibleTo(t *testing.T) {
 	tests := []struct {
 		name       string
 		params     []any
@@ -135,14 +135,14 @@ func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
 		wantParams int // expected params length after call
 	}{
 		{
-			name: "normal: second param has logVisibleTo returns DIDs and trims params",
+			name: "normal: second param has visibleTo returns DIDs and trims params",
 			params: []any{
 				"0xf86c...",
 				map[string]any{
-					"logVisibleTo": []any{"did:example:alice"},
+					"visibleTo": []any{"did:example:alice"},
 				},
 			},
-			body:       `{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0xf86c...",{"logVisibleTo":["did:example:alice"]}],"id":1}`,
+			body:       `{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0xf86c...",{"visibleTo":["did:example:alice"]}],"id":1}`,
 			wantDIDs:   []string{"did:example:alice"},
 			wantParams: 1,
 		},
@@ -154,7 +154,7 @@ func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
 			wantParams: 1,
 		},
 		{
-			name: "second param has no logVisibleTo returns nil",
+			name: "second param has no visibleTo returns nil",
 			params: []any{
 				"0xf86c...",
 				map[string]any{
@@ -177,10 +177,10 @@ func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
 			params: []any{
 				"0xf86c...",
 				map[string]any{
-					"logVisibleTo": []any{"did:example:alice", 123, "did:example:bob"},
+					"visibleTo": []any{"did:example:alice", 123, "did:example:bob"},
 				},
 			},
-			body:       `{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0xf86c...",{"logVisibleTo":["did:example:alice",123,"did:example:bob"]}],"id":1}`,
+			body:       `{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0xf86c...",{"visibleTo":["did:example:alice",123,"did:example:bob"]}],"id":1}`,
 			wantDIDs:   []string{"did:example:alice", "did:example:bob"},
 			wantParams: 1,
 		},
@@ -194,7 +194,7 @@ func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
 				Body:   []byte(tt.body),
 			}
 
-			got := extractAndStripRawTxLogVisibleTo(req)
+			got := extractAndStripRawTxVisibleTo(req)
 
 			// Check returned DIDs.
 			if tt.wantDIDs == nil {
@@ -220,8 +220,8 @@ func TestExtractAndStripRawTxLogVisibleTo(t *testing.T) {
 			// When params were trimmed, body should not contain the second param.
 			if tt.wantDIDs != nil {
 				bodyStr := string(req.Body)
-				if containsSubstring(bodyStr, "logVisibleTo") {
-					t.Errorf("logVisibleTo should have been removed from body, got: %s", bodyStr)
+				if containsSubstring(bodyStr, "visibleTo") {
+					t.Errorf("visibleTo should have been removed from body, got: %s", bodyStr)
 				}
 			}
 		})
@@ -236,7 +236,7 @@ func TestRebuildRequestBody(t *testing.T) {
 	}{
 		{
 			name:     "preserves JSON-RPC envelope with new params",
-			original: `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","logVisibleTo":["did:x"]}],"id":1}`,
+			original: `{"jsonrpc":"2.0","method":"eth_sendTransaction","params":[{"from":"0xaaa","visibleTo":["did:x"]}],"id":1}`,
 			params: []any{map[string]any{
 				"from": "0xaaa",
 			}},
