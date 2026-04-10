@@ -400,7 +400,7 @@ explorerStore:    explorerStore,
 		s.jsonrpcProcessor = NewJSONRPCProcessor(rbacAccessCtrl, rateLimiter, proxySvc, database, circuitBreaker, concurrencyLimiter, cfg.RPCAPIKey)
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
-	s.jsonrpcProcessor.SetLogVisibilityStore(database)
+	s.jsonrpcProcessor.SetTxVisibilityStore(database)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {

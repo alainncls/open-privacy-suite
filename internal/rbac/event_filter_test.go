@@ -2535,11 +2535,11 @@ func TestFilterEventLogs_DeployWriteClaims_NoBypass(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// logVisibleTo extension tests
+// visibleTo extension tests
 // ---------------------------------------------------------------------------
 
-func TestFilterEventLogs_LogVisibleTo_ParamRulesFail_ViewerInList(t *testing.T) {
-	// Viewer DID is in logVisibleTo list → event visible despite must_be=self failure.
+func TestFilterEventLogs_VisibleTo_ParamRulesFail_ViewerInList(t *testing.T) {
+	// Viewer DID is in visibleTo list → event visible despite must_be=self failure.
 	contractAddr := "0xcontract1"
 	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	otherAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -2567,7 +2567,7 @@ func TestFilterEventLogs_LogVisibleTo_ParamRulesFail_ViewerInList(t *testing.T) 
 		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
 	}
 
-	visCtx := &LogVisibilityContext{
+	visCtx := &TxVisibilityContext{
 		ViewerDID: viewerDID,
 		TxVisibility: map[string][]string{
 			txHash: {viewerDID, "did:privado:other"},
@@ -2580,15 +2580,15 @@ func TestFilterEventLogs_LogVisibleTo_ParamRulesFail_ViewerInList(t *testing.T) 
 		t.Errorf("without visCtx: expected 0 logs (self check fails), got %d", len(resultWithout))
 	}
 
-	// With visCtx: should pass (viewer in logVisibleTo)
+	// With visCtx: should pass (viewer in visibleTo)
 	resultWith := FilterEventLogs(logs, perms, []string{userAddr}, nil, visCtx)
 	if len(resultWith) != 1 {
-		t.Errorf("with visCtx: expected 1 log (viewer in logVisibleTo), got %d", len(resultWith))
+		t.Errorf("with visCtx: expected 1 log (viewer in visibleTo), got %d", len(resultWith))
 	}
 }
 
-func TestFilterEventLogs_LogVisibleTo_ViewerNotInList(t *testing.T) {
-	// Viewer DID NOT in logVisibleTo list → event still filtered.
+func TestFilterEventLogs_VisibleTo_ViewerNotInList(t *testing.T) {
+	// Viewer DID NOT in visibleTo list → event still filtered.
 	contractAddr := "0xcontract1"
 	viewerDID := "did:privado:not_listed"
 	txHash := "0xdeadbeef"
@@ -2613,7 +2613,7 @@ func TestFilterEventLogs_LogVisibleTo_ViewerNotInList(t *testing.T) {
 		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + transferTopic0 + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
 	}
 
-	visCtx := &LogVisibilityContext{
+	visCtx := &TxVisibilityContext{
 		ViewerDID: viewerDID,
 		TxVisibility: map[string][]string{
 			txHash: {"did:privado:someone_else"},
@@ -2622,11 +2622,11 @@ func TestFilterEventLogs_LogVisibleTo_ViewerNotInList(t *testing.T) {
 
 	result := FilterEventLogs(logs, perms, []string{"0xnotinanylog"}, nil, visCtx)
 	if len(result) != 0 {
-		t.Errorf("expected 0 logs (viewer not in logVisibleTo list), got %d", len(result))
+		t.Errorf("expected 0 logs (viewer not in visibleTo list), got %d", len(result))
 	}
 }
 
-func TestFilterEventLogs_LogVisibleTo_NilContext_BackwardCompat(t *testing.T) {
+func TestFilterEventLogs_VisibleTo_NilContext_BackwardCompat(t *testing.T) {
 	// nil visCtx → backward compat, no change in behavior.
 	contractAddr := "0xcontract1"
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -2655,8 +2655,8 @@ func TestFilterEventLogs_LogVisibleTo_NilContext_BackwardCompat(t *testing.T) {
 	}
 }
 
-func TestFilterEventLogs_LogVisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T) {
-	// logVisibleTo should NOT bypass topic0 allowlist — only param rules.
+func TestFilterEventLogs_VisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T) {
+	// visibleTo should NOT bypass topic0 allowlist — only param rules.
 	contractAddr := "0xcontract1"
 	viewerDID := "did:privado:viewer1"
 	txHash := "0xdeadbeef"
@@ -2676,11 +2676,11 @@ func TestFilterEventLogs_LogVisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T)
 	}
 
 	logs := []json.RawMessage{
-		// Disallowed topic0 — logVisibleTo should NOT make this pass.
+		// Disallowed topic0 — visibleTo should NOT make this pass.
 		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + disallowedTopic0 + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
 	}
 
-	visCtx := &LogVisibilityContext{
+	visCtx := &TxVisibilityContext{
 		ViewerDID: viewerDID,
 		TxVisibility: map[string][]string{
 			txHash: {viewerDID},
@@ -2689,12 +2689,12 @@ func TestFilterEventLogs_LogVisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T)
 
 	result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, visCtx)
 	if len(result) != 0 {
-		t.Errorf("expected 0 logs (logVisibleTo must not bypass topic0 allowlist), got %d", len(result))
+		t.Errorf("expected 0 logs (visibleTo must not bypass topic0 allowlist), got %d", len(result))
 	}
 }
 
-func TestFilterEventLogs_LogVisibleTo_AdminStillBypasses(t *testing.T) {
-	// Admin users bypass everything — logVisibleTo doesn't change this.
+func TestFilterEventLogs_VisibleTo_AdminStillBypasses(t *testing.T) {
+	// Admin users bypass everything — visibleTo doesn't change this.
 	contractAddr := "0xcontract1"
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
@@ -2722,10 +2722,10 @@ func TestFilterEventLogs_LogVisibleTo_AdminStillBypasses(t *testing.T) {
 	}
 }
 
-func TestFilterEventLogs_LogVisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *testing.T) {
+func TestFilterEventLogs_VisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *testing.T) {
 	// When no event rules are configured (default address filtering),
-	// logVisibleTo extends the filter: if user address is NOT in topics
-	// but viewer DID IS in logVisibleTo, the log should be visible.
+	// visibleTo extends the filter: if user address is NOT in topics
+	// but viewer DID IS in visibleTo, the log should be visible.
 	contractAddr := "0xcontract1"
 	viewerDID := "did:privado:viewer1"
 	txHash := "0xdeadbeef"
@@ -2751,8 +2751,8 @@ func TestFilterEventLogs_LogVisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t
 		t.Errorf("without visCtx: expected 0 logs, got %d", len(resultWithout))
 	}
 
-	// With visCtx: should be visible (viewer in logVisibleTo)
-	visCtx := &LogVisibilityContext{
+	// With visCtx: should be visible (viewer in visibleTo)
+	visCtx := &TxVisibilityContext{
 		ViewerDID: viewerDID,
 		TxVisibility: map[string][]string{
 			txHash: {viewerDID},
@@ -2760,6 +2760,6 @@ func TestFilterEventLogs_LogVisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t
 	}
 	resultWith := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, visCtx)
 	if len(resultWith) != 1 {
-		t.Errorf("with visCtx: expected 1 log (viewer in logVisibleTo), got %d", len(resultWith))
+		t.Errorf("with visCtx: expected 1 log (viewer in visibleTo), got %d", len(resultWith))
 	}
 }

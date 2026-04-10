@@ -58,7 +58,7 @@ The Open Privacy Suite exposes a set of internal REST endpoints specifically for
 | `GET /api/explorer/blocks/:number` | Get detailed block information |
 | `GET /api/explorer/transactions` | List recent transactions |
 | `GET /api/explorer/addresses/:addr/stats` | Get address-specific activity stats |
-| `GET /api/explorer/shared-logs` | List logs shared with the authenticated user via `logVisibleTo` |
+| *(removed)* | The separate shared-logs endpoint has been replaced by `visibleTo` integration into regular views |
 | `GET /api/explorer/sync/status` | Get indexer synchronization levels |
 
 ## Identity Forwarding
@@ -235,50 +235,18 @@ All of `balance`, `gas_used`, and `gas_price` are accessible through the explore
 
 ---
 
-## Shared Logs ("Shared with me")
+## Per-Transaction Visibility (`visibleTo`)
 
-When a transaction is submitted with the `logVisibleTo` parameter, the specified DIDs are stored alongside the transaction hash. This allows the block explorer to show a "Shared with me" view: a list of transactions whose event logs have been explicitly shared with the current user, even though the user is not a direct participant (sender or receiver).
-
-### Endpoint
-
-```
-GET /api/v1/explorer/shared-logs?limit=20&offset=0
-```
-
-**Authentication:** Requires a valid JWT. The viewer's DID is extracted from the token.
-
-**Response:**
-
-```json
-{
-  "shared_logs": [
-    {
-      "tx_hash": "0x...",
-      "block_number": 8,
-      "timestamp": 1234567890,
-      "contract_address": "0x...",
-      "logs": [
-        { "address": "0x...", "topic0": "0x...", "data": "0x..." }
-      ],
-      "shared_at": "2026-04-09T..."
-    }
-  ],
-  "total": 1,
-  "limit": 20,
-  "offset": 0
-}
-```
-
-The endpoint returns only log data. Full transaction details (from, to, value, calldata) are not included -- the viewer was granted access to the logs, not the transaction itself.
+When a transaction is submitted with the `visibleTo` parameter (renamed from `logVisibleTo`), the specified DIDs are stored alongside the transaction hash. Transactions shared via `visibleTo` appear in the regular Transactions and Token Transfers pages for the listed DIDs -- no separate endpoint is needed.
 
 ### How it works
 
-1. A transaction sender includes `logVisibleTo: ["did:example:bob"]` in their transaction metadata.
-2. The proxy stores the mapping before forwarding the transaction to the node.
-3. When Bob queries `/shared-logs`, the proxy looks up all transaction hashes where Bob's DID appears in the `logVisibleTo` list.
-4. For each matching transaction, the event logs are fetched from the explorer database and returned.
+1. A transaction sender includes `visibleTo: ["did:example:bob"]` in their transaction metadata.
+2. The proxy strips the field and stores the mapping before forwarding the transaction to the node.
+3. When Bob views the Transactions or Token Transfers pages, the visibility filter includes these shared tx hashes, so they appear alongside Bob's own transactions.
+4. Event logs from these transactions are also visible to Bob via `eth_getLogs` (the `visibleTo` fallback extends param rule checks).
 
-This is purely additive -- it never restricts existing event rule access. If Bob already has access to the logs via RBAC event rules, `logVisibleTo` simply provides an additional discovery path.
+This is purely additive -- it never restricts existing event rule access. If Bob already has access to the logs via RBAC event rules, `visibleTo` simply provides an additional discovery path.
 
 ---
 

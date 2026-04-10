@@ -54,12 +54,12 @@ func (p *JSONRPCProcessor) contractABIProvider(ctx context.Context) rbac.ABIProv
 	return newStoreABIProvider(ctx, p.rbacAccessCtrl.Store())
 }
 
-// buildLogVisibilityContext builds a LogVisibilityContext for the given response.
-// It extracts tx hashes from the response body, batch-queries logVisibleTo rules,
-// and returns a context the filter can use. Returns nil if the logVisibleTo
+// buildTxVisibilityContext builds a TxVisibilityContext for the given response.
+// It extracts tx hashes from the response body, batch-queries visibleTo rules,
+// and returns a context the filter can use. Returns nil if the visibleTo
 // feature is not configured or if no rules are found.
-func (p *JSONRPCProcessor) buildLogVisibilityContext(ctx context.Context, userDID string, responseBody []byte) *rbac.LogVisibilityContext {
-	if p.logVisibilityStore == nil || userDID == "" {
+func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID string, responseBody []byte) *rbac.TxVisibilityContext {
+	if p.txVisibilityStore == nil || userDID == "" {
 		return nil
 	}
 
@@ -68,16 +68,16 @@ func (p *JSONRPCProcessor) buildLogVisibilityContext(ctx context.Context, userDI
 		return nil
 	}
 
-	visibility, err := p.logVisibilityStore.GetBatchTxLogVisibility(ctx, txHashes)
+	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
 	if err != nil {
-		slog.Warn("failed to query logVisibleTo rules", "error", err)
+		slog.Warn("failed to query visibleTo rules", "error", err)
 		return nil
 	}
 	if len(visibility) == 0 {
 		return nil
 	}
 
-	return &rbac.LogVisibilityContext{
+	return &rbac.TxVisibilityContext{
 		ViewerDID:    userDID,
 		TxVisibility: visibility,
 	}

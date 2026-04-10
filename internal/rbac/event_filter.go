@@ -17,16 +17,16 @@ type ABIProvider interface {
 	GetContractABI(address string) string
 }
 
-// LogVisibilityProvider looks up per-tx logVisibleTo rules from the database.
-type LogVisibilityProvider interface {
-	GetBatchTxLogVisibility(ctx context.Context, txHashes []string) (map[string][]string, error)
+// TxVisibilityProvider looks up per-tx visibleTo rules from the database.
+type TxVisibilityProvider interface {
+	GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[string][]string, error)
 }
 
-// LogVisibilityContext provides per-tx logVisibleTo data for the current filter pass.
+// TxVisibilityContext provides per-tx visibleTo data for the current filter pass.
 // When non-nil, it extends (never restricts) the existing event rule filtering:
 // if a log's topic0 matches an event rule but param rules fail, the viewer's DID
-// is checked against the tx's logVisibleTo list as a fallback.
-type LogVisibilityContext struct {
+// is checked against the tx's visibleTo list as a fallback.
+type TxVisibilityContext struct {
 	ViewerDID    string              // The DID of the user viewing the logs
 	TxVisibility map[string][]string // tx_hash (lowercase) -> visible_to_dids
 }
@@ -49,20 +49,20 @@ type logEntry struct {
 //     the caller's address in the constrained parameter positions (OR semantics
 //     across multiple ParamRules on the same event).
 //   - Union semantics across grants: if any grant allows the event, it passes.
-//   - Per-tx logVisibleTo: if topic0 matches an event rule but param rules fail,
-//     the viewer's DID is checked against the tx's logVisibleTo list as a fallback.
+//   - Per-tx visibleTo: if topic0 matches an event rule but param rules fail,
+//     the viewer's DID is checked against the tx's visibleTo list as a fallback.
 //     This is purely additive — it never restricts existing access.
 //
 // userAddresses are the caller's linked ETH addresses (lowercase 0x-prefixed).
 // perms contains the resolved effective permissions with ContractAccess and EventRules.
 // abiProvider supplies contract ABIs for param rule decoding (may be nil).
-// visCtx provides optional per-tx logVisibleTo data (may be nil for backward compat).
+// visCtx provides optional per-tx visibleTo data (may be nil for backward compat).
 func FilterEventLogs(
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
 	userAddresses []string,
 	abiProvider ABIProvider,
-	visCtx *LogVisibilityContext,
+	visCtx *TxVisibilityContext,
 ) []json.RawMessage {
 	if len(logs) == 0 {
 		return logs
@@ -108,8 +108,8 @@ func FilterEventLogs(
 		if access.EventRules == nil {
 			if logHasUserAddress(entry, addrSet) {
 				filtered = append(filtered, rawLog)
-			} else if isViewerInLogVisibleTo(visCtx, rawLog) {
-				// logVisibleTo extends default address filtering too.
+			} else if isViewerInVisibleTo(visCtx, rawLog) {
+				// visibleTo extends default address filtering too.
 				filtered = append(filtered, rawLog)
 			}
 			continue
@@ -124,9 +124,9 @@ func FilterEventLogs(
 		topic0 := strings.ToLower(entry.Topics[0])
 		if eventAllowed(topic0, entry, access.EventRules, addrSet, contractAddr, abiProvider) {
 			filtered = append(filtered, rawLog)
-		} else if eventTopic0Matches(topic0, access.EventRules) && isViewerInLogVisibleTo(visCtx, rawLog) {
+		} else if eventTopic0Matches(topic0, access.EventRules) && isViewerInVisibleTo(visCtx, rawLog) {
 			// Topic0 is in the allowlist but param rules failed.
-			// logVisibleTo extends param rule checks as a fallback.
+			// visibleTo extends param rule checks as a fallback.
 			filtered = append(filtered, rawLog)
 		}
 	}
@@ -134,9 +134,9 @@ func FilterEventLogs(
 	return filtered
 }
 
-// isViewerInLogVisibleTo checks if the viewer's DID appears in the logVisibleTo
+// isViewerInVisibleTo checks if the viewer's DID appears in the visibleTo
 // list for the transaction that produced this log entry.
-func isViewerInLogVisibleTo(visCtx *LogVisibilityContext, rawLog json.RawMessage) bool {
+func isViewerInVisibleTo(visCtx *TxVisibilityContext, rawLog json.RawMessage) bool {
 	if visCtx == nil || visCtx.ViewerDID == "" || len(visCtx.TxVisibility) == 0 {
 		return false
 	}
@@ -159,7 +159,7 @@ func isViewerInLogVisibleTo(visCtx *LogVisibilityContext, rawLog json.RawMessage
 }
 
 // eventTopic0Matches checks if the given topic0 matches any event rule's Topic0,
-// without checking param rules. Used to determine if logVisibleTo should be
+// without checking param rules. Used to determine if visibleTo should be
 // considered as a fallback (topic0 must be in the allowlist).
 func eventTopic0Matches(topic0 string, rules []EventRule) bool {
 	for _, rule := range rules {

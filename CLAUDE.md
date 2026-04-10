@@ -64,7 +64,7 @@ Every PR must include a security review before merging if it touches any of:
 - **Auth / RBAC** — JWT handling, claims, permissions, group access
 - **Visibility / redaction** — `GetBatchVisibility`, `RedactTransactions`, `RedactLogs`, event filtering
 - **New or changed API endpoints** — any new route, changed parameters, changed response shape
-- **Disclosure / grants** — disclosure requests, grants, logVisibleTo, shared logs
+- **Disclosure / grants** — disclosure requests, grants, visibleTo
 - **Explorer API** — any endpoint that returns chain data filtered by privacy rules
 - **Cross-org isolation** — contract ownership, org context, default claims
 

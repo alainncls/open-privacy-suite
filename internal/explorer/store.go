@@ -584,10 +584,15 @@ func (s *Store) GetTransactionsPaginatedWithCategories(ctx context.Context, page
 //
 //  2. Allowlist mode (AllPrivate=true): VisibleAddresses are the only ones allowed.
 //     Transactions are excluded unless at least one participant is in the allowlist.
+//
+// VisibleTxHashes provides an additional override: transactions whose hash appears
+// in this list are always visible regardless of address-based filtering. This is
+// used by the visibleTo feature to surface shared transactions in regular views.
 type VisibilityFilter struct {
 	HiddenAddresses  []string // blocklist mode: addresses with VisibilityHidden or VisibilityRedacted
 	AllPrivate       bool     // when true, use allowlist mode (VisibleAddresses)
 	VisibleAddresses []string // allowlist mode: addresses with VisibilityFull
+	VisibleTxHashes  []string // tx hashes that are always visible (visibleTo override)
 }
 
 // isFilterActive returns true if the filter has any effect.
@@ -611,16 +616,32 @@ func visibilityWhereClause(filter *VisibilityFilter, argIdx int) (string, []any,
 
 	if filter.AllPrivate {
 		// Allowlist mode: only show transactions where at least one participant is visible.
-		// If VisibleAddresses is empty, no transactions are shown (fully private network
-		// with no viewer access). This is correct — fail closed.
-		if len(filter.VisibleAddresses) == 0 {
+		// If VisibleAddresses is empty and no VisibleTxHashes, no transactions are shown
+		// (fully private network with no viewer access). This is correct — fail closed.
+		if len(filter.VisibleAddresses) == 0 && len(filter.VisibleTxHashes) == 0 {
 			return " AND FALSE", nil, argIdx
 		}
-		// Show tx if from OR to is in the visible set (at least one participant visible).
-		clause := fmt.Sprintf(` AND (
-			LOWER(t.from_address) = ANY($%d) OR LOWER(COALESCE(t.to_address, '')) = ANY($%d)
-		)`, argIdx, argIdx)
-		return clause, []any{pq.Array(filter.VisibleAddresses)}, argIdx + 1
+
+		// Build clause: show tx if from OR to is in visible set, OR hash is in VisibleTxHashes.
+		var parts []string
+		var args []any
+
+		if len(filter.VisibleAddresses) > 0 {
+			parts = append(parts, fmt.Sprintf(
+				"LOWER(t.from_address) = ANY($%d) OR LOWER(COALESCE(t.to_address, '')) = ANY($%d)",
+				argIdx, argIdx))
+			args = append(args, pq.Array(filter.VisibleAddresses))
+			argIdx++
+		}
+
+		if len(filter.VisibleTxHashes) > 0 {
+			parts = append(parts, fmt.Sprintf("t.hash = ANY($%d)", argIdx))
+			args = append(args, pq.Array(filter.VisibleTxHashes))
+			argIdx++
+		}
+
+		clause := " AND (" + strings.Join(parts, " OR ") + ")"
+		return clause, args, argIdx
 	}
 
 	// Blocklist mode (legacy): exclude txs where both sides are hidden.
