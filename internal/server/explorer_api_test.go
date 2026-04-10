@@ -87,6 +87,7 @@ func setupTestServerForExplorer(t *testing.T) (*Server, *db.DB) {
 	}
 
 	t.Cleanup(func() {
+		srv.rbacAccessCtrl.Stop()
 		srv.db.Close()
 	})
 
@@ -1406,6 +1407,7 @@ func setupTestServerForExplorerTransactions(t *testing.T) (*Server, *db.DB, *sql
 	}
 
 	t.Cleanup(func() {
+		srv.rbacAccessCtrl.Stop()
 		explorerStore.Close()
 		srv.db.Close()
 	})
