@@ -208,6 +208,65 @@ describe('GroupAccessForm', () => {
       });
     });
 
+    it('clicking Wallet User preset selects exactly the right number of methods', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
+      const expectedCount = getPresetMethods(walletPreset).length;
+
+      // Verify the section counter shows the correct count
+      await waitFor(() => {
+        // Wallet User section header should show N / N (all selected)
+        const sectionMethods = METHOD_SECTIONS['Wallet User'].methods;
+        expect(screen.getByText(`${sectionMethods.length} / ${sectionMethods.length}`)).toBeInTheDocument();
+      });
+
+      // Service/Backend section should show 0 selected
+      const serviceMethods = METHOD_SECTIONS['Service / Backend'].methods;
+      expect(screen.getByText(`0 / ${serviceMethods.length}`)).toBeInTheDocument();
+
+      // Developer section should show 0 selected
+      const devMethods = METHOD_SECTIONS['Developer'].methods;
+      expect(screen.getByText(`0 / ${devMethods.length}`)).toBeInTheDocument();
+
+      // The preset card shows "N methods" label
+      expect(screen.getByText(`${expectedCount} methods`)).toBeInTheDocument();
+    });
+
+    it('clicking Developer preset selects all 3 sections fully', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      const devCard = screen.getByText('Engineers — deploy, debug, inspect contract state').closest('button')!;
+      await user.click(devCard);
+
+      // All three sections should show full counts
+      await waitFor(() => {
+        const walletMethods = METHOD_SECTIONS['Wallet User'].methods;
+        expect(screen.getByText(`${walletMethods.length} / ${walletMethods.length}`)).toBeInTheDocument();
+      });
+
+      const serviceMethods = METHOD_SECTIONS['Service / Backend'].methods;
+      expect(screen.getByText(`${serviceMethods.length} / ${serviceMethods.length}`)).toBeInTheDocument();
+
+      const devMethods = METHOD_SECTIONS['Developer'].methods;
+      expect(screen.getByText(`${devMethods.length} / ${devMethods.length}`)).toBeInTheDocument();
+    });
+
     it('edit mode detects matching preset on load', async () => {
       // Load with exact Wallet User preset methods
       const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
@@ -477,6 +536,100 @@ describe('GroupAccessForm', () => {
       await waitFor(() => {
         expect(screen.getByText('Saving...')).toBeInTheDocument();
       });
+    });
+
+    it('save derives correct claims for Wallet User preset', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            ...capturedBody,
+          });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Apply Wallet User preset
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      await waitFor(() => {
+        expect(walletCard.className).toContain('border-primary');
+      });
+
+      // Save
+      const saveButton = screen.getByText('Save Access Settings');
+      await user.click(saveButton);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      // Wallet User has read methods + eth_sendTransaction (write), so claims should be [read, write]
+      expect(capturedBody).toBeDefined();
+      const claims = capturedBody!.claims as string[];
+      expect(claims).toContain('read');
+      expect(claims).toContain('write');
+      expect(claims).not.toContain('admin');
+      expect(claims).not.toContain('deploy');
+      expect(claims).not.toContain('upgrade');
+    });
+
+    it('save derives admin claim for Admin preset', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            ...capturedBody,
+          });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Apply Admin preset
+      const adminCard = screen.getByText('Full control — all methods, all claims').closest('button')!;
+      await user.click(adminCard);
+
+      await waitFor(() => {
+        expect(adminCard.className).toContain('border-primary');
+      });
+
+      // Save
+      const saveButton = screen.getByText('Save Access Settings');
+      await user.click(saveButton);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      // Admin preset sets isAdmin flag, so claims should include admin and all expanded claims
+      expect(capturedBody).toBeDefined();
+      const claims = capturedBody!.claims as string[];
+      expect(claims).toContain('admin');
+      expect(claims).toContain('read');
+      expect(claims).toContain('write');
+      expect(claims).toContain('deploy');
+      expect(claims).toContain('upgrade');
     });
   });
 

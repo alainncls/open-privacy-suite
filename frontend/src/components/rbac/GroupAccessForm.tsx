@@ -42,13 +42,19 @@ export default function GroupAccessForm({
   const [rpcApiKey, setRpcApiKey] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Track whether the last method change came from a preset click (skip auto-detect)
+  const [presetApplied, setPresetApplied] = useState(false);
 
   useEffect(() => {
     loadAccess();
   }, [groupId]);
 
-  // Auto-detect preset whenever methods change
+  // Auto-detect preset whenever methods change (but skip if a preset was just applied)
   useEffect(() => {
+    if (presetApplied) {
+      setPresetApplied(false);
+      return;
+    }
     const match = detectMatchingPreset(allowedMethods);
     setSelectedPresetId(match);
     setIsAdminPreset(match === 'admin');
@@ -94,6 +100,7 @@ export default function GroupAccessForm({
 
   const applyPreset = (preset: PermissionPreset) => {
     const methods = getPresetMethods(preset);
+    setPresetApplied(true);
     setAllowedMethods(methods);
     setIsAdminPreset(preset.adminClaim === true);
     setSelectedPresetId(preset.id);
