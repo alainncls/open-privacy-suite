@@ -297,11 +297,11 @@ func TestGroupAPI(t *testing.T) {
 		assert.Equal(t, "root", response["slug"])
 	})
 
-	t.Run("CreateChildGroup", func(t *testing.T) {
+	t.Run("CreateChildGroup_ParentIDIgnored", func(t *testing.T) {
 		body := map[string]any{
 			"slug":      "child",
 			"name":      "Child Group",
-			"parent_id": createdGroupID,
+			"parent_id": createdGroupID, // should be silently ignored
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -317,8 +317,10 @@ func TestGroupAPI(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.Equal(t, "root.child", response["path"])
-		assert.Equal(t, float64(1), response["depth"])
+		// parent_id is ignored — group is flat, depth 0, path is just the slug
+		assert.Equal(t, "child", response["path"])
+		assert.Equal(t, float64(0), response["depth"])
+		assert.Nil(t, response["parent_id"], "parent_id should be nil (ignored)")
 	})
 
 	t.Run("ListGroups", func(t *testing.T) {

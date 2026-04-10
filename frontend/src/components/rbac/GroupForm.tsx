@@ -4,60 +4,30 @@ import type { Group } from '@/types/rbac';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { AlertCircle, Save, X, Loader2, FolderTree, Shield, Check } from 'lucide-react';
+import { AlertCircle, Save, X, Loader2, Shield, Check } from 'lucide-react';
 
 interface GroupFormProps {
   orgId: string;
-  groups: Group[];
+  groups?: Group[]; // kept for API compat but unused (no parent hierarchy)
   group?: Group;
-  parentId?: string;
   onClose: () => void;
   onSave: () => void;
 }
 
 export default function GroupForm({
   orgId,
-  groups,
   group,
-  parentId,
   onClose,
   onSave,
 }: GroupFormProps) {
   const [name, setName] = useState(group?.name || '');
   const [slug, setSlug] = useState(group?.slug || '');
   const [description, setDescription] = useState(group?.description || '');
-  const [selectedParentId, setSelectedParentId] = useState<string | undefined>(
-    parentId || group?.parent_id || undefined
-  );
   const [isOrgAdmin, setIsOrgAdmin] = useState(group?.is_org_admin || false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!group;
-
-  // Filter out the current group and its descendants from parent options
-  const getAvailableParents = () => {
-    if (!group) return groups;
-
-    // Get all descendant IDs
-    const descendants = new Set<string>();
-    const findDescendants = (id: string) => {
-      descendants.add(id);
-      groups.filter(g => g.parent_id === id).forEach(g => findDescendants(g.id));
-    };
-    findDescendants(group.id);
-
-    return groups.filter(g => !descendants.has(g.id));
-  };
-
-  const availableParents = getAvailableParents();
 
   // Auto-generate slug from name (only for new groups)
   const handleNameChange = (value: string) => {
@@ -88,7 +58,7 @@ export default function GroupForm({
           slug,
           name,
           description,
-          parent_id: selectedParentId || null,
+          parent_id: null,
           is_org_admin: isOrgAdmin,
         });
       }
@@ -107,13 +77,6 @@ export default function GroupForm({
       setSaving(false);
     }
   };
-
-  const selectedParent = selectedParentId
-    ? groups.find(g => g.id === selectedParentId)
-    : null;
-  const previewPath = selectedParent
-    ? `${selectedParent.path}.${slug || '<slug>'}`
-    : slug || '<slug>';
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -136,62 +99,21 @@ export default function GroupForm({
       </div>
 
       {!isEditing && (
-        <>
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-neutral-700">Slug</label>
-            <Input
-              type="text"
-              value={slug}
-              onChange={e => setSlug(e.target.value)}
-              placeholder="e.g., engineering"
-              required
-              pattern="^[a-z0-9]+(_[a-z0-9]+)*$"
-              title="Lowercase letters, numbers, and underscores only"
-            />
-            <p className="text-xs text-neutral-400">
-              URL-friendly identifier (lowercase, underscores allowed)
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-neutral-700">
-              Parent Group (optional)
-            </label>
-            <Select
-              value={selectedParentId || '_none'}
-              onValueChange={value =>
-                setSelectedParentId(value === '_none' ? undefined : value)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="No parent (root level)" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_none">
-                  <div className="flex items-center gap-2 text-neutral-500">
-                    <FolderTree className="w-4 h-4" />
-                    <span>No parent (root level)</span>
-                  </div>
-                </SelectItem>
-                {availableParents.map(g => (
-                  <SelectItem key={g.id} value={g.id}>
-                    <div className="flex items-center gap-2">
-                      <FolderTree className="w-4 h-4 text-neutral-400" />
-                      <span>{g.name}</span>
-                      <span className="text-neutral-400 text-xs">({g.path})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Path Preview */}
-          <div className="p-3 rounded-lg bg-neutral-100 border border-neutral-200">
-            <p className="text-xs text-neutral-500 mb-1">Path preview:</p>
-            <code className="text-sm text-primary font-mono">{previewPath}</code>
-          </div>
-        </>
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-neutral-700">Slug</label>
+          <Input
+            type="text"
+            value={slug}
+            onChange={e => setSlug(e.target.value)}
+            placeholder="e.g., engineering"
+            required
+            pattern="^[a-z0-9]+(_[a-z0-9]+)*$"
+            title="Lowercase letters, numbers, and underscores only"
+          />
+          <p className="text-xs text-neutral-400">
+            URL-friendly identifier (lowercase, underscores allowed)
+          </p>
+        </div>
       )}
 
       <div className="space-y-2">

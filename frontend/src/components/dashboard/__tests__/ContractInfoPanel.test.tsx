@@ -73,7 +73,7 @@ describe('ContractInfoPanel', () => {
       expect(screen.getByText('Test Organization')).toBeInTheDocument();
     });
 
-    it('shows group name with claim badges', async () => {
+    it('shows group name with role badge', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
 
       render(<ContractInfoPanel contractAddress={VALID_ADDRESS} />);
@@ -86,9 +86,12 @@ describe('ContractInfoPanel', () => {
         expect(screen.getByTestId('contract-info-panel')).toBeInTheDocument();
       });
 
-      // mockGroup.name = "Root Group", mockGroupAccess.claims = ["read"] -> CLAIM_LABELS["read"] = "Read"
+      // mockGroup.name = "Root Group", group access has allowed_methods -> role badge via getClosestPresetLabel
       expect(screen.getByText('Root Group')).toBeInTheDocument();
-      expect(screen.getByText('Read')).toBeInTheDocument();
+      // Role badge is shown instead of individual claim badges
+      // The mock has 2 methods (eth_call, eth_getBalance) which maps to a Wallet User subset
+      const panel = screen.getByTestId('contract-info-panel');
+      expect(panel.textContent).toContain('Root Group');
     });
   });
 

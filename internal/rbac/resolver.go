@@ -129,12 +129,9 @@ func (r *Resolver) ResolvePermissions(ctx context.Context, userID, orgID string)
 // Algorithm:
 //  1. Get user's memberships in the org
 //  2. Check for org admin memberships - if found, grant all claims on all contracts
-//  3. For each membership:
-//     a. Get the group hierarchy (root -> ... -> current)
-//     b. Compute permissions through hierarchy with INTERSECTION (child narrows parent)
-//     c. Collect contract grants and group access along the hierarchy
+//  3. For each membership, get the group's OWN access and contract grants (flat, no hierarchy)
 //  4. Merge permissions across multiple group memberships (UNION - user benefits from all groups)
-//  5. Rate limits: MINIMUM within hierarchy, MAXIMUM across memberships
+//  5. Rate limits: MAXIMUM across memberships
 func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) {
 	// Get user's memberships in this org with details
 	memberships, err := r.store.ListUserMembershipsInOrg(ctx, userID, orgID)
@@ -180,14 +177,8 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	firstMembership := true
 
 	for _, m := range memberships {
-		// Get the group hierarchy for this membership
-		hierarchy, err := r.store.GetGroupHierarchy(ctx, m.Group.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		// Compute permissions through the hierarchy with restrictive inheritance
-		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy)
+		// Get the group's own permissions directly (flat — no hierarchy walk)
+		membershipPerms, err := r.computeGroupPermissions(ctx, m.Group.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -259,13 +250,8 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 	var finalRPCAPIKey string
 
 	for _, m := range memberships {
-		// Get the group hierarchy for this membership to get rate limits
-		hierarchy, err := r.store.GetGroupHierarchy(ctx, m.Group.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		membershipPerms, err := r.computeHierarchyPermissions(ctx, hierarchy)
+		// Get the group's own permissions directly (flat — no hierarchy walk)
+		membershipPerms, err := r.computeGroupPermissions(ctx, m.Group.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -291,6 +277,77 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(r.cacheTTL),
 	}, nil
+}
+
+// computeGroupPermissions computes permissions from a single group's own access
+// settings and contract grants (flat — no hierarchy walk).
+func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) (*hierarchyPerms, error) {
+	access, err := r.store.GetGroupAccess(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &hierarchyPerms{
+		AllowedMethods: []string{},
+		ContractAccess: make(map[string]ContractAccess),
+		Claims:         []Claim{},
+	}
+
+	if access != nil {
+		if access.AllowedMethods != nil {
+			result.AllowedMethods = access.AllowedMethods
+		}
+		if access.Claims != nil {
+			result.Claims = access.Claims
+		}
+		result.RateLimitRPS = access.RateLimitRPS
+		result.RateLimitDaily = access.RateLimitDaily
+
+		// Decrypt RPC API key if present
+		if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
+			decrypted, err := crypto.Decrypt(*access.RPCAPIKey, r.encryptionKey)
+			if err != nil {
+				// Decryption failed — use the raw value (may be legacy plaintext)
+				result.RPCAPIKey = *access.RPCAPIKey
+			} else {
+				result.RPCAPIKey = decrypted
+			}
+		}
+	}
+
+	// Get contract grants for this group
+	grants, err := r.store.ListContractGrantsByGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(grants) > 0 {
+		// Batch load contracts
+		contractIDs := make([]string, len(grants))
+		for i, g := range grants {
+			contractIDs[i] = g.ContractID
+		}
+		contracts, err := r.store.GetContractsByIDs(ctx, contractIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		// Build contract access from grants using group's claims
+		for _, grant := range grants {
+			contract, ok := contracts[grant.ContractID]
+			if !ok {
+				continue // Contract deleted, skip
+			}
+			address := strings.ToLower(contract.Address)
+			result.ContractAccess[address] = ContractAccess{
+				Claims:     result.Claims,
+				Functions:  grant.Functions,
+				EventRules: grant.EventRules,
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // hierarchyPerms holds permissions computed through a group hierarchy.

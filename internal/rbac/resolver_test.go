@@ -397,34 +397,34 @@ func (m *MockStore) ListUsersPaginated(ctx context.Context, limit, offset int) (
 
 // Tests
 
-func TestResolverRestrictiveInheritance(t *testing.T) {
+func TestResolverFlatGroupPermissions(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
 
-	// Setup: org -> root -> child
+	// Setup: org with two groups (flat — parent_id is ignored by resolver)
 	org := &Organization{ID: "org1", Slug: "test"}
 	store.organizations["org1"] = org
 
 	rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-	childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
+	childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
 	store.groups["root"] = rootGroup
 	store.groups["child"] = childGroup
 
-	// Root group access - wider permissions
+	// Root group access - wider permissions (not consulted for child's members)
 	store.groupAccess["root"] = &GroupAccess{
 		GroupID:        "root",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
 		Claims:         []Claim{ClaimRead, ClaimWrite},
 	}
 
-	// Child group access - more restrictive (INTERSECTION with parent)
+	// Child group access - its own permissions (no intersection with root)
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
 		Claims:         []Claim{ClaimRead},
 	}
 
-	// User in child group
+	// User in child group only
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 		{
 			Membership: &UserMembership{UserID: "user1", GroupID: "child"},
@@ -438,7 +438,7 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 		t.Fatalf("ResolvePermissions failed: %v", err)
 	}
 
-	// Should only have intersection: eth_call, eth_getBalance
+	// Should have child's own methods: eth_call, eth_getBalance
 	if len(perms.AllowedMethods) != 2 {
 		t.Errorf("Expected 2 methods, got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 	}
@@ -450,34 +450,27 @@ func TestResolverRestrictiveInheritance(t *testing.T) {
 		t.Error("Expected eth_getBalance to be allowed")
 	}
 	if perms.HasMethod("eth_sendTransaction") {
-		t.Error("eth_sendTransaction should be restricted by child group")
+		t.Error("eth_sendTransaction should not be allowed (not in child group)")
 	}
 
-	// Should only have intersection of claims: read
+	// Should have child's own claims: read
 	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimRead {
 		t.Errorf("Expected only read claim, got %v", perms.Claims)
 	}
 }
 
-func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
-	t.Run("empty claims narrows parent claims to zero", func(t *testing.T) {
+func TestResolverFlatGroupEdgeCases(t *testing.T) {
+	t.Run("empty claims on group means zero claims", func(t *testing.T) {
 		store := NewMockStore()
 		resolver := NewResolver(store, 5*time.Minute)
 
 		org := &Organization{ID: "org1", Slug: "test"}
 		store.organizations["org1"] = org
 
-		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-		store.groups["root"] = rootGroup
-		store.groups["child"] = childGroup
+		group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
+		store.groups["child"] = group
 
-		store.groupAccess["root"] = &GroupAccess{
-			GroupID:        "root",
-			AllowedMethods: []string{"eth_call"},
-			Claims:         []Claim{ClaimRead, ClaimWrite},
-		}
-		// Explicitly empty claims — should narrow parent to zero
+		// Explicitly empty claims — group grants no claims
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: []string{"eth_call"},
@@ -487,7 +480,7 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 			{
 				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-				Group:      childGroup,
+				Group:      group,
 			},
 		}
 
@@ -497,28 +490,21 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		}
 
 		if len(perms.Claims) != 0 {
-			t.Errorf("Expected 0 claims (empty narrows parent), got %d: %v", len(perms.Claims), perms.Claims)
+			t.Errorf("Expected 0 claims (group has empty claims), got %d: %v", len(perms.Claims), perms.Claims)
 		}
 	})
 
-	t.Run("nil claims inherits parent claims", func(t *testing.T) {
+	t.Run("nil claims on group means zero claims", func(t *testing.T) {
 		store := NewMockStore()
 		resolver := NewResolver(store, 5*time.Minute)
 
 		org := &Organization{ID: "org1", Slug: "test"}
 		store.organizations["org1"] = org
 
-		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-		store.groups["root"] = rootGroup
-		store.groups["child"] = childGroup
+		group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
+		store.groups["child"] = group
 
-		store.groupAccess["root"] = &GroupAccess{
-			GroupID:        "root",
-			AllowedMethods: []string{"eth_call"},
-			Claims:         []Claim{ClaimRead, ClaimWrite},
-		}
-		// nil claims — should inherit parent's claims
+		// nil claims — with flat model, no parent to inherit from, so zero claims
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: []string{"eth_call"},
@@ -528,7 +514,7 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 			{
 				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-				Group:      childGroup,
+				Group:      group,
 			},
 		}
 
@@ -537,35 +523,22 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 			t.Fatalf("ResolvePermissions failed: %v", err)
 		}
 
-		if len(perms.Claims) != 2 {
-			t.Errorf("Expected 2 claims (inherited from parent), got %d: %v", len(perms.Claims), perms.Claims)
-		}
-		if !HasClaim(perms.Claims, ClaimRead) {
-			t.Error("Expected read claim to be inherited")
-		}
-		if !HasClaim(perms.Claims, ClaimWrite) {
-			t.Error("Expected write claim to be inherited")
+		if len(perms.Claims) != 0 {
+			t.Errorf("Expected 0 claims (nil treated as empty for flat groups), got %d: %v", len(perms.Claims), perms.Claims)
 		}
 	})
 
-	t.Run("empty allowed methods narrows parent methods to zero", func(t *testing.T) {
+	t.Run("empty allowed methods means zero methods", func(t *testing.T) {
 		store := NewMockStore()
 		resolver := NewResolver(store, 5*time.Minute)
 
 		org := &Organization{ID: "org1", Slug: "test"}
 		store.organizations["org1"] = org
 
-		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-		store.groups["root"] = rootGroup
-		store.groups["child"] = childGroup
+		group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
+		store.groups["child"] = group
 
-		store.groupAccess["root"] = &GroupAccess{
-			GroupID:        "root",
-			AllowedMethods: []string{"eth_call", "eth_getBalance"},
-			Claims:         []Claim{ClaimRead},
-		}
-		// Explicitly empty methods — should narrow parent to zero
+		// Explicitly empty methods — group allows no methods
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: []string{},
@@ -575,7 +548,7 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 			{
 				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-				Group:      childGroup,
+				Group:      group,
 			},
 		}
 
@@ -585,28 +558,21 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		}
 
 		if len(perms.AllowedMethods) != 0 {
-			t.Errorf("Expected 0 methods (empty narrows parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
+			t.Errorf("Expected 0 methods (group has empty methods), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 		}
 	})
 
-	t.Run("nil allowed methods inherits parent methods", func(t *testing.T) {
+	t.Run("nil allowed methods means zero methods", func(t *testing.T) {
 		store := NewMockStore()
 		resolver := NewResolver(store, 5*time.Minute)
 
 		org := &Organization{ID: "org1", Slug: "test"}
 		store.organizations["org1"] = org
 
-		rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-		childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-		store.groups["root"] = rootGroup
-		store.groups["child"] = childGroup
+		group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
+		store.groups["child"] = group
 
-		store.groupAccess["root"] = &GroupAccess{
-			GroupID:        "root",
-			AllowedMethods: []string{"eth_call", "eth_getBalance"},
-			Claims:         []Claim{ClaimRead},
-		}
-		// nil methods — should inherit parent's methods
+		// nil methods — with flat model, no parent to inherit from, so zero methods
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: nil,
@@ -616,7 +582,7 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 			{
 				Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-				Group:      childGroup,
+				Group:      group,
 			},
 		}
 
@@ -625,14 +591,8 @@ func TestResolverEmptyClaimsNarrowsHierarchy(t *testing.T) {
 			t.Fatalf("ResolvePermissions failed: %v", err)
 		}
 
-		if len(perms.AllowedMethods) != 2 {
-			t.Errorf("Expected 2 methods (inherited from parent), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
-		}
-		if !perms.HasMethod("eth_call") {
-			t.Error("Expected eth_call to be inherited")
-		}
-		if !perms.HasMethod("eth_getBalance") {
-			t.Error("Expected eth_getBalance to be inherited")
+		if len(perms.AllowedMethods) != 0 {
+			t.Errorf("Expected 0 methods (nil treated as empty for flat groups), got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 		}
 	})
 }
@@ -691,49 +651,45 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	}
 }
 
-func TestResolverContractGrantsInheritance(t *testing.T) {
+func TestResolverContractGrantsFlatGroup(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
 
 	org := &Organization{ID: "org1", Slug: "test"}
 	store.organizations["org1"] = org
 
-	rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-	childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-	store.groups["root"] = rootGroup
-	store.groups["child"] = childGroup
+	// Two flat groups — no hierarchy relationship
+	groupA := &Group{ID: "groupA", OrgID: "org1", Slug: "groupA", Path: "groupA", Depth: 0}
+	groupB := &Group{ID: "groupB", OrgID: "org1", Slug: "groupB", Path: "groupB", Depth: 0}
+	store.groups["groupA"] = groupA
+	store.groups["groupB"] = groupB
 
 	// Contract A
 	contractA := &Contract{ID: "contractA", OrgID: "org1", Address: "0xaddressA"}
 	store.contracts["contractA"] = contractA
 
-	// Note: Grant-level claims are deprecated. Claims are now inherited from GroupAccess.
-	// Grants just link groups to contracts and optionally restrict functions.
-	// For this test, we set up GroupAccess.Claims on root and child to test inheritance.
-	store.contractGrants["root"] = []*ContractGrant{
-		{ContractID: "contractA", GroupID: "root"},
+	// Only groupB has a grant on contractA
+	store.contractGrants["groupB"] = []*ContractGrant{
+		{ContractID: "contractA", GroupID: "groupB"},
 	}
 
-	store.contractGrants["child"] = []*ContractGrant{
-		{ContractID: "contractA", GroupID: "child"},
-	}
-
-	// Group access - claims here are now the source of truth for contract access
-	store.groupAccess["root"] = &GroupAccess{
-		GroupID:        "root",
+	// Group access — groupB's claims are the source of truth for its contract grants
+	store.groupAccess["groupA"] = &GroupAccess{
+		GroupID:        "groupA",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
 	}
-	store.groupAccess["child"] = &GroupAccess{
-		GroupID:        "child",
+	store.groupAccess["groupB"] = &GroupAccess{
+		GroupID:        "groupB",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead, ClaimWrite}, // More restrictive than parent
+		Claims:         []Claim{ClaimRead, ClaimWrite},
 	}
 
+	// User is member of groupB only
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 		{
-			Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-			Group:      childGroup,
+			Membership: &UserMembership{UserID: "user1", GroupID: "groupB"},
+			Group:      groupB,
 		},
 	}
 
@@ -742,7 +698,7 @@ func TestResolverContractGrantsInheritance(t *testing.T) {
 		t.Fatalf("ResolvePermissions failed: %v", err)
 	}
 
-	// Should have INTERSECTION of claims on contract A: read, write (not admin)
+	// Should have groupB's own claims on contract A: read, write (not admin)
 	// Note: addresses are lowercased in the resolver
 	access, ok := perms.ContractAccess["0xaddressa"]
 	if !ok {
@@ -752,41 +708,32 @@ func TestResolverContractGrantsInheritance(t *testing.T) {
 		t.Errorf("Expected 2 claims on contract A, got %d: %v", len(access.Claims), access.Claims)
 	}
 	if access.HasClaim(ClaimAdmin) {
-		t.Error("Should not have admin claim (restricted by child group)")
+		t.Error("Should not have admin claim (groupB only has read, write)")
 	}
 }
 
-func TestResolverRateLimitsRestrictive(t *testing.T) {
+func TestResolverRateLimitsFlatGroup(t *testing.T) {
 	store := NewMockStore()
 	resolver := NewResolver(store, 5*time.Minute)
 
 	org := &Organization{ID: "org1", Slug: "test"}
 	store.organizations["org1"] = org
 
-	rootGroup := &Group{ID: "root", OrgID: "org1", Slug: "root", Path: "root", Depth: 0}
-	childGroup := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "root.child", Depth: 1, ParentID: &rootGroup.ID}
-	store.groups["root"] = rootGroup
-	store.groups["child"] = childGroup
+	group := &Group{ID: "child", OrgID: "org1", Slug: "child", Path: "child", Depth: 0}
+	store.groups["child"] = group
 
-	rootRPS := 100
-	childRPS := 50 // More restrictive
-
-	store.groupAccess["root"] = &GroupAccess{
-		GroupID:        "root",
-		AllowedMethods: []string{"eth_call"},
-		RateLimitRPS:   &rootRPS,
-	}
+	groupRPS := 50
 
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call"},
-		RateLimitRPS:   &childRPS,
+		RateLimitRPS:   &groupRPS,
 	}
 
 	store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
 		{
 			Membership: &UserMembership{UserID: "user1", GroupID: "child"},
-			Group:      childGroup,
+			Group:      group,
 		},
 	}
 
@@ -795,7 +742,7 @@ func TestResolverRateLimitsRestrictive(t *testing.T) {
 		t.Fatalf("ResolvePermissions failed: %v", err)
 	}
 
-	// Should have MINIMUM rate limit (50, the more restrictive one)
+	// Should have the group's own rate limit (50)
 	if perms.RateLimitRPS == nil || *perms.RateLimitRPS != 50 {
 		t.Errorf("Expected rate limit 50, got %v", perms.RateLimitRPS)
 	}

@@ -403,9 +403,7 @@ export const METHOD_CATEGORIES = {
       'eth_blockNumber',
       'net_version',
       'net_listening',
-      'net_peerCount',
       'web3_clientVersion',
-      'web3_sha3',
       'eth_syncing',
       'eth_accounts',
     ],
@@ -435,28 +433,12 @@ export const METHOD_CATEGORIES = {
     'Gas & Fee Data': [
       'eth_gasPrice',
       'eth_maxPriorityFeePerGas',
-      'eth_feeHistory',
-    ],
-    'Filters (Deprecated)': [
-      'eth_newFilter',
-      'eth_newBlockFilter',
-      'eth_newPendingTransactionFilter',
-      'eth_getFilterChanges',
-      'eth_getFilterLogs',
-      'eth_uninstallFilter',
     ],
   },
   write: {
     'State Modifying': [
       'eth_sendTransaction',
       'eth_sendRawTransaction',
-    ],
-    'Signing & Wallets': [
-      'eth_sign',
-      'eth_signTransaction',
-      'personal_sign',
-      'eth_signTypedData',
-      'eth_signTypedData_v4',
     ],
   },
   deploy: {
@@ -571,4 +553,152 @@ export interface ContractSyncDeleteResponse {
     id: string;
     reason: string;
   }>;
+}
+
+// ============================================================================
+// PERMISSION PRESETS & ROLE-BASED METHOD SECTIONS
+// ============================================================================
+
+// Expand claims using the hierarchy (frontend equivalent of backend ExpandClaims)
+export function ExpandClaims(claims: Claim[]): Claim[] {
+  const expanded = new Set<Claim>(claims);
+  for (const claim of claims) {
+    const implied = CLAIM_HIERARCHY[claim];
+    if (implied) {
+      for (const c of implied) expanded.add(c);
+    }
+  }
+  return Array.from(expanded);
+}
+
+// Role-based method sections — incremental layers
+export const METHOD_SECTIONS = {
+  'Wallet User': {
+    description: 'Core methods for end users with wallets',
+    methods: [
+      'eth_chainId', 'eth_blockNumber', 'net_version', 'net_listening',
+      'web3_clientVersion', 'eth_syncing', 'eth_accounts',
+      'eth_getBalance', 'eth_getTransactionCount',
+      'eth_getBlockByHash', 'eth_getBlockByNumber',
+      'eth_getTransactionByHash', 'eth_getTransactionReceipt', 'eth_getLogs',
+      'eth_call', 'eth_estimateGas',
+      'eth_gasPrice', 'eth_maxPriorityFeePerGas',
+      'eth_sendTransaction',
+    ],
+  },
+  'Service / Backend': {
+    description: 'Additional methods for automated systems and backend services',
+    methods: [
+      'eth_sendRawTransaction',
+      'eth_getBlockTransactionCountByHash', 'eth_getBlockTransactionCountByNumber',
+      'eth_getTransactionByBlockHashAndIndex', 'eth_getTransactionByBlockNumberAndIndex',
+    ],
+  },
+  'Developer': {
+    description: 'Deep inspection and debugging tools for engineers',
+    methods: [
+      'eth_getCode', 'eth_getStorageAt',
+      'debug_traceTransaction', 'debug_traceCall',
+    ],
+  },
+} as const;
+
+export interface PermissionPreset {
+  id: string;
+  name: string;
+  description: string;
+  icon: string; // lucide-react icon name
+  sections: (keyof typeof METHOD_SECTIONS)[]; // which sections to check
+  adminClaim?: boolean; // if true, set admin claim instead of deriving
+}
+
+export const PERMISSION_PRESETS: PermissionPreset[] = [
+  {
+    id: 'wallet_user',
+    name: 'Wallet User',
+    description: 'End users with wallets — send payments, check balances',
+    icon: 'Wallet',
+    sections: ['Wallet User'],
+  },
+  {
+    id: 'service_backend',
+    name: 'Service / Backend',
+    description: 'Automated systems — raw transactions, event monitoring',
+    icon: 'Server',
+    sections: ['Wallet User', 'Service / Backend'],
+  },
+  {
+    id: 'developer',
+    name: 'Developer',
+    description: 'Engineers — deploy, debug, inspect contract state',
+    icon: 'Code',
+    sections: ['Wallet User', 'Service / Backend', 'Developer'],
+  },
+  {
+    id: 'admin',
+    name: 'Admin',
+    description: 'Full control — all methods, all claims',
+    icon: 'ShieldCheck',
+    sections: ['Wallet User', 'Service / Backend', 'Developer'],
+    adminClaim: true,
+  },
+];
+
+// Get all methods for a preset
+export function getPresetMethods(preset: PermissionPreset): string[] {
+  return preset.sections.flatMap(s => [...METHOD_SECTIONS[s].methods]);
+}
+
+// Derive claims from selected methods
+export function deriveClaims(methods: string[], isAdmin?: boolean): Claim[] {
+  if (isAdmin) return ExpandClaims(['admin'] as Claim[]);
+  const claims: Claim[] = [];
+  const methodSet = new Set(methods);
+  if (RPC_METHODS_BY_CLAIM.read.some(m => methodSet.has(m))) claims.push('read' as Claim);
+  if (RPC_METHODS_BY_CLAIM.write.some(m => methodSet.has(m))) claims.push('write' as Claim);
+  if (RPC_METHODS_BY_CLAIM.deploy.some(m => methodSet.has(m))) claims.push('deploy' as Claim);
+  return ExpandClaims(claims);
+}
+
+// Find closest matching preset for a method set. Returns badge text.
+export function getClosestPresetLabel(methods: string[]): string {
+  const methodSet = new Set(methods);
+  let bestPreset: PermissionPreset | null = null;
+  let bestDelta = Infinity;
+
+  for (const preset of PERMISSION_PRESETS) {
+    const presetMethods = new Set(getPresetMethods(preset));
+    let added = 0, removed = 0;
+    for (const m of methodSet) { if (!presetMethods.has(m)) added++; }
+    for (const m of presetMethods) { if (!methodSet.has(m)) removed++; }
+    const delta = added + removed;
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestPreset = preset;
+    }
+  }
+
+  if (!bestPreset || bestDelta > 6) return `Custom \u00b7 ${methods.length}`;
+  if (bestDelta === 0) return bestPreset.name;
+
+  const presetMethods = new Set(getPresetMethods(bestPreset));
+  let added = 0, removed = 0;
+  for (const m of methodSet) { if (!presetMethods.has(m)) added++; }
+  for (const m of presetMethods) { if (!methodSet.has(m)) removed++; }
+
+  const parts = [bestPreset.name];
+  if (added > 0) parts.push(`+${added}`);
+  if (removed > 0) parts.push(`-${removed}`);
+  return parts.join(' ');
+}
+
+// Detect which preset exactly matches current config
+export function detectMatchingPreset(methods: string[]): string | null {
+  const methodSet = new Set(methods);
+  for (const preset of PERMISSION_PRESETS) {
+    const presetMethods = getPresetMethods(preset);
+    if (presetMethods.length !== methodSet.size) continue;
+    if (presetMethods.every(m => methodSet.has(m))) return preset.id;
+  }
+  return null;
 }
