@@ -45,55 +45,55 @@ end
 return 1
 `)
 
-// setCodeScript atomically sets the authorization code on an existing session.
-// It GETs the session, decodes it, updates code/code_expires/user_did/kyc,
-// writes it back with KEEPTTL, and creates the code index key — all in one
-// atomic Lua script to eliminate the TOCTOU race in the original GET+SET flow.
+// setCodeScript atomically checks that a session exists, replaces it with the
+// full JSON prepared by Go, and creates the code index key. This avoids using
+// cjson.decode/encode in Lua, which corrupts empty JSON arrays.
 //
 // KEYS[1] = session key     (pp:oauth:sess:{id})
 // KEYS[2] = code index key  (pp:oauth:code:{code})
-// ARGV[1] = code
-// ARGV[2] = code_expires    (RFC 3339 string, matching Go json.Marshal of time.Time)
-// ARGV[3] = user_did
-// ARGV[4] = kyc             ("true" / "false")
-// ARGV[5] = code TTL        (seconds)
-// ARGV[6] = session ID      (value stored in the code index key)
+// ARGV[1] = full session JSON (prepared by Go)
+// ARGV[2] = session ID      (value stored in the code index key)
+// ARGV[3] = code TTL        (seconds)
 //
 // Returns {1} on success, {0} if the session does not exist.
 var setCodeScript = redis.NewScript(`
 local data = redis.call('GET', KEYS[1])
 if not data then return {0} end
-local session = cjson.decode(data)
-session.code = ARGV[1]
-session.code_expires = ARGV[2]
-session.user_did = ARGV[3]
-session.kyc = (ARGV[4] == 'true')
-redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
-redis.call('SET', KEYS[2], ARGV[6], 'EX', tonumber(ARGV[5]))
+redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
+redis.call('SET', KEYS[2], ARGV[2], 'EX', tonumber(ARGV[3]))
 return {1}
 `)
 
-// markCodeUsedScript atomically marks an OAuth authorization code as used.
-// It looks up the session via the code index, checks that the code hasn't been
-// used yet, sets code_used=true, persists the session, and deletes the code index
-// entry — all in a single atomic Lua script to prevent replay attacks.
+// markCodeUsedReadScript is phase 1 of the two-phase mark-code-used flow.
+// It reads the code index and session data and returns them to Go for
+// JSON manipulation, avoiding cjson.decode/encode which corrupts empty arrays.
 //
 // KEYS[1] = code index key (pp:oauth:code:{code})
 // ARGV[1] = session key prefix (pp:oauth:sess:)
 //
-// Returns {1, sessionID} on success, {0, ""} on failure.
-var markCodeUsedScript = redis.NewScript(`
+// Returns {1, sessionID, sessionData} on success, {0, "", ""} on failure.
+var markCodeUsedReadScript = redis.NewScript(`
 local sess_id = redis.call('GET', KEYS[1])
-if not sess_id then return {0, ''} end
+if not sess_id then return {0, '', ''} end
 local sess_key = ARGV[1] .. sess_id
 local data = redis.call('GET', sess_key)
-if not data then return {0, ''} end
-local session = cjson.decode(data)
-if session.code_used then return {0, ''} end
-session.code_used = true
-redis.call('SET', sess_key, cjson.encode(session), 'KEEPTTL')
-redis.call('DEL', KEYS[1])
-return {1, sess_id}
+if not data then return {0, '', ''} end
+return {1, sess_id, data}
+`)
+
+// markCodeUsedWriteScript is phase 2 of the two-phase mark-code-used flow.
+// It persists the updated session JSON (prepared by Go) and deletes the
+// code index entry.
+//
+// KEYS[1] = session key   (pp:oauth:sess:{id})
+// KEYS[2] = code index key (pp:oauth:code:{code})
+// ARGV[1] = full session JSON (prepared by Go)
+//
+// Returns 1 on success.
+var markCodeUsedWriteScript = redis.NewScript(`
+redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
+redis.call('DEL', KEYS[2])
+return 1
 `)
 
 // OAuthSessionStore is a Redis-backed implementation of the OAuthSessionManager interface.
@@ -206,28 +206,37 @@ func (s *OAuthSessionStore) GetSessionByCode(code string) *types.OAuthSession {
 }
 
 // SetCode atomically sets the authorization code for a session.
-// Uses a Lua script to eliminate the TOCTOU race between reading and updating the session.
+// Reads the session in Go, updates fields, marshals the complete session,
+// and uses a Lua script to check-and-SET atomically. All JSON encoding
+// happens in Go to avoid Redis Lua's cjson library, which corrupts empty
+// arrays ([] -> {}).
 func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) error {
 	ctx := context.Background()
 	sessKey := oauthSessionKeyPrefix + sessionID
 	codeKey := oauthCodeKeyPrefix + code
 
-	codeExpires := time.Now().Add(oauthCodeTTL)
-	codeTTLSeconds := int64(oauthCodeTTL.Seconds())
-
-	kycStr := "false"
-	if kyc {
-		kycStr = "true"
+	session := s.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found")
 	}
+
+	session.Code = code
+	session.CodeExpires = time.Now().Add(oauthCodeTTL)
+	session.UserDID = userDID
+	session.KYC = kyc
+
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+
+	codeTTLSeconds := int64(oauthCodeTTL.Seconds())
 
 	result, err := setCodeScript.Run(ctx, s.client,
 		[]string{sessKey, codeKey},
-		code,
-		codeExpires.Format(time.RFC3339Nano),
-		userDID,
-		kycStr,
-		codeTTLSeconds,
+		string(data),
 		sessionID,
+		codeTTLSeconds,
 	).Slice()
 	if err != nil {
 		return fmt.Errorf("redis setCode script: %w", err)
@@ -247,28 +256,68 @@ func (s *OAuthSessionStore) SetCode(sessionID, code, userDID string, kyc bool) e
 
 // MarkCodeUsed atomically marks the authorization code as used (single-use).
 // Returns true if the code was valid and successfully marked, false otherwise.
-// Uses a Lua script to prevent replay attacks via race conditions.
+// Uses a two-phase Lua approach: phase 1 reads code index + session data,
+// Go checks code_used and prepares updated JSON, phase 2 persists and cleans up.
+// All JSON encoding happens in Go to avoid Redis Lua's cjson library,
+// which corrupts empty arrays ([] -> {}).
 func (s *OAuthSessionStore) MarkCodeUsed(code string) bool {
 	ctx := context.Background()
 	codeKey := oauthCodeKeyPrefix + code
 
-	result, err := markCodeUsedScript.Run(ctx, s.client, []string{codeKey}, oauthSessionKeyPrefix).Slice()
+	// Phase 1: Read code index and session data.
+	result, err := markCodeUsedReadScript.Run(ctx, s.client, []string{codeKey}, oauthSessionKeyPrefix).Slice()
 	if err != nil {
-		slog.Error("redis oauth store: markCodeUsed script failed", "error", err)
+		slog.Error("redis oauth store: markCodeUsedRead script failed", "error", err)
 		return false
 	}
 
-	if len(result) < 1 {
+	if len(result) < 3 {
 		return false
 	}
 
-	// The Lua script returns {1, sessionID} on success.
 	success, ok := result[0].(int64)
-	if !ok {
+	if !ok || success != 1 {
 		return false
 	}
 
-	return success == 1
+	sessID, ok := result[1].(string)
+	if !ok || sessID == "" {
+		return false
+	}
+
+	sessData, ok := result[2].(string)
+	if !ok || sessData == "" {
+		return false
+	}
+
+	// Decode in Go, check code_used, update.
+	var session types.OAuthSession
+	if err := json.Unmarshal([]byte(sessData), &session); err != nil {
+		slog.Error("redis oauth store: failed to unmarshal session in markCodeUsed", "error", err)
+		return false
+	}
+
+	if session.CodeUsed {
+		return false
+	}
+
+	session.CodeUsed = true
+
+	data, err := json.Marshal(&session)
+	if err != nil {
+		slog.Error("redis oauth store: failed to marshal session in markCodeUsed", "error", err)
+		return false
+	}
+
+	// Phase 2: Persist updated session and delete code index.
+	sessKey := oauthSessionKeyPrefix + sessID
+	_, err = markCodeUsedWriteScript.Run(ctx, s.client, []string{sessKey, codeKey}, string(data)).Int()
+	if err != nil {
+		slog.Error("redis oauth store: markCodeUsedWrite script failed", "error", err)
+		return false
+	}
+
+	return true
 }
 
 // DeleteSession removes an OAuth session, its code index entry, and decrements

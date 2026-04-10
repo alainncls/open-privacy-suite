@@ -355,9 +355,22 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 
 	// Extract and strip logVisibleTo from eth_sendTransaction before forwarding.
+	// Only accepted on contract calls (tx with data field) — plain ETH transfers
+	// have no event logs, so logVisibleTo is rejected for them.
 	var logVisibleTo []string
 	if req.Method == "eth_sendTransaction" {
 		logVisibleTo = extractAndStripLogVisibleTo(req)
+		if len(logVisibleTo) > 0 {
+			_, to, data, _ := extractTxParams(req.Params)
+			if isSimpleValueTransfer(data) || to == "" || to == "0x" {
+				return &ProcessResult{
+					Error: &ProcessError{
+						StatusCode: http.StatusBadRequest,
+						Message:    "logVisibleTo is only supported for contract calls that emit event logs",
+					},
+				}
+			}
+		}
 	}
 
 	// Check concurrency limit
@@ -1081,8 +1094,19 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	}
 
 	// Extract and strip logVisibleTo from second param (if present) before forwarding.
+	// Only accepted on contract calls — plain transfers have no event logs.
 	var rawTxLogVisibleTo []string
 	rawTxLogVisibleTo = extractAndStripRawTxLogVisibleTo(req)
+	if len(rawTxLogVisibleTo) > 0 {
+		if isSimpleValueTransfer(data) || to == "" {
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusBadRequest,
+					Message:    "logVisibleTo is only supported for contract calls that emit event logs",
+				},
+			}
+		}
+	}
 
 	// Check concurrency limit
 	if p.concurrencyLimiter != nil && !p.concurrencyLimiter.TryAcquire(req.UserID) {

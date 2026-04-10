@@ -42,26 +42,24 @@ end
 return 1
 `)
 
-// updateSessionScript atomically updates a session's auth_request field.
-// It GETs the session, decodes it, replaces the auth_request, and writes it
-// back with KEEPTTL — all in a single Lua script to eliminate TOCTOU races.
+// updateSessionScript atomically checks that a session exists and replaces it
+// with the full JSON prepared by Go. This avoids using cjson.decode/encode in
+// Lua, which corrupts empty JSON arrays (e.g. scope: [] becomes scope: {}).
 //
 // KEYS[1] = session key (pp:session:{id})
-// ARGV[1] = new auth_request JSON string
+// ARGV[1] = full session JSON (prepared by Go)
 //
 // Returns 1 on success, 0 if the key doesn't exist.
 var updateSessionScript = redis.NewScript(`
 local data = redis.call('GET', KEYS[1])
 if not data then return 0 end
-local session = cjson.decode(data)
-session['auth_request'] = cjson.decode(ARGV[1])
-redis.call('SET', KEYS[1], cjson.encode(session), 'KEEPTTL')
+redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
 return 1
 `)
 
-// completeSessionScript atomically marks a session as completed with tokens.
-// It GETs the session, decodes it, sets the completion fields, and writes it
-// back with a new TTL — all in a single Lua script to eliminate TOCTOU races.
+// completeSessionScript atomically checks that a session exists and replaces
+// it with the full JSON prepared by Go. This avoids using cjson.decode/encode
+// in Lua, which corrupts empty JSON arrays (e.g. scope: [] becomes scope: {}).
 //
 // SECURITY: Tokens are stored in plaintext in Redis for a maximum of 2 minutes
 // (the completed-session TTL). This window is required because the frontend polls
@@ -71,23 +69,14 @@ return 1
 // session payload with a per-instance key.
 //
 // KEYS[1] = session key (pp:session:{id})
-// ARGV[1] = access_token
-// ARGV[2] = refresh_token
-// ARGV[3] = completed_at (unix timestamp)
-// ARGV[4] = expires_at (unix timestamp)
-// ARGV[5] = new TTL in seconds
+// ARGV[1] = full session JSON (prepared by Go)
+// ARGV[2] = new TTL in seconds
 //
 // Returns 1 on success, 0 if the key doesn't exist.
 var completeSessionScript = redis.NewScript(`
 local data = redis.call('GET', KEYS[1])
 if not data then return 0 end
-local session = cjson.decode(data)
-session['completed'] = true
-session['access_token'] = ARGV[1]
-session['refresh_token'] = ARGV[2]
-session['completed_at'] = ARGV[3]
-session['expires_at'] = ARGV[4]
-redis.call('SET', KEYS[1], cjson.encode(session), 'EX', tonumber(ARGV[5]))
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
 return 1
 `)
 
@@ -203,17 +192,27 @@ func (s *SessionStore) DeleteSession(sessionID string) {
 }
 
 // UpdateSession atomically updates an existing session's auth request.
-// Uses a Lua script to avoid TOCTOU races from separate GET/SET operations.
+// Reads the session in Go, updates the auth_request field, marshals the
+// complete session, and uses a Lua script to check-and-SET atomically.
+// All JSON encoding happens in Go to avoid Redis Lua's cjson library,
+// which corrupts empty arrays ([] -> {}).
 func (s *SessionStore) UpdateSession(sessionID string, authRequest *protocol.AuthorizationRequestMessage) error {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
 
-	authRequestJSON, err := json.Marshal(authRequest)
-	if err != nil {
-		return fmt.Errorf("marshal auth request: %w", err)
+	session := s.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found")
 	}
 
-	result, err := updateSessionScript.Run(ctx, s.client, []string{key}, string(authRequestJSON)).Int()
+	session.AuthRequest = authRequest
+
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+
+	result, err := updateSessionScript.Run(ctx, s.client, []string{key}, string(data)).Int()
 	if err != nil {
 		return fmt.Errorf("redis update session script: %w", err)
 	}
@@ -226,18 +225,35 @@ func (s *SessionStore) UpdateSession(sessionID string, authRequest *protocol.Aut
 
 // CompleteSession atomically marks a session as completed with tokens.
 // Extends the TTL to 2 minutes so the frontend can poll for completion.
-// Uses a Lua script to avoid TOCTOU races from separate GET/SET operations.
+// Reads the session in Go, sets completion fields, marshals the complete
+// session, and uses a Lua script to check-and-SET atomically.
+// All JSON encoding happens in Go to avoid Redis Lua's cjson library,
+// which corrupts empty arrays ([] -> {}).
 func (s *SessionStore) CompleteSession(sessionID, accessToken, refreshToken string) error {
 	ctx := context.Background()
 	key := sessionKeyPrefix + sessionID
 
+	session := s.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found")
+	}
+
 	now := time.Now()
-	completedAt := now.Format(time.RFC3339Nano)
-	expiresAt := now.Add(2 * time.Minute).Format(time.RFC3339Nano)
+	session.Completed = true
+	session.AccessToken = accessToken
+	session.RefreshToken = refreshToken
+	session.CompletedAt = now
+	session.ExpiresAt = now.Add(2 * time.Minute)
+
 	ttlSeconds := 120
 
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+
 	result, err := completeSessionScript.Run(ctx, s.client, []string{key},
-		accessToken, refreshToken, completedAt, expiresAt, ttlSeconds,
+		string(data), ttlSeconds,
 	).Int()
 	if err != nil {
 		return fmt.Errorf("redis complete session script: %w", err)
