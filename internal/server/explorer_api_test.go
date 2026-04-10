@@ -1595,12 +1595,11 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 	assert.Equal(t, addrB, strings.ToLower(*txs[0].To))
 }
 
-// TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer verifies that
-// disclosure grants do NOT affect regular explorer views. Even when viewer A
-// has a full disclosure grant on user B, transactions involving B should remain
-// hidden in the global tx list (both B and C are hidden EOAs → tx dropped).
-// Grants only affect the dedicated /grant/{id}/{addr_id}/transactions endpoint.
-func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) {
+// TestExplorerTransactions_GrantVisibleInRegularExplorer verifies that
+// disclosure grants DO upgrade visibility in regular explorer views (G17 reverted).
+// When viewer A has a full disclosure grant on user B, transactions involving B
+// appear in the global tx list with a "disclosure_grant" label.
+func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
 
@@ -1615,7 +1614,7 @@ func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) 
 	createTestUserForExplorer(t, database, didA)
 	linkEthAddressToUser(t, database, didA, addrA)
 
-	// Create target B (whose addresses A can see via grant page only).
+	// Create target B (whose addresses A can see via disclosure grant).
 	targetUserID := createTestUserForExplorer(t, database, didB)
 	linkEthAddressToUser(t, database, didB, addrB)
 
@@ -1626,12 +1625,12 @@ func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) 
 	// Grant A full disclosure on B.
 	createDisclosureGrant(t, database, didA, targetUserID, time.Now().Add(24*time.Hour))
 
-	// Seed a transaction from B to C (both are hidden EOAs).
+	// Seed a transaction from B to C (B visible via grant, C hidden).
 	blockNum := seedExplorerBlock(t, conn)
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A — the grant should NOT make B visible here.
+	// Request as viewer A — the grant makes B visible, so B→C tx appears.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -1640,7 +1639,21 @@ func TestExplorerTransactions_GrantDoesNotLeakIntoRegularExplorer(t *testing.T) 
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	assert.Len(t, txs, 0, "grant must NOT leak into regular explorer — both sides hidden, tx should be dropped")
+	require.Len(t, txs, 1, "disclosed address tx should appear in regular explorer")
+	assert.Equal(t, txHash, txs[0].Hash)
+
+	// Viewer without grant should NOT see the tx.
+	didD := "did:d:nogrant"
+	createTestUserForExplorer(t, database, didD)
+
+	req2 := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
+	addBearerToken(t, req2, srv, didD)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	require.Equal(t, http.StatusOK, w2.Code)
+	txs2 := parseTransactionsResponse(t, w2.Body.Bytes())
+	assert.Len(t, txs2, 0, "viewer without grant should NOT see hidden address txs")
 }
 
 // TestExplorerTransactions_UnownedAddresses_HiddenByDefault verifies that
