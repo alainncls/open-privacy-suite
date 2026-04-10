@@ -12,32 +12,35 @@ func TestGetClaimForMethod(t *testing.T) {
 		method string
 		want   Claim
 	}{
-		// Read methods
-		{name: "eth_call is read", method: "eth_call", want: ClaimRead},
-		{name: "eth_getBalance is read", method: "eth_getBalance", want: ClaimRead},
-		{name: "eth_chainId is read", method: "eth_chainId", want: ClaimRead},
-		{name: "eth_blockNumber is read", method: "eth_blockNumber", want: ClaimRead},
-		{name: "eth_estimateGas is read", method: "eth_estimateGas", want: ClaimRead},
-		{name: "eth_getLogs is read", method: "eth_getLogs", want: ClaimRead},
-		{name: "eth_getTransactionReceipt is read", method: "eth_getTransactionReceipt", want: ClaimRead},
-		{name: "eth_getCode is read", method: "eth_getCode", want: ClaimRead},
-		{name: "net_version is read", method: "net_version", want: ClaimRead},
-		{name: "web3_clientVersion is read", method: "web3_clientVersion", want: ClaimRead},
-		{name: "eth_newFilter is read", method: "eth_newFilter", want: ClaimRead},
-		{name: "eth_getFilterChanges is read", method: "eth_getFilterChanges", want: ClaimRead},
+		// Read methods no longer require a claim — gated by method allowlist
+		{name: "eth_call has no claim", method: "eth_call", want: ""},
+		{name: "eth_getBalance has no claim", method: "eth_getBalance", want: ""},
+		{name: "eth_chainId has no claim", method: "eth_chainId", want: ""},
+		{name: "eth_blockNumber has no claim", method: "eth_blockNumber", want: ""},
+		{name: "eth_estimateGas has no claim", method: "eth_estimateGas", want: ""},
+		{name: "eth_getLogs has no claim", method: "eth_getLogs", want: ""},
+		{name: "eth_getTransactionReceipt has no claim", method: "eth_getTransactionReceipt", want: ""},
+		{name: "eth_getCode has no claim", method: "eth_getCode", want: ""},
+		{name: "net_version has no claim", method: "net_version", want: ""},
+		{name: "web3_clientVersion has no claim", method: "web3_clientVersion", want: ""},
+		{name: "eth_newFilter has no claim", method: "eth_newFilter", want: ""},
+		{name: "eth_getFilterChanges has no claim", method: "eth_getFilterChanges", want: ""},
 
-		// Write methods
-		{name: "eth_sendTransaction is write", method: "eth_sendTransaction", want: ClaimWrite},
-		{name: "eth_sendRawTransaction is write", method: "eth_sendRawTransaction", want: ClaimWrite},
-		{name: "eth_sign is write", method: "eth_sign", want: ClaimWrite},
-		{name: "eth_signTransaction is write", method: "eth_signTransaction", want: ClaimWrite},
-		{name: "personal_sign is write", method: "personal_sign", want: ClaimWrite},
-		{name: "eth_signTypedData is write", method: "eth_signTypedData", want: ClaimWrite},
-		{name: "eth_signTypedData_v4 is write", method: "eth_signTypedData_v4", want: ClaimWrite},
+		// Write methods no longer require a claim — gated by method allowlist
+		{name: "eth_sendTransaction has no claim", method: "eth_sendTransaction", want: ""},
+		{name: "eth_sendRawTransaction has no claim", method: "eth_sendRawTransaction", want: ""},
+		{name: "eth_sign has no claim", method: "eth_sign", want: ""},
+		{name: "eth_signTransaction has no claim", method: "eth_signTransaction", want: ""},
+		{name: "personal_sign has no claim", method: "personal_sign", want: ""},
+		{name: "eth_signTypedData has no claim", method: "eth_signTypedData", want: ""},
+		{name: "eth_signTypedData_v4 has no claim", method: "eth_signTypedData_v4", want: ""},
+
+		// Deploy methods still require deploy claim
+		{name: "debug_traceCall requires deploy", method: "debug_traceCall", want: ClaimDeploy},
+		{name: "debug_traceTransaction requires deploy", method: "debug_traceTransaction", want: ClaimDeploy},
 
 		// Unknown/uncategorized methods
 		{name: "unknown method returns empty", method: "unknown_method", want: ""},
-		{name: "debug method returns deploy", method: "debug_traceCall", want: ClaimDeploy},
 		{name: "admin method returns empty", method: "admin_peers", want: ""},
 	}
 
@@ -74,43 +77,41 @@ func TestValidateMethodsMatchClaims(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name:    "read methods with read claim",
+			name:    "read methods need no claims",
 			methods: []string{"eth_call", "eth_getBalance", "eth_chainId"},
-			claims:  []Claim{ClaimRead},
+			claims:  []Claim{},
 			wantErr: false,
 		},
 		{
-			name:    "write methods with write claim",
+			name:    "write methods need no claims",
 			methods: []string{"eth_sendTransaction", "eth_sendRawTransaction"},
-			claims:  []Claim{ClaimWrite},
+			claims:  []Claim{},
 			wantErr: false,
 		},
 		{
-			name:    "mixed methods with both claims",
+			name:    "mixed read+write methods need no claims",
 			methods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
-			claims:  []Claim{ClaimRead, ClaimWrite},
+			claims:  []Claim{},
 			wantErr: false,
 		},
 		{
-			name:    "read methods without read claim",
-			methods: []string{"eth_call"},
-			claims:  []Claim{ClaimWrite},
-			wantErr: true,
-			errMsg:  "method eth_call requires read claim",
+			name:    "deploy methods need deploy claim",
+			methods: []string{"debug_traceTransaction"},
+			claims:  []Claim{ClaimDeploy},
+			wantErr: false,
 		},
 		{
-			name:    "write methods without write claim",
-			methods: []string{"eth_sendTransaction"},
-			claims:  []Claim{ClaimRead},
+			name:    "deploy methods without deploy claim fail",
+			methods: []string{"debug_traceTransaction"},
+			claims:  []Claim{},
 			wantErr: true,
-			errMsg:  "method eth_sendTransaction requires write claim",
+			errMsg:  "method debug_traceTransaction requires deploy claim",
 		},
 		{
-			name:    "mixed methods missing write claim",
-			methods: []string{"eth_call", "eth_sendTransaction"},
-			claims:  []Claim{ClaimRead},
-			wantErr: true,
-			errMsg:  "method eth_sendTransaction requires write claim",
+			name:    "admin claim satisfies deploy requirement (via expansion)",
+			methods: []string{"debug_traceCall"},
+			claims:  ExpandClaims([]Claim{ClaimAdmin}),
+			wantErr: false,
 		},
 		{
 			name:    "empty methods list",
@@ -122,12 +123,6 @@ func TestValidateMethodsMatchClaims(t *testing.T) {
 			name:    "unknown methods don't require claims",
 			methods: []string{"some_unknown_method"},
 			claims:  []Claim{},
-			wantErr: false,
-		},
-		{
-			name:    "all claims provided",
-			methods: []string{"eth_call", "eth_sendTransaction"},
-			claims:  []Claim{ClaimRead, ClaimWrite, ClaimAdmin, ClaimUpgrade, ClaimDeploy},
 			wantErr: false,
 		},
 	}
@@ -149,10 +144,10 @@ func TestValidateMethodsMatchClaims(t *testing.T) {
 
 func TestMethodClaimMismatchError(t *testing.T) {
 	err := &MethodClaimMismatchError{
-		Method:        "eth_sendTransaction",
-		RequiredClaim: ClaimWrite,
+		Method:        "debug_traceTransaction",
+		RequiredClaim: ClaimDeploy,
 	}
-	assert.Equal(t, "method eth_sendTransaction requires write claim", err.Error())
+	assert.Equal(t, "method debug_traceTransaction requires deploy claim", err.Error())
 }
 
 func TestGetAllReadMethods(t *testing.T) {

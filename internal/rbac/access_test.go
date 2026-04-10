@@ -19,33 +19,35 @@ func TestClassifyOperation(t *testing.T) {
 		params        []any
 		expectedClaim Claim
 	}{
+		// Read methods — no claim required (gated by method allowlist)
 		{
-			name:          "Read operation - eth_call",
+			name:          "Read operation - eth_call (no claim)",
 			method:        "eth_call",
 			params:        nil,
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
 		{
-			name:          "Read operation - eth_getBalance",
+			name:          "Read operation - eth_getBalance (no claim)",
 			method:        "eth_getBalance",
 			params:        nil,
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
 		{
-			name:   "Read operation - eth_estimateGas with to address",
+			name:   "Read operation - eth_estimateGas with to address (no claim)",
 			method: "eth_estimateGas",
 			params: []any{
 				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
 			},
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
+		// Write methods — no claim required (gated by method allowlist)
 		{
-			name:   "Write operation - eth_sendTransaction with to address",
+			name:   "Write operation - eth_sendTransaction with to address (no claim)",
 			method: "eth_sendTransaction",
 			params: []any{
 				map[string]any{"to": "0x1234567890123456789012345678901234567890", "value": "0x100"},
 			},
-			expectedClaim: ClaimWrite,
+			expectedClaim: "",
 		},
 		{
 			name:          "Other method - no contract claim required",
@@ -59,18 +61,18 @@ func TestClassifyOperation(t *testing.T) {
 			params:        nil,
 			expectedClaim: "",
 		},
-		// Without params, we can't determine deployment - treat as regular write
+		// Without params, we can't determine deployment — no claim
 		{
-			name:          "Write - eth_sendTransaction with no params (unknown)",
+			name:          "eth_sendTransaction with no params (no claim)",
 			method:        "eth_sendTransaction",
 			params:        nil,
-			expectedClaim: ClaimWrite, // Can't determine deployment without params
+			expectedClaim: "",
 		},
 		{
-			name:          "Write - eth_sendTransaction with empty params (unknown)",
+			name:          "eth_sendTransaction with empty params (no claim)",
 			method:        "eth_sendTransaction",
 			params:        []any{},
-			expectedClaim: ClaimWrite, // Can't determine deployment without params
+			expectedClaim: "",
 		},
 		// Contract deployment cases - should require deploy claim
 		{
@@ -106,20 +108,20 @@ func TestClassifyOperation(t *testing.T) {
 			expectedClaim: ClaimDeploy,
 		},
 		{
-			name:   "NOT Deploy - eth_sendTransaction with valid 'to' address",
+			name:   "NOT Deploy - eth_sendTransaction with valid 'to' address (no claim)",
 			method: "eth_sendTransaction",
 			params: []any{
 				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
 			},
-			expectedClaim: ClaimWrite,
+			expectedClaim: "",
 		},
 		{
-			name:   "NOT Deploy - eth_sendTransaction to zero address (burn)",
+			name:   "NOT Deploy - eth_sendTransaction to zero address (no claim)",
 			method: "eth_sendTransaction",
 			params: []any{
 				map[string]any{"to": "0x0000000000000000000000000000000000000000", "value": "0x100"},
 			},
-			expectedClaim: ClaimWrite,
+			expectedClaim: "",
 		},
 		// eth_estimateGas deployment cases - should require deploy claim
 		{
@@ -139,12 +141,12 @@ func TestClassifyOperation(t *testing.T) {
 			expectedClaim: ClaimDeploy,
 		},
 		{
-			name:   "NOT Deploy - eth_estimateGas with valid 'to' (regular call estimation)",
+			name:   "NOT Deploy - eth_estimateGas with valid 'to' (no claim)",
 			method: "eth_estimateGas",
 			params: []any{
 				map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
 			},
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
 	}
 
@@ -932,9 +934,9 @@ func TestValidateGetLogsAccess(t *testing.T) {
 	permsWithAccess := &EffectivePermissions{
 		AllowedMethods: []string{"eth_getLogs", "eth_call"},
 		ContractAccess: map[string]ContractAccess{
-			"0xcontract1": {Claims: []Claim{ClaimRead, ClaimWrite}},
-			"0xcontract2": {Claims: []Claim{ClaimRead}},
-			"0xnoread":    {Claims: []Claim{ClaimWrite}}, // Has write but NOT read
+			"0xcontract1": {Claims: []Claim{ClaimDeploy}},
+			"0xcontract2": {Claims: nil},
+			"0xhasaccess": {Claims: nil}, // Has access — method allowlist controls read/write
 		},
 		Claims: []Claim{}, // No default claims
 	}
@@ -942,9 +944,9 @@ func TestValidateGetLogsAccess(t *testing.T) {
 	permsWithDefaultDeploy := &EffectivePermissions{
 		AllowedMethods: []string{"eth_getLogs"},
 		ContractAccess: map[string]ContractAccess{
-			"0xcontract1": {Claims: []Claim{ClaimRead}},
+			"0xcontract1": {Claims: nil},
 		},
-		Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy users can access unregistered contracts
+		Claims: []Claim{ClaimDeploy},
 	}
 
 	tests := []struct {
@@ -1016,13 +1018,12 @@ func TestValidateGetLogsAccess(t *testing.T) {
 			errorSubstr: ErrContractAccessDenied,
 		},
 		{
-			name:  "Single address - has write but not read claim",
+			name:  "Single address - has access (method allowlist controls read/write)",
 			perms: permsWithAccess,
 			params: []any{map[string]any{
-				"address": "0xnoread",
+				"address": "0xhasaccess",
 			}},
-			expectError: true,
-			errorSubstr: ErrContractAccessDenied,
+			expectError: false,
 		},
 		{
 			name:  "Multiple addresses - one without access",
@@ -1034,10 +1035,10 @@ func TestValidateGetLogsAccess(t *testing.T) {
 			errorSubstr: ErrContractAccessDenied,
 		},
 		{
-			name:  "Multiple addresses - one missing read claim",
+			name:  "Multiple addresses - one has no contract access entry",
 			perms: permsWithAccess,
 			params: []any{map[string]any{
-				"address": []any{"0xcontract1", "0xnoread"},
+				"address": []any{"0xcontract1", "0xunknowncontract"},
 			}},
 			expectError: true,
 			errorSubstr: ErrContractAccessDenied,
@@ -1137,7 +1138,7 @@ func searchSubstr(s, substr string) bool {
 }
 
 func TestClassifyOperation_EthGetLogs(t *testing.T) {
-	// eth_getLogs should require read claim
+	// eth_getLogs no longer requires a claim — gated by method allowlist
 	tests := []struct {
 		name          string
 		method        string
@@ -1145,18 +1146,18 @@ func TestClassifyOperation_EthGetLogs(t *testing.T) {
 		expectedClaim Claim
 	}{
 		{
-			name:          "eth_getLogs requires read claim",
+			name:          "eth_getLogs requires no claim",
 			method:        "eth_getLogs",
 			params:        nil,
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
 		{
-			name:   "eth_getLogs with filter requires read claim",
+			name:   "eth_getLogs with filter requires no claim",
 			method: "eth_getLogs",
 			params: []any{
 				map[string]any{"address": "0x1234", "fromBlock": "latest"},
 			},
-			expectedClaim: ClaimRead,
+			expectedClaim: "",
 		},
 	}
 
@@ -1216,28 +1217,25 @@ func TestCrossOrgIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("GetContractAccess returns read for precompile address", func(t *testing.T) {
+	t.Run("GetContractAccess returns access for precompile address", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xmycontract": {Claims: []Claim{ClaimRead}},
+				"0xmycontract": {Claims: nil},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: nil,
 		}
 
 		// Registered contract still works
 		access := perms.GetContractAccess("0xmycontract")
-		if access == nil || len(access.Claims) != 1 {
-			t.Errorf("Expected 1 claim for registered contract, got %v", access)
+		if access == nil {
+			t.Error("Expected access for registered contract, got nil")
 		}
 
-		// Precompile should return read access
+		// Precompile should return non-nil access (always accessible)
 		access = perms.GetContractAccess("0x0000000000000000000000000000000000000001")
 		if access == nil {
-			t.Fatal("Expected read access for precompile, got nil")
-		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("Expected read claim on precompile")
+			t.Fatal("Expected access for precompile, got nil")
 		}
 
 		// Non-precompile unregistered should return nil
@@ -1299,10 +1297,11 @@ func TestGetContractAccessUnregisteredRestriction(t *testing.T) {
 	}
 }
 
-// TestCrossOrgIsolationReadOps verifies the ReadOpsMap and WriteOpsMap contain the right methods.
-// All map keys are lowercase; ClassifyOperation normalises before lookup.
-func TestCrossOrgIsolationReadOps(t *testing.T) {
-	// Core read operations that need cross-org isolation check (lowercase keys)
+// TestReadWriteOpsMaps verifies the ReadOpsMap and WriteOpsMap contain the right methods.
+// These maps are retained for reference and test completeness even though ClassifyOperation
+// no longer consults them (read/write are gated by method allowlist, not claims).
+func TestReadWriteOpsMaps(t *testing.T) {
+	// Core read operations (lowercase keys)
 	expectedReadOps := []string{
 		"eth_call",
 		"eth_estimategas",
@@ -1311,7 +1310,7 @@ func TestCrossOrgIsolationReadOps(t *testing.T) {
 		"eth_getstorageat",
 		"eth_gettransactioncount",
 		"eth_getlogs",
-		// Filter equivalents of eth_getLogs — must also require auth
+		// Filter equivalents of eth_getLogs
 		"eth_newfilter",
 		"eth_newblockfilter",
 		"eth_newpendingtransactionfilter",
@@ -1359,7 +1358,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call", "eth_estimateGas"},
 			ContractAccess: map[string]ContractAccess{
-				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
+				contractOrgA: {Claims: []Claim{ClaimDeploy}},
 			},
 			Claims: []Claim{}, // No default claims - cross-org denied
 		}
@@ -1369,9 +1368,6 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		if accessA == nil {
 			t.Fatal("User should have access to their own org's contract")
 		}
-		if !accessA.HasClaim(ClaimRead) {
-			t.Error("User should have read claim on their own contract")
-		}
 
 		// User does NOT have access to other org's contract (contractOrgB is registered elsewhere)
 		// With no default claims, GetContractAccess returns nil
@@ -1380,12 +1376,12 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			t.Error("User should NOT have access to other org's contract when no default claims")
 		}
 
-		// Operation classification
+		// Operation classification — no claim needed for reads
 		claim := ClassifyOperation("eth_call", []any{
 			map[string]any{"to": contractOrgB, "data": "0xa9059cbb"},
 		})
-		if claim != ClaimRead {
-			t.Errorf("eth_call should require read claim, got %v", claim)
+		if claim != "" {
+			t.Errorf("eth_call should require no claim, got %v", claim)
 		}
 	})
 
@@ -1393,7 +1389,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call", "eth_estimateGas"},
 			ContractAccess: map[string]ContractAccess{
-				contractOrgA: {Claims: []Claim{ClaimRead}},
+				contractOrgA: {Claims: nil},
 			},
 			Claims: []Claim{}, // No default claims
 		}
@@ -1404,12 +1400,12 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 			t.Error("User should NOT have access to other org's contract")
 		}
 
-		// Operation still requires read claim
+		// No claim needed for reads
 		claim := ClassifyOperation("eth_estimateGas", []any{
 			map[string]any{"to": contractOrgB, "data": "0xa9059cbb"},
 		})
-		if claim != ClaimRead {
-			t.Errorf("eth_estimateGas should require read claim, got %v", claim)
+		if claim != "" {
+			t.Errorf("eth_estimateGas should require no claim, got %v", claim)
 		}
 	})
 
@@ -1644,7 +1640,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 	t.Run("eth_estimateGas follows same rules as eth_call", func(t *testing.T) {
 		addr := "0xaaaa000000000000000000000000000000000001"
 
-		// Both should require read claim
+		// Both should require no claim (gated by method allowlist)
 		callClaim := ClassifyOperation("eth_call", []any{
 			map[string]any{"to": addr, "data": "0xa9059cbb"},
 		})
@@ -1656,8 +1652,8 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 			t.Errorf("eth_call and eth_estimateGas should require same claim, got %v vs %v",
 				callClaim, estimateClaim)
 		}
-		if callClaim != ClaimRead {
-			t.Errorf("Both should require read claim, got %v", callClaim)
+		if callClaim != "" {
+			t.Errorf("Both should require no claim, got %v", callClaim)
 		}
 	})
 
@@ -1671,9 +1667,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("all read ops require read claim", func(t *testing.T) {
-		// Read methods that work without params
-		// Note: eth_getStorageAt has tiered access (admin=all, read=well-known only) in CheckAccess
+	t.Run("read ops require no claim (gated by method allowlist)", func(t *testing.T) {
 		simpleReadMethods := []string{
 			"eth_call",
 			"eth_getCode",
@@ -1684,25 +1678,23 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 
 		for _, method := range simpleReadMethods {
 			claim := ClassifyOperation(method, nil)
-			if claim != ClaimRead {
-				t.Errorf("%s should require read claim, got %v", method, claim)
+			if claim != "" {
+				t.Errorf("%s should require no claim, got %v", method, claim)
 			}
 		}
 
-		// eth_estimateGas with nil params returns read claim
-		// because we can't determine deployment without params
-		// With proper params (including 'to'), it also requires read claim
+		// eth_estimateGas with nil params returns no claim
 		claimNoParams := ClassifyOperation("eth_estimateGas", nil)
-		if claimNoParams != ClaimRead {
-			t.Errorf("eth_estimateGas with nil params should require read claim, got %v", claimNoParams)
+		if claimNoParams != "" {
+			t.Errorf("eth_estimateGas with nil params should require no claim, got %v", claimNoParams)
 		}
 
-		// With a 'to' address, eth_estimateGas requires read claim
+		// With a 'to' address, eth_estimateGas requires no claim
 		claimWithTo := ClassifyOperation("eth_estimateGas", []any{
 			map[string]any{"to": "0x1234567890123456789012345678901234567890", "data": "0xa9059cbb"},
 		})
-		if claimWithTo != ClaimRead {
-			t.Errorf("eth_estimateGas with 'to' address should require read claim, got %v", claimWithTo)
+		if claimWithTo != "" {
+			t.Errorf("eth_estimateGas with 'to' address should require no claim, got %v", claimWithTo)
 		}
 	})
 }
@@ -1777,7 +1769,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 	t.Run("returns read access for precompile address", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{},
-			Claims:         []Claim{ClaimRead},
+			Claims:         nil,
 		}
 
 		// Test all precompile addresses (0x01-0x09)
@@ -1785,11 +1777,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 			addr := fmt.Sprintf("0x%040x", i)
 			access := perms.GetContractAccess(addr)
 			if access == nil {
-				t.Errorf("Should return access for precompile %s", addr)
-				continue
-			}
-			if !access.HasClaim(ClaimRead) {
-				t.Errorf("Precompile %s should have read claim", addr)
+				t.Errorf("Should return non-nil access for precompile %s", addr)
 			}
 		}
 	})
@@ -1799,7 +1787,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				addr: {
-					Claims:    []Claim{ClaimRead},
+					Claims:    nil,
 					Functions: []FunctionRule{{Selector: "0xa9059cbb"}, {Selector: "0x095ea7b3"}},
 				},
 			},
@@ -2100,13 +2088,13 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}
 	})
 
-	t.Run("eth_getLogs requires read claim specifically", func(t *testing.T) {
+	t.Run("eth_getLogs allowed when user has contract access (claims no longer checked)", func(t *testing.T) {
 		addr := "0xaaaa000000000000000000000000000000000001"
 
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{
-				addr: {Claims: []Claim{ClaimWrite, ClaimAdmin}}, // Has write and admin but NOT read
+				addr: {Claims: []Claim{ClaimAdmin}}, // Any access entry is sufficient
 			},
 			Claims: []Claim{},
 		}
@@ -2116,8 +2104,8 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}}
 
 		err := ValidateGetLogsAccess(perms, params)
-		if err == nil {
-			t.Error("Should deny when user has write/admin but not read claim")
+		if err != nil {
+			t.Errorf("Should allow eth_getLogs when user has contract access entry, got: %v", err)
 		}
 	})
 }

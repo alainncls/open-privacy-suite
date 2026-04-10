@@ -391,15 +391,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				Reason:  reason,
 			}, nil
 		}
-		requiredClaim := ClassifyOperation(req.Method, req.Params)
 
 		// Only pure network/chain metadata methods (eth_blockNumber, eth_chainId,
 		// eth_gasPrice, net_version, etc.) are allowed without authentication.
 		// These return no user data — just network state.
 		//
-		// Everything that could reveal transaction data, balances, logs, or
-		// contract state requires authentication, even for unregistered addresses.
-		if requiredClaim == "" {
+		// Everything in ReadOpsMap, WriteOpsMap, or DeployMethods could reveal
+		// transaction data, balances, logs, or contract state and requires auth.
+		methodLower := strings.ToLower(strings.TrimSpace(req.Method))
+		if !ReadOpsMap[methodLower] && !WriteOpsMap[methodLower] && !DeployMethods[methodLower] && !IsContractDeployment(req.Method, req.Params) {
 			rps, daily := 10, 1000
 			return &AccessCheckResult{
 				Allowed:        true,
@@ -584,8 +584,9 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	var factoryDeployInfo *FactoryDeployInfo
 
 	// Simple value transfers (eth_sendTransaction with no calldata) to unregistered
-	// addresses are treated as EOA transfers. They only require the 'write' claim —
-	// no contract-level access check is needed since EOAs don't have code to execute.
+	// addresses are treated as EOA transfers. No contract-level access check is
+	// needed since EOAs don't have code to execute; method allowlist already
+	// verified eth_sendTransaction is permitted.
 	if req.Method == "eth_sendTransaction" && req.TargetAddress != "" && isValueTransferParams(req.Params) {
 		addr := strings.ToLower(req.TargetAddress)
 		// Check if this address is registered as a contract or preregistered address
@@ -596,7 +597,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}
 			if ownerOrgID == "" {
 				// Address is not a known contract — treat as EOA value transfer.
-				// Just verify user has the required write claim.
 				if requiredClaim != "" && !containsClaim(perms.Claims, requiredClaim) {
 					slog.Debug("access denied: missing claim for value transfer", "claim", requiredClaim, "target", req.TargetAddress, "user", req.UserExternalID)
 					return &AccessCheckResult{
@@ -618,13 +618,12 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 	}
 
-	// Basic state queries (balance, nonce, code) on addresses not registered to any org
-	// are allowed with the read claim. These are needed for:
+	// Basic state queries (balance, nonce) on addresses not registered to any org
+	// are allowed if the method is in the user's allowlist. These are needed for:
 	//   - eth_getTransactionCount: nonce lookups for tx building (cast send, wallets)
 	//   - eth_getBalance: wallet balance display
-	//   - eth_getCode: EOA vs contract detection
-	// eth_getStorageAt has tiered access (admin=all slots, read=well-known only)
-	// enforced in CheckAccess. eth_getProof needs strict contract-level gating since
+	// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
+	// enforced below. eth_getProof needs strict contract-level gating since
 	// both methods access contract-internal state that could leak sensitive data.
 	if req.TargetAddress != "" && isBasicAddressQuery(req.Method) {
 		addr := strings.ToLower(req.TargetAddress)
@@ -634,19 +633,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				return nil, fmt.Errorf("failed to check address ownership: %w", err)
 			}
 			if ownerOrgID == "" {
-				// Not owned by any org — allow with read claim (public EOA data)
-				if containsClaim(perms.Claims, ClaimRead) {
-					allClaims := collectAllClaims(perms)
-					return &AccessCheckResult{
-						Allowed:        true,
-						OrgID:          org.ID,
-						UserID:         user.ID,
-						RateLimitRPS:   perms.RateLimitRPS,
-						RateLimitDaily: perms.RateLimitDaily,
-						RPCAPIKey:      perms.RPCAPIKey,
-						Claims:         allClaims,
-					}, nil
-				}
+				// Not owned by any org — allow (method allowlist already verified).
+				allClaims := collectAllClaims(perms)
+				return &AccessCheckResult{
+					Allowed:        true,
+					OrgID:          org.ID,
+					UserID:         user.ID,
+					RateLimitRPS:   perms.RateLimitRPS,
+					RateLimitDaily: perms.RateLimitDaily,
+					RPCAPIKey:      perms.RPCAPIKey,
+					Claims:         allClaims,
+				}, nil
 			}
 			// Owned by an org — fall through to contract access check
 		}
@@ -702,23 +699,23 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				// still verify whether this is a registered contract (requires explicit grant)
 				// or a preregistered address (allowed via org ownership).
 				access = &ContractAccess{
-					Claims:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+					Claims:    []Claim{ClaimDeploy},
 					Functions: nil, // All functions allowed
 				}
 			}
 		}
 
-		// Deployer auto-grant: if the user deployed this contract, they get read+write access automatically.
+		// Deployer auto-grant: if the user deployed this contract, they get access automatically.
 		// This happens even without explicit grants - the deployer should always be able to interact
 		// with their own contracts. Note: this does NOT grant upgrade/admin claims.
-		if access == nil || !containsClaim(access.Claims, requiredClaim) {
+		if access == nil || (requiredClaim != "" && !containsClaim(access.Claims, requiredClaim)) {
 			deployerID, err := c.store.GetContractDeployerByAddress(ctx, addr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to check contract deployer: %w", err)
 			}
 			if deployerID != nil && *deployerID == user.ID {
-				// User is the deployer - grant read+write access
-				deployerClaims := []Claim{ClaimRead, ClaimWrite}
+				// User is the deployer - grant access (method allowlist controls read/write).
+				deployerClaims := []Claim{}
 				if access == nil {
 					access = &ContractAccess{
 						Claims:    deployerClaims,
@@ -776,10 +773,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 
 		// Tiered eth_getStorageAt access: admin-claim users get all slots,
-		// read-claim users get only well-known infrastructure slots (EIP-1967, EIP-2535).
-		// This runs AFTER the requiredClaim check (so we know the user has at least
-		// the read claim on the contract) but BEFORE function selector checks
-		// (which don't apply to storage reads).
+		// non-admin users get only well-known infrastructure slots (EIP-1967, EIP-2535).
+		// This runs AFTER the contract access check (so we know the user has access
+		// to the contract) but BEFORE function selector checks (which don't apply
+		// to storage reads).
 		if req.Method == MethodGetStorageAt {
 			if !containsClaim(access.Claims, ClaimAdmin) {
 				slot := extractStorageSlot(req.Params)
@@ -1045,15 +1042,20 @@ func collectAllClaims(perms *EffectivePermissions) []Claim {
 	return result
 }
 
-// WriteOpsMap contains write operations that require 'write' claim.
-// All keys must be lowercase — ClassifyOperation lowercases before lookup.
+// WriteOpsMap classifies state-modifying RPC methods. These methods are no
+// longer gated by a "write" claim — the method allowlist is the source of
+// truth. The map is retained for reference and test completeness checks.
+// All keys must be lowercase.
 var WriteOpsMap = map[string]bool{
 	"eth_sendtransaction":    true,
 	"eth_sendrawtransaction": true, // Requires auth; processor enforces runtime-tracing gate
 }
 
-// ReadOpsMap contains read operations that require 'read' claim.
-// On a private network ALL blockchain data is considered sensitive:
+// ReadOpsMap classifies read-only RPC methods that access blockchain state.
+// These methods are no longer gated by a "read" claim — the method allowlist
+// is the source of truth. The map is retained for reference, test completeness
+// checks, and documentation of which methods access sensitive data on a
+// private network:
 //   - Contract state (balance, code, storage, logs) reveals private holdings
 //   - Block contents reveal which transactions occurred (sender, receiver, value)
 //   - Transaction details reveal identities and amounts
@@ -1064,7 +1066,7 @@ var WriteOpsMap = map[string]bool{
 // Only pure network/chain metadata that contains no user data is claim-free
 // (eth_blockNumber, eth_chainId, eth_gasPrice, net_version, etc.).
 //
-// All keys must be lowercase — ClassifyOperation lowercases before lookup.
+// All keys must be lowercase.
 var ReadOpsMap = map[string]bool{
 	// Contract state reads
 	"eth_call":                true,
@@ -1106,33 +1108,22 @@ var ReadOpsMap = map[string]bool{
 }
 
 // ClassifyOperation determines the required claim for a JSON-RPC method.
-// Returns the claim needed to execute this operation.
-// For eth_sendTransaction and eth_estimateGas, checks params to distinguish
-// deployment vs regular transaction/call.
+// Returns the claim needed to execute this operation, or "" if the method
+// is gated only by the method allowlist (no additional claim required).
+//
+// Only deployment requires a claim gate (ClaimDeploy). Read/write methods
+// are controlled entirely by the method allowlist on the group — if a method
+// is in allowed_methods, it's permitted; claims are not consulted.
 func ClassifyOperation(method string, params []any) Claim {
 	// Normalize to lowercase for case-insensitive matching.
-	// IsMethodBlocked already does this; ClassifyOperation must match.
 	method = strings.ToLower(strings.TrimSpace(method))
 
-	// Check for contract deployment FIRST (before general write/read check)
-	// This includes both eth_sendTransaction deployments AND eth_estimateGas
-	// for deployment gas estimation - both require deploy claim
+	// Contract deployment requires deploy claim
 	if IsContractDeployment(method, params) {
 		return ClaimDeploy
 	}
 
-	// Write operations require 'write' claim
-	if WriteOpsMap[method] {
-		return ClaimWrite
-	}
-
-	// Read operations require 'read' claim
-	if ReadOpsMap[method] {
-		return ClaimRead
-	}
-
-	// Other methods don't require contract-level claims
-	// (e.g., eth_blockNumber, eth_chainId - these are not contract-specific)
+	// All other methods are gated by AllowedMethods, not claims
 	return ""
 }
 
@@ -1744,9 +1735,8 @@ func ValidateGetLogsAccess(perms *EffectivePermissions, params []any) error {
 		if access == nil {
 			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
-		if !containsClaim(access.Claims, ClaimRead) {
-			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-		}
+		// Method allowlist already verified eth_getLogs is permitted;
+		// having a non-nil ContractAccess entry is sufficient.
 	}
 
 	return nil
@@ -1851,17 +1841,14 @@ func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Co
 			if !precompile.IsPrecompileAddress(addr) {
 				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
-			// Precompile — allow with read claim
-			if !containsClaim(perms.Claims, ClaimRead) {
-				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-			}
+			// Precompile — always accessible (method allowlist already verified eth_getLogs).
 			continue
 		}
 
 		// For backwards compatibility: also check explicit access in current org
 		if hasExplicitAccess {
 			access := perms.GetContractAccess(addr)
-			if access == nil || !containsClaim(access.Claims, ClaimRead) {
+			if access == nil {
 				return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 			}
 		}
@@ -1895,7 +1882,7 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 		return fmt.Errorf("eth_getLogs: %w", err)
 	}
 
-	// Check user has read claim on each address
+	// Verify user has access to each address (method allowlist already checked eth_getLogs).
 	for _, addr := range addresses {
 		hasExplicitAccess := perms.IsContractRegistered(addr)
 		if !hasExplicitAccess {
@@ -1909,24 +1896,21 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 				if !precompile.IsPrecompileAddress(addr) {
 					return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 				}
-				// Precompile — allow with read claim
-				if !containsClaim(perms.Claims, ClaimRead) {
-					return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
-				}
+				// Precompile — always accessible.
 				continue
 			}
 		}
 
-		// For contracts in user's orgs or public contracts, check claims
+		// For contracts in user's orgs or public contracts, check cross-org isolation
 		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
 			// Contract is in another org - should have been caught by CheckMultiAddressesInScope,
 			// but double-check here for defense in depth
 			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 
-		// Verify read claim exists
+		// Verify contract access exists
 		access := perms.GetContractAccess(addr)
-		if access == nil || !containsClaim(access.Claims, ClaimRead) {
+		if access == nil {
 			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)
 		}
 	}

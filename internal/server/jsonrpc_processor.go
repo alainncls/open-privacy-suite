@@ -1008,13 +1008,13 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
-	// Determine the operation type and required claims
+	// Determine the operation type and required claims.
+	// Only deployments need a claim gate; write access is controlled by the
+	// method allowlist (eth_sendTransaction must be in allowed_methods).
 	var requiredClaims []rbac.Claim
 	isDeployment := to == ""
 	if isDeployment {
 		requiredClaims = []rbac.Claim{rbac.ClaimDeploy}
-	} else {
-		requiredClaims = []rbac.Claim{rbac.ClaimWrite}
 	}
 
 	// Build RBAC access check request

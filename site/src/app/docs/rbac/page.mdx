@@ -26,24 +26,22 @@ smart contracts.
 
 ## Simplified Permission Model (TL;DR)
 
-The RBAC system uses a **group-centric claim model**:
+The RBAC system uses a **two-layer permission model**: a method allowlist controls which RPC methods a group can call, and operational claims (`deploy`, `upgrade`, `admin`) gate specific high-privilege operations.
 
-1. **Groups have claims** -- each group defines capabilities (`read`, `write`, `deploy`, `admin`, `upgrade`) via `GroupAccess.claims`. This is the single source of truth.
+1. **Method allowlist is the source of truth for read/write** -- each group defines which RPC methods are permitted via `GroupAccess.allowed_methods`. If `eth_call` is not in the list, the user cannot call it. If `eth_sendTransaction` is not in the list, the user cannot send transactions.
 
-2. **ContractGrants link groups to contracts** -- for registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
+2. **Operational claims gate privileged operations** -- only `deploy`, `upgrade`, and `admin` are claim-gated. Contract deployment requires the `deploy` claim. Proxy upgrades require the `upgrade` claim. The `admin` claim implies both.
 
-3. **All contracts are private by default** -- unregistered addresses (not registered to any organization) are denied. Only EVM precompiles (0x01-0x09) are accessible without explicit registration. A contract registered to a *different* org is always denied regardless of the user's claims.
+3. **ContractGrants link groups to contracts** -- for registered contracts, a `ContractGrant` establishes which groups can access which contracts. The grant does NOT store claims; claims are inherited from the group.
 
-4. **Deploy/admin users have broad access** -- they can access any registered contract in their own org without needing explicit `ContractGrant` entries.
+4. **All contracts are private by default** -- unregistered addresses (not registered to any organization) are denied. Only EVM precompiles (0x01-0x09) are accessible without explicit registration. A contract registered to a *different* org is always denied regardless of the user's claims.
 
-5. **Read/write users need explicit grants** -- they must have a `ContractGrant` linking their group to each contract they need to access.
+5. **Org admins bypass everything** -- groups with `is_org_admin: true` give members all claims on all contracts in the organization.
 
-6. **Org admins bypass everything** -- groups with `is_org_admin: true` give members all claims on all contracts in the organization.
-
-| Contract Type | Deploy/Admin Users | Read/Write Users |
-|--------------|-------------------|-----------------|
+| Contract Type | Deploy/Admin Users | Standard Users |
+|--------------|-------------------|----------------|
 | Unregistered | **Denied** (private by default) | **Denied** (private by default) |
-| EVM Precompile (0x01-0x09) | Allowed (read) | Allowed (read) |
+| EVM Precompile (0x01-0x09) | Allowed | Allowed |
 | Registered (own org) | Allowed (default claims) | ContractGrant required |
 | Registered (other org) | Denied (cross-org) | Denied (cross-org) |
 | Self-deployed | Grant added to deployer's group | Grant added to deployer's group |
@@ -114,16 +112,17 @@ graph TD
 
 | Claim | Purpose | Required For |
 |-------|---------|--------------|
-| `read` | Read blockchain state | `eth_call`, `eth_getBalance`, `eth_getCode`, etc. |
-| `write` | Modify blockchain state | `eth_sendTransaction` (non-deployment) |
 | `deploy` | Deploy new contracts | `eth_sendTransaction` with empty `to`, `eth_estimateGas` for deployment |
-| `admin` | Full administrative access | All operations including deployment |
+| `admin` | Full administrative access | All operations including deployment; implies `deploy` + `upgrade` |
 | `upgrade` | Upgrade proxy contracts | `upgradeTo()`, `upgradeToAndCall()` on managed proxies |
+
+Read and write access is controlled entirely by the method allowlist. If `eth_call` is in a group's allowed methods, members can read contract data. If `eth_sendTransaction` is in the list, members can send transactions. No additional claim is needed.
 
 <Callout variant="info" title="Method-claim validation">
 
 The system enforces consistency between allowed methods and claims. For example, allowing
-`eth_sendTransaction` without the `write` claim returns a 400 Bad Request error.
+`debug_traceTransaction` without the `deploy` claim returns a 400 Bad Request error.
+Read/write methods do not require claims.
 
 </Callout>
 
@@ -159,7 +158,7 @@ graph TD
 - **GroupAccess** -- defines allowed methods, claims, and an optional RPC API key for a group
 - **ContractGrant** -- links a group to a contract; optionally restricts callable functions via `FunctionRule` and parameter constraints via `ParamRule`
 - **UserMembership** -- assigns a user to a group with a role
-- **Role** -- named set of claims (e.g., "deployer" with `[read, write, deploy]`)
+- **Role** -- named set of claims (e.g., "deployer" with `[deploy]`)
 
 ---
 
@@ -167,9 +166,9 @@ graph TD
 
 <Callout variant="info" title="How permissions are computed">
 
-1. **Group has claims** via GroupAccess: `{ claims: [read, write], methods: [...] }`
+1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list controls read/write; claims gate deployment and upgrades.
 2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
-3. **Registered contracts (own org)**: deploy/admin users allowed via default claims. Read/write users need a ContractGrant. Claims come from GroupAccess. Functions can be restricted via FunctionRule. Parameters can be constrained via ParamRule.
+3. **Registered contracts (own org)**: deploy/admin users allowed via default claims. Other users need a ContractGrant. Functions can be restricted via FunctionRule. Parameters can be constrained via ParamRule.
 4. **Deployer contract grant**: when a user deploys a contract, a `contract_grant` is added to their existing deploy group. The admin must pre-create a group with the `deploy` claim and add deployers to it.
 5. **Org admin bypass**: groups with `is_org_admin=true` get ALL claims on ALL contracts in the organization.
 
@@ -243,7 +242,7 @@ Function rules can include `param_rules` to enforce constraints on individual ca
 
 <Callout variant="warning" title="Known limitations">
 
-- `eth_getStorageAt` uses tiered access (admin: all slots, read: EIP-1967 proxy infrastructure slots only, no claim: blocked) which limits but does not fully prevent storage-level reads for users with the read claim -- the four allowed proxy slots expose implementation/admin addresses only
+- `eth_getStorageAt` uses tiered access (admin: all slots, non-admin: EIP-1967 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only
 - Internal calls within contracts cannot be intercepted
 - `eth_getLogs` topic filtering is not yet addressed
 - Users without a linked ETH address cannot access functions with param constraints
