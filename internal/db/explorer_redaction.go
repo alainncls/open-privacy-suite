@@ -467,8 +467,7 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 		WHERE r.requester_did = $1
 		  AND eal.revoked = false
 		  AND g.revoked_at IS NULL
-		  AND g.expires_at > NOW()
-		  AND g.scope->>'disclosure_level' = 'full'`
+		  AND g.expires_at > NOW()`
 
 	rows, err := d.conn.QueryContext(ctx, query, viewerDID)
 	if err != nil {
