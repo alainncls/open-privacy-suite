@@ -6,7 +6,7 @@ import { server } from '@/test/mocks/server';
 import GroupAccessForm from '../GroupAccessForm';
 import { mockGroupAccess } from '@/test/mocks/handlers';
 import { mockGroupAccessFull } from '@/test/mocks/rbac-fixtures';
-import type { Claim } from '@/types/rbac';
+import { METHOD_SECTIONS, getPresetMethods, PERMISSION_PRESETS } from '@/types/rbac';
 
 // Minimal wrapper since GroupAccessForm doesn't need org context directly
 function renderGroupAccessForm(props: {
@@ -71,34 +71,12 @@ describe('GroupAccessForm', () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        // The methods are displayed as checkboxes in collapsible sections
-        // Look for a method that should be checked
         expect(screen.getByText('eth_call')).toBeInTheDocument();
       });
 
       // Check that selected methods have the checked indicator (bg-primary)
       const ethCallLabel = screen.getByText('eth_call').closest('label');
       expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
-    });
-
-    it('shows existing claims', async () => {
-      server.use(
-        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json(mockGroupAccessFull);
-        })
-      );
-
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        // Find the Read claim label
-        expect(screen.getByText('Read')).toBeInTheDocument();
-      });
-
-      // The checkbox for 'read' should be checked (mockGroupAccessFull has read, write)
-      // We check by looking for the checked state indicator
-      const readLabel = screen.getByText('Read').closest('label');
-      expect(readLabel).toBeInTheDocument();
     });
 
     it('shows existing rate limits', async () => {
@@ -120,31 +98,224 @@ describe('GroupAccessForm', () => {
     });
   });
 
-  describe('Editing Allowed Methods', () => {
+  describe('Preset Cards', () => {
     beforeEach(() => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json({
-            ...mockGroupAccess,
-            claims: ['read', 'write'] as Claim[], // Need claims to enable method sections
-          });
+          return HttpResponse.json(mockGroupAccess);
         })
       );
     });
 
-    it('displays methods as checkboxes in sections', async () => {
+    it('renders all four preset cards', async () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        // Should show Read Methods section
-        expect(screen.getByText('Read Methods')).toBeInTheDocument();
-        // Should show Write Methods section
-        expect(screen.getByText('Write Methods')).toBeInTheDocument();
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
       });
 
-      // Methods should be visible
-      expect(screen.getByText('eth_call')).toBeInTheDocument();
-      expect(screen.getByText('eth_getBalance')).toBeInTheDocument();
+      // Each preset appears as a card (button) with description
+      expect(screen.getByText('End users with wallets — send payments, check balances')).toBeInTheDocument();
+      expect(screen.getByText('Automated systems — raw transactions, event monitoring')).toBeInTheDocument();
+      expect(screen.getByText('Engineers — deploy, debug, inspect contract state')).toBeInTheDocument();
+      expect(screen.getByText('Full control — all methods, all claims')).toBeInTheDocument();
+    });
+
+    it('clicking preset fills methods', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Click Wallet User preset card (use the description to find the right button)
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      // After clicking, all Wallet User methods should be checked
+      await waitFor(() => {
+        const ethCallLabel = screen.getByText('eth_call').closest('label');
+        expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+      });
+
+      // eth_sendTransaction should also be checked (part of Wallet User preset)
+      const sendTxLabel = screen.getByText('eth_sendTransaction').closest('label');
+      expect(sendTxLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+
+      // eth_sendRawTransaction should NOT be checked (Service/Backend only)
+      const rawTxLabel = screen.getByText('eth_sendRawTransaction').closest('label');
+      expect(rawTxLabel?.querySelector('.bg-primary')).not.toBeInTheDocument();
+    });
+
+    it('clicking Developer preset includes all lower-level methods', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Click Developer preset card
+      const devCard = screen.getByText('Engineers — deploy, debug, inspect contract state').closest('button')!;
+      await user.click(devCard);
+
+      // Developer includes Wallet User + Service/Backend + Developer methods
+      await waitFor(() => {
+        // Wallet User method
+        const ethCallLabel = screen.getByText('eth_call').closest('label');
+        expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+      });
+
+      // Service/Backend method
+      const rawTxLabel = screen.getByText('eth_sendRawTransaction').closest('label');
+      expect(rawTxLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+
+      // Developer method
+      const traceLabel = screen.getByText('debug_traceTransaction').closest('label');
+      expect(traceLabel?.querySelector('.bg-primary')).toBeInTheDocument();
+    });
+
+    it('modifying methods deselects preset highlight', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Apply Wallet User preset
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      await waitFor(() => {
+        // The Wallet User card should be highlighted (border-primary)
+        expect(walletCard.className).toContain('border-primary');
+      });
+
+      // Now toggle off a method to diverge from the preset
+      const ethCallLabel = screen.getByText('eth_call').closest('label');
+      if (ethCallLabel) {
+        await user.click(ethCallLabel);
+      }
+
+      // The preset card should no longer be highlighted
+      await waitFor(() => {
+        expect(walletCard.className).not.toContain('border-primary bg-primary-50');
+      });
+    });
+
+    it('clicking Wallet User preset selects exactly the right number of methods', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
+      const expectedCount = getPresetMethods(walletPreset).length;
+
+      // Verify the section counter shows the correct count
+      await waitFor(() => {
+        // Wallet User section header should show N / N (all selected)
+        const sectionMethods = METHOD_SECTIONS['Wallet User'].methods;
+        expect(screen.getByText(`${sectionMethods.length} / ${sectionMethods.length}`)).toBeInTheDocument();
+      });
+
+      // Service/Backend section should show 0 selected
+      const serviceMethods = METHOD_SECTIONS['Service / Backend'].methods;
+      expect(screen.getByText(`0 / ${serviceMethods.length}`)).toBeInTheDocument();
+
+      // Developer section should show 0 selected
+      const devMethods = METHOD_SECTIONS['Developer'].methods;
+      expect(screen.getByText(`0 / ${devMethods.length}`)).toBeInTheDocument();
+
+      // The preset card shows "N methods" label
+      expect(screen.getByText(`${expectedCount} methods`)).toBeInTheDocument();
+    });
+
+    it('clicking Developer preset selects all 3 sections fully', async () => {
+      const user = userEvent.setup();
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      const devCard = screen.getByText('Engineers — deploy, debug, inspect contract state').closest('button')!;
+      await user.click(devCard);
+
+      // All three sections should show full counts
+      await waitFor(() => {
+        const walletMethods = METHOD_SECTIONS['Wallet User'].methods;
+        expect(screen.getByText(`${walletMethods.length} / ${walletMethods.length}`)).toBeInTheDocument();
+      });
+
+      const serviceMethods = METHOD_SECTIONS['Service / Backend'].methods;
+      expect(screen.getByText(`${serviceMethods.length} / ${serviceMethods.length}`)).toBeInTheDocument();
+
+      const devMethods = METHOD_SECTIONS['Developer'].methods;
+      expect(screen.getByText(`${devMethods.length} / ${devMethods.length}`)).toBeInTheDocument();
+    });
+
+    it('edit mode detects matching preset on load', async () => {
+      // Load with exact Wallet User preset methods
+      const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
+      const walletMethods = getPresetMethods(walletPreset);
+
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            allowed_methods: walletMethods,
+            claims: ['read', 'write'],
+          });
+        })
+      );
+
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        // The Wallet User preset card should be highlighted
+        const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button');
+        expect(walletCard?.className).toContain('border-primary');
+      });
+    });
+  });
+
+  describe('Method Sections', () => {
+    beforeEach(() => {
+      server.use(
+        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
+          return HttpResponse.json(mockGroupAccess);
+        })
+      );
+    });
+
+    it('displays method sections by role', async () => {
+      renderGroupAccessForm({});
+
+      await waitFor(() => {
+        // Service/Backend section (with + prefix) - unique to section headers
+        expect(screen.getByText('+ Service / Backend')).toBeInTheDocument();
+      });
+
+      // Developer section (with + prefix)
+      expect(screen.getByText('+ Developer')).toBeInTheDocument();
+
+      // Method section descriptions
+      expect(screen.getByText('Core methods for end users with wallets')).toBeInTheDocument();
+      expect(screen.getByText('Additional methods for automated systems and backend services')).toBeInTheDocument();
+      expect(screen.getByText('Deep inspection and debugging tools for engineers')).toBeInTheDocument();
     });
 
     it('can toggle method by clicking checkbox', async () => {
@@ -162,11 +333,9 @@ describe('GroupAccessForm', () => {
         await user.click(methodLabel);
       }
 
-      // After clicking, it should be toggled (check for visual indicator)
+      // After clicking, it should be toggled
       await waitFor(() => {
         const updatedLabel = screen.getByText('eth_estimateGas').closest('label');
-        const checkbox = updatedLabel?.querySelector('.bg-primary');
-        // State should have changed (either now checked or unchecked)
         expect(updatedLabel).toBeInTheDocument();
       });
     });
@@ -177,91 +346,17 @@ describe('GroupAccessForm', () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        expect(screen.getByText('Read Methods')).toBeInTheDocument();
+        expect(screen.getByText('Core methods for end users with wallets')).toBeInTheDocument();
       });
 
-      // Click Select All for read methods
+      // Click Select All for the first section (Wallet User)
       const selectAllButtons = screen.getAllByText('Select All');
-      await user.click(selectAllButtons[0]); // First one is for read methods
+      await user.click(selectAllButtons[0]);
 
-      // After clicking, all read methods should be selected
+      // After clicking, all Wallet User methods should be selected
       await waitFor(() => {
         const ethCallLabel = screen.getByText('eth_call').closest('label');
         expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('Editing Default Claims', () => {
-    beforeEach(() => {
-      server.use(
-        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json({
-            ...mockGroupAccess,
-            claims: ['read'],
-          });
-        })
-      );
-    });
-
-    it('shows checkboxes for all claims', async () => {
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        expect(screen.getByText('Read')).toBeInTheDocument();
-      });
-
-      expect(screen.getByText('Write')).toBeInTheDocument();
-      expect(screen.getByText('Admin')).toBeInTheDocument();
-      expect(screen.getByText('Upgrade')).toBeInTheDocument();
-      expect(screen.getByText('Deploy')).toBeInTheDocument();
-    });
-
-    it('current claims are checked', async () => {
-      server.use(
-        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json({
-            ...mockGroupAccess,
-            claims: ['read', 'write'] as Claim[],
-          });
-        })
-      );
-
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        expect(screen.getByText('Read')).toBeInTheDocument();
-      });
-
-      // Check that read and write labels have the checked indicator
-      // The component uses a custom checkbox with bg-primary when checked
-      const readLabel = screen.getByText('Read').closest('label');
-      const writeLabel = screen.getByText('Write').closest('label');
-
-      expect(readLabel?.querySelector('.bg-primary')).toBeInTheDocument();
-      expect(writeLabel?.querySelector('.bg-primary')).toBeInTheDocument();
-    });
-
-    it('can toggle claims', async () => {
-      const user = userEvent.setup();
-
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        expect(screen.getByText('Write')).toBeInTheDocument();
-      });
-
-      // Click on Write to toggle it on
-      const writeLabel = screen.getByText('Write').closest('label');
-      if (writeLabel) {
-        await user.click(writeLabel);
-      }
-
-      // After clicking, the write claim should be toggled
-      // We can verify by checking if the UI updated (visual indicator changed)
-      await waitFor(() => {
-        const updatedWriteLabel = screen.getByText('Write').closest('label');
-        expect(updatedWriteLabel?.querySelector('.bg-primary')).toBeInTheDocument();
       });
     });
   });
@@ -442,6 +537,100 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Saving...')).toBeInTheDocument();
       });
     });
+
+    it('save derives correct claims for Wallet User preset', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            ...capturedBody,
+          });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Apply Wallet User preset
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
+
+      await waitFor(() => {
+        expect(walletCard.className).toContain('border-primary');
+      });
+
+      // Save
+      const saveButton = screen.getByText('Save Access Settings');
+      await user.click(saveButton);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      // Wallet User has read methods + eth_sendTransaction (write), so claims should be [read, write]
+      expect(capturedBody).toBeDefined();
+      const claims = capturedBody!.claims as string[];
+      expect(claims).toContain('read');
+      expect(claims).toContain('write');
+      expect(claims).not.toContain('admin');
+      expect(claims).not.toContain('deploy');
+      expect(claims).not.toContain('upgrade');
+    });
+
+    it('save derives admin claim for Admin preset', async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      let capturedBody: Record<string, unknown> | null = null;
+
+      server.use(
+        http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            ...mockGroupAccess,
+            ...capturedBody,
+          });
+        })
+      );
+
+      renderGroupAccessForm({ onSave });
+
+      await waitFor(() => {
+        expect(screen.getByText('Quick Start')).toBeInTheDocument();
+      });
+
+      // Apply Admin preset
+      const adminCard = screen.getByText('Full control — all methods, all claims').closest('button')!;
+      await user.click(adminCard);
+
+      await waitFor(() => {
+        expect(adminCard.className).toContain('border-primary');
+      });
+
+      // Save
+      const saveButton = screen.getByText('Save Access Settings');
+      await user.click(saveButton);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      // Admin preset sets isAdmin flag, so claims should include admin and all expanded claims
+      expect(capturedBody).toBeDefined();
+      const claims = capturedBody!.claims as string[];
+      expect(claims).toContain('admin');
+      expect(claims).toContain('read');
+      expect(claims).toContain('write');
+      expect(claims).toContain('deploy');
+      expect(claims).toContain('upgrade');
+    });
   });
 
   describe('Cancel Button', () => {
@@ -485,25 +674,22 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
       });
 
-      // Method sections should be shown (though disabled without claims)
-      expect(screen.getByText('Read Methods')).toBeInTheDocument();
-      expect(screen.getByText('Write Methods')).toBeInTheDocument();
+      // Method sections should be shown (use unique section descriptions)
+      expect(screen.getByText('Core methods for end users with wallets')).toBeInTheDocument();
+      expect(screen.getByText('+ Service / Backend')).toBeInTheDocument();
+      expect(screen.getByText('+ Developer')).toBeInTheDocument();
     });
   });
 
   describe('Full Integration', () => {
-    it('can modify all fields and save', async () => {
+    it('can apply preset, modify methods, and save', async () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       let capturedBody: Record<string, unknown> | null = null;
 
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json({
-            ...mockGroupAccess,
-            claims: ['read'] as Claim[],
-            allowed_methods: ['eth_call'],
-          });
+          return HttpResponse.json(mockGroupAccess);
         }),
         http.put('/api/v1/admin/orgs/:orgId/groups/:groupId/access', async ({ request }) => {
           capturedBody = (await request.json()) as Record<string, unknown>;
@@ -520,34 +706,20 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Save Access Settings')).toBeInTheDocument();
       });
 
-      // Toggle Write claim first (this enables write methods section)
-      const writeLabel = screen.getByText('Write').closest('label');
-      if (writeLabel) {
-        await user.click(writeLabel);
-      }
+      // Apply Wallet User preset
+      const walletCard = screen.getByText('End users with wallets — send payments, check balances').closest('button')!;
+      await user.click(walletCard);
 
-      // Wait for write methods section to be enabled
+      // Verify methods are checked
       await waitFor(() => {
-        // After enabling write claim, we should be able to click write methods
-        const sendTxLabel = screen.getByText('eth_sendTransaction').closest('label');
-        expect(sendTxLabel).toBeInTheDocument();
+        const ethCallLabel = screen.getByText('eth_call').closest('label');
+        expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
       });
-
-      // Click on eth_sendTransaction to select it
-      const sendTxLabel = screen.getByText('eth_sendTransaction').closest('label');
-      if (sendTxLabel) {
-        await user.click(sendTxLabel);
-      }
 
       // Modify RPS
       const rpsInput = screen.getByPlaceholderText('100');
       await user.clear(rpsInput);
       await user.type(rpsInput, '200');
-
-      // Modify daily limit
-      const dailyInput = screen.getByPlaceholderText('100000');
-      await user.clear(dailyInput);
-      await user.type(dailyInput, '75000');
 
       // Save
       const saveButton = screen.getByText('Save Access Settings');
@@ -561,7 +733,6 @@ describe('GroupAccessForm', () => {
         allowed_methods: expect.arrayContaining(['eth_call', 'eth_sendTransaction']),
         claims: expect.arrayContaining(['read', 'write']),
         rate_limit_rps: 200,
-        rate_limit_daily: 75000,
       });
     });
   });

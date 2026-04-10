@@ -66,40 +66,17 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
-	// Calculate depth and path
-	var depth int
-	var path string
-
-	if input.ParentID != nil {
-		parent, err := s.db.GetGroup(c.Request.Context(), *input.ParentID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if parent == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "parent group not found"})
-			return
-		}
-		if parent.OrgID != orgID {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "parent group does not belong to the same organization"})
-			return
-		}
-		depth = parent.Depth + 1
-		path = parent.Path + "." + input.Slug
-	} else {
-		depth = 0
-		path = input.Slug
-	}
+	// parent_id is accepted but ignored — groups are flat (no hierarchy).
+	// The DB column is retained per expand-only migration policy.
 
 	group := &rbac.Group{
 		ID:          uuid.New().String(),
 		OrgID:       orgID,
-		ParentID:    input.ParentID,
 		Slug:        input.Slug,
 		Name:        input.Name,
 		Description: input.Description,
-		Depth:       depth,
-		Path:        path,
+		Depth:       0,
+		Path:        input.Slug,
 		IsOrgAdmin:  input.IsOrgAdmin,
 	}
 

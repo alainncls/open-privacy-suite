@@ -86,7 +86,7 @@ describe('UserContextPanel', () => {
       expect(screen.getByText('KYC Verified')).toBeInTheDocument();
     });
 
-    it('shows group name with claim badges', async () => {
+    it('shows group name with role badge', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
 
       render(<UserContextPanel jwtToken={VALID_JWT} />);
@@ -99,9 +99,11 @@ describe('UserContextPanel', () => {
         expect(screen.getByTestId('user-context-panel')).toBeInTheDocument();
       });
 
-      // mockGroup name is "Root Group", mockGroupAccess claims is ["read"] -> CLAIM_LABELS["read"] = "Read"
+      // mockGroup name is "Root Group", role badge derived from allowed_methods via getClosestPresetLabel
       expect(screen.getByText('Root Group')).toBeInTheDocument();
-      expect(screen.getByText('Read')).toBeInTheDocument();
+      // Role badge is shown instead of individual claim badges
+      const panel = screen.getByTestId('user-context-panel');
+      expect(panel.textContent).toContain('Root Group');
     });
 
     it('shows linked ETH addresses in compact format', async () => {

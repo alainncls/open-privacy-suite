@@ -117,9 +117,9 @@ describe('GroupList', () => {
     });
   });
 
-  describe('Hierarchy Display', () => {
+  describe('Flat List Display', () => {
     beforeEach(() => {
-      // Setup hierarchical groups with inline access data
+      // Setup groups with inline access data
       const groupsWithAccess = mockGroupHierarchy.map(g => {
         let access = mockGroupAccess;
         if (g.id === 'group-engineering') access = mockGroupAccessFull;
@@ -133,59 +133,30 @@ describe('GroupList', () => {
       );
     });
 
-    it('shows group path reflecting hierarchy', async () => {
+    it('shows all groups in a flat list', async () => {
       renderGroupList();
 
       await waitFor(() => {
-        // Check for the root group name
         expect(screen.getByText('Root')).toBeInTheDocument();
       });
 
-      // Check for nested paths - these are unique
-      await waitFor(() => {
-        expect(screen.getByText('root.engineering')).toBeInTheDocument();
-      });
+      expect(screen.getByText('Engineering')).toBeInTheDocument();
+      expect(screen.getByText('DevOps')).toBeInTheDocument();
     });
 
-    it('shows depth level correctly for nested groups', async () => {
+    it('does not indent child groups', async () => {
       renderGroupList();
 
       await waitFor(() => {
-        // Root has depth 0, Engineering has depth 1
-        expect(screen.getByText('Root')).toBeInTheDocument();
         expect(screen.getByText('Engineering')).toBeInTheDocument();
       });
 
-      // DevOps has depth 2 and path root.engineering.devops
-      await waitFor(() => {
-        expect(screen.getByText('DevOps')).toBeInTheDocument();
-        expect(screen.getByText('root.engineering.devops')).toBeInTheDocument();
-      });
-    });
-
-    it('root groups have depth 0', async () => {
-      renderGroupList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Root')).toBeInTheDocument();
-        // The Root group should have path 'root' (no dots = depth 0)
-        // 'root' appears multiple times (slug badge and path), so just verify root group exists
-        const rootElements = screen.getAllByText('root');
-        expect(rootElements.length).toBeGreaterThan(0);
-      });
-    });
-
-    it('child groups show parent path', async () => {
-      renderGroupList();
-
-      await waitFor(() => {
-        // Engineering is child of Root
-        expect(screen.getByText('root.engineering')).toBeInTheDocument();
-        // DevOps is child of Engineering
-        expect(screen.getByText('root.engineering.devops')).toBeInTheDocument();
-        // Frontend is also child of Engineering
-        expect(screen.getByText('root.engineering.frontend')).toBeInTheDocument();
-      });
+      // No group card should have ml-6 (hierarchy indentation)
+      const groupCards = screen.getAllByTestId('group-card');
+      for (const card of groupCards) {
+        const innerDiv = card.querySelector('.ml-6');
+        expect(innerDiv).toBeNull();
+      }
     });
   });
 
@@ -263,14 +234,14 @@ describe('GroupList', () => {
       expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
     });
 
-    it('Cannot delete group with children - shows error dialog', async () => {
+    it('Delete failure shows error dialog', async () => {
       const user = userEvent.setup();
 
       // Setup handler that returns error for delete
       server.use(
         http.delete('/api/v1/admin/orgs/:orgId/groups/:groupId', () => {
           return HttpResponse.json(
-            { error: 'Cannot delete group with children' },
+            { error: 'Cannot delete group with members' },
             { status: 400 }
           );
         })
@@ -297,23 +268,6 @@ describe('GroupList', () => {
         expect(screen.getByText('Delete Failed')).toBeInTheDocument();
       });
       expect(screen.getByText(/Failed to delete group/)).toBeInTheDocument();
-    });
-
-    it('Add child button opens form with parent preset', async () => {
-      const user = userEvent.setup();
-      renderGroupList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Root Group')).toBeInTheDocument();
-      });
-
-      // Click the add child button (Plus icon)
-      const addChildButton = screen.getByTitle('Add child group');
-      await user.click(addChildButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/Add child group to "Root Group"/)).toBeInTheDocument();
-      });
     });
   });
 

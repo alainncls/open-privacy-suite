@@ -1,29 +1,16 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import GroupForm from '../GroupForm';
-import { mockGroup, mockChildGroup } from '@/test/mocks/handlers';
-import { mockGroupHierarchy } from '@/test/mocks/rbac-fixtures';
-
-// Mock hasPointerCapture for Radix UI Select in JSDOM
-beforeAll(() => {
-  Element.prototype.hasPointerCapture = vi.fn().mockReturnValue(false);
-  Element.prototype.setPointerCapture = vi.fn();
-  Element.prototype.releasePointerCapture = vi.fn();
-});
-
-afterAll(() => {
-  vi.restoreAllMocks();
-});
+import { mockGroup } from '@/test/mocks/handlers';
 
 // Minimal wrapper since GroupForm doesn't need org context directly
 function renderGroupForm(props: {
   orgId?: string;
-  groups?: typeof mockGroupHierarchy;
+  groups?: typeof mockGroup[];
   group?: typeof mockGroup;
-  parentId?: string;
   onClose?: () => void;
   onSave?: () => void;
 }) {
@@ -55,18 +42,12 @@ describe('GroupForm', () => {
       expect(slugInput).toHaveValue('');
     });
 
-    it('parent dropdown is rendered with combobox role', async () => {
-      renderGroupForm({
-        groups: mockGroupHierarchy,
-      });
+    it('does not show parent group dropdown', () => {
+      renderGroupForm({});
 
-      // Verify the parent dropdown trigger is rendered
-      const parentTrigger = screen.getByRole('combobox');
-      expect(parentTrigger).toBeInTheDocument();
-
-      // The select should have default placeholder text (multiple elements possible due to hidden select)
-      const placeholders = screen.getAllByText('No parent (root level)');
-      expect(placeholders.length).toBeGreaterThan(0);
+      // No combobox/select for parent should exist
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      expect(screen.queryByText('Parent Group')).not.toBeInTheDocument();
     });
 
     it('validates name is required', async () => {
@@ -109,7 +90,7 @@ describe('GroupForm', () => {
       expect(onSave).not.toHaveBeenCalled();
     });
 
-    it('submits POST with parent_id if selected', async () => {
+    it('submits POST with null parent_id', async () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       let capturedBody: Record<string, unknown> | null = null;
@@ -120,69 +101,17 @@ describe('GroupForm', () => {
           return HttpResponse.json({
             ...mockGroup,
             id: 'group-new',
-            parent_id: capturedBody.parent_id,
           });
         })
       );
 
-      renderGroupForm({
-        groups: mockGroupHierarchy,
-        onSave,
-      });
+      renderGroupForm({ onSave });
 
       // Fill in name
       const nameInput = screen.getByPlaceholderText(/Engineering, DevOps/);
       await user.type(nameInput, 'New Team');
 
-      // Select a parent using the combobox
-      const parentTrigger = screen.getByRole('combobox');
-      await user.click(parentTrigger);
-
-      await waitFor(() => {
-        expect(screen.getByText('Engineering')).toBeInTheDocument();
-      });
-
-      // Click on Engineering option
-      await user.click(screen.getByText('Engineering'));
-
       // Submit
-      const submitButton = screen.getByText('Create Group');
-      await user.click(submitButton);
-
-      await waitFor(() => {
-        expect(onSave).toHaveBeenCalled();
-      });
-
-      expect(capturedBody).toMatchObject({
-        parent_id: 'group-engineering',
-      });
-    });
-
-    it('root group has null parent_id', async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      let capturedBody: Record<string, unknown> | null = null;
-
-      server.use(
-        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
-          capturedBody = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json({
-            ...mockGroup,
-            id: 'group-new',
-          });
-        })
-      );
-
-      renderGroupForm({
-        groups: mockGroupHierarchy,
-        onSave,
-      });
-
-      // Fill in name (no parent selected = root level)
-      const nameInput = screen.getByPlaceholderText(/Engineering, DevOps/);
-      await user.type(nameInput, 'Root Team');
-
-      // Submit without selecting a parent
       const submitButton = screen.getByText('Create Group');
       await user.click(submitButton);
 
@@ -206,33 +135,6 @@ describe('GroupForm', () => {
       const slugInput = screen.getByPlaceholderText(/engineering/);
       expect(slugInput).toHaveValue('my_test_group');
     });
-
-    it('shows path preview with parent', async () => {
-      const user = userEvent.setup();
-
-      renderGroupForm({
-        groups: mockGroupHierarchy,
-      });
-
-      // Fill in name
-      const nameInput = screen.getByPlaceholderText(/Engineering, DevOps/);
-      await user.type(nameInput, 'New Team');
-
-      // Select a parent
-      const parentTrigger = screen.getByRole('combobox');
-      await user.click(parentTrigger);
-
-      await waitFor(() => {
-        expect(screen.getByText('Engineering')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByText('Engineering'));
-
-      // Check path preview
-      await waitFor(() => {
-        expect(screen.getByText('root.engineering.new_team')).toBeInTheDocument();
-      });
-    });
   });
 
   describe('Edit Mode', () => {
@@ -247,16 +149,6 @@ describe('GroupForm', () => {
 
       // Slug field should not be shown in edit mode
       expect(screen.queryByPlaceholderText(/engineering/)).not.toBeInTheDocument();
-    });
-
-    it('shows current parent in edit mode', () => {
-      renderGroupForm({
-        group: mockChildGroup,
-        groups: [mockGroup, mockChildGroup],
-      });
-
-      // The name should be populated
-      expect(screen.getByDisplayValue('Engineering')).toBeInTheDocument();
     });
 
     it('shows Update button in edit mode', () => {
@@ -393,43 +285,6 @@ describe('GroupForm', () => {
       await user.click(cancelButton);
 
       expect(onClose).toHaveBeenCalled();
-    });
-  });
-
-  describe('Pre-selected Parent', () => {
-    it('uses parentId prop when provided', async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      let capturedBody: Record<string, unknown> | null = null;
-
-      server.use(
-        http.post('/api/v1/admin/orgs/:orgId/groups', async ({ request }) => {
-          capturedBody = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json(mockGroup);
-        })
-      );
-
-      renderGroupForm({
-        groups: mockGroupHierarchy,
-        parentId: 'group-engineering',
-        onSave,
-      });
-
-      // Fill in name
-      const nameInput = screen.getByPlaceholderText(/Engineering, DevOps/);
-      await user.type(nameInput, 'Sub Team');
-
-      // Submit
-      const submitButton = screen.getByText('Create Group');
-      await user.click(submitButton);
-
-      await waitFor(() => {
-        expect(onSave).toHaveBeenCalled();
-      });
-
-      expect(capturedBody).toMatchObject({
-        parent_id: 'group-engineering',
-      });
     });
   });
 });

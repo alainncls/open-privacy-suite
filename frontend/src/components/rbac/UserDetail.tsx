@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { rbacApi } from '@/api/rbac';
 import type { User, MembershipWithDetails, EffectivePermissions } from '@/types/rbac';
 import { useOrgContext } from './RBACManager';
-import { CLAIM_LABELS } from '@/types/rbac';
+import { getClosestPresetLabel } from '@/types/rbac';
 import MembershipForm from './MembershipForm';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -216,23 +216,6 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
     await loadMemberships();
     // Permissions will reload via useEffect when userOrgIds changes
     onUpdate();
-  };
-
-  const getClaimColor = (claim: string) => {
-    switch (claim) {
-      case 'admin':
-        return 'bg-red-100 text-error-dark border-red-300';
-      case 'deployer':
-        return 'bg-purple-100 text-purple-700 border-purple-300';
-      case 'upgrade':
-        return 'bg-orange-100 text-orange-700 border-orange-300';
-      case 'writer':
-        return 'bg-blue-100 text-blue-700 border-blue-300';
-      case 'reader':
-        return 'bg-green-100 text-green-700 border-green-300';
-      default:
-        return 'bg-gray-100 text-gray-600 border-gray-300';
-    }
   };
 
   return (
@@ -485,18 +468,20 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                               (for unregistered contracts)
                             </span>
                           </label>
-                          {effectivePerms.claims && effectivePerms.claims.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {effectivePerms.claims.map(claim => (
-                                <Badge
-                                  key={claim}
-                                  variant="outline"
-                                  className={`text-xs ${getClaimColor(claim)}`}
-                                >
-                                  {CLAIM_LABELS[claim] || claim}
-                                </Badge>
-                              ))}
-                            </div>
+                          {effectivePerms.allowed_methods && effectivePerms.allowed_methods.length > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="text-xs bg-primary-50 text-primary border-primary-200"
+                            >
+                              {getClosestPresetLabel(effectivePerms.allowed_methods)}
+                            </Badge>
+                          ) : effectivePerms.claims && effectivePerms.claims.length > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="text-xs bg-primary-50 text-primary border-primary-200"
+                            >
+                              Admin
+                            </Badge>
                           ) : (
                             <span className="text-neutral-400 text-sm">None</span>
                           )}

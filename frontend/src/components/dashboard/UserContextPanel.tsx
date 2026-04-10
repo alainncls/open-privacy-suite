@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { testApi } from '@/api/client';
-import { CLAIM_LABELS, type Claim } from '@/types/rbac';
+import { getClosestPresetLabel } from '@/types/rbac';
 import { Loader2, User, AlertTriangle } from 'lucide-react';
 
 function parseJWT(token: string): { sub?: string; exp?: number } | null {
@@ -18,17 +18,6 @@ function parseJWT(token: string): { sub?: string; exp?: number } | null {
     return JSON.parse(jsonPayload);
   } catch {
     return null;
-  }
-}
-
-function getClaimColor(claim: string): string {
-  switch (claim) {
-    case 'admin': return 'bg-red-100 text-error-dark border-red-300';
-    case 'deployer': return 'bg-purple-100 text-purple-700 border-purple-300';
-    case 'upgrade': return 'bg-orange-100 text-orange-700 border-orange-300';
-    case 'writer': return 'bg-blue-100 text-blue-700 border-blue-300';
-    case 'reader': return 'bg-green-100 text-green-700 border-green-300';
-    default: return 'bg-gray-100 text-gray-600 border-gray-300';
   }
 }
 
@@ -176,24 +165,32 @@ export function UserContextPanel({ jwtToken, onUserLoaded }: UserContextPanelPro
                   const groupWithAccess = orgGroups.find(g => g.group.id === m.group.id);
                   const claims = groupWithAccess?.access?.claims || [];
 
+                  // Build method list from the access object
+                  const methods = groupWithAccess?.access ? (
+                    (groupWithAccess.access as { allowed_methods?: string[] }).allowed_methods || []
+                  ) : [];
+                  const filteredMethods = methods.filter((m: string) => m !== '*');
+
                   return (
                     <div key={m.membership.id} className="flex items-center gap-2 text-sm">
                       <span className="text-neutral-700">{m.group.name}</span>
                       <span className="text-neutral-400">&mdash;</span>
-                      {claims.length > 0 ? (
-                        <div className="flex gap-1">
-                          {claims.map((claim) => (
-                            <Badge
-                              key={claim}
-                              variant="outline"
-                              className={`text-xs py-0 ${getClaimColor(claim)}`}
-                            >
-                              {CLAIM_LABELS[claim as Claim] || claim}
-                            </Badge>
-                          ))}
-                        </div>
+                      {filteredMethods.length > 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="text-xs py-0 bg-primary-50 text-primary border-primary-200"
+                        >
+                          {getClosestPresetLabel(filteredMethods)}
+                        </Badge>
+                      ) : claims.length > 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="text-xs py-0 bg-primary-50 text-primary border-primary-200"
+                        >
+                          {getClosestPresetLabel([])}
+                        </Badge>
                       ) : (
-                        <span className="text-xs text-neutral-400">No claims</span>
+                        <span className="text-xs text-neutral-400">No permissions</span>
                       )}
                     </div>
                   );

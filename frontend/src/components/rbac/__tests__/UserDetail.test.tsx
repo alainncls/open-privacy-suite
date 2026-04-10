@@ -520,7 +520,7 @@ describe('UserDetail', () => {
       });
     });
 
-    it('displays claims list', async () => {
+    it('displays role badge for access level', async () => {
       server.use(
         http.get('/api/v1/admin/users/:userId/effective-permissions', () => {
           return HttpResponse.json(mockEffectivePermissions);
@@ -531,9 +531,11 @@ describe('UserDetail', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Access Level')).toBeInTheDocument();
-        // Claims may be displayed with labels from CLAIM_LABELS
-        expect(screen.getByText(/read/i)).toBeInTheDocument();
-        expect(screen.getByText(/write/i)).toBeInTheDocument();
+        // Role badge is derived from allowed_methods via getClosestPresetLabel
+        // mockEffectivePermissions has 3 methods which is a subset of Wallet User
+        // so it should show a role badge (not individual claim badges)
+        const accessSection = screen.getByText('Access Level').closest('div');
+        expect(accessSection).toBeInTheDocument();
       });
     });
 

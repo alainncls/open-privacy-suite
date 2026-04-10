@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { toFunctionSelector } from 'viem';
 import { rbacApi } from '@/api/rbac';
 import type { Contract, ContractGrant, FunctionRule, EventRule, Group, GroupAccess, GroupWithAccess } from '@/types/rbac';
-import { CLAIM_LABELS } from '@/types/rbac';
+import { getClosestPresetLabel } from '@/types/rbac';
 import ContractGrantForm from './ContractGrantForm';
 import { Button } from '@/components/ui/button';
 import {
@@ -321,33 +321,16 @@ export default function ContractGrantsManager({
                   </div>
                 </div>
 
-                {/* Group's claims from GroupAccess */}
+                {/* Group role badge */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-neutral-500">
-                    {grant.groupAccess?.narrowed_by_parent ? 'Effective claims:' : 'Group claims:'}
-                  </span>
-                  {grant.groupAccess?.claims && grant.groupAccess.claims.length > 0 ? (
-                    <>
-                      {(grant.groupAccess.narrowed_by_parent
-                        ? grant.groupAccess.effective_claims || []
-                        : grant.groupAccess.claims
-                      ).map(claim => (
-                        <span
-                          key={claim}
-                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary"
-                        >
-                          {CLAIM_LABELS[claim] || claim}
-                        </span>
-                      ))}
-                      {grant.groupAccess.narrowed_by_parent && (
-                        <span className="text-xs text-neutral-400 italic ml-1">
-                          (narrowed by parent)
-                        </span>
-                      )}
-                    </>
+                  <span className="text-xs text-neutral-500">Role:</span>
+                  {grant.groupAccess?.allowed_methods && grant.groupAccess.allowed_methods.length > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary">
+                      {getClosestPresetLabel(grant.groupAccess.allowed_methods.filter(m => m !== '*'))}
+                    </span>
                   ) : (
                     <span className="text-xs text-neutral-400 italic">
-                      No claims configured - set up in Groups tab
+                      No permissions configured - set up in Groups tab
                     </span>
                   )}
                 </div>

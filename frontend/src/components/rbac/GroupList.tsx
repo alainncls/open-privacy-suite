@@ -18,8 +18,7 @@ import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { Input } from '@/components/ui/input';
 import {
-  FolderTree,
-  FolderOpen,
+  Users,
   Plus,
   Pencil,
   Trash2,
@@ -43,7 +42,6 @@ export default function GroupList() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Group | null>(null);
   const [editingAccess, setEditingAccess] = useState<Group | null>(null);
-  const [parentForNew, setParentForNew] = useState<Group | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Group | null>(null);
   const [showDeleteError, setShowDeleteError] = useState(false);
 
@@ -95,8 +93,8 @@ export default function GroupList() {
       const response = await rbacApi.groups.list(orgId, params);
       const page = response.data;
       const groupsList = page.data || [];
-      // Sort by path for hierarchical display
-      groupsList.sort((a, b) => a.group.path.localeCompare(b.group.path));
+      // Sort alphabetically by name
+      groupsList.sort((a: GroupWithAccess, b: GroupWithAccess) => a.group.name.localeCompare(b.group.name));
       setGroups(groupsList);
       setTotal(page.total);
       setOffset(newOffset);
@@ -125,7 +123,6 @@ export default function GroupList() {
   const handleSave = async () => {
     setShowForm(false);
     setEditing(null);
-    setParentForNew(null);
     await loadGroups();
   };
 
@@ -134,124 +131,13 @@ export default function GroupList() {
     await loadGroups();
   };
 
-  const handleAddChild = (parent: Group) => {
-    setParentForNew(parent);
-    setShowForm(true);
-  };
-
-  // Group groups by parent for tree rendering
-  const getRootGroups = () => groups.filter(g => !g.group.parent_id);
-
-  const getChildGroups = (parentId: string) =>
-    groups.filter(g => g.group.parent_id === parentId);
-
-  const renderGroup = (gwa: GroupWithAccess, level: number = 0) => {
-    const children = getChildGroups(gwa.group.id);
-    const hasMethods =
-      gwa.access &&
-      (gwa.access.allowed_methods?.length || 0) > 0;
-
-    return (
-      <div key={gwa.group.id} data-testid="group-card" className="animate-fade-in">
-        <div
-          className={`flex items-center gap-3 p-3 rounded-lg bg-neutral-100 hover:bg-primary-50 transition-colors ${
-            level > 0 ? 'ml-6 border-l-2 border-neutral-200' : ''
-          } ${selectedIds.has(gwa.group.id) ? 'ring-2 ring-primary/30' : ''}`}
-        >
-          <Checkbox
-            checked={selectedIds.has(gwa.group.id)}
-            onCheckedChange={() => toggleSelect(gwa.group.id)}
-            className="flex-shrink-0"
-          />
-          <div
-            className="flex items-center gap-2 flex-1 min-w-0"
-            style={{ paddingLeft: `${level * 8}px` }}
-          >
-            {children.length > 0 ? (
-              <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
-            ) : (
-              <FolderTree className="w-5 h-5 text-primary flex-shrink-0" />
-            )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-medium truncate text-neutral-900">{gwa.group.name}</span>
-                <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
-                  {gwa.group.slug}
-                </Badge>
-                {gwa.group.is_org_admin && (
-                  <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
-                    <Shield className="w-3 h-3" />
-                    Org Admin
-                  </Badge>
-                )}
-              </div>
-              <div className="flex items-center gap-1 text-xs text-neutral-400 mt-0.5">
-                <span className="font-mono">{gwa.group.path}</span>
-                {hasMethods && (
-                  <>
-                    <ChevronRight className="w-3 h-3" />
-                    <span>
-                      {gwa.access?.allowed_methods?.length || 0} methods
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleAddChild(gwa.group)}
-              title="Add child group"
-            >
-              <Plus className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditingAccess(gwa.group)}
-              title="Edit access settings"
-            >
-              <Settings className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditing(gwa.group)}
-              title="Edit group"
-            >
-              <Pencil className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteTarget(gwa.group)}
-              className="text-error-dark hover:text-error-dark hover:bg-error-light"
-              title="Delete group"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-
-        {children.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {children.map(child => renderGroup(child, level + 1))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium text-neutral-700">Groups</h3>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Hierarchical containers defining what methods and addresses users can access
+            Groups define what methods and addresses users can access
           </p>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
@@ -329,7 +215,7 @@ export default function GroupList() {
       ) : groups.length === 0 ? (
         <div className="text-center py-12">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
-            <FolderTree className="w-8 h-8 text-neutral-400" />
+            <Users className="w-8 h-8 text-neutral-400" />
           </div>
           <>
             <p className="text-neutral-500 mb-4">No groups found</p>
@@ -344,7 +230,84 @@ export default function GroupList() {
           </>
         </div>
       ) : (
-        <div className="space-y-2">{getRootGroups().map(g => renderGroup(g))}</div>
+        <div className="space-y-2">
+          {groups.map(gwa => {
+            const hasMethods =
+              gwa.access &&
+              (gwa.access.allowed_methods?.length || 0) > 0;
+
+            return (
+              <div key={gwa.group.id} data-testid="group-card" className="animate-fade-in">
+                <div
+                  className={`flex items-center gap-3 p-3 rounded-lg bg-neutral-100 hover:bg-primary-50 transition-colors ${
+                    selectedIds.has(gwa.group.id) ? 'ring-2 ring-primary/30' : ''
+                  }`}
+                >
+                  <Checkbox
+                    checked={selectedIds.has(gwa.group.id)}
+                    onCheckedChange={() => toggleSelect(gwa.group.id)}
+                    className="flex-shrink-0"
+                  />
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <Users className="w-5 h-5 text-primary flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium truncate text-neutral-900">{gwa.group.name}</span>
+                        <Badge variant="outline" className="font-mono text-xs flex-shrink-0">
+                          {gwa.group.slug}
+                        </Badge>
+                        {gwa.group.is_org_admin && (
+                          <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
+                            <Shield className="w-3 h-3" />
+                            Org Admin
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-neutral-400 mt-0.5">
+                        {hasMethods && (
+                          <>
+                            <ChevronRight className="w-3 h-3" />
+                            <span>
+                              {gwa.access?.allowed_methods?.length || 0} methods
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingAccess(gwa.group)}
+                      title="Edit access settings"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditing(gwa.group)}
+                      title="Edit group"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeleteTarget(gwa.group)}
+                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                      title="Delete group"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadGroups(newOffset)} />
@@ -354,24 +317,17 @@ export default function GroupList() {
         open={showForm}
         onOpenChange={open => {
           setShowForm(open);
-          if (!open) setParentForNew(null);
         }}
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>
-              {parentForNew
-                ? `Add child group to "${parentForNew.name}"`
-                : 'Create Group'}
-            </DialogTitle>
+            <DialogTitle>Create Group</DialogTitle>
           </DialogHeader>
           <GroupForm
             orgId={orgId}
             groups={groups.map(g => g.group)}
-            parentId={parentForNew?.id}
             onClose={() => {
               setShowForm(false);
-              setParentForNew(null);
             }}
             onSave={handleSave}
           />
@@ -412,14 +368,6 @@ export default function GroupList() {
             <GroupAccessForm
               orgId={orgId}
               groupId={editingAccess.id}
-              parentGroup={editingAccess.parent_id ? (() => {
-                const parentGwa = groups.find(g => g.group.id === editingAccess.parent_id);
-                if (!parentGwa) return null;
-                return {
-                  name: parentGwa.group.name,
-                  claims: parentGwa.access?.claims || [],
-                };
-              })() : null}
               onClose={() => setEditingAccess(null)}
               onSave={handleAccessSave}
             />
@@ -432,7 +380,7 @@ export default function GroupList() {
         open={!!deleteTarget}
         onOpenChange={open => !open && setDeleteTarget(null)}
         title="Delete Group"
-        description={`Are you sure you want to delete "${deleteTarget?.name}"? This will also delete all child groups.`}
+        description={`Are you sure you want to delete "${deleteTarget?.name}"?`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         onConfirm={handleDeleteConfirm}
@@ -444,7 +392,7 @@ export default function GroupList() {
         open={showDeleteError}
         onOpenChange={setShowDeleteError}
         title="Delete Failed"
-        description="Failed to delete group. It may have members or child groups that need to be removed first."
+        description="Failed to delete group. It may have members that need to be removed first."
         buttonLabel="OK"
         variant="error"
       />

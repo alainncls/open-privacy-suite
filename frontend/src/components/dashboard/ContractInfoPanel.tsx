@@ -1,19 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { testApi } from '@/api/client';
-import { CLAIM_LABELS, type Claim } from '@/types/rbac';
+import { getClosestPresetLabel } from '@/types/rbac';
 import { Loader2, FileText, AlertTriangle } from 'lucide-react';
-
-function getClaimColor(claim: string): string {
-  switch (claim) {
-    case 'admin': return 'bg-red-100 text-error-dark border-red-300';
-    case 'deployer': return 'bg-purple-100 text-purple-700 border-purple-300';
-    case 'upgrade': return 'bg-orange-100 text-orange-700 border-orange-300';
-    case 'writer': return 'bg-blue-100 text-blue-700 border-blue-300';
-    case 'reader': return 'bg-green-100 text-green-700 border-green-300';
-    default: return 'bg-gray-100 text-gray-600 border-gray-300';
-  }
-}
 
 const ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 
@@ -119,27 +108,23 @@ export function ContractInfoPanel({ contractAddress }: ContractInfoPanelProps) {
           <div className="text-xs font-medium text-neutral-500 mb-1.5">Groups with access</div>
           <div className="space-y-1">
             {grants.map((g) => {
-              const claims = g.access?.claims || [];
+              const methods = g.access?.allowed_methods || [];
+              const filteredMethods = methods.filter(m => m !== '*');
               const hasFunctionRestrictions = g.grant.functions !== null && g.grant.functions !== undefined;
 
               return (
                 <div key={g.grant.id} className="flex items-center gap-2 text-sm">
                   <span className="text-neutral-700">{g.group.name}</span>
                   <span className="text-neutral-400">&mdash;</span>
-                  {claims.length > 0 ? (
-                    <div className="flex gap-1">
-                      {claims.map((claim) => (
-                        <Badge
-                          key={claim}
-                          variant="outline"
-                          className={`text-xs py-0 ${getClaimColor(claim)}`}
-                        >
-                          {CLAIM_LABELS[claim as Claim] || claim}
-                        </Badge>
-                      ))}
-                    </div>
+                  {filteredMethods.length > 0 ? (
+                    <Badge
+                      variant="outline"
+                      className="text-xs py-0 bg-primary-50 text-primary border-primary-200"
+                    >
+                      {getClosestPresetLabel(filteredMethods)}
+                    </Badge>
                   ) : (
-                    <span className="text-xs text-neutral-400">No claims</span>
+                    <span className="text-xs text-neutral-400">No permissions</span>
                   )}
                   {hasFunctionRestrictions && (
                     <span className="text-xs text-neutral-400">
