@@ -66,6 +66,13 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
+	// Escalation prevention: JWT admins (tier 2) cannot create org admin groups.
+	// Only super admins (X-Admin-Token) can set is_org_admin = true.
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin groups"})
+		return
+	}
+
 	// parent_id is accepted but ignored — groups are flat (no hierarchy).
 	// The DB column is retained per expand-only migration policy.
 
@@ -127,6 +134,13 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin = true.
+	// Only super admins (X-Admin-Token) can promote groups to org admin status.
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin != nil && *input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin status on groups"})
 		return
 	}
 

@@ -525,6 +525,40 @@ func (d *DB) HasAdminClaim(ctx context.Context, userID string) (bool, error) {
 	return exists, nil
 }
 
+// IsOrgAdmin checks whether a user (identified by internal ID) is a member of
+// any group with is_org_admin = true. Returns true if the user is an org admin
+// in at least one org, along with the list of org IDs where they hold org admin
+// status. This is stricter than HasAdminClaim: having 'admin' in group_access.claims
+// alone (tier 3 contract admin) does NOT qualify — the group must have is_org_admin = true.
+func (d *DB) IsOrgAdmin(ctx context.Context, userID string) (bool, []string, error) {
+	query := `SELECT DISTINCT g.org_id
+		FROM user_memberships m
+		JOIN groups g ON g.id = m.group_id
+		WHERE m.user_id = $1
+		  AND g.is_org_admin = true
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
+
+	rows, err := d.conn.QueryContext(ctx, query, userID)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to check org admin status: %w", err)
+	}
+	defer rows.Close()
+
+	var orgIDs []string
+	for rows.Next() {
+		var orgID string
+		if err := rows.Scan(&orgID); err != nil {
+			return false, nil, fmt.Errorf("failed to scan org admin result: %w", err)
+		}
+		orgIDs = append(orgIDs, orgID)
+	}
+	if err := rows.Err(); err != nil {
+		return false, nil, fmt.Errorf("error iterating org admin results: %w", err)
+	}
+
+	return len(orgIDs) > 0, orgIDs, nil
+}
+
 func (d *DB) DeleteExpiredMemberships(ctx context.Context) (int64, error) {
 	result, err := d.conn.ExecContext(ctx,
 		`DELETE FROM user_memberships WHERE expires_at IS NOT NULL AND expires_at < $1`,

@@ -631,11 +631,12 @@ func (s *Server) setupRouter() *gin.Engine {
 	// API endpoints for UI - protected by localhost-only middleware
 	// Register versioned API (v1) - primary path
 	adminAuth := s.adminAuthMiddleware()
+	orgScope := s.orgScopingMiddleware()
 	apiV1 := router.Group("/api/v1")
 	{
-		// Admin endpoints - private network + token auth
+		// Admin endpoints - private network + token auth + org scoping
 		admin := apiV1.Group("/admin")
-		admin.Use(s.localhostOnlyMiddleware(), adminAuth)
+		admin.Use(s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		{
 			admin.GET("/logs", s.getLogs)
 			admin.GET("/status", s.getStatus)
@@ -665,7 +666,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	api := router.Group("/api")
 	{
 		adminLegacy := api.Group("/admin")
-		adminLegacy.Use(s.localhostOnlyMiddleware(), adminAuth)
+		adminLegacy.Use(s.localhostOnlyMiddleware(), adminAuth, orgScope)
 		adminLegacy.Use(s.deprecationMiddleware("/api/admin", "/api/v1/admin"))
 		{
 			adminLegacy.GET("/logs", s.getLogs)
@@ -866,22 +867,26 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 					return
 				}
 
-				// Check if any of the user's groups grant the admin claim.
-				isAdmin, err := s.db.HasAdminClaim(c.Request.Context(), user.ID)
+				// Check if the user is an org admin (is_org_admin = true on their group).
+				// This is tier 2 in the 3-tier admin model. Contract admins (tier 3,
+				// who have 'admin' in group_access.claims but NOT is_org_admin) are
+				// denied admin dashboard access.
+				isOrgAdmin, adminOrgIDs, err := s.db.IsOrgAdmin(c.Request.Context(), user.ID)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check admin claim"})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check admin status"})
 					c.Abort()
 					return
 				}
-				if !isAdmin {
-					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: admin claim required"})
+				if !isOrgAdmin {
+					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: org admin required"})
 					c.Abort()
 					return
 				}
 
 				c.Set("auth_method", "jwt_admin")
 				c.Set("admin_subject", claims.Subject)
-				c.Set("admin_user_id", user.ID) // Internal Postgres UUID
+				c.Set("admin_user_id", user.ID)       // Internal Postgres UUID
+				c.Set("admin_org_ids", adminOrgIDs)    // Org IDs where user is org admin
 				c.Next()
 				return
 			}
@@ -895,6 +900,67 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "admin authentication required"})
+		c.Abort()
+	}
+}
+
+// orgScopingMiddleware enforces that JWT-based org admins (tier 2) can only
+// access resources within their own organizations. Super admins (X-Admin-Token)
+// bypass this check entirely.
+//
+// For routes with :org_id in the path, the middleware verifies the org_id matches
+// one of the admin's org IDs stored in context by adminAuthMiddleware.
+//
+// For routes without :org_id (e.g., cross-org lookups, user management), super
+// admin is required — JWT admins get 403.
+func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authMethod := c.GetString("auth_method")
+
+		// Super admin (X-Admin-Token) bypasses org scoping entirely.
+		if authMethod == "admin_token" {
+			c.Next()
+			return
+		}
+
+		// Dev mode: no auth configured, allow through.
+		if authMethod == "" {
+			c.Next()
+			return
+		}
+
+		// JWT admin: enforce org scoping.
+		orgID := c.Param("org_id")
+		if orgID == "" {
+			// Routes without :org_id (cross-org operations) require super admin.
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied: super admin required for cross-org operations"})
+			c.Abort()
+			return
+		}
+
+		// Check if the org_id is in the admin's scoped org list.
+		adminOrgIDsRaw, exists := c.Get("admin_org_ids")
+		if !exists {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			c.Abort()
+			return
+		}
+
+		adminOrgIDs, ok := adminOrgIDsRaw.([]string)
+		if !ok {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			c.Abort()
+			return
+		}
+
+		for _, id := range adminOrgIDs {
+			if id == orgID {
+				c.Next()
+				return
+			}
+		}
+
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied to this organization"})
 		c.Abort()
 	}
 }
@@ -1230,7 +1296,10 @@ func (s *Server) registerUserProfileRoutes(router *gin.Engine) {
 	}
 }
 
-// getMyAdminStatus returns whether the authenticated user has admin privileges.
+// getMyAdminStatus returns whether the authenticated user has org admin privileges.
+// Only users in groups with is_org_admin = true (tier 2) are considered admins
+// for dashboard access purposes. Contract admins (tier 3, admin claim only) get
+// is_admin: false because they have no admin dashboard access.
 func (s *Server) getMyAdminStatus(c *gin.Context) {
 	subject, exists := c.Get("subject")
 	if !exists {
@@ -1241,17 +1310,21 @@ func (s *Server) getMyAdminStatus(c *gin.Context) {
 	user, err := s.db.GetUserByExternalID(c.Request.Context(), subject.(string))
 	if err != nil || user == nil {
 		// User not in DB yet — not an admin.
-		c.JSON(http.StatusOK, gin.H{"is_admin": false})
+		c.JSON(http.StatusOK, gin.H{"is_admin": false, "admin_org_ids": []string{}})
 		return
 	}
 
-	isAdmin, err := s.db.HasAdminClaim(c.Request.Context(), user.ID)
+	isOrgAdmin, orgIDs, err := s.db.IsOrgAdmin(c.Request.Context(), user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check admin status"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"is_admin": isAdmin})
+	if orgIDs == nil {
+		orgIDs = []string{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"is_admin": isOrgAdmin, "admin_org_ids": orgIDs})
 }
 
 // UserOrgResponse represents an organization the user belongs to.

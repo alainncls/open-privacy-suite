@@ -51,6 +51,43 @@ The RBAC system uses a **group-centric claim model**:
 
 ---
 
+## 3-Tier Admin Model
+
+The system uses three tiers of administrative access, each scoped to a different level of the hierarchy.
+
+### Tier 1: Super Admin
+
+Configured via the `ADMIN_API_TOKEN` environment variable. This is not a user account -- it is a shared secret for cross-org access used by scripts and initial setup. Super admins can access the admin API for any organization.
+
+### Tier 2: Org Admin
+
+Groups with `is_org_admin` enabled. Scoped to their organization:
+
+- Full admin dashboard access for their org
+- Can manage groups, users, and contract grants
+- Can create groups with any claims but **cannot create other org admin groups**
+- Sees all contracts in their org in the block explorer
+- Bypasses event rules for org contracts
+
+### Tier 3: Contract Admin
+
+Groups with the `admin` claim on specific contracts (via contract grants):
+
+- Full access to granted contracts only (bypasses event rules, sees all storage)
+- **No** admin dashboard access
+- **No** org-wide visibility
+- Cannot manage users or groups
+
+### Escalation Prevention
+
+No user can grant permissions at their own level or higher:
+
+- Org admins cannot create org admin groups
+- Contract admins cannot access the admin API
+- Only super admins can grant org admin status
+
+---
+
 ## Claims Hierarchy
 
 Claims are capability tokens that grant specific actions. Higher-level claims imply lower-level ones.
@@ -98,7 +135,7 @@ The system enforces consistency between allowed methods and claims. For example,
 graph TD
     Org["Organization<br/><small>e.g. gateway, acme_corp</small>"]
     Group["Group (root)"]
-    GA["GroupAccess<br/><small>methods, claims, rate_limit</small>"]
+    GA["GroupAccess<br/><small>methods, claims, rpc_api_key</small>"]
     CG["ContractGrant<br/><small>links group → contract</small>"]
     Child["Group (child)<br/><small>engineering — INTERSECTION inheritance</small>"]
     UM["UserMembership<br/><small>user + group + role</small>"]
@@ -119,7 +156,7 @@ graph TD
 
 - **Organization** -- top-level tenant with a unique slug, display name, and custom settings (JSONB)
 - **Group** -- hierarchical permission container with parent/child relationships and a materialized path (e.g., `root.engineering.devops`)
-- **GroupAccess** -- defines allowed methods, claims, and rate limits for a group
+- **GroupAccess** -- defines allowed methods, claims, and an optional RPC API key for a group
 - **ContractGrant** -- links a group to a contract; optionally restricts callable functions via `FunctionRule` and parameter constraints via `ParamRule`
 - **UserMembership** -- assigns a user to a group with a role
 - **Role** -- named set of claims (e.g., "deployer" with `[read, write, deploy]`)
@@ -158,7 +195,6 @@ When computing effective permissions for a single membership:
 1. Traverse from root to leaf group
 2. Apply **INTERSECTION** for methods and contracts
 3. Apply **UNION** for owned contracts (ownership propagates down)
-4. Apply **MINIMUM** for rate limits (most restrictive wins)
 
 ### Multiple Memberships
 
@@ -166,7 +202,6 @@ A user can belong to multiple groups. Across memberships:
 
 1. Compute permissions for each membership (restrictive inheritance within the chain)
 2. Apply **UNION** across all memberships (user gets combined permissions)
-3. Apply **MAXIMUM** for rate limits across memberships
 
 ---
 
@@ -235,13 +270,9 @@ based on the **target contract**:
 
 ## Rate Limiting
 
-Each group can define rate limits:
-
-- **`rate_limit_rps`** -- requests per second
-- **`rate_limit_daily`** -- daily request cap
-
-Within a group chain, the **minimum** (most restrictive) value applies. Across multiple
-memberships, the **maximum** value applies.
+Rate limiting is handled at the **RPC proxy API key level**, not per-group. Each group can have an
+`rpc_api_key` that maps to rate limit tiers configured on the upstream RPC proxy. See the
+[Per-Group RPC API Keys](#per-group-rpc-api-keys) section below for details.
 
 ---
 

@@ -170,8 +170,6 @@ export const mockGroupAccessFull: GroupAccess = {
     'eth_getTransactionReceipt',
   ],
   claims: ['read', 'write'] as Claim[],
-  rate_limit_rps: 100,
-  rate_limit_daily: 50000,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-15T00:00:00Z',
 };
@@ -184,8 +182,6 @@ export const mockGroupAccessReadOnly: GroupAccess = {
   group_id: 'group-operations',
   allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
   claims: ['read'] as Claim[],
-  rate_limit_rps: 10,
-  rate_limit_daily: 1000,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -198,8 +194,6 @@ export const mockGroupAccessAdmin: GroupAccess = {
   group_id: 'group-root',
   allowed_methods: ['*'], // All methods
   claims: ['read', 'write', 'admin', 'upgrade', 'deploy'] as Claim[],
-  rate_limit_rps: null, // Unlimited
-  rate_limit_daily: null, // Unlimited
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
