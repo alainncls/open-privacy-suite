@@ -637,7 +637,7 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'admin',
     name: 'Admin',
-    description: 'Full control — all methods, all claims',
+    description: 'All methods + bypasses event rules and contract grants. Sees all org contracts.',
     icon: 'ShieldCheck',
     sections: ['Wallet User', 'Service / Backend', 'Developer'],
     adminClaim: true,
