@@ -391,13 +391,11 @@ func TestCalculateAddressVisibility_AllScenarios(t *testing.T) {
 	// Test with grant separately (needs setup)
 	t.Run("disclosed address with grant", func(t *testing.T) {
 		_ = createDisclosureGrant(t, database, testViewerDID, targetUserID, time.Now().Add(24*time.Hour))
-		// Internal function: G17 means grants don't upgrade visibility, so still hidden.
-		// G16 oracle masking is only in the HTTP handler, not here.
+		// G17 reverted: disclosure grants now upgrade visibility in all views.
 		result := srv.calculateAddressVisibility(ctx, testViewerWallet, testTargetAddress)
-		assert.False(t, result.Visible)
-		assert.Equal(t, VisibilityHidden, result.Level)
-		assert.Equal(t, ReasonNoAccess, result.Reason)
-		assert.Nil(t, result.GrantID)
+		assert.True(t, result.Visible)
+		assert.Equal(t, VisibilityFull, result.Level)
+		assert.Equal(t, ReasonDisclosureGrant, result.Reason)
 	})
 }
 

@@ -204,7 +204,7 @@ func TestAddressStats_FullDisclosureGrantVisibility(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("bob with pseudonymous grant still gets 404", func(t *testing.T) {
+	t.Run("bob with pseudonymous grant can access address stats", func(t *testing.T) {
 		createDisclosureGrantWithLevel(t, database, bobDID, aliceUserID,
 			disclosure.DisclosurePseudonymous, time.Now().Add(24*time.Hour))
 
@@ -213,8 +213,8 @@ func TestAddressStats_FullDisclosureGrantVisibility(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusNotFound, w.Code,
-			"pseudonymous grant should NOT upgrade address page visibility")
+		assert.Equal(t, http.StatusOK, w.Code,
+			"any active disclosure grant should upgrade address page visibility")
 	})
 
 	t.Run("bob with full grant can access address stats", func(t *testing.T) {
@@ -349,11 +349,11 @@ func TestAddressIsContract_FullDisclosureGrantVisibility(t *testing.T) {
 	})
 }
 
-// TestG17_DisclosureGrantsNotLeakedInTransactionLists verifies that disclosure
-// grants do NOT affect the general transaction list endpoint (G17 preserved).
-// This is the critical security invariant: grants only apply to address-specific
-// endpoints, not to exploratory listing endpoints.
-func TestG17_DisclosureGrantsNotLeakedInTransactionLists(t *testing.T) {
+// TestDisclosureGrantsVisibleInTransactionLists verifies that disclosure grants
+// DO upgrade visibility in the general transaction list endpoint (G17 reverted).
+// Disclosed addresses now appear in regular Transactions/Token Transfers pages
+// with a "disclosure_grant" label.
+func TestDisclosureGrantsVisibleInTransactionLists(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 
 	router := setupDisclosureVisibilityRouter(srv)
@@ -380,7 +380,7 @@ func TestG17_DisclosureGrantsNotLeakedInTransactionLists(t *testing.T) {
 	block1 := seedExplorerBlock(t, conn)
 	seedExplorerTransaction(t, conn, block1, "0xtx_g17_test", aliceAddr, "0x0000000000000000000000000000000000000001")
 
-	t.Run("transaction list does NOT show hidden address txs despite full grant", func(t *testing.T) {
+	t.Run("transaction list shows disclosed address txs with grant", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions?limit=100", nil)
 		addBearerToken(t, req, srv, bobDID)
 		w := httptest.NewRecorder()
@@ -391,12 +391,36 @@ func TestG17_DisclosureGrantsNotLeakedInTransactionLists(t *testing.T) {
 		var txs []explorer.Transaction
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &txs))
 
-		// Bob should NOT see Alice's transaction in the general list
-		// because GetBatchVisibility (used by buildVisibilityFilter) does NOT
-		// check disclosure grants (G17). The grant only works for /addresses/:address/* endpoints.
+		// Bob SHOULD see Alice's transaction in the general list because
+		// GetBatchVisibility now includes disclosure grants (G17 reverted).
+		found := false
+		for _, tx := range txs {
+			if tx.Hash == "0xtx_g17_test" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found,
+			"disclosed address txs should appear in general transaction list")
+	})
+
+	t.Run("viewer without grant does not see hidden address txs", func(t *testing.T) {
+		const daveDID = "did:test:dave_no_grant"
+		createTestUserForExplorer(t, database, daveDID)
+
+		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions?limit=100", nil)
+		addBearerToken(t, req, srv, daveDID)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var txs []explorer.Transaction
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &txs))
+
 		for _, tx := range txs {
 			assert.NotEqual(t, "0xtx_g17_test", tx.Hash,
-				"G17 VIOLATION: disclosure grant leaked into transaction list")
+				"viewer without grant should NOT see hidden address txs")
 		}
 	})
 }

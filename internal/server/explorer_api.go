@@ -847,10 +847,9 @@ func (s *Server) calculateAddressVisibilityWithDID(ctx context.Context, viewerWa
 // full-disclosure grant on the target address. This is used by address-specific
 // endpoints to allow full disclosure recipients to view address pages.
 //
-// NOTE: This does NOT modify GetBatchVisibility (G17 preserved). The check is
-// performed only in address-specific endpoint handlers where the target address
-// is already known from the URL path — no information is leaked because the
-// viewer explicitly navigated to that address.
+// NOTE: GetBatchVisibility now includes disclosure grants (G17 reverted), so this
+// check is a secondary fallback for address-specific endpoints where the target
+// address is already known from the URL path.
 func (s *Server) viewerHasFullDisclosureGrant(ctx context.Context, viewerDID, targetAddress string) bool {
 	if viewerDID == "" || targetAddress == "" {
 		return false
@@ -870,9 +869,9 @@ func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerWallet, vi
 	if visibility.Level != VisibilityHidden && visibility.Level != VisibilityRedacted {
 		return true
 	}
-	// G17-safe: Only check disclosure grants for the specific address the viewer
-	// navigated to. This cannot leak grant existence to attackers because the
-	// viewer already knows the address (it's in the URL they requested).
+	// Fallback: check disclosure grants for the specific address the viewer
+	// navigated to. GetBatchVisibility should already handle this, but this
+	// ensures coverage for edge cases.
 	resolvedDID := s.resolveViewerDID(ctx, viewerWallet, viewerDID)
 	return s.viewerHasFullDisclosureGrant(ctx, resolvedDID, address)
 }
