@@ -230,12 +230,26 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			continue
 		}
 
+		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
+		// are dropped. This aligns explorer visibility with the RPC layer —
+		// eth_getTransactionByHash returns null for non-participants, so the
+		// explorer must not show these txs in listings either.
+		// Exception: if both sides are Full (e.g., admin viewing two contracts),
+		// keep the tx — both parties are identifiable to the viewer.
+		if !viewerIsParticipant && !txVisibleToViewer {
+			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
+				continue
+			}
+		}
+
 		redactedTx := tx
 		redactedTx.AddressMetadata = make(map[string]VisibilityReason)
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redactedTx.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
+				redactedTx.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visibilityMapDetailed[aLower]; ok {
 				redactedTx.AddressMetadata[aLower] = meta.Reason
 			}

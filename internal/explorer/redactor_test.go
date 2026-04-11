@@ -148,7 +148,8 @@ func TestRedactTransactions_FullVisibility(t *testing.T) {
 	}
 }
 
-func TestRedactTransactions_HiddenFrom_KeepsWithPrivate(t *testing.T) {
+func TestRedactTransactions_HiddenFrom_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side hidden → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -161,21 +162,13 @@ func TestRedactTransactions_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx (hidden from, public to → keep), got %d", len(result))
-	}
-	if result[0].From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
-	}
-	if *result[0].To != to {
-		t.Errorf("To should be unchanged, got %s", *result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: hidden from, non-participant → drop), got %d", len(result))
 	}
 }
 
-func TestRedactTransactions_HiddenTo_KeepsWithPrivate(t *testing.T) {
+func TestRedactTransactions_HiddenTo_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side hidden → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -188,17 +181,8 @@ func TestRedactTransactions_HiddenTo_KeepsWithPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx (public from, hidden to → keep), got %d", len(result))
-	}
-	if result[0].From != from {
-		t.Errorf("From should be unchanged, got %s", result[0].From)
-	}
-	if *result[0].To != "[PRIVATE]" {
-		t.Errorf("To should be [PRIVATE], got %s", *result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: hidden to, non-participant → drop), got %d", len(result))
 	}
 }
 
@@ -256,7 +240,8 @@ func TestRedactTransactions_HiddenPlusRedacted_Drops(t *testing.T) {
 	}
 }
 
-func TestRedactTransactions_RedactedPlusFull_Keeps(t *testing.T) {
+func TestRedactTransactions_RedactedPlusFull_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side redacted → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -269,25 +254,13 @@ func TestRedactTransactions_RedactedPlusFull_Keeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx (redacted + full → keep), got %d", len(result))
-	}
-	tx := result[0]
-	if tx.From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", tx.From)
-	}
-	if *tx.To != to {
-		t.Errorf("To should be unchanged, got %s", *tx.To)
-	}
-	if tx.Value != "" {
-		t.Errorf("Value should be stripped, got %s", tx.Value)
-	}
-	if tx.InputData != "" {
-		t.Errorf("InputData should be stripped, got %s", tx.InputData)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: redacted from, non-participant → drop), got %d", len(result))
 	}
 }
 
-func TestRedactTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
+func TestRedactTransactions_HiddenFrom_PublicTo_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side hidden → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	errStr := "execution reverted"
@@ -310,31 +283,13 @@ func TestRedactTransactions_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	tx := result[0]
-	if tx.From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", tx.From)
-	}
-	if *tx.To != to {
-		t.Errorf("To should be unchanged, got %s", *tx.To)
-	}
-	if tx.Value != "" {
-		t.Errorf("Value should be stripped, got %s", tx.Value)
-	}
-	if tx.InputData != "" {
-		t.Errorf("InputData should be stripped, got %s", tx.InputData)
-	}
-	if tx.Error != nil {
-		t.Errorf("Error should be nil")
-	}
-	if tx.RevertReason != nil {
-		t.Errorf("RevertReason should be nil")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: hidden from, non-participant → drop), got %d", len(result))
 	}
 }
 
-func TestRedactTransactions_HiddenTo_PublicFrom_ShowsPrivate(t *testing.T) {
+func TestRedactTransactions_HiddenTo_PublicFrom_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side hidden → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -347,25 +302,13 @@ func TestRedactTransactions_HiddenTo_PublicFrom_ShowsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	tx := result[0]
-	if tx.From != from {
-		t.Errorf("From should be unchanged, got %s", tx.From)
-	}
-	if *tx.To != "[PRIVATE]" {
-		t.Errorf("To should be [PRIVATE], got %s", *tx.To)
-	}
-	if tx.Value != "" {
-		t.Errorf("Value should be stripped, got %s", tx.Value)
-	}
-	if tx.InputData != "" {
-		t.Errorf("InputData should be stripped, got %s", tx.InputData)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: hidden to, non-participant → drop), got %d", len(result))
 	}
 }
 
-func TestRedactTransactions_RedactedFrom_StripsData(t *testing.T) {
+func TestRedactTransactions_RedactedFrom_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side redacted → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	errStr := "execution reverted"
@@ -388,32 +331,13 @@ func TestRedactTransactions_RedactedFrom_StripsData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	tx := result[0]
-	if tx.From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", tx.From)
-	}
-	if tx.Value != "" {
-		t.Errorf("Value should be stripped, got %s", tx.Value)
-	}
-	if tx.InputData != "" {
-		t.Errorf("InputData should be stripped, got %s", tx.InputData)
-	}
-	if tx.Error != nil {
-		t.Errorf("Error should be nil")
-	}
-	if tx.RevertReason != nil {
-		t.Errorf("RevertReason should be nil")
-	}
-	// To address unchanged (full visibility)
-	if *tx.To != to {
-		t.Errorf("To should be unchanged, got %s", *tx.To)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: redacted from, non-participant → drop), got %d", len(result))
 	}
 }
 
-func TestRedactTransactions_RedactedTo_StripsData(t *testing.T) {
+func TestRedactTransactions_RedactedTo_DroppedForNonParticipant(t *testing.T) {
+	// G10: non-participant, one side redacted → dropped
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -426,18 +350,8 @@ func TestRedactTransactions_RedactedTo_StripsData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	tx := result[0]
-	if *tx.To != "[PRIVATE]" {
-		t.Errorf("To should be [PRIVATE], got %s", *tx.To)
-	}
-	if tx.Value != "" {
-		t.Errorf("Value should be stripped, got %s", tx.Value)
-	}
-	if tx.From != from {
-		t.Errorf("From should be unchanged, got %s", tx.From)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: redacted to, non-participant → drop), got %d", len(result))
 	}
 }
 
@@ -496,6 +410,8 @@ func TestRedactTransactions_DBError(t *testing.T) {
 }
 
 func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
+	// G10: non-participant txs with any hidden/redacted side are dropped.
+	// Only Full<->Full survives for non-participants.
 	addrFull := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	addrHidden := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	addrRedacted := "0xcccccccccccccccccccccccccccccccccccccccc"
@@ -506,10 +422,10 @@ func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
 	})
 
 	txs := []Transaction{
-		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},       // keep, full
-		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},     // keep, to=[PRIVATE]
-		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)},   // keep, redacted to
-		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},     // keep, from=[PRIVATE]
+		{Hash: "0x01", From: addrFull, To: strPtr(addrFull)},       // keep (both Full)
+		{Hash: "0x02", From: addrFull, To: strPtr(addrHidden)},     // drop (G10: hidden to, non-participant)
+		{Hash: "0x03", From: addrFull, To: strPtr(addrRedacted)},   // drop (G10: redacted to, non-participant)
+		{Hash: "0x04", From: addrHidden, To: strPtr(addrFull)},     // drop (G10: hidden from, non-participant)
 		{Hash: "0x05", From: addrHidden, To: strPtr(addrHidden)},   // drop (both hidden)
 	}
 
@@ -517,26 +433,11 @@ func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 4 {
-		t.Fatalf("expected 4 txs (0x05 dropped, rest kept), got %d", len(result))
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (only 0x01 Full<->Full survives), got %d", len(result))
 	}
 	if result[0].Hash != "0x01" {
-		t.Errorf("first result should be 0x01, got %s", result[0].Hash)
-	}
-	if result[1].Hash != "0x02" {
-		t.Errorf("second result should be 0x02, got %s", result[1].Hash)
-	}
-	if *result[1].To != "[PRIVATE]" {
-		t.Errorf("0x02 To should be [PRIVATE], got %s", *result[1].To)
-	}
-	if result[2].Hash != "0x03" {
-		t.Errorf("third result should be 0x03, got %s", result[2].Hash)
-	}
-	if result[3].Hash != "0x04" {
-		t.Errorf("fourth result should be 0x04, got %s", result[3].Hash)
-	}
-	if result[3].From != "[PRIVATE]" {
-		t.Errorf("0x04 From should be [PRIVATE], got %s", result[3].From)
+		t.Errorf("surviving tx should be 0x01, got %s", result[0].Hash)
 	}
 }
 
@@ -547,12 +448,14 @@ func TestRedactTransactions_MultipleTxsMixed(t *testing.T) {
 func u64ptr(n uint64) *uint64 { return &n }
 
 func TestRedactTransactions_HiddenFrom_NilsNonce(t *testing.T) {
+	// Viewer is the receiver (participant), sender is hidden.
+	// Nonce of hidden sender must be nil even when revealed via participant override.
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	engine := newEngine(VisibilityMap{
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
 		from: VisibilityHidden,
 		to:   VisibilityFull,
-	})
+	}, []string{to}) // viewer is the receiver
 
 	nonce := u64ptr(42)
 	txs := []Transaction{
@@ -566,18 +469,19 @@ func TestRedactTransactions_HiddenFrom_NilsNonce(t *testing.T) {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
 	if result[0].Nonce != nil {
-		t.Errorf("nonce must be nil when sender is hidden, got %v", *result[0].Nonce)
+		t.Errorf("nonce must be nil when sender is base-hidden (participant override), got %v", *result[0].Nonce)
 	}
 }
 
 func TestRedactTransactions_HiddenTo_PreservesNonce(t *testing.T) {
-	// When the RECEIVER is hidden but the sender is public, nonce is not stripped
+	// Viewer is the sender (participant). Receiver is hidden.
+	// Sender's own nonce should be preserved (their base level is Full).
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	engine := newEngine(VisibilityMap{
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
 		from: VisibilityFull,
 		to:   VisibilityHidden,
-	})
+	}, []string{from}) // viewer is the sender
 
 	nonce := u64ptr(7)
 	txs := []Transaction{
@@ -591,18 +495,19 @@ func TestRedactTransactions_HiddenTo_PreservesNonce(t *testing.T) {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
 	if result[0].Nonce == nil || *result[0].Nonce != 7 {
-		t.Errorf("nonce should be preserved when only receiver is hidden, got %v", result[0].Nonce)
+		t.Errorf("nonce should be preserved when sender (viewer) is Full, got %v", result[0].Nonce)
 	}
 }
 
 func TestRedactTransactions_RedactedFrom_NilsNonce(t *testing.T) {
-	// VisibilityRedacted (address truncated, data stripped) also hides nonce
+	// Viewer is the receiver (participant). Sender is redacted.
+	// Nonce of redacted sender must be nil even via participant override.
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	engine := newEngine(VisibilityMap{
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
 		from: VisibilityRedacted,
 		to:   VisibilityFull,
-	})
+	}, []string{to}) // viewer is the receiver
 
 	nonce := u64ptr(99)
 	txs := []Transaction{
@@ -616,7 +521,7 @@ func TestRedactTransactions_RedactedFrom_NilsNonce(t *testing.T) {
 		t.Fatalf("expected 1 tx, got %d", len(result))
 	}
 	if result[0].Nonce != nil {
-		t.Errorf("nonce must be nil when sender is redacted, got %v", *result[0].Nonce)
+		t.Errorf("nonce must be nil when sender is base-redacted, got %v", *result[0].Nonce)
 	}
 }
 
@@ -1946,8 +1851,8 @@ func TestRedactTransactions_ParticipantNonceStripped_ReceiverViewingRedactedSend
 }
 
 func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T) {
-	// Charlie (viewer) is not a participant. Alice and Bob are from/to.
-	// Alice is hidden — Charlie should NOT see Alice's real address.
+	// G10: Charlie (viewer) is not a participant. Alice is hidden.
+	// Under G10, the tx is dropped entirely for non-participants.
 	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	charlie := "0xcccccccccccccccccccccccccccccccccccccccc"
@@ -1964,26 +1869,14 @@ func TestRedactTransactions_NonParticipantDoesNotSeeHiddenAddresses(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	if result[0].From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE] for non-participant, got %s", result[0].From)
-	}
-	if *result[0].To != bob {
-		t.Errorf("To should be unchanged, got %s", *result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", result[0].Value)
-	}
-	if result[0].Nonce != nil {
-		t.Errorf("Nonce must be nil for non-participant when sender is hidden, got %v", *result[0].Nonce)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: non-participant, hidden from → drop), got %d", len(result))
 	}
 }
 
 func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testing.T) {
 	// Alice (viewer) is participant in tx1 (Alice -> Bob) but NOT in tx2 (Carol -> Bob).
-	// Bob is hidden globally. Alice should see Bob in tx1 but NOT in tx2.
+	// Bob is hidden globally. Under G10, tx2 is dropped (non-participant, hidden to).
 	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	carol := "0xcccccccccccccccccccccccccccccccccccccccc"
@@ -1997,14 +1890,14 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 	nonce8 := u64ptr(8)
 	txs := []Transaction{
 		{Hash: "0x01", From: alice, To: strPtr(bob), Value: "100", Nonce: nonce5},  // Alice is participant
-		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8},  // Alice is NOT participant
+		{Hash: "0x02", From: carol, To: strPtr(bob), Value: "200", Nonce: nonce8},  // Alice is NOT participant → dropped (G10)
 	}
 	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 2 {
-		t.Fatalf("expected 2 txs, got %d", len(result))
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (tx2 dropped under G10), got %d", len(result))
 	}
 
 	// tx1: Alice is participant (sender), Bob should be visible
@@ -2021,23 +1914,6 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 	// Alice is the sender — her own nonce should be preserved (baseFromLevel is Full)
 	if tx1.Nonce == nil || *tx1.Nonce != 5 {
 		t.Errorf("tx1: Sender's own nonce should be preserved, got %v", tx1.Nonce)
-	}
-
-	// tx2: Alice is NOT participant, Bob should be hidden
-	tx2 := result[1]
-	if tx2.Hash != "0x02" {
-		t.Fatalf("expected tx2 hash 0x02, got %s", tx2.Hash)
-	}
-	if *tx2.To != "[PRIVATE]" {
-		t.Errorf("tx2: To should be [PRIVATE] (non-participant), got %s", *tx2.To)
-	}
-	if tx2.Value != "" {
-		t.Errorf("tx2: Value should be stripped (one side hidden, non-participant), got %s", tx2.Value)
-	}
-	// Carol's nonce should be preserved — Carol is Full (public sender), only Bob is hidden
-	// The nonce strip only applies when the SENDER is hidden, not the receiver
-	if tx2.Nonce == nil || *tx2.Nonce != 8 {
-		t.Errorf("tx2: Carol's nonce should be preserved (sender is public), got %v", tx2.Nonce)
 	}
 }
 
@@ -2126,8 +2002,8 @@ func TestRedactTransactions_CalldataParticipant_TransferFrom(t *testing.T) {
 }
 
 func TestRedactTransactions_CalldataParticipant_NonParticipantStillHidden(t *testing.T) {
-	// Charlie is NOT in the calldata. Tx is Alice → Contract with Dave as recipient.
-	// Charlie should NOT be detected as participant.
+	// G10: Charlie is NOT in the calldata or tx-level from/to.
+	// Alice (from) is hidden. Under G10, dropped for non-participant Charlie.
 	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
 	charlie := "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
@@ -2156,12 +2032,8 @@ func TestRedactTransactions_CalldataParticipant_NonParticipantStillHidden(t *tes
 		t.Fatal(err)
 	}
 
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx (contract is visible), got %d", len(result))
-	}
-	// Charlie is NOT a participant — Alice should be hidden as [PRIVATE]
-	if result[0].From == alice {
-		t.Errorf("Charlie should NOT see Alice's address (not a participant)")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: non-participant, hidden from → drop), got %d", len(result))
 	}
 }
 
@@ -2684,9 +2556,8 @@ func TestRedactTransactions_AddressMetadata_ParticipantOverride(t *testing.T) {
 }
 
 func TestRedactTransactions_AddressMetadata_NoAccess(t *testing.T) {
-	// When one side is hidden and the viewer is NOT a participant, the hidden
-	// address shows as [PRIVATE] and no metadata reason is set for it (the address
-	// is replaced, so metadata for the original address is not included).
+	// G10: When one side is hidden and the viewer is NOT a participant,
+	// the tx is dropped entirely (not shown with [PRIVATE]).
 	viewer := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	hidden := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
@@ -2704,16 +2575,8 @@ func TestRedactTransactions_AddressMetadata_NoAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 tx, got %d", len(result))
-	}
-	// Hidden address should be replaced with [PRIVATE]
-	if *result[0].To != "[PRIVATE]" {
-		t.Errorf("expected [PRIVATE] for hidden address, got %s", *result[0].To)
-	}
-	// Viewer's metadata should be present
-	if result[0].AddressMetadata[viewer] != ReasonPublicAddress {
-		t.Errorf("expected public_address for viewer, got %q", result[0].AddressMetadata[viewer])
+	if len(result) != 0 {
+		t.Fatalf("expected 0 txs (G10: non-participant, hidden to → drop), got %d", len(result))
 	}
 }
 
@@ -2802,5 +2665,231 @@ func TestRedactTransactions_ContractCreationRedactedDeployer(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("expected contract creation from redacted deployer to be dropped, got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// visible_to_grant label tests
+// ---------------------------------------------------------------------------
+
+func TestRedactTransactions_VisibleToGrant_SetsMetadata(t *testing.T) {
+	// A tx is in VisibleTxHashes and the from address is Hidden.
+	// The viewer is NOT a participant but has the visibleTo grant.
+	// Expected: metadata for the from address is "visible_to_grant".
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityHidden, bob: VisibilityFull},
+		map[string]AddressVisibility{
+			alice: {Level: VisibilityHidden, Reason: ReasonNoAccess},
+			bob:   {Level: VisibilityFull, Reason: ReasonPublicAddress},
+		},
+		nil, // no linked addresses — viewer is NOT a participant
+	)
+
+	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Alice's address should be revealed (visibleTo upgrade)
+	if result[0].From != alice {
+		t.Errorf("expected From=%s (visibleTo override), got %s", alice, result[0].From)
+	}
+	// Alice's metadata should be visible_to_grant
+	if result[0].AddressMetadata[alice] != ReasonVisibleToGrant {
+		t.Errorf("expected visible_to_grant for alice, got %q", result[0].AddressMetadata[alice])
+	}
+	// Bob's metadata should be public_address (from DB)
+	if result[0].AddressMetadata[bob] != ReasonPublicAddress {
+		t.Errorf("expected public_address for bob, got %q", result[0].AddressMetadata[bob])
+	}
+}
+
+func TestRedactTransactions_VisibleToGrant_ParticipantTakesPrecedence(t *testing.T) {
+	// Viewer is both a participant (sender) AND tx is in VisibleTxHashes.
+	// participant_override should take precedence over visible_to_grant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityFull, bob: VisibilityHidden},
+		map[string]AddressVisibility{
+			alice: {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			bob:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+		},
+		[]string{alice}, // alice is the viewer's linked address
+	)
+
+	txs := []Transaction{{Hash: "0xabc", From: alice, To: strPtr(bob), Value: "1000"}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0xabc": true}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:alice", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	// Bob's metadata should be participant_override, NOT visible_to_grant
+	if result[0].AddressMetadata[bob] != ReasonParticipantOverride {
+		t.Errorf("expected participant_override for bob (participant beats visibleTo), got %q", result[0].AddressMetadata[bob])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// G10 fix: non-participant drop tests
+// ---------------------------------------------------------------------------
+
+func TestRedactTransactions_G10_NonParticipantContractCallDropped(t *testing.T) {
+	// from=Hidden, to=Full(contract), viewer not participant, not visibleTo.
+	// G10 says: drop — the RPC layer would return null for this tx.
+	sender := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	contract := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{sender: VisibilityHidden, contract: VisibilityFull},
+		map[string]AddressVisibility{
+			sender:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+			contract: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		nil, // no linked addresses — viewer is NOT a participant
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:outsider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected tx to be dropped (G10: non-participant, one side hidden), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_G10_ParticipantStillSees(t *testing.T) {
+	// Same setup as above, but the viewer is the sender → participant → kept.
+	sender := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	contract := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{sender: VisibilityHidden, contract: VisibilityFull},
+		map[string]AddressVisibility{
+			sender:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+			contract: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		[]string{sender}, // viewer IS the sender
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (participant keeps it), got %d", len(result))
+	}
+	if result[0].From != sender {
+		t.Errorf("expected From=%s (participant override), got %s", sender, result[0].From)
+	}
+}
+
+func TestRedactTransactions_G10_VisibleToStillSees(t *testing.T) {
+	// Same setup, but tx hash is in VisibleTxHashes → kept.
+	sender := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	contract := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{sender: VisibilityHidden, contract: VisibilityFull},
+		map[string]AddressVisibility{
+			sender:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+			contract: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		nil, // viewer is NOT a participant
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: sender, To: strPtr(contract), Value: "1000"}}
+	opts := RedactOpts{VisibleTxHashes: map[string]bool{"0x01": true}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:viewer", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (visibleTo override keeps it), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_G10_BothFullStillVisible(t *testing.T) {
+	// Both from and to are Full visibility, viewer is NOT a participant.
+	// Both sides are identifiable → tx should NOT be dropped.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	engine := newEngineDetailed(
+		VisibilityMap{alice: VisibilityFull, bob: VisibilityFull},
+		map[string]AddressVisibility{
+			alice: {Level: VisibilityFull, Reason: ReasonPublicAddress},
+			bob:   {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		nil, // no linked addresses — viewer is NOT a participant
+	)
+
+	txs := []Transaction{{Hash: "0x01", From: alice, To: strPtr(bob), Value: "1000"}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:outsider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (both Full, no drop), got %d", len(result))
+	}
+	if result[0].From != alice {
+		t.Errorf("expected From=%s, got %s", alice, result[0].From)
+	}
+	if *result[0].To != bob {
+		t.Errorf("expected To=%s, got %s", bob, *result[0].To)
+	}
+}
+
+func TestRedactTransactions_G10_CalldataParticipantStillSees(t *testing.T) {
+	// Viewer is the ERC20 transfer recipient (in calldata, not tx-level to).
+	// from=Hidden, to=contract(Full). Viewer is calldata participant → kept.
+	sender := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+	contract := "0xcccccccccccccccccccccccccccccccccccccccc"
+
+	// transfer(address,uint256) selector = 0xa9059cbb, Dave is param 0
+	calldata := "0xa9059cbb00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000"
+
+	engine := newEngineDetailed(
+		VisibilityMap{sender: VisibilityHidden, dave: VisibilityFull, contract: VisibilityFull},
+		map[string]AddressVisibility{
+			sender:   {Level: VisibilityHidden, Reason: ReasonNoAccess},
+			dave:     {Level: VisibilityFull, Reason: ReasonOwnAddress},
+			contract: {Level: VisibilityFull, Reason: ReasonRBACGroupMember},
+		},
+		[]string{dave}, // Dave is the viewer
+	)
+
+	contractStr := contract
+	txs := []Transaction{{
+		Hash:      "0x01",
+		From:      sender,
+		To:        &contractStr,
+		Value:     "1000",
+		InputData: calldata,
+	}}
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (calldata participant keeps it), got %d", len(result))
+	}
+	// Sender's address should be revealed via participant override
+	if result[0].From != sender {
+		t.Errorf("expected From=%s (participant override), got %s", sender, result[0].From)
 	}
 }

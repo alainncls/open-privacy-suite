@@ -64,6 +64,7 @@ const (
 	ReasonPublicAddress   = explorer.ReasonPublicAddress
 	ReasonNoAccess        = explorer.ReasonNoAccess
 	ReasonRBACGroupMember = explorer.ReasonRBACGroupMember
+	ReasonVisibleToGrant  = explorer.ReasonVisibleToGrant
 )
 
 // ResolveAddressResponse is returned when resolving an address_id.

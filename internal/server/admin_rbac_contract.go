@@ -575,6 +575,52 @@ func expectedByteLength(abiType string) int {
 	}
 }
 
+// autoAddSelfConstraints adds "self" param rules for all address-type parameters
+// in event rules that don't already have an explicit constraint. This ensures
+// that by default, users only see events where they are a party (fail-closed).
+// The admin can remove self constraints via a subsequent update if broader access is needed.
+func autoAddSelfConstraints(rules []rbac.EventRule, abiJSON string) []rbac.EventRule {
+	if len(rules) == 0 || abiJSON == "" {
+		return rules
+	}
+
+	sigs, err := rbac.ExtractEventSignatures(abiJSON)
+	if err != nil || len(sigs) == 0 {
+		return rules
+	}
+
+	// Build topic0 -> signature map
+	sigMap := make(map[string]rbac.EventSignature)
+	for _, sig := range sigs {
+		sigMap[strings.ToLower(sig.Topic0)] = sig
+	}
+
+	for i := range rules {
+		sig, ok := sigMap[strings.ToLower(rules[i].Topic0)]
+		if !ok {
+			continue
+		}
+
+		// Build set of already-constrained param indexes
+		constrained := make(map[int]bool)
+		for _, pr := range rules[i].ParamRules {
+			constrained[pr.Index] = true
+		}
+
+		// Add self for unconstrained address params
+		for j, input := range sig.Inputs {
+			if input.Type == "address" && !constrained[j] {
+				rules[i].ParamRules = append(rules[i].ParamRules, rbac.ParamRule{
+					Index:  j,
+					MustBe: "self",
+				})
+			}
+		}
+	}
+
+	return rules
+}
+
 // Contract Grant handlers
 
 func (s *Server) listContractGrants(c *gin.Context) {
@@ -642,6 +688,12 @@ func (s *Server) createContractGrant(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
+	}
+
+	// Auto-add self constraints for unconstrained address params (fail-closed default).
+	if input.EventRules != nil {
+		abiJSON := resolveContractABI(contract)
+		input.EventRules = autoAddSelfConstraints(input.EventRules, abiJSON)
 	}
 
 	// Verify group exists and belongs to the same org
@@ -752,6 +804,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}
+
+			// Auto-add self constraints for unconstrained address params (fail-closed default).
+			rules = autoAddSelfConstraints(rules, abiJSON)
 
 			grant.EventRules = rules
 		}

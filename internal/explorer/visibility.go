@@ -27,6 +27,7 @@ const (
 	ReasonNoAccess            VisibilityReason = "no_access"
 	ReasonRBACGroupMember     VisibilityReason = "rbac_group_member"
 	ReasonParticipantOverride VisibilityReason = "participant_override"
+	ReasonVisibleToGrant     VisibilityReason = "visible_to_grant"
 )
 
 // AddressVisibility represents the visibility status of a single address
