@@ -776,6 +776,15 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 // from Redacted contracts are kept (with topics/data intact) instead of being
 // stripped — the viewer is a direct participant and already knows the contract.
 func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string, participantAddrs ...string) ([]Log, error) {
+	return r.RedactLogsWithOpts(ctx, logs, viewerDID, nil, participantAddrs...)
+}
+
+// RedactLogsWithOpts is RedactLogs with visibleTo support.
+func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
+	var visibleTxHashes map[string]bool
+	if opts != nil {
+		visibleTxHashes = opts.VisibleTxHashes
+	}
 	if len(logs) == 0 {
 		return logs, nil
 	}
@@ -830,8 +839,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 	extraAddrMap := make(map[string]bool)
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
-		// Redacted/hidden contracts are scanned only if viewer is a participant.
-		if (level == VisibilityHidden || level == VisibilityRedacted) && !isParticipant {
+		// Redacted/hidden contracts are scanned if viewer is a participant
+		// or the tx is in the viewer's visibleTo set.
+		logVisibleTo := visibleTxHashes[strings.ToLower(l.TxHash)]
+		if (level == VisibilityHidden || level == VisibilityRedacted) && !isParticipant && !logVisibleTo {
 			continue
 		}
 		for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
@@ -939,6 +950,12 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		// Participant override: if the viewer is from/to of the parent tx,
 		// upgrade Redacted emitting contracts so they can see their own logs.
 		if level == VisibilityRedacted && isParticipant {
+			level = VisibilityFull
+		}
+
+		// visibleTo override: if the tx that produced this log was shared
+		// with the viewer, upgrade Hidden/Redacted to Full.
+		if (level == VisibilityHidden || level == VisibilityRedacted) && visibleTxHashes[strings.ToLower(l.TxHash)] {
 			level = VisibilityFull
 		}
 

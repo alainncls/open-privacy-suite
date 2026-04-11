@@ -1550,7 +1550,8 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 		}
 	}
 
-	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID, participantAddrs...)
+	logOpts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactLogsWithOpts(c.Request.Context(), logs, viewerDID, &logOpts, participantAddrs...)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
