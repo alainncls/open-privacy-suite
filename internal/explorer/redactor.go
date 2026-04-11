@@ -132,6 +132,11 @@ type RedactOpts struct {
 	// the viewer (via the visibleTo param). Transactions matching these
 	// hashes are never dropped, and their addresses get full visibility.
 	VisibleTxHashes map[string]bool
+
+	// ViewerIsAdmin indicates the viewer has admin-level access (org admin
+	// or admin claim). Admins see all contract activity including txs from
+	// private users — G10 non-participant drop does not apply to admins.
+	ViewerIsAdmin bool
 }
 
 // RedactTransactions applies privacy rules to a list of transactions.
@@ -142,8 +147,10 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	}
 
 	var visibleHashes map[string]bool
-	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+	var viewerIsAdmin bool
+	if len(opts) > 0 {
 		visibleHashes = opts[0].VisibleTxHashes
+		viewerIsAdmin = opts[0].ViewerIsAdmin
 	}
 
 	// 1. Extract unique addresses
@@ -231,12 +238,11 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		}
 
 		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
-		// are dropped. This aligns explorer visibility with the RPC layer —
-		// eth_getTransactionByHash returns null for non-participants, so the
-		// explorer must not show these txs in listings either.
-		// Exception: if both sides are Full (e.g., admin viewing two contracts),
-		// keep the tx — both parties are identifiable to the viewer.
-		if !viewerIsParticipant && !txVisibleToViewer {
+		// are dropped. This aligns explorer visibility with the RPC layer.
+		// Exceptions:
+		// - Admins see all contract activity (they need to audit the network)
+		// - Both sides Full = both identifiable, no information leak
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -352,8 +358,10 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	}
 
 	var visibleHashes map[string]bool
-	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+	var viewerIsAdminT bool
+	if len(opts) > 0 {
 		visibleHashes = opts[0].VisibleTxHashes
+		viewerIsAdminT = opts[0].ViewerIsAdmin
 	}
 
 	var result []TokenTransfer
@@ -383,8 +391,8 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			continue
 		}
 
-		// G10: non-participant, non-visibleTo, one side hidden → drop
-		if !viewerIsParticipant && !txVisibleToViewer {
+		// G10: non-participant, non-visibleTo, non-admin, one side hidden → drop
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdminT {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}

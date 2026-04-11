@@ -1596,9 +1596,10 @@ func TestExplorerTransactions_ParticipantSeesOwnTransaction(t *testing.T) {
 }
 
 // TestExplorerTransactions_GrantVisibleInRegularExplorer verifies that
-// disclosure grants DO upgrade visibility in regular explorer views (G17 reverted).
-// When viewer A has a full disclosure grant on user B, transactions involving B
-// appear in the global tx list with a "disclosure_grant" label.
+// disclosure grants upgrade address visibility but do NOT exempt the viewer
+// from G10 non-participant drop. When viewer A has a full disclosure grant on
+// user B and B sends a tx to hidden user C, the tx is dropped because A is not
+// a participant and one side (C) is non-identifiable.
 func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupExplorerTransactionsRouter(srv)
@@ -1630,7 +1631,9 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	txHash := "0xtx_grant_1"
 	seedExplorerTransaction(t, conn, blockNum, txHash, addrB, addrC)
 
-	// Request as viewer A — the grant makes B visible, so B→C tx appears.
+	// Request as viewer A — the grant makes B visible (Full), but C is hidden.
+	// G10: A is not a participant (from/to/calldata), not visibleTo, not admin,
+	// and one side (C) is non-identifiable, so the tx is dropped.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/transactions", nil)
 	addBearerToken(t, req, srv, didA)
 	w := httptest.NewRecorder()
@@ -1639,10 +1642,9 @@ func TestExplorerTransactions_GrantVisibleInRegularExplorer(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	txs := parseTransactionsResponse(t, w.Body.Bytes())
-	require.Len(t, txs, 1, "disclosed address tx should appear in regular explorer")
-	assert.Equal(t, txHash, txs[0].Hash)
+	require.Len(t, txs, 0, "G10: disclosure grant viewer is not a participant — tx with hidden counterparty is dropped")
 
-	// Viewer without grant should NOT see the tx.
+	// Viewer without grant should also NOT see the tx.
 	didD := "did:d:nogrant"
 	createTestUserForExplorer(t, database, didD)
 

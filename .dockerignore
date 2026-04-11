@@ -39,6 +39,16 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 
+# Docs site (Next.js, ~750MB)
+site/
+
+# Demo files
+demo/
+demos/
+
+# Agents
+.agents/
+
 # Test files
 e2e/
 *_test.go
