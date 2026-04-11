@@ -805,8 +805,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				return
 			}
 
-			// Auto-add self constraints for unconstrained address params (fail-closed default).
-			rules = autoAddSelfConstraints(rules, abiJSON)
+			// NOTE: autoAddSelfConstraints is NOT called on update — only on create.
+			// Updating a grant preserves the admin's explicit constraint choices.
+			// Re-running auto-add on update would silently tighten existing grants.
 
 			grant.EventRules = rules
 		}
