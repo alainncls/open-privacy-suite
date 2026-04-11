@@ -543,6 +543,71 @@ func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
 	}
 }
 
+func TestFilterEventLogs_EmptyParamRules_FailClosed(t *testing.T) {
+	// Empty non-nil ParamRules means constraints were intended but none are valid.
+	// This MUST deny (fail-closed), not allow. Prevents malformed JSON from
+	// granting full access when param restrictions were intended.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	otherTopic1 := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic2 := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0:     transferTopic0,
+						Name:       "Transfer",
+						ParamRules: []ParamRule{}, // empty non-nil = broken constraints
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic1 + `","` + otherTopic2 + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (empty ParamRules must fail-closed), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NilParamRules_AllowsAll(t *testing.T) {
+	// nil ParamRules means no constraints intended — topic0 match is sufficient.
+	// This is the intentional "allow all matching events" case.
+	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
+	otherTopic1 := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherTopic2 := "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{
+						Topic0:     transferTopic0,
+						Name:       "Transfer",
+						ParamRules: nil, // nil = no constraints, allow all
+					},
+				},
+			},
+		},
+	}
+
+	logJSON := `{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + otherTopic1 + `","` + otherTopic2 + `"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+
+	logs := []json.RawMessage{json.RawMessage(logJSON)}
+	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (nil ParamRules allows all matching events), got %d", len(result))
+	}
+}
+
 func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 	// Event rules with param_rules "self" constraint: only Transfer events
 	// where user is from or to should be visible.

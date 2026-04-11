@@ -202,9 +202,14 @@ func eventAllowed(
 			continue
 		}
 
-		// Topic0 matches this rule. If no param rules, event is allowed.
-		if len(rule.ParamRules) == 0 {
+		// Topic0 matches this rule.
+		// nil ParamRules = no constraints intended, topic0 match is sufficient.
+		// Empty non-nil slice = constraints intended but none valid — fail closed.
+		if rule.ParamRules == nil {
 			return true
+		}
+		if len(rule.ParamRules) == 0 {
+			return false
 		}
 
 		// Check param rules: at least one "self" constraint must match (OR semantics).
