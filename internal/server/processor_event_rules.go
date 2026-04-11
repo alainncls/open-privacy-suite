@@ -54,6 +54,42 @@ func (p *JSONRPCProcessor) contractABIProvider(ctx context.Context) rbac.ABIProv
 	return newStoreABIProvider(ctx, p.rbacAccessCtrl.Store())
 }
 
+// isResponseTxVisibleTo checks if the transaction in the response body has been
+// shared with the viewer via the visibleTo param. Extracts the tx hash from the
+// response and checks tx_visible_to.
+func (p *JSONRPCProcessor) isResponseTxVisibleTo(ctx context.Context, viewerDID string, responseBody []byte) bool {
+	if p.txVisibilityStore == nil || viewerDID == "" {
+		return false
+	}
+	txHashes := extractTxHashesFromResponse(responseBody)
+	if len(txHashes) == 0 {
+		return false
+	}
+	visibility, err := p.txVisibilityStore.GetBatchTxVisibility(ctx, txHashes)
+	if err != nil || len(visibility) == 0 {
+		return false
+	}
+	for _, dids := range visibility {
+		for _, did := range dids {
+			if strings.EqualFold(did, viewerDID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isNullResult checks if a JSON-RPC response has a null result.
+func isNullResult(body []byte) bool {
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return false
+	}
+	return resp.Result == nil || string(*resp.Result) == "null"
+}
+
 // buildTxVisibilityContext builds a TxVisibilityContext for the given response.
 // It extracts tx hashes from the response body, batch-queries visibleTo rules,
 // and returns a context the filter can use. Returns nil if the visibleTo

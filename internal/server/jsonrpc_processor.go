@@ -595,21 +595,40 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
-			// No linked addresses -- return null (cannot verify participation)
+			// No linked addresses — check visibleTo before returning null
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 		}
-		return FilterTransactionByHash(responseBody, addrs)
+		filtered := FilterTransactionByHash(responseBody, addrs)
+		// If participant check returned null, check visibleTo as fallback
+		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+			return responseBody
+		}
+		return filtered
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
-			// No linked addresses -- return null (cannot verify participation)
+			// No linked addresses — check visibleTo before returning null
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				// visibleTo viewer gets the full receipt with log filtering
+				perms := p.resolvePermsForFilter(ctx, result)
+				visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
+				return FilterReceiptLogsWithEventRules(responseBody, nil, perms, p.contractABIProvider(ctx), visCtx)
+			}
 			return FilterTransactionReceipt(responseBody, nil)
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
-		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
+		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
+		// If participant check returned null, check visibleTo as fallback
+		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+			return FilterReceiptLogsWithEventRules(responseBody, nil, perms, p.contractABIProvider(ctx), visCtx)
+		}
+		return filtered
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)

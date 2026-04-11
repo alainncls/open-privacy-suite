@@ -448,7 +448,7 @@ For raw transactions, pass it as a second parameter:
 - The DID list is stored in `tx_visible_to` with the resulting tx hash.
 - **Explorer views**: Transactions with `visibleTo` grants appear in regular Transactions and Token Transfers pages for the listed DIDs. The `buildVisibilityFilter` includes these tx hashes as an override to address-based filtering.
 - **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs`, even when `must_be=self` param rules would otherwise filter them. This extends (never restricts) existing access.
-- **Receipt filtering**: `visibleTo` does NOT override receipt participant checks. A listed DID still receives `null` from `eth_getTransactionReceipt` if they are not a from/to participant. This is intentional — receipts contain financial data that should only be visible to participants.
+- **Transaction and receipt access**: `visibleTo` overrides participant checks for both `eth_getTransactionByHash` and `eth_getTransactionReceipt`. A listed DID receives the full transaction/receipt even if they are not a from/to participant — the sender explicitly chose to share this transaction.
 
 ### Storage
 
