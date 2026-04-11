@@ -79,10 +79,24 @@ func extractUniqueAddresses(txs []Transaction) []string {
 	return addrs
 }
 
-// RedactTransactions applies privacy rules to a list of transactions
-func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transaction, viewerDID string) ([]Transaction, error) {
+// RedactOpts provides optional overrides for transaction redaction.
+type RedactOpts struct {
+	// VisibleTxHashes is the set of tx hashes that are always visible to
+	// the viewer (via the visibleTo param). Transactions matching these
+	// hashes are never dropped, and their addresses get full visibility.
+	VisibleTxHashes map[string]bool
+}
+
+// RedactTransactions applies privacy rules to a list of transactions.
+// Optional RedactOpts can override drop behavior for visibleTo transactions.
+func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transaction, viewerDID string, opts ...RedactOpts) ([]Transaction, error) {
 	if len(txs) == 0 {
 		return txs, nil
+	}
+
+	var visibleHashes map[string]bool
+	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+		visibleHashes = opts[0].VisibleTxHashes
 	}
 
 	// 1. Extract unique addresses
@@ -131,13 +145,18 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 			baseToLevel = visibilityMap[strings.ToLower(*tx.To)]
 		}
 
+		// visibleTo override: if this tx was shared with the viewer via the
+		// visibleTo param, upgrade both addresses to full visibility — the
+		// sender explicitly chose to share this transaction with the viewer.
+		txVisibleToViewer := visibleHashes[strings.ToLower(tx.Hash)]
+
 		// Participant override: the counterparty address is revealed (so we don't
 		// replace it with [PRIVATE]), but sensitive metadata like nonce is still
 		// stripped based on the BASE visibility — the participant override only
 		// makes the address visible, not the sender's activity metadata.
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
-		if viewerIsParticipant {
+		if viewerIsParticipant || txVisibleToViewer {
 			if fromLevel == VisibilityHidden || fromLevel == VisibilityRedacted {
 				fromLevel = VisibilityFull
 			}

@@ -902,6 +902,19 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 	return newFilter
 }
 
+// redactOptsFromFilter builds RedactOpts from a VisibilityFilter, passing
+// the visibleTo tx hashes so RedactTransactions doesn't drop them.
+func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts {
+	if filter == nil || len(filter.VisibleTxHashes) == 0 {
+		return explorer.RedactOpts{}
+	}
+	m := make(map[string]bool, len(filter.VisibleTxHashes))
+	for _, h := range filter.VisibleTxHashes {
+		m[strings.ToLower(h)] = true
+	}
+	return explorer.RedactOpts{VisibleTxHashes: m}
+}
+
 func (s *Server) getExplorerChainID(c *gin.Context) {
 	// Approximation: return 1 or get from proxy if needed
 	c.JSON(http.StatusOK, gin.H{"chain_id": 1})
@@ -1122,7 +1135,7 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 
 	// Field-level redaction still needed (replacing addresses with [PRIVATE],
 	// stripping values, etc.) — the SQL filter only drops entire rows.
-	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, redactOptsFromFilter(filter))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1384,7 +1397,7 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	}
 
 	// Field-level redaction still needed for address masking and value stripping.
-	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, redactOptsFromFilter(filter))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
