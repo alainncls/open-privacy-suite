@@ -1236,9 +1236,16 @@ func (s *Server) getExplorerAddressStats(c *gin.Context) {
 		filter = s.addDisclosureAddressToFilter(filter, normalizedAddr)
 	}
 
-	filteredCount, err := s.explorerStore.GetAddressTransactionCountFiltered(c.Request.Context(), address, filter)
+	// Load the actual transactions for this address and run RedactTransactions
+	// to get the accurate post-G10 count. The SQL-level count doesn't account
+	// for the non-participant drop (G10) or calldata participant detection.
+	allTxs, err := s.explorerStore.GetTransactionsByAddress(c.Request.Context(), address, 10000, nil)
 	if err == nil {
-		stats.TxCount = filteredCount
+		opts := s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID)
+		redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), allTxs, resolvedDID, opts)
+		if err == nil {
+			stats.TxCount = len(redacted)
+		}
 	}
 
 	c.JSON(http.StatusOK, stats)
@@ -1427,6 +1434,9 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 		redacted = []explorer.Transaction{}
 	}
 
+	// NOTE: total comes from SQL count which doesn't account for G10 post-query
+	// drops. This is a known pagination limitation — the total may slightly
+	// overcount. Fixing this requires loading all pages which is too expensive.
 	c.JSON(http.StatusOK, gin.H{"data": redacted, "total": total})
 }
 
