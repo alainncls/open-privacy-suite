@@ -89,7 +89,11 @@ func FilterEventLogs(
 		contractAddr := strings.ToLower(entry.Address)
 		access := perms.GetContractAccess(contractAddr)
 		if access == nil {
-			// No access to this contract at all — hide the log.
+			// No RBAC access to this contract — check visibleTo as fallback.
+			// The sender explicitly shared this tx with the viewer.
+			if isViewerInVisibleTo(visCtx, rawLog) {
+				filtered = append(filtered, rawLog)
+			}
 			continue
 		}
 
