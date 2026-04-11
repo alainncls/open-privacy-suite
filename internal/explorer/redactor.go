@@ -79,6 +79,46 @@ func extractUniqueAddresses(txs []Transaction) []string {
 	return addrs
 }
 
+// isViewerInCalldata checks if any of the viewer's addresses appear as an
+// address parameter in the transaction's input data. This detects participation
+// in contract calls where the actual counterparty is encoded in calldata rather
+// than in the tx-level "to" field (e.g., ERC20 transfer(address,uint256)).
+//
+// Supported function selectors:
+//   - 0xa9059cbb: transfer(address to, uint256 amount)      — to at bytes 4-36
+//   - 0x23b872dd: transferFrom(address from, address to, uint256 amount) — from at 4-36, to at 36-68
+//   - 0x095ea7b3: approve(address spender, uint256 amount)  — spender at bytes 4-36
+func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
+	if len(viewerAddrs) == 0 || len(inputData) < 10 { // "0x" + 8 hex selector
+		return false
+	}
+
+	data := strings.ToLower(inputData)
+	selector := data[:10]
+
+	// Each address param is 32 bytes (64 hex chars), zero-padded on the left.
+	// Address is in the last 20 bytes: offset 24 hex chars from param start.
+	extractAddr := func(offset int) string {
+		start := 10 + offset*64 // 10 = "0x" + 8-char selector
+		end := start + 64
+		if len(data) < end {
+			return ""
+		}
+		// Address is last 20 bytes of 32-byte word
+		return "0x" + data[start+24:end]
+	}
+
+	switch selector {
+	case "0xa9059cbb": // transfer(address,uint256) — param 0 is recipient
+		return viewerAddrs[extractAddr(0)]
+	case "0x23b872dd": // transferFrom(address,address,uint256) — param 0 is from, param 1 is to
+		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
+	case "0x095ea7b3": // approve(address,uint256) — param 0 is spender
+		return viewerAddrs[extractAddr(0)]
+	}
+	return false
+}
+
 // RedactOpts provides optional overrides for transaction redaction.
 type RedactOpts struct {
 	// VisibleTxHashes is the set of tx hashes that are always visible to
@@ -131,9 +171,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	var redactedTxs []Transaction
 	for _, tx := range txs {
 		// Determine whether the viewer is a participant in this transaction.
+		// Check tx-level from/to AND calldata-level recipients (e.g. ERC20
+		// transfer(address,uint256) encodes the real recipient in calldata,
+		// while tx.To is just the contract address).
 		viewerIsFrom := tx.From != "" && viewerAddrs[strings.ToLower(tx.From)]
 		viewerIsTo := tx.HasRecipient() && viewerAddrs[strings.ToLower(*tx.To)]
-		viewerIsParticipant := viewerIsFrom || viewerIsTo
+		viewerIsCalldataRecipient := isViewerInCalldata(tx.InputData, viewerAddrs)
+		viewerIsParticipant := viewerIsFrom || viewerIsTo || viewerIsCalldataRecipient
 
 		// Resolve base visibility from the shared map.
 		baseFromLevel := VisibilityFull

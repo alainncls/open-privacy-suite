@@ -209,13 +209,19 @@ However, **transaction participants must always see their counterparty** in thei
 This is implemented as a **per-transaction override** in `RedactTransactions` (`internal/explorer/redactor.go`):
 
 1. The viewer's linked ETH addresses are fetched via `GetLinkedAddresses(ctx, viewerDID)`.
-2. For each transaction, if any viewer address matches `from` or `to`, both sides are overridden to `VisibilityFull` for that transaction only.
+2. For each transaction, if any viewer address matches `from`, `to`, **or appears in calldata as an address parameter** (e.g., ERC20 `transfer(address,uint256)` recipient), both sides are overridden to `VisibilityFull` for that transaction only.
 3. The shared visibility map is **never mutated** — the override uses local variables scoped to the current transaction.
+
+**Calldata-level participant detection:** For contract calls, the tx-level `to` is the contract address, not the actual counterparty. The redactor also parses `inputData` for common function selectors to detect participants encoded in calldata:
+- `0xa9059cbb` — `transfer(address to, uint256 amount)`: param 0 is recipient
+- `0x23b872dd` — `transferFrom(address from, address to, uint256 amount)`: params 0 and 1
+- `0x095ea7b3` — `approve(address spender, uint256 amount)`: param 0 is spender
 
 | Scenario | Viewer is participant? | Counterparty visibility | Override |
 |----------|----------------------|------------------------|----------|
-| Viewer is sender | Yes | Hidden → Full | Per-tx only |
-| Viewer is receiver | Yes | Hidden → Full | Per-tx only |
+| Viewer is sender (`from`) | Yes | Hidden → Full | Per-tx only |
+| Viewer is receiver (`to`) | Yes | Hidden → Full | Per-tx only |
+| Viewer is ERC20 transfer recipient (in calldata) | Yes | Hidden → Full | Per-tx only |
 | Viewer is not involved | No | No override | Normal rules apply |
 | Same tx, different viewer | — | Independent | Each viewer gets their own override |
 

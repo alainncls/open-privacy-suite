@@ -2042,6 +2042,160 @@ func TestRedactTransactions_ParticipantVisibilityDoesNotLeakToOtherTxs(t *testin
 }
 
 // ---------------------------------------------------------------------------
+// Calldata-level participant detection — ERC20 transfer recipients
+// ---------------------------------------------------------------------------
+
+func TestRedactTransactions_CalldataParticipant_ERC20Transfer(t *testing.T) {
+	// Alice sends ERC20 transfer to Dave via contract. Tx-level to = contract.
+	// Dave's address is in the calldata (transfer(address,uint256)).
+	// Dave should be detected as participant and see Alice's address + value.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+	contract := "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9"
+
+	// transfer(address,uint256) selector = 0xa9059cbb
+	// Dave's address padded to 32 bytes + amount
+	calldata := "0xa9059cbb00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice:    VisibilityHidden,
+		dave:     VisibilityFull,
+		contract: VisibilityFull,
+	}, []string{dave})
+
+	contractStr := contract
+	nonce := uint64(5)
+	txs := []Transaction{{
+		Hash:      "0x01",
+		From:      alice,
+		To:        &contractStr,
+		Value:     "1000",
+		InputData: calldata,
+		Nonce:     &nonce,
+	}}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (Dave is calldata participant), got %d", len(result))
+	}
+
+	// Dave should see Alice's real address (participant override)
+	if result[0].From != alice {
+		t.Errorf("expected From=%s (participant sees counterparty), got %s", alice, result[0].From)
+	}
+	// Value should be preserved (participant sees value)
+	if result[0].Value == "0" || result[0].Value == "" {
+		t.Errorf("expected value preserved for participant, got %q", result[0].Value)
+	}
+}
+
+func TestRedactTransactions_CalldataParticipant_TransferFrom(t *testing.T) {
+	// transferFrom(alice, dave, amount) — Dave is param 1 (to)
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+	contract := "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9"
+
+	// transferFrom(address,address,uint256) selector = 0x23b872dd
+	calldata := "0x23b872dd000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice:    VisibilityHidden,
+		dave:     VisibilityFull,
+		contract: VisibilityFull,
+	}, []string{dave})
+
+	contractStr := contract
+	txs := []Transaction{{
+		Hash:      "0x02",
+		From:      "0xspender", // spender is a third party
+		To:        &contractStr,
+		Value:     "500",
+		InputData: calldata,
+	}}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (Dave is transferFrom recipient), got %d", len(result))
+	}
+}
+
+func TestRedactTransactions_CalldataParticipant_NonParticipantStillHidden(t *testing.T) {
+	// Charlie is NOT in the calldata. Tx is Alice → Contract with Dave as recipient.
+	// Charlie should NOT be detected as participant.
+	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+	charlie := "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+	contract := "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9"
+
+	calldata := "0xa9059cbb00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000"
+
+	engine := newEngineWithLinkedAddrs(VisibilityMap{
+		alice:    VisibilityHidden,
+		dave:     VisibilityHidden,
+		charlie:  VisibilityFull,
+		contract: VisibilityFull,
+	}, []string{charlie})
+
+	contractStr := contract
+	txs := []Transaction{{
+		Hash:      "0x03",
+		From:      alice,
+		To:        &contractStr,
+		Value:     "1000",
+		InputData: calldata,
+	}}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test:charlie")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx (contract is visible), got %d", len(result))
+	}
+	// Charlie is NOT a participant — Alice should be hidden as [PRIVATE]
+	if result[0].From == alice {
+		t.Errorf("Charlie should NOT see Alice's address (not a participant)")
+	}
+}
+
+func TestIsViewerInCalldata(t *testing.T) {
+	dave := "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65"
+	addrs := map[string]bool{dave: true}
+
+	tests := []struct {
+		name      string
+		inputData string
+		expect    bool
+	}{
+		{"ERC20 transfer to viewer", "0xa9059cbb00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000", true},
+		{"ERC20 transfer to someone else", "0xa9059cbb000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000000000000000056bc75e2d63100000", false},
+		{"transferFrom with viewer as to", "0x23b872dd000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000", true},
+		{"transferFrom with viewer as from", "0x23b872dd00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a65000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000000000000000056bc75e2d63100000", true},
+		{"approve with viewer as spender", "0x095ea7b300000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000000000000000000000000000056bc75e2d63100000", true},
+		{"unknown selector", "0xdeadbeef00000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a65", false},
+		{"empty input", "0x", false},
+		{"too short", "0xa9059cbb", false},
+		{"no input", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isViewerInCalldata(tt.inputData, addrs)
+			if got != tt.expect {
+				t.Errorf("isViewerInCalldata(%s) = %v, want %v", tt.name, got, tt.expect)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RedactTransfers — Participant visibility override
 // ---------------------------------------------------------------------------
 
