@@ -89,17 +89,24 @@ func extractUniqueAddresses(txs []Transaction) []string {
 //   - 0x23b872dd: transferFrom(address from, address to, uint256 amount) — from at 4-36, to at 36-68
 //   - 0x095ea7b3: approve(address spender, uint256 amount)  — spender at bytes 4-36
 func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
-	if len(viewerAddrs) == 0 || len(inputData) < 10 { // "0x" + 8 hex selector
+	if len(viewerAddrs) == 0 || len(inputData) < 8 {
 		return false
 	}
 
 	data := strings.ToLower(inputData)
-	selector := data[:10]
+	// Normalize: strip 0x prefix if present so selector is always at [0:8]
+	if strings.HasPrefix(data, "0x") {
+		data = data[2:]
+	}
+	if len(data) < 8 {
+		return false
+	}
+	selector := "0x" + data[:8]
 
 	// Each address param is 32 bytes (64 hex chars), zero-padded on the left.
 	// Address is in the last 20 bytes: offset 24 hex chars from param start.
 	extractAddr := func(offset int) string {
-		start := 10 + offset*64 // 10 = "0x" + 8-char selector
+		start := 8 + offset*64 // 8 = selector length after stripping 0x
 		end := start + 64
 		if len(data) < end {
 			return ""
