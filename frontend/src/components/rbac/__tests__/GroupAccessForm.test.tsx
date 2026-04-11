@@ -517,11 +517,11 @@ describe('GroupAccessForm', () => {
         expect(onSave).toHaveBeenCalled();
       });
 
-      // Wallet User has read methods + eth_sendTransaction (write), so claims should be [read, write]
+      // Wallet User has no operational claims — read/write are implicit from methods
       expect(capturedBody).toBeDefined();
       const claims = capturedBody!.claims as string[];
-      expect(claims).toContain('read');
-      expect(claims).toContain('write');
+      expect(claims).not.toContain('read');
+      expect(claims).not.toContain('write');
       expect(claims).not.toContain('admin');
       expect(claims).not.toContain('deploy');
       expect(claims).not.toContain('upgrade');
@@ -564,14 +564,14 @@ describe('GroupAccessForm', () => {
         expect(onSave).toHaveBeenCalled();
       });
 
-      // Admin preset sets isAdmin flag, so claims should include admin and all expanded claims
+      // Admin preset sets admin claim which implies deploy+upgrade (not read/write)
       expect(capturedBody).toBeDefined();
       const claims = capturedBody!.claims as string[];
       expect(claims).toContain('admin');
-      expect(claims).toContain('read');
-      expect(claims).toContain('write');
       expect(claims).toContain('deploy');
       expect(claims).toContain('upgrade');
+      expect(claims).not.toContain('read');
+      expect(claims).not.toContain('write');
     });
   });
 
@@ -668,8 +668,11 @@ describe('GroupAccessForm', () => {
 
       expect(capturedBody).toMatchObject({
         allowed_methods: expect.arrayContaining(['eth_call', 'eth_sendTransaction']),
-        claims: expect.arrayContaining(['read', 'write']),
       });
+      // Wallet User has no operational claims — read/write removed
+      const integClaims = (capturedBody as Record<string, unknown>).claims as string[];
+      expect(integClaims).not.toContain('read');
+      expect(integClaims).not.toContain('write');
       // Rate limits should not be in the payload
       expect(capturedBody).not.toHaveProperty('rate_limit_rps');
       expect(capturedBody).not.toHaveProperty('rate_limit_daily');
