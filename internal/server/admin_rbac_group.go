@@ -66,6 +66,13 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
+	// Escalation prevention: JWT admins (tier 2) cannot create org admin groups.
+	// Only super admins (X-Admin-Token) can set is_org_admin = true.
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin groups"})
+		return
+	}
+
 	// parent_id is accepted but ignored — groups are flat (no hierarchy).
 	// The DB column is retained per expand-only migration policy.
 
@@ -127,6 +134,13 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin = true.
+	// Only super admins (X-Admin-Token) can promote groups to org admin status.
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin != nil && *input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin status on groups"})
 		return
 	}
 
@@ -225,11 +239,13 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// The UI should never send "*" but the API accepts it for programmatic use.
 	input.AllowedMethods = rbac.ExpandWildcardMethods(input.AllowedMethods)
 
-	// Expand claims according to hierarchy (e.g., admin → read, write, deploy, upgrade)
+	// Strip read/write claims (no longer used as gates) and expand hierarchy.
+	// Only deploy, upgrade, and admin are operational claims.
+	input.Claims = rbac.FilterOperationalClaims(input.Claims)
 	input.Claims = rbac.ExpandClaims(input.Claims)
 
 	// Validate that allowed_methods match the claims
-	// e.g., eth_call requires "read" claim, eth_sendTransaction requires "write" claim
+	// e.g., debug_traceTransaction requires "deploy" claim
 	if err := rbac.ValidateMethodsMatchClaims(input.AllowedMethods, input.Claims); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

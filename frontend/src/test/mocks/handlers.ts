@@ -91,8 +91,6 @@ export const mockGroupAccess: GroupAccess = {
   group_id: 'group-1',
   allowed_methods: ['eth_call', 'eth_getBalance'],
   claims: ['read'],
-  rate_limit_rps: 100,
-  rate_limit_daily: 10000,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };

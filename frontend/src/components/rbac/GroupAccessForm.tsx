@@ -37,8 +37,6 @@ export default function GroupAccessForm({
   const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [isAdminPreset, setIsAdminPreset] = useState(false);
-  const [rateLimitRPS, setRateLimitRPS] = useState<string>('');
-  const [rateLimitDaily, setRateLimitDaily] = useState<string>('');
   const [rpcApiKey, setRpcApiKey] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,8 +66,6 @@ export default function GroupAccessForm({
       if (access) {
         const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
         setAllowedMethods(methods);
-        setRateLimitRPS(access.rate_limit_rps?.toString() || '');
-        setRateLimitDaily(access.rate_limit_daily?.toString() || '');
         setRpcApiKey(access.rpc_api_key || '');
         // Admin detection: if all admin claims present, treat as admin preset
         if (access.claims?.includes('admin')) {
@@ -129,8 +125,6 @@ export default function GroupAccessForm({
       const input: SetGroupAccessInput = {
         allowed_methods: allowedMethods,
         claims: claims,
-        rate_limit_rps: rateLimitRPS ? parseInt(rateLimitRPS, 10) : null,
-        rate_limit_daily: rateLimitDaily ? parseInt(rateLimitDaily, 10) : null,
         rpc_api_key: rpcApiKey || null,
       };
 
@@ -277,37 +271,6 @@ export default function GroupAccessForm({
             </div>
           );
         })}
-      </div>
-
-      {/* Rate limits */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-neutral-700">
-            Rate Limit (RPS)
-          </label>
-          <Input
-            type="number"
-            value={rateLimitRPS}
-            onChange={e => setRateLimitRPS(e.target.value)}
-            placeholder="100"
-            min="0"
-          />
-          <p className="text-xs text-neutral-400">Requests per second</p>
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-neutral-700">
-            Rate Limit (Daily)
-          </label>
-          <Input
-            type="number"
-            value={rateLimitDaily}
-            onChange={e => setRateLimitDaily(e.target.value)}
-            placeholder="100000"
-            min="0"
-          />
-          <p className="text-xs text-neutral-400">Requests per day</p>
-        </div>
       </div>
 
       {/* RPC API Key */}

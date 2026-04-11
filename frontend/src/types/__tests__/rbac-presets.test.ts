@@ -12,50 +12,30 @@ import {
 import type { Claim } from '../rbac';
 
 describe('ExpandClaims', () => {
-  it('admin expands to read, write, deploy, upgrade', () => {
+  it('admin expands to deploy, upgrade', () => {
     const result = ExpandClaims(['admin'] as Claim[]);
     expect(result).toContain('admin');
-    expect(result).toContain('read');
-    expect(result).toContain('write');
     expect(result).toContain('deploy');
     expect(result).toContain('upgrade');
-    expect(result).toHaveLength(5);
+    expect(result).toHaveLength(3);
   });
 
-  it('deploy expands to read, write', () => {
+  it('deploy does not expand', () => {
     const result = ExpandClaims(['deploy'] as Claim[]);
-    expect(result).toContain('deploy');
-    expect(result).toContain('read');
-    expect(result).toContain('write');
-    expect(result).toHaveLength(3);
+    expect(result).toEqual(['deploy']);
   });
 
-  it('upgrade expands to read, write', () => {
+  it('upgrade does not expand', () => {
     const result = ExpandClaims(['upgrade'] as Claim[]);
-    expect(result).toContain('upgrade');
-    expect(result).toContain('read');
-    expect(result).toContain('write');
-    expect(result).toHaveLength(3);
+    expect(result).toEqual(['upgrade']);
   });
 
-  it('read does not expand', () => {
-    const result = ExpandClaims(['read'] as Claim[]);
-    expect(result).toEqual(['read']);
-  });
-
-  it('write does not expand', () => {
-    const result = ExpandClaims(['write'] as Claim[]);
-    expect(result).toEqual(['write']);
-  });
-
-  it('deduplicates when multiple claims imply the same', () => {
-    // deploy and upgrade both imply read + write
-    const result = ExpandClaims(['deploy', 'upgrade'] as Claim[]);
+  it('deduplicates when admin already includes deploy/upgrade', () => {
+    const result = ExpandClaims(['admin', 'deploy'] as Claim[]);
+    expect(result).toContain('admin');
     expect(result).toContain('deploy');
     expect(result).toContain('upgrade');
-    expect(result).toContain('read');
-    expect(result).toContain('write');
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(3);
   });
 
   it('empty array returns empty', () => {
@@ -179,36 +159,31 @@ describe('getPresetMethods', () => {
 });
 
 describe('deriveClaims', () => {
-  it('Wallet User methods derive read and write (eth_sendTransaction is write)', () => {
+  it('Wallet User methods derive no claims (method allowlist controls access)', () => {
     const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
     const methods = getPresetMethods(walletPreset);
     const claims = deriveClaims(methods);
-    expect(claims).toContain('read');
-    expect(claims).toContain('write');
-    expect(claims).not.toContain('deploy');
-    expect(claims).not.toContain('admin');
-    expect(claims).not.toContain('upgrade');
+    expect(claims).toHaveLength(0);
   });
 
-  it('Developer methods derive read, write, deploy (debug_trace* is deploy)', () => {
+  it('Developer methods derive deploy (debug_trace* is deploy-gated)', () => {
     const devPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;
     const methods = getPresetMethods(devPreset);
     const claims = deriveClaims(methods);
-    expect(claims).toContain('read');
-    expect(claims).toContain('write');
     expect(claims).toContain('deploy');
+    expect(claims).not.toContain('read');
+    expect(claims).not.toContain('write');
     expect(claims).not.toContain('admin');
-    // deploy implies read + write, so those are still there
   });
 
-  it('admin flag produces admin, read, write, deploy, upgrade', () => {
+  it('admin flag produces admin, deploy, upgrade', () => {
     const claims = deriveClaims([], true);
     expect(claims).toContain('admin');
-    expect(claims).toContain('read');
-    expect(claims).toContain('write');
     expect(claims).toContain('deploy');
     expect(claims).toContain('upgrade');
-    expect(claims).toHaveLength(5);
+    expect(claims).not.toContain('read');
+    expect(claims).not.toContain('write');
+    expect(claims).toHaveLength(3);
   });
 
   it('empty methods returns empty claims', () => {
@@ -216,27 +191,25 @@ describe('deriveClaims', () => {
     expect(claims).toEqual([]);
   });
 
-  it('single read method returns [read]', () => {
+  it('single read method returns no claims', () => {
     const claims = deriveClaims(['eth_call']);
-    expect(claims).toEqual(['read']);
+    expect(claims).toEqual([]);
   });
 
-  it('single write method returns [write]', () => {
+  it('single write method returns no claims', () => {
     const claims = deriveClaims(['eth_sendTransaction']);
-    expect(claims).toEqual(['write']);
+    expect(claims).toEqual([]);
   });
 
-  it('single deploy method returns [deploy, read, write] (deploy implies read+write)', () => {
+  it('single deploy method returns [deploy]', () => {
     const claims = deriveClaims(['debug_traceTransaction']);
     expect(claims).toContain('deploy');
-    expect(claims).toContain('read');
-    expect(claims).toContain('write');
-    expect(claims).toHaveLength(3);
+    expect(claims).toHaveLength(1);
   });
 
-  it('admin flag overrides methods — even empty methods get all claims', () => {
+  it('admin flag overrides methods — even empty methods get admin claims', () => {
     const claims = deriveClaims([], true);
-    expect(claims).toHaveLength(5);
+    expect(claims).toHaveLength(3);
     expect(claims).toContain('admin');
   });
 });
@@ -261,8 +234,6 @@ describe('getClosestPresetLabel', () => {
   });
 
   it('Admin methods match Developer label (same method set, Developer wins first)', () => {
-    // Admin and Developer share the same methods. getClosestPresetLabel iterates
-    // PERMISSION_PRESETS in order and Developer comes before Admin, so it wins.
     const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin')!;
     const methods = getPresetMethods(adminPreset);
     expect(getClosestPresetLabel(methods)).toBe('Developer');
@@ -283,7 +254,6 @@ describe('getClosestPresetLabel', () => {
   it('Developer + 2 extra - 1 removed returns "Developer +2 -1"', () => {
     const devPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;
     const presetMethods = getPresetMethods(devPreset);
-    // Remove last method, add 2 custom ones
     const methods = [...presetMethods.slice(0, -1), 'custom_method_1', 'custom_method_2'];
     expect(getClosestPresetLabel(methods)).toBe('Developer +2 -1');
   });
@@ -319,11 +289,8 @@ describe('detectMatchingPreset', () => {
   });
 
   it('exact Admin methods returns "admin"', () => {
-    // Admin and Developer have the same methods, but Admin comes after Developer
-    // in PERMISSION_PRESETS. Since Developer matches first, it returns "developer".
     const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin')!;
     const methods = getPresetMethods(adminPreset);
-    // Both developer and admin have the same method set — the first match wins
     const result = detectMatchingPreset(methods);
     expect(result === 'developer' || result === 'admin').toBe(true);
   });

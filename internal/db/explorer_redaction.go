@@ -115,23 +115,20 @@ func (d *DB) GetBatchVisibility(ctx context.Context, viewerDID string, addresses
 
 		// Step 2: For authenticated viewers, check if they have access to any of
 		// these contracts. A viewer gets VisibilityFull if they are a member of:
-		//   - An is_org_admin group (sees ALL contracts in their org), OR
-		//   - A group with 'admin' in group_access.claims (sees ALL org contracts), OR
-		//   - Any group that has a contract_grant on the specific contract
+		//   - An is_org_admin group (sees ALL contracts in their org — tier 2), OR
+		//   - Any group that has a contract_grant on the specific contract (any claim)
 		//
-		// The group_access.claims check is critical because real admin groups use
-		// claims={admin} rather than is_org_admin=true. Without it, admins only see
-		// contracts explicitly granted to their group. (G11 regression fix)
+		// 3-tier admin model: 'admin' in group_access.claims (tier 3, contract admin)
+		// does NOT grant org-wide contract visibility. Contract admins see only
+		// contracts explicitly granted to their group via contract_grant.
 		if viewerDID != "" && len(orgContractAddrs) > 0 {
 			grantedGroupQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
 				JOIN groups g ON g.org_id = c.org_id
 				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
-				LEFT JOIN group_access ga ON ga.group_id = g.id
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
-				       OR 'admin' = ANY(ga.claims)
 				       OR cg.id IS NOT NULL)`
 
 			orgRows, err := d.conn.QueryContext(ctx, grantedGroupQuery, pq.Array(orgContractAddrs))
@@ -343,18 +340,16 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 		}
 
 		// Find which groups grant visibility (same logic as GetBatchVisibility).
-		// Admin via is_org_admin or group_access.claims sees ALL org contracts.
-		// Any grant holder sees their granted contracts.
+		// Org admin (is_org_admin) sees ALL org contracts (tier 2).
+		// Contract grant holders see their granted contracts (any claim, including tier 3 admin).
 		if viewerDID != "" && len(orgContractAddrs) > 0 {
 			orgContractQuery := `
 				SELECT LOWER(c.address) AS addr, g.id AS group_id
 				FROM contracts c
 				JOIN groups g ON g.org_id = c.org_id
 				LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
-				LEFT JOIN group_access ga ON ga.group_id = g.id
 				WHERE LOWER(c.address) = ANY($1)
 				  AND (g.is_org_admin = true
-				       OR 'admin' = ANY(ga.claims)
 				       OR cg.id IS NOT NULL)`
 
 			orgRows, err := d.conn.QueryContext(ctx, orgContractQuery, pq.Array(orgContractAddrs))

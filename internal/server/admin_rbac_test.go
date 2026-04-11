@@ -472,10 +472,11 @@ func TestGroupAccessValidation(t *testing.T) {
 	org := createTestOrganization(t, server, "access-validation-org")
 	group := createTestGroup(t, server, org.ID, "validation-group")
 
-	t.Run("RejectsWriteMethodsWithoutWriteClaim", func(t *testing.T) {
+	t.Run("AcceptsWriteMethodsWithoutWriteClaim", func(t *testing.T) {
+		// Write methods no longer require a "write" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{"read"}, // Missing "write" claim!
+			"claims":  []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -485,20 +486,31 @@ func TestGroupAccessValidation(t *testing.T) {
 
 		server.router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-
-		var response map[string]any
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-
-		assert.Contains(t, response["error"], "eth_sendTransaction")
-		assert.Contains(t, response["error"], "write claim")
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("RejectsReadMethodsWithoutReadClaim", func(t *testing.T) {
+	t.Run("AcceptsReadMethodsWithoutReadClaim", func(t *testing.T) {
+		// Read methods no longer require a "read" claim — method allowlist is the gate
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_getBalance"},
-			"claims":  []string{"write"}, // Missing "read" claim!
+			"claims":  []string{},
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("RejectsDeployMethodsWithoutDeployClaim", func(t *testing.T) {
+		// Deploy methods still require the deploy claim
+		body := map[string]any{
+			"allowed_methods": []string{"debug_traceTransaction"},
+			"claims":  []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 
@@ -514,13 +526,13 @@ func TestGroupAccessValidation(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
 
-		assert.Contains(t, response["error"], "read claim")
+		assert.Contains(t, response["error"], "deploy claim")
 	})
 
-	t.Run("AcceptsMatchingMethodsAndClaims", func(t *testing.T) {
+	t.Run("AcceptsMethodsWithNoClaims", func(t *testing.T) {
 		body := map[string]any{
 			"allowed_methods": []string{"eth_call", "eth_sendTransaction"},
-			"claims":  []string{"read", "write"},
+			"claims":  []string{},
 		}
 		jsonBody, _ := json.Marshal(body)
 

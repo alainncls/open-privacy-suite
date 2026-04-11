@@ -79,7 +79,7 @@ describe('GroupAccessForm', () => {
       expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
     });
 
-    it('shows existing rate limits', async () => {
+    it('does not render rate limit inputs', async () => {
       server.use(
         http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
           return HttpResponse.json(mockGroupAccessFull);
@@ -89,12 +89,14 @@ describe('GroupAccessForm', () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
-        const rpsInput = screen.getByPlaceholderText('100');
-        expect(rpsInput).toHaveValue(mockGroupAccessFull.rate_limit_rps);
+        expect(screen.getByText('eth_call')).toBeInTheDocument();
       });
 
-      const dailyInput = screen.getByPlaceholderText('100000');
-      expect(dailyInput).toHaveValue(mockGroupAccessFull.rate_limit_daily);
+      // Rate limit fields should not exist — rate limiting is handled at the RPC proxy API key level
+      expect(screen.queryByPlaceholderText('100')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('100000')).not.toBeInTheDocument();
+      expect(screen.queryByText('Rate Limit (RPS)')).not.toBeInTheDocument();
+      expect(screen.queryByText('Rate Limit (Daily)')).not.toBeInTheDocument();
     });
   });
 
@@ -361,66 +363,6 @@ describe('GroupAccessForm', () => {
     });
   });
 
-  describe('Rate Limits', () => {
-    beforeEach(() => {
-      server.use(
-        http.get('/api/v1/admin/orgs/:orgId/groups/:groupId/access', () => {
-          return HttpResponse.json(mockGroupAccessFull);
-        })
-      );
-    });
-
-    it('shows RPS input with current value', async () => {
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        const rpsInput = screen.getByPlaceholderText('100');
-        expect(rpsInput).toHaveValue(mockGroupAccessFull.rate_limit_rps);
-      });
-    });
-
-    it('shows daily limit input with current value', async () => {
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        const dailyInput = screen.getByPlaceholderText('100000');
-        expect(dailyInput).toHaveValue(mockGroupAccessFull.rate_limit_daily);
-      });
-    });
-
-    it('validates numeric input for RPS', async () => {
-      const user = userEvent.setup();
-
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('100')).toBeInTheDocument();
-      });
-
-      const rpsInput = screen.getByPlaceholderText('100');
-      await user.clear(rpsInput);
-      await user.type(rpsInput, '50');
-
-      expect(rpsInput).toHaveValue(50);
-    });
-
-    it('validates numeric input for daily limit', async () => {
-      const user = userEvent.setup();
-
-      renderGroupAccessForm({});
-
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('100000')).toBeInTheDocument();
-      });
-
-      const dailyInput = screen.getByPlaceholderText('100000');
-      await user.clear(dailyInput);
-      await user.type(dailyInput, '25000');
-
-      expect(dailyInput).toHaveValue(25000);
-    });
-  });
-
   describe('Saving', () => {
     beforeEach(() => {
       server.use(
@@ -575,11 +517,11 @@ describe('GroupAccessForm', () => {
         expect(onSave).toHaveBeenCalled();
       });
 
-      // Wallet User has read methods + eth_sendTransaction (write), so claims should be [read, write]
+      // Wallet User has no operational claims — read/write are implicit from methods
       expect(capturedBody).toBeDefined();
       const claims = capturedBody!.claims as string[];
-      expect(claims).toContain('read');
-      expect(claims).toContain('write');
+      expect(claims).not.toContain('read');
+      expect(claims).not.toContain('write');
       expect(claims).not.toContain('admin');
       expect(claims).not.toContain('deploy');
       expect(claims).not.toContain('upgrade');
@@ -622,14 +564,14 @@ describe('GroupAccessForm', () => {
         expect(onSave).toHaveBeenCalled();
       });
 
-      // Admin preset sets isAdmin flag, so claims should include admin and all expanded claims
+      // Admin preset sets admin claim which implies deploy+upgrade (not read/write)
       expect(capturedBody).toBeDefined();
       const claims = capturedBody!.claims as string[];
       expect(claims).toContain('admin');
-      expect(claims).toContain('read');
-      expect(claims).toContain('write');
       expect(claims).toContain('deploy');
       expect(claims).toContain('upgrade');
+      expect(claims).not.toContain('read');
+      expect(claims).not.toContain('write');
     });
   });
 
@@ -716,11 +658,6 @@ describe('GroupAccessForm', () => {
         expect(ethCallLabel?.querySelector('.bg-primary')).toBeInTheDocument();
       });
 
-      // Modify RPS
-      const rpsInput = screen.getByPlaceholderText('100');
-      await user.clear(rpsInput);
-      await user.type(rpsInput, '200');
-
       // Save
       const saveButton = screen.getByText('Save Access Settings');
       await user.click(saveButton);
@@ -731,9 +668,14 @@ describe('GroupAccessForm', () => {
 
       expect(capturedBody).toMatchObject({
         allowed_methods: expect.arrayContaining(['eth_call', 'eth_sendTransaction']),
-        claims: expect.arrayContaining(['read', 'write']),
-        rate_limit_rps: 200,
       });
+      // Wallet User has no operational claims — read/write removed
+      const integClaims = (capturedBody as Record<string, unknown>).claims as string[];
+      expect(integClaims).not.toContain('read');
+      expect(integClaims).not.toContain('write');
+      // Rate limits should not be in the payload
+      expect(capturedBody).not.toHaveProperty('rate_limit_rps');
+      expect(capturedBody).not.toHaveProperty('rate_limit_daily');
     });
   });
 });

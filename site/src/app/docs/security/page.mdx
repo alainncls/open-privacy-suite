@@ -377,25 +377,31 @@ Anonymous requests are subject to strict rate limits: **10 requests per second**
 Admin endpoints (`/api/v1/admin/*`, `/api/admin/*`) are protected by three independent layers:
 
 1. **Localhost-only middleware** -- requests must originate from private networks (`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`). Guards against external callers. Uses the raw TCP peer address, not `X-Forwarded-For`.
-2. **`X-Admin-Token` header** -- M2M / bootstrap authentication. Timing-safe comparison via `crypto/subtle.ConstantTimeCompare`. Required in production.
-3. **JWT with admin claim** -- browser-based admin access. The middleware validates the JWT, looks up the user, checks ban status, then queries `HasAdminClaim()` which joins `user_memberships → group_access` and filters expired memberships.
+2. **`X-Admin-Token` header** -- tier 1 (super admin) M2M / bootstrap authentication. Timing-safe comparison via `crypto/subtle.ConstantTimeCompare`. Required in production. Cross-org access.
+3. **JWT with org admin membership** -- tier 2 browser-based admin access. The middleware validates the JWT, looks up the user, checks ban status, then queries `IsOrgAdmin()` which joins `user_memberships → groups` and checks `is_org_admin = true` (filtering expired memberships). Contract admins (tier 3, `admin` claim only without `is_org_admin`) are rejected.
 
 The middleware tries these in order: X-Admin-Token first, then JWT Bearer token. If neither is present and `ADMIN_API_TOKEN` is unset (dev mode only), requests pass through.
+
+After authentication, an **org scoping middleware** enforces that JWT admins can only access their own organizations. Routes with `:org_id` in the path are checked against the user's org admin org IDs. Routes without `:org_id` (cross-org operations like user management) require super admin.
 
 <Callout variant="warning" title="Why both layers?">
   The localhost check is the first gate but can be bypassed by a misconfigured reverse proxy that forwards external traffic on localhost, an SSRF vulnerability, or another container on the same Docker network. The token/JWT is the backstop when the network gate fails.
 </Callout>
 
 <Callout variant="danger" title="Production requirement">
-  Set `ADMIN_API_TOKEN` to a strong random secret (32+ characters). Never pass this token to the frontend as a `VITE_*` environment variable -- Vite bakes env vars into the JS bundle, exposing them to every visitor. For browser-based admin access, users authenticate via Privado ID or Azure AD and receive a JWT with an admin RBAC claim.
+  Set `ADMIN_API_TOKEN` to a strong random secret (32+ characters). Never pass this token to the frontend as a `VITE_*` environment variable -- Vite bakes env vars into the JS bundle, exposing them to every visitor. For browser-based admin access, users authenticate via Privado ID or Azure AD and receive a JWT. The user must be a member of an `is_org_admin` group for dashboard access.
 </Callout>
+
+### Escalation Prevention
+
+Org admins (tier 2) cannot grant org admin status to new groups -- only super admins (tier 1) can set `is_org_admin: true`. Org admins can create groups with the `admin` claim (creating tier 3 contract admins), but these groups do not have dashboard access or org-wide visibility.
 
 ### Frontend Admin Gate
 
 The admin dashboard (`/admin/*`) is protected client-side by two nested components:
 
 1. **`RequireAuth`** -- redirects unauthenticated users to `/login`
-2. **`RequireAdmin`** -- calls `/api/v1/me/admin-status` to verify the user has the admin claim server-side. Non-admin users see an "Access Denied" page.
+2. **`RequireAdmin`** -- calls `/api/v1/me/admin-status` to verify the user is an org admin server-side. Non-admin users (including tier 3 contract admins) see an "Access Denied" page.
 
 The frontend gate is a UX convenience. The actual security boundary is the backend `adminAuthMiddleware` -- admin API calls without valid credentials are rejected regardless of what the frontend shows.
 

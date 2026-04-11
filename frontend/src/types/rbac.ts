@@ -1,7 +1,8 @@
 // RBAC TypeScript types mirroring backend models
 
-// Claims: read, write, admin, upgrade, deploy
-export type Claim = 'read' | 'write' | 'admin' | 'upgrade' | 'deploy';
+// Claims: deploy, upgrade, admin (operational gates only).
+// Read/write access is controlled by the method allowlist, not claims.
+export type Claim = 'read' | 'write' | 'admin' | 'upgrade' | 'deploy'; // read/write retained for DB compatibility
 
 export type MembershipSource = 'admin' | 'zk_attested';
 
@@ -174,14 +175,12 @@ export interface ContractGrant {
 }
 
 // GroupAccess - RPC method permissions and rate limits for a group
-// Claims define the capabilities group members have (read, write, deploy, admin, upgrade)
+// Claims define operational gates (deploy, upgrade, admin). Read/write is method-gated.
 export interface GroupAccess {
   id: string;
   group_id: string;
   allowed_methods: string[];
-  claims: Claim[]; // Group capabilities - applies to public contracts directly, registered via grants
-  rate_limit_rps?: number | null;
-  rate_limit_daily?: number | null;
+  claims: Claim[]; // Operational claims: deploy, upgrade, admin
   rpc_api_key?: string | null;
   created_at: string;
   updated_at: string;
@@ -296,8 +295,6 @@ export interface UpdateGroupInput {
 export interface SetGroupAccessInput {
   allowed_methods?: string[];
   claims?: Claim[];
-  rate_limit_rps?: number | null;
-  rate_limit_daily?: number | null;
   rpc_api_key?: string | null;
 }
 
@@ -352,8 +349,8 @@ export interface GroupWithAccess {
   access: GroupAccess | null;
 }
 
-// All available claims for reference
-export const ALL_CLAIMS: Claim[] = ['read', 'write', 'admin', 'upgrade', 'deploy'];
+// Operational claims (the only claims that serve as gates)
+export const ALL_CLAIMS: Claim[] = ['admin', 'upgrade', 'deploy'];
 
 // Claim labels for display
 export const CLAIM_LABELS: Record<Claim, string> = {
@@ -366,18 +363,19 @@ export const CLAIM_LABELS: Record<Claim, string> = {
 
 // Claim descriptions for tooltips
 export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
-  read: 'Can read contract data (eth_call, eth_estimateGas)',
-  write: 'Can send transactions (eth_sendTransaction)',
-  admin: 'Full control — implies Read, Write, Deploy, and Upgrade',
-  upgrade: 'Can upgrade proxy contract implementations — implies Read and Write',
-  deploy: 'Can deploy new contracts to new addresses — implies Read and Write',
+  read: '(Legacy — read access is now controlled by method allowlist)',
+  write: '(Legacy — write access is now controlled by method allowlist)',
+  admin: 'Full control — implies Deploy and Upgrade',
+  upgrade: 'Can upgrade proxy contract implementations',
+  deploy: 'Can deploy new contracts to new addresses',
 };
 
-// Claims hierarchy: which claims each claim implies
+// Claims hierarchy: which claims each claim implies.
+// Read/write are no longer implied — the method allowlist is the source of truth.
 export const CLAIM_HIERARCHY: Partial<Record<Claim, Claim[]>> = {
-  admin: ['read', 'write', 'deploy', 'upgrade'],
-  deploy: ['read', 'write'],
-  upgrade: ['read', 'write'],
+  admin: ['deploy', 'upgrade'],
+  deploy: [],
+  upgrade: [],
 };
 
 // Get all claims implied by a given claim
@@ -463,13 +461,11 @@ export const ALL_RPC_METHODS = [
   ...RPC_METHODS_BY_CLAIM.write,
 ] as const;
 
-// Helper to get required claim for a method
-export function getClaimForMethod(method: string): 'read' | 'write' | null {
-  if ((RPC_METHODS_BY_CLAIM.read as readonly string[]).includes(method)) {
-    return 'read';
-  }
-  if ((RPC_METHODS_BY_CLAIM.write as readonly string[]).includes(method)) {
-    return 'write';
+// Helper to get required claim for a method.
+// Only deploy-tier methods return a non-null claim; read/write are method-gated.
+export function getClaimForMethod(method: string): 'deploy' | null {
+  if ((RPC_METHODS_BY_CLAIM.deploy as readonly string[]).includes(method)) {
+    return 'deploy';
   }
   return null;
 }
@@ -649,13 +645,13 @@ export function getPresetMethods(preset: PermissionPreset): string[] {
   return preset.sections.flatMap(s => [...METHOD_SECTIONS[s].methods]);
 }
 
-// Derive claims from selected methods
+// Derive operational claims from selected methods.
+// Only deploy-tier methods (debug_trace*) require a claim; read/write methods
+// are gated by the method allowlist alone.
 export function deriveClaims(methods: string[], isAdmin?: boolean): Claim[] {
   if (isAdmin) return ExpandClaims(['admin'] as Claim[]);
   const claims: Claim[] = [];
   const methodSet = new Set(methods);
-  if (RPC_METHODS_BY_CLAIM.read.some(m => methodSet.has(m))) claims.push('read' as Claim);
-  if (RPC_METHODS_BY_CLAIM.write.some(m => methodSet.has(m))) claims.push('write' as Claim);
   if (RPC_METHODS_BY_CLAIM.deploy.some(m => methodSet.has(m))) claims.push('deploy' as Claim);
   return ExpandClaims(claims);
 }

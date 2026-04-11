@@ -11,34 +11,24 @@ func TestExpandClaims(t *testing.T) {
 		expected []Claim
 	}{
 		{
-			name:     "admin expands to all claims",
+			name:     "admin expands to deploy and upgrade",
 			input:    []Claim{ClaimAdmin},
-			expected: []Claim{ClaimAdmin, ClaimDeploy, ClaimRead, ClaimUpgrade, ClaimWrite},
+			expected: []Claim{ClaimAdmin, ClaimDeploy, ClaimUpgrade},
 		},
 		{
-			name:     "deploy expands to read and write",
+			name:     "deploy does not expand",
 			input:    []Claim{ClaimDeploy},
-			expected: []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			expected: []Claim{ClaimDeploy},
 		},
 		{
-			name:     "upgrade expands to read and write",
+			name:     "upgrade does not expand",
 			input:    []Claim{ClaimUpgrade},
-			expected: []Claim{ClaimRead, ClaimUpgrade, ClaimWrite},
+			expected: []Claim{ClaimUpgrade},
 		},
 		{
-			name:     "deploy and upgrade deduplicate read and write",
+			name:     "deploy and upgrade stay as-is",
 			input:    []Claim{ClaimDeploy, ClaimUpgrade},
-			expected: []Claim{ClaimDeploy, ClaimRead, ClaimUpgrade, ClaimWrite},
-		},
-		{
-			name:     "read alone stays as read",
-			input:    []Claim{ClaimRead},
-			expected: []Claim{ClaimRead},
-		},
-		{
-			name:     "write alone stays as write",
-			input:    []Claim{ClaimWrite},
-			expected: []Claim{ClaimWrite},
+			expected: []Claim{ClaimDeploy, ClaimUpgrade},
 		},
 		{
 			name:     "empty input returns empty",
@@ -47,14 +37,57 @@ func TestExpandClaims(t *testing.T) {
 		},
 		{
 			name:     "already expanded input is idempotent",
-			input:    []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
-			expected: []Claim{ClaimAdmin, ClaimDeploy, ClaimRead, ClaimUpgrade, ClaimWrite},
+			input:    []Claim{ClaimAdmin, ClaimDeploy, ClaimUpgrade},
+			expected: []Claim{ClaimAdmin, ClaimDeploy, ClaimUpgrade},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ExpandClaims(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("expected %v, got %v", tt.expected, result)
+			}
+			for i, claim := range result {
+				if claim != tt.expected[i] {
+					t.Fatalf("expected %v at index %d, got %v (full result: %v)", tt.expected[i], i, claim, result)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterOperationalClaims(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []Claim
+		expected []Claim
+	}{
+		{
+			name:     "strips read and write",
+			input:    []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimAdmin},
+			expected: []Claim{ClaimDeploy, ClaimAdmin},
+		},
+		{
+			name:     "keeps operational claims only",
+			input:    []Claim{ClaimAdmin},
+			expected: []Claim{ClaimAdmin},
+		},
+		{
+			name:     "empty input returns empty",
+			input:    []Claim{},
+			expected: []Claim{},
+		},
+		{
+			name:     "all legacy claims stripped",
+			input:    []Claim{ClaimRead, ClaimWrite},
+			expected: []Claim{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FilterOperationalClaims(tt.input)
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %v, got %v", tt.expected, result)
 			}

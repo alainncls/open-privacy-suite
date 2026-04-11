@@ -14,9 +14,9 @@ import (
 type Claim string
 
 const (
-	ClaimRead    Claim = "read"    // eth_call, eth_estimateGas (view functions)
-	ClaimWrite   Claim = "write"   // eth_sendTransaction (state-changing functions)
-	ClaimAdmin   Claim = "admin"   // Full control, considered "owner" of the contract
+	ClaimRead    Claim = "read"    // Legacy — retained for DB compatibility; no longer used as a gate
+	ClaimWrite   Claim = "write"   // Legacy — retained for DB compatibility; no longer used as a gate
+	ClaimAdmin   Claim = "admin"   // Full control — implies deploy + upgrade
 	ClaimUpgrade Claim = "upgrade" // Can upgrade proxy contracts
 	ClaimDeploy  Claim = "deploy"  // Can deploy new contracts (contract creation transactions)
 )
@@ -27,18 +27,39 @@ func AllClaims() []Claim {
 }
 
 // claimImplications defines which claims each claim implies.
-// admin implies all other claims; deploy and upgrade each imply read+write.
+// admin implies deploy+upgrade. Read/write access is determined by the method
+// allowlist, not by claims — those are operational gates only.
 var claimImplications = map[Claim][]Claim{
-	ClaimAdmin:   {ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
-	ClaimDeploy:  {ClaimRead, ClaimWrite},
-	ClaimUpgrade: {ClaimRead, ClaimWrite},
+	ClaimAdmin:   {ClaimDeploy, ClaimUpgrade},
+	ClaimDeploy:  {},
+	ClaimUpgrade: {},
+}
+
+// OperationalClaims are the claims that serve as operation-level gates.
+// Read/write access is determined by the method allowlist, not by claims.
+var OperationalClaims = map[Claim]bool{
+	ClaimDeploy:  true,
+	ClaimUpgrade: true,
+	ClaimAdmin:   true,
+}
+
+// FilterOperationalClaims removes read/write claims, keeping only
+// operational claims (deploy, upgrade, admin). This is used when
+// accepting claims from the frontend to strip legacy read/write values.
+func FilterOperationalClaims(claims []Claim) []Claim {
+	result := make([]Claim, 0, len(claims))
+	for _, c := range claims {
+		if OperationalClaims[c] {
+			result = append(result, c)
+		}
+	}
+	return result
 }
 
 // ExpandClaims expands claims according to the hierarchy:
-//   - admin → read, write, deploy, upgrade
-//   - deploy → read, write
-//   - upgrade → read, write
+//   - admin → deploy, upgrade
 //
+// Read/write are no longer claim-gated; the method allowlist is the source of truth.
 // Returns a deduplicated, sorted slice.
 func ExpandClaims(claims []Claim) []Claim {
 	set := make(map[Claim]bool, len(claims))
@@ -212,13 +233,14 @@ type ContractGrant struct {
 }
 
 // GroupAccess represents RPC method permissions and rate limits for a group.
-// Claims define what capabilities group members have (read, write, deploy, admin, upgrade).
-// These claims apply to public contracts directly, and to registered contracts via grants.
+// AllowedMethods controls which RPC methods the group can call (the method allowlist).
+// Claims are operational gates: only deploy, upgrade, and admin are meaningful.
+// Read/write access is determined by AllowedMethods, not claims.
 type GroupAccess struct {
 	ID             string    `json:"id"`
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
-	Claims         []Claim   `json:"claims"` // Capabilities: read, write, deploy, admin, upgrade
+	Claims         []Claim   `json:"claims"` // Operational claims: deploy, upgrade, admin
 	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
 	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
 	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"`      // API key for upstream RPC proxy authentication
@@ -404,7 +426,7 @@ func (e *EffectivePermissions) GetContractAccess(address string) *ContractAccess
 	// Precompiles (0x01-0x09) are always accessible — they are native EVM functions.
 	if precompile.IsPrecompileAddress(addr) {
 		return &ContractAccess{
-			Claims:    []Claim{ClaimRead},
+			Claims:    nil, // No operational claims needed; access is implied by the entry existing.
 			Functions: nil,
 		}
 	}

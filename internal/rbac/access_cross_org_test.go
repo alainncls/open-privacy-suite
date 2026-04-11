@@ -1643,13 +1643,13 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 
 	store.groupAccess["group-a"] = &GroupAccess{
 		ID: "ga-a", GroupID: "group-a",
-		Claims:         []Claim{ClaimRead, ClaimWrite},
+		Claims:         []Claim{},
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID: "ga-b", GroupID: "group-b",
-		Claims:         []Claim{ClaimRead},
-		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		Claims:         []Claim{},
+		AllowedMethods: []string{"eth_call", "eth_getBalance"}, // No eth_sendTransaction — read-only
 	}
 
 	store.cachedPermissions["write-user:org-a"] = &EffectivePermissions{
@@ -1658,7 +1658,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
 		ContractAccess: map[string]ContractAccess{},
-		Claims:         []Claim{ClaimRead, ClaimWrite},
+		Claims:         []Claim{},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -1666,9 +1666,9 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		ID:             "perms-reader",
 		UserID:         "read-user",
 		OrgID:          "org-a",
-		AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_getBalance"},
+		AllowedMethods: []string{"eth_call", "eth_getBalance"}, // No eth_sendTransaction — read-only
 		ContractAccess: map[string]ContractAccess{},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -1695,7 +1695,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		}
 	})
 
-	t.Run("EOA-002: User with only read claim cannot send ETH to EOA", func(t *testing.T) {
+	t.Run("EOA-002: User without eth_sendTransaction in methods cannot send ETH to EOA", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:reader",
 			Method:         "eth_sendTransaction",
@@ -1710,8 +1710,8 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 		if result.Allowed {
 			t.Error("expected read-only user to be denied sending ETH")
 		}
-		if result.Reason != "access denied" {
-			t.Errorf("expected generic denial, got: %s", result.Reason)
+		if result.Reason != "method eth_sendTransaction not allowed" {
+			t.Errorf("expected method-not-allowed denial, got: %s", result.Reason)
 		}
 	})
 

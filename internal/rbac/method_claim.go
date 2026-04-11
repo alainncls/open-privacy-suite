@@ -2,8 +2,9 @@ package rbac
 
 import "sort"
 
-// ReadMethods are RPC methods that require the "read" claim.
+// ReadMethods classifies read-only RPC methods.
 // These methods only read blockchain state and don't modify it.
+// Note: No longer used for claim gating — retained for AllAllowedMethods() and reference.
 var ReadMethods = map[string]bool{
 	// Chain/Network info
 	"eth_chainId":      true,
@@ -55,8 +56,8 @@ var ReadMethods = map[string]bool{
 	"eth_uninstallFilter":            true,
 }
 
-// WriteMethods are RPC methods that require the "write" claim.
-// These methods can modify blockchain state by sending transactions.
+// WriteMethods classifies state-modifying RPC methods.
+// Note: No longer used for claim gating — retained for AllAllowedMethods() and reference.
 var WriteMethods = map[string]bool{
 	"eth_sendTransaction":    true,
 	"eth_sendRawTransaction": true,
@@ -75,15 +76,9 @@ var DeployMethods = map[string]bool{
 }
 
 // GetClaimForMethod returns the claim required for a given RPC method.
-// Returns an empty string if the method doesn't require a specific claim
-// (either it's a general method or it's blocked by the global blocklist).
+// Returns an empty string for read/write methods (gated by method allowlist, not claims).
+// Only deploy-tier methods (debug_trace*) return a non-empty claim.
 func GetClaimForMethod(method string) Claim {
-	if ReadMethods[method] {
-		return ClaimRead
-	}
-	if WriteMethods[method] {
-		return ClaimWrite
-	}
 	if DeployMethods[method] {
 		return ClaimDeploy
 	}
@@ -102,7 +97,8 @@ func IsWriteMethod(method string) bool {
 
 // ValidateMethodsMatchClaims checks that all provided methods have
 // their required claims in the claims list.
-// Returns an error if any method requires a claim that's not present.
+// Only deploy-tier methods (debug_trace*) require a claim; read/write
+// methods are gated by the method allowlist alone.
 func ValidateMethodsMatchClaims(methods []string, claims []Claim) error {
 	// Build a set of available claims
 	hasClaim := make(map[Claim]bool)
@@ -110,7 +106,7 @@ func ValidateMethodsMatchClaims(methods []string, claims []Claim) error {
 		hasClaim[c] = true
 	}
 
-	// Check each method
+	// Check each method — only deploy methods need a claim
 	for _, method := range methods {
 		requiredClaim := GetClaimForMethod(method)
 		if requiredClaim != "" && !hasClaim[requiredClaim] {

@@ -134,11 +134,11 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 			"admin group member must have VisibilityFull for their org contract")
 	})
 
-	t.Run("admin via group_access.claims sees Full on ALL org contracts (G11 regression)", func(t *testing.T) {
-		// This is the real-world admin pattern: group_access.claims={admin},
-		// is_org_admin=false, NO explicit contract_grant. The admin should see
-		// ALL contracts in their org, not just granted ones.
-		// Regression: PR #87 (RD-789) dropped the group_access.claims check.
+	t.Run("contract admin (admin claim, NOT is_org_admin) does NOT see ungranted org contracts (3-tier model)", func(t *testing.T) {
+		// 3-tier admin model: contract admins (tier 3) have admin claim in
+		// group_access.claims but NOT is_org_admin=true. They should only see
+		// contracts explicitly granted to their group, NOT all org contracts.
+		// This reverses the old G11 behavior intentionally.
 		const claimsAdminDID = "did:privado:claims_admin_member"
 
 		// Create a second contract in the same org with no grants at all
@@ -153,7 +153,7 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 			ungrantedContractID, orgID, ungrantedAddr)
 		require.NoError(t, err)
 
-		// Create admin group: is_org_admin=false, but group_access.claims={admin}
+		// Create contract admin group: is_org_admin=false, group_access.claims={admin}
 		claimsAdminGroupID := uuid.New().String()
 		_, err = database.Conn().ExecContext(ctx,
 			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'claims-admins', 'Claims Admins', 0, 'claims-admins', false)",
@@ -166,15 +166,17 @@ func TestGetBatchVisibility_OrgContract(t *testing.T) {
 
 		addMember(t, database, claimsAdminDID, claimsAdminGroupID)
 
-		// Admin via claims must see BOTH contracts — the granted one AND the ungranted one
+		// Contract admin (tier 3) must NOT see the ungranted contract.
+		// They have no contract_grant on it and are not is_org_admin.
 		visMap, err := database.GetBatchVisibility(ctx, claimsAdminDID, []string{privateAddr, ungrantedAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityFull, visMap[privateAddr],
-			"admin via group_access.claims must see granted contract as Full")
-		assert.Equal(t, explorer.VisibilityFull, visMap[ungrantedAddr],
-			"admin via group_access.claims must see UNGRANTED org contract as Full — "+
-				"this is the G11 regression: without the group_access.claims check, "+
-				"admins only see explicitly granted contracts")
+		// The granted contract (privateAddr) has a grant to groupID, not claimsAdminGroupID.
+		// So the contract admin does not see it either (no grant to THEIR group).
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[privateAddr],
+			"contract admin without explicit grant to their group must NOT see this contract")
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[ungrantedAddr],
+			"contract admin (tier 3) must NOT see ungranted org contracts — "+
+				"only is_org_admin=true (tier 2) grants org-wide visibility")
 	})
 
 	t.Run("contract admin via grant sees Full", func(t *testing.T) {
@@ -536,13 +538,13 @@ func TestGetBatchVisibility_EdgeCases(t *testing.T) {
 }
 
 // ============================================================================
-// G11: group_access.claims admin should grant VisibilityFull
+// 3-tier admin model: visibility scoping
 // ============================================================================
 
-// TestGetBatchVisibility_GroupAccessAdminClaim verifies that a group with
-// 'admin' in group_access.claims AND a contract_grant on the contract receives
-// VisibilityFull. This is the G11 fix — previously only is_org_admin and
-// contract_grants.claims were checked, not group_access.claims.
+// TestGetBatchVisibility_GroupAccessAdminClaim verifies the 3-tier visibility model:
+// - Group with admin claim + contract_grant = VisibilityFull (tier 3, scoped to granted contracts)
+// - Group with admin claim WITHOUT grant = VisibilityRedacted (tier 3 does NOT get org-wide visibility)
+// - Group with is_org_admin = true = VisibilityFull on ALL org contracts (tier 2)
 func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
 	database := setupRBACTestDB(t)
 	defer cleanupTestDB(t, database)
@@ -632,17 +634,18 @@ func TestGetBatchVisibility_GroupAccessAdminClaim(t *testing.T) {
 				"explorer visibility aligns with RPC access")
 	})
 
-	t.Run("group_access admin claim without grant sees Full on ALL org contracts", func(t *testing.T) {
-		// Admin via group_access.claims should see ALL contracts in their org,
-		// not just those with explicit contract_grants. This is the core G11 fix.
+	t.Run("group_access admin claim without grant sees Redacted (3-tier model)", func(t *testing.T) {
+		// 3-tier model: contract admin (tier 3) with admin claim but NO
+		// contract_grant does NOT see the contract. Only is_org_admin (tier 2)
+		// grants org-wide visibility. This intentionally reverses the old G11 behavior.
 		const memberDID = "did:test:g11_admin_no_grant_member"
 		addMember(t, database, memberDID, noGrantGroupID)
 
 		visMap, err := database.GetBatchVisibility(ctx, memberDID, []string{contractAddr})
 		require.NoError(t, err)
-		assert.Equal(t, explorer.VisibilityFull, visMap[contractAddr],
-			"admin via group_access.claims must see ALL org contracts as Full — "+
-				"this is the G11 regression fix: admin sees everything in their org")
+		assert.Equal(t, explorer.VisibilityRedacted, visMap[contractAddr],
+			"contract admin (tier 3) without grant must see Redacted — "+
+				"only is_org_admin=true (tier 2) gets org-wide visibility")
 	})
 
 	t.Run("is_org_admin still works", func(t *testing.T) {
@@ -749,8 +752,8 @@ func TestGetBatchVisibility_NoGrantNoFull(t *testing.T) {
 	})
 }
 
-// TestGetBatchVisibilityDetailed_GroupAccessAdminClaim verifies the same G11
-// fix applies to GetBatchVisibilityDetailed.
+// TestGetBatchVisibilityDetailed_GroupAccessAdminClaim verifies the 3-tier
+// visibility model for GetBatchVisibilityDetailed: admin claim + grant = Full.
 func TestGetBatchVisibilityDetailed_GroupAccessAdminClaim(t *testing.T) {
 	database := setupRBACTestDB(t)
 	defer cleanupTestDB(t, database)
