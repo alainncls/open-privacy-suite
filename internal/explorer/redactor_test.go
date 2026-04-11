@@ -541,6 +541,7 @@ func TestRedactTransfers_Empty(t *testing.T) {
 }
 
 func TestRedactTransfers_HiddenFrom_KeepsWithPrivate(t *testing.T) {
+	// G10: non-participant viewer, one side hidden → transfer dropped.
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -553,17 +554,8 @@ func TestRedactTransfers_HiddenFrom_KeepsWithPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 transfer (hidden from, public to → keep), got %d", len(result))
-	}
-	if result[0].From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
-	}
-	if result[0].To != to {
-		t.Errorf("To should be unchanged, got %s", result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 transfers (G10: hidden from, non-participant → drop), got %d", len(result))
 	}
 }
 
@@ -622,6 +614,7 @@ func TestRedactTransfers_HiddenPlusRedacted_Drops(t *testing.T) {
 }
 
 func TestRedactTransfers_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
+	// G10: non-participant viewer, from is hidden → transfer dropped.
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -634,21 +627,13 @@ func TestRedactTransfers_HiddenFrom_PublicTo_ShowsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 transfer, got %d", len(result))
-	}
-	if result[0].From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE], got %s", result[0].From)
-	}
-	if result[0].To != to {
-		t.Errorf("To should be unchanged, got %s", result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped, got %s", result[0].Value)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 transfers (G10: hidden from, non-participant → drop), got %d", len(result))
 	}
 }
 
 func TestRedactTransfers_RedactedStripsValue(t *testing.T) {
+	// G10: non-participant viewer, to is redacted → transfer dropped.
 	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	engine := newEngine(VisibilityMap{
@@ -661,17 +646,8 @@ func TestRedactTransfers_RedactedStripsValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 transfer, got %d", len(result))
-	}
-	if result[0].To != "[PRIVATE]" {
-		t.Errorf("To should be [PRIVATE], got %s", result[0].To)
-	}
-	if result[0].Value != "" {
-		t.Errorf("Value should be stripped, got %s", result[0].Value)
-	}
-	if result[0].From != from {
-		t.Errorf("From should be unchanged, got %s", result[0].From)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 transfers (G10: redacted to, non-participant → drop), got %d", len(result))
 	}
 }
 
@@ -2135,8 +2111,8 @@ func TestRedactTransfers_ParticipantSeesCounterparty_Receiver(t *testing.T) {
 }
 
 func TestRedactTransfers_NonParticipantDoesNotSeeHiddenTransfer(t *testing.T) {
-	// Charlie (viewer) is not a participant. Alice (From) is hidden.
-	// Charlie should see [PRIVATE] for Alice and Value should be stripped.
+	// G10: Charlie (viewer) is not a participant. Alice (From) is hidden.
+	// Non-participant with one side hidden → transfer dropped entirely.
 	alice := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bob := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	charlie := "0xcccccccccccccccccccccccccccccccccccccccc"
@@ -2150,18 +2126,8 @@ func TestRedactTransfers_NonParticipantDoesNotSeeHiddenTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 transfer, got %d", len(result))
-	}
-	tr := result[0]
-	if tr.From != "[PRIVATE]" {
-		t.Errorf("From should be [PRIVATE] for non-participant, got %s", tr.From)
-	}
-	if tr.To != bob {
-		t.Errorf("To should be unchanged, got %s", tr.To)
-	}
-	if tr.Value != "" {
-		t.Errorf("Value should be stripped (one side hidden, non-participant), got %s", tr.Value)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 transfers (G10: hidden from, non-participant → drop), got %d", len(result))
 	}
 }
 

@@ -311,7 +311,7 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 // RedactTransfers applies privacy rules to a list of token transfers.
 // Like RedactTransactions, participants (viewer is sender or receiver) get a
 // visibility override so they can see the transfer amount and counterparty.
-func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []TokenTransfer, viewerDID string) ([]TokenTransfer, error) {
+func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []TokenTransfer, viewerDID string, opts ...RedactOpts) ([]TokenTransfer, error) {
 	if len(transfers) == 0 {
 		return transfers, nil
 	}
@@ -351,20 +351,25 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 		}
 	}
 
+	var visibleHashes map[string]bool
+	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+		visibleHashes = opts[0].VisibleTxHashes
+	}
+
 	var result []TokenTransfer
 	for _, t := range transfers {
 		viewerIsFrom := t.From != "" && viewerAddrs[strings.ToLower(t.From)]
 		viewerIsTo := t.To != "" && viewerAddrs[strings.ToLower(t.To)]
 		viewerIsParticipant := viewerIsFrom || viewerIsTo
+		txVisibleToViewer := visibleHashes[strings.ToLower(t.TxHash)]
 
 		baseFromLevel := visMap[strings.ToLower(t.From)]
 		baseToLevel := visMap[strings.ToLower(t.To)]
 		fromLevel := baseFromLevel
 		toLevel := baseToLevel
 
-		// Participant override: reveal counterparty address so the transfer
-		// isn't stripped — the viewer already knows who they transacted with.
-		if viewerIsParticipant {
+		// Participant or visibleTo override
+		if viewerIsParticipant || txVisibleToViewer {
 			if isNonIdentifiable(fromLevel) {
 				fromLevel = VisibilityFull
 			}
@@ -378,12 +383,21 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			continue
 		}
 
+		// G10: non-participant, non-visibleTo, one side hidden → drop
+		if !viewerIsParticipant && !txVisibleToViewer {
+			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
+				continue
+			}
+		}
+
 		redacted := t
 		redacted.AddressMetadata = make(map[string]VisibilityReason)
 		setMeta := func(addr string, baseLvl VisibilityLevel) {
 			aLower := strings.ToLower(addr)
 			if viewerIsParticipant && isNonIdentifiable(baseLvl) {
 				redacted.AddressMetadata[aLower] = ReasonParticipantOverride
+			} else if txVisibleToViewer && isNonIdentifiable(baseLvl) {
+				redacted.AddressMetadata[aLower] = ReasonVisibleToGrant
 			} else if meta, ok := visMapDetailed[aLower]; ok {
 				redacted.AddressMetadata[aLower] = meta.Reason
 			}

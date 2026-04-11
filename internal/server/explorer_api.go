@@ -916,6 +916,23 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 	return explorer.RedactOpts{VisibleTxHashes: m}
 }
 
+// buildRedactOptsForViewer builds RedactOpts from the viewer's visibleTo
+// entries. Used by single-item endpoints that don't have a VisibilityFilter.
+func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string) explorer.RedactOpts {
+	if viewerDID == "" {
+		return explorer.RedactOpts{}
+	}
+	hashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
+	if err != nil || len(hashes) == 0 {
+		return explorer.RedactOpts{}
+	}
+	m := make(map[string]bool, len(hashes))
+	for _, h := range hashes {
+		m[strings.ToLower(h)] = true
+	}
+	return explorer.RedactOpts{VisibleTxHashes: m}
+}
+
 func (s *Server) getExplorerChainID(c *gin.Context) {
 	// Approximation: return 1 or get from proxy if needed
 	c.JSON(http.StatusOK, gin.H{"chain_id": 1})
@@ -1169,7 +1186,8 @@ func (s *Server) getExplorerTransaction(c *gin.Context) {
 	}
 
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), []explorer.Transaction{*tx}, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), []explorer.Transaction{*tx}, viewerDID, opts)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1253,7 +1271,8 @@ func (s *Server) getExplorerAddressTransactions(c *gin.Context) {
 		return
 	}
 
-	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redactedTxs, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, opts)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1301,7 +1320,8 @@ func (s *Server) getExplorerBlockTransactions(c *gin.Context) {
 		txs = []explorer.Transaction{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID)
+	opts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, opts)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1451,7 +1471,7 @@ func (s *Server) getExplorerTransactionTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1666,7 +1686,7 @@ func (s *Server) getExplorerAddressTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID = s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -2105,7 +2125,7 @@ func (s *Server) getExplorerTokenTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	resolvedDID := s.resolveViewerDID(c.Request.Context(), viewerWallet, viewerDID)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, resolvedDID, s.buildRedactOptsForViewer(c.Request.Context(), resolvedDID))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -2142,7 +2162,7 @@ func (s *Server) getExplorerAllTransfers(c *gin.Context) {
 		transfers = []explorer.TokenTransfer{}
 	}
 	viewerDID := s.getViewerDIDFromRequest(c)
-	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransfers(c.Request.Context(), transfers, viewerDID, s.buildRedactOptsForViewer(c.Request.Context(), viewerDID))
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
