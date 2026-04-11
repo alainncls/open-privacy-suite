@@ -919,18 +919,46 @@ func redactOptsFromFilter(filter *explorer.VisibilityFilter) explorer.RedactOpts
 // buildRedactOptsForViewer builds RedactOpts from the viewer's visibleTo
 // entries. Used by single-item endpoints that don't have a VisibilityFilter.
 func (s *Server) buildRedactOptsForViewer(ctx context.Context, viewerDID string) explorer.RedactOpts {
+	opts := explorer.RedactOpts{}
 	if viewerDID == "" {
-		return explorer.RedactOpts{}
+		return opts
 	}
 	hashes, err := s.db.GetVisibleTxHashesForDID(ctx, viewerDID)
-	if err != nil || len(hashes) == 0 {
-		return explorer.RedactOpts{}
+	if err == nil && len(hashes) > 0 {
+		m := make(map[string]bool, len(hashes))
+		for _, h := range hashes {
+			m[strings.ToLower(h)] = true
+		}
+		opts.VisibleTxHashes = m
 	}
-	m := make(map[string]bool, len(hashes))
-	for _, h := range hashes {
-		m[strings.ToLower(h)] = true
+	// Check if viewer is an admin of any org
+	opts.ViewerIsAdmin = s.isViewerAdmin(ctx, viewerDID)
+	return opts
+}
+
+// isViewerAdmin checks if the viewer has admin-level access in any org.
+// A viewer is considered admin if they have 'admin' in group_access.claims
+// (HasAdminClaim) OR are a member of an is_org_admin group (IsOrgAdmin).
+func (s *Server) isViewerAdmin(ctx context.Context, viewerDID string) bool {
+	if viewerDID == "" {
+		return false
 	}
-	return explorer.RedactOpts{VisibleTxHashes: m}
+	user, err := s.db.GetUserByExternalID(ctx, viewerDID)
+	if err != nil || user == nil {
+		return false
+	}
+	isAdmin, err := s.db.HasAdminClaim(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	if isAdmin {
+		return true
+	}
+	isOrgAdmin, _, err := s.db.IsOrgAdmin(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	return isOrgAdmin
 }
 
 func (s *Server) getExplorerChainID(c *gin.Context) {
@@ -1153,7 +1181,9 @@ func (s *Server) getExplorerTransactions(c *gin.Context) {
 
 	// Field-level redaction still needed (replacing addresses with [PRIVATE],
 	// stripping values, etc.) — the SQL filter only drops entire rows.
-	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, redactOptsFromFilter(filter))
+	opts := redactOptsFromFilter(filter)
+	opts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, opts)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1425,7 +1455,9 @@ func (s *Server) getExplorerTransactionsPaginated(c *gin.Context) {
 	}
 
 	// Field-level redaction still needed for address masking and value stripping.
-	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, redactOptsFromFilter(filter))
+	pOpts := redactOptsFromFilter(filter)
+	pOpts.ViewerIsAdmin = s.isViewerAdmin(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactTransactions(c.Request.Context(), txs, viewerDID, pOpts)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return
@@ -1518,7 +1550,8 @@ func (s *Server) getExplorerTransactionLogs(c *gin.Context) {
 		}
 	}
 
-	redacted, err := s.explorerRedactor.RedactLogs(c.Request.Context(), logs, viewerDID, participantAddrs...)
+	logOpts := s.buildRedactOptsForViewer(c.Request.Context(), viewerDID)
+	redacted, err := s.explorerRedactor.RedactLogsWithOpts(c.Request.Context(), logs, viewerDID, &logOpts, participantAddrs...)
 	if err != nil {
 		respondInternalError(c, "redaction failed: "+err.Error())
 		return

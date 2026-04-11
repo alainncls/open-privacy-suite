@@ -132,6 +132,11 @@ type RedactOpts struct {
 	// the viewer (via the visibleTo param). Transactions matching these
 	// hashes are never dropped, and their addresses get full visibility.
 	VisibleTxHashes map[string]bool
+
+	// ViewerIsAdmin indicates the viewer has admin-level access (org admin
+	// or admin claim). Admins see all contract activity including txs from
+	// private users — G10 non-participant drop does not apply to admins.
+	ViewerIsAdmin bool
 }
 
 // RedactTransactions applies privacy rules to a list of transactions.
@@ -142,8 +147,10 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 	}
 
 	var visibleHashes map[string]bool
-	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+	var viewerIsAdmin bool
+	if len(opts) > 0 {
 		visibleHashes = opts[0].VisibleTxHashes
+		viewerIsAdmin = opts[0].ViewerIsAdmin
 	}
 
 	// 1. Extract unique addresses
@@ -231,12 +238,11 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		}
 
 		// G10 fix: Non-participant, non-visibleTo txs where one side is hidden
-		// are dropped. This aligns explorer visibility with the RPC layer —
-		// eth_getTransactionByHash returns null for non-participants, so the
-		// explorer must not show these txs in listings either.
-		// Exception: if both sides are Full (e.g., admin viewing two contracts),
-		// keep the tx — both parties are identifiable to the viewer.
-		if !viewerIsParticipant && !txVisibleToViewer {
+		// are dropped. This aligns explorer visibility with the RPC layer.
+		// Exceptions:
+		// - Admins see all contract activity (they need to audit the network)
+		// - Both sides Full = both identifiable, no information leak
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdmin {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -352,8 +358,10 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 	}
 
 	var visibleHashes map[string]bool
-	if len(opts) > 0 && opts[0].VisibleTxHashes != nil {
+	var viewerIsAdminT bool
+	if len(opts) > 0 {
 		visibleHashes = opts[0].VisibleTxHashes
+		viewerIsAdminT = opts[0].ViewerIsAdmin
 	}
 
 	var result []TokenTransfer
@@ -383,8 +391,8 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 			continue
 		}
 
-		// G10: non-participant, non-visibleTo, one side hidden → drop
-		if !viewerIsParticipant && !txVisibleToViewer {
+		// G10: non-participant, non-visibleTo, non-admin, one side hidden → drop
+		if !viewerIsParticipant && !txVisibleToViewer && !viewerIsAdminT {
 			if isNonIdentifiable(fromLevel) || isNonIdentifiable(toLevel) {
 				continue
 			}
@@ -768,6 +776,15 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 // from Redacted contracts are kept (with topics/data intact) instead of being
 // stripped — the viewer is a direct participant and already knows the contract.
 func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID string, participantAddrs ...string) ([]Log, error) {
+	return r.RedactLogsWithOpts(ctx, logs, viewerDID, nil, participantAddrs...)
+}
+
+// RedactLogsWithOpts is RedactLogs with visibleTo support.
+func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, viewerDID string, opts *RedactOpts, participantAddrs ...string) ([]Log, error) {
+	var visibleTxHashes map[string]bool
+	if opts != nil {
+		visibleTxHashes = opts.VisibleTxHashes
+	}
 	if len(logs) == 0 {
 		return logs, nil
 	}
@@ -822,8 +839,10 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 	extraAddrMap := make(map[string]bool)
 	for _, l := range logs {
 		level := visMap[strings.ToLower(l.Address)]
-		// Redacted/hidden contracts are scanned only if viewer is a participant.
-		if (level == VisibilityHidden || level == VisibilityRedacted) && !isParticipant {
+		// Redacted/hidden contracts are scanned if viewer is a participant
+		// or the tx is in the viewer's visibleTo set.
+		logVisibleTo := visibleTxHashes[strings.ToLower(l.TxHash)]
+		if (level == VisibilityHidden || level == VisibilityRedacted) && !isParticipant && !logVisibleTo {
 			continue
 		}
 		for _, t := range []*string{l.Topic0, l.Topic1, l.Topic2, l.Topic3} {
@@ -931,6 +950,12 @@ func (r *RedactionEngine) RedactLogs(ctx context.Context, logs []Log, viewerDID 
 		// Participant override: if the viewer is from/to of the parent tx,
 		// upgrade Redacted emitting contracts so they can see their own logs.
 		if level == VisibilityRedacted && isParticipant {
+			level = VisibilityFull
+		}
+
+		// visibleTo override: if the tx that produced this log was shared
+		// with the viewer, upgrade Hidden/Redacted to Full.
+		if (level == VisibilityHidden || level == VisibilityRedacted) && visibleTxHashes[strings.ToLower(l.TxHash)] {
 			level = VisibilityFull
 		}
 

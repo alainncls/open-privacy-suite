@@ -406,10 +406,10 @@ create_membership() {
     local group_id="$2"
     local label="$3"
 
-    # Check existing memberships
+    # Check existing memberships (API returns array directly, not wrapped in {data:})
     local existing
-    existing=$(admin_get "/users/${user_id}/memberships" | jq -r ".data[]?.membership.group_id // empty" 2>/dev/null)
-    if echo "$existing" | grep -q "$group_id"; then
+    existing=$(admin_get "/users/${user_id}/memberships" | jq -r ".[].membership.group_id // empty" 2>/dev/null || true)
+    if echo "$existing" | grep -q "$group_id" 2>/dev/null; then
         ok "$label already a member"
         return 0
     fi
@@ -583,6 +583,101 @@ ok "Charlie -> Dave: 0.1 ETH"
 info "Dave -> Alice: 0.01 ETH"
 cast send --private-key "$DAVE_KEY" "$ALICE_ADDR" --value 0.01ether --rpc-url "$ANVIL_URL" > /dev/null 2>&1
 ok "Dave -> Alice: 0.01 ETH"
+
+# ---------------------------------------------------------------------------
+# Step 11: Create External Auditors group + add Charlie and Dave
+# ---------------------------------------------------------------------------
+
+step "Creating External Auditors group in Alpha Corp"
+
+EXT_AUDITORS_ID=$(find_group_by_slug "$ALPHA_ORG_ID" "external-auditors")
+if [[ -z "$EXT_AUDITORS_ID" ]]; then
+    resp=$(admin_post "/orgs/${ALPHA_ORG_ID}/groups" '{"slug":"external-auditors","name":"External Auditors","description":"External users with scoped read access"}')
+    EXT_AUDITORS_ID=$(echo "$resp" | jq -r '.id // empty')
+    ok "Created External Auditors group ($EXT_AUDITORS_ID)"
+else
+    ok "External Auditors group already exists ($EXT_AUDITORS_ID)"
+fi
+
+# Set access: read claim + standard read methods including eth_getLogs
+admin_put "/orgs/${ALPHA_ORG_ID}/groups/${EXT_AUDITORS_ID}/access" \
+    '{"allowed_methods":["eth_getLogs","eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode"],"claims":["read"]}' > /dev/null
+ok "Set External Auditors access (read claim)"
+
+# Add Charlie and Dave to External Auditors (cross-org access to Alpha contracts)
+create_membership "$CHARLIE_USER_ID" "$EXT_AUDITORS_ID" "Charlie -> Alpha External Auditors"
+create_membership "$DAVE_USER_ID"    "$EXT_AUDITORS_ID" "Dave -> Alpha External Auditors"
+
+# Create contract grant with self event rules for External Auditors on Alpha Treasury Token
+if [[ -n "$ALPHA_TOKEN1_ADDR" ]]; then
+    TRANSFER_TOPIC="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    GRANT_RESP=$(curl -sf -X POST "${ADMIN_CURL_HEADERS[@]}" -H "Content-Type: application/json" \
+        -d "{\"group_id\":\"$EXT_AUDITORS_ID\"}" \
+        "${ADMIN_URL}/orgs/${ALPHA_ORG_ID}/contracts/${ALPHA_TOKEN1_ADDR}/grants" 2>/dev/null || echo "")
+    if [[ -n "$GRANT_RESP" ]]; then
+        ok "External Auditors grant on Alpha Treasury Token (self event rules)"
+    else
+        warn "Grant creation failed (may need manual setup)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 12: Send visibleTo transactions through the proxy
+# ---------------------------------------------------------------------------
+
+step "Sending visibleTo transactions"
+
+# Fund Alice with tokens from deployer (account 0 has initial supply)
+DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+if [[ -n "$ALPHA_TOKEN1_ADDR" ]]; then
+    # Fund Alice with 10000 tokens from deployer
+    PADDED_ALICE=$(printf '%064s' "$(echo "$ALICE_ADDR" | sed 's/0x//')" | tr ' ' '0')
+    AMT="00000000000000000000000000000000000000000000021e19e0c9bab2400000"
+    info "Funding Alice with Alpha Treasury tokens..."
+    cast send --private-key "$DEPLOYER_KEY" "$ALPHA_TOKEN1_ADDR" "0xa9059cbb${PADDED_ALICE}${AMT}" \
+        --rpc-url "$ANVIL_URL" > /dev/null 2>&1
+    ok "Alice funded with 10000 Alpha Treasury tokens"
+    sleep 3
+
+    # Helper: build ERC20 transfer calldata
+    transfer_data() {
+        local to_addr="$1"
+        local padded=$(printf '%064s' "$(echo "$to_addr" | sed 's/0x//')" | tr ' ' '0')
+        echo "0xa9059cbb${padded}0000000000000000000000000000000000000000000000056bc75e2d63100000"
+    }
+
+    # TX1: Alice -> Bob (100 tokens), visibleTo=[Charlie, Dave]
+    info "Alice -> Bob: 100 tokens, visibleTo=[Charlie, Dave]"
+    TX1=$(curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ALICE_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendTransaction\",\"params\":[{\"from\":\"$ALICE_ADDR\",\"to\":\"$ALPHA_TOKEN1_ADDR\",\"data\":\"$(transfer_data "$BOB_ADDR")\",\"visibleTo\":[\"$CHARLIE_DID\",\"$DAVE_DID\"]}],\"id\":1}" \
+        "$PROXY_URL" | jq -r '.result // empty')
+    if [[ -n "$TX1" ]]; then ok "TX1: $TX1"; else warn "TX1 failed"; fi
+    sleep 3
+
+    # TX2: Alice -> Charlie (100 tokens), visibleTo=[Bob]
+    info "Alice -> Charlie: 100 tokens, visibleTo=[Bob]"
+    TX2=$(curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ALICE_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendTransaction\",\"params\":[{\"from\":\"$ALICE_ADDR\",\"to\":\"$ALPHA_TOKEN1_ADDR\",\"data\":\"$(transfer_data "$CHARLIE_ADDR")\",\"visibleTo\":[\"$BOB_DID\"]}],\"id\":2}" \
+        "$PROXY_URL" | jq -r '.result // empty')
+    if [[ -n "$TX2" ]]; then ok "TX2: $TX2"; else warn "TX2 failed"; fi
+    sleep 3
+
+    # TX3: Alice -> Dave (100 tokens), visibleTo=[Charlie]
+    info "Alice -> Dave: 100 tokens, visibleTo=[Charlie]"
+    TX3=$(curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ALICE_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendTransaction\",\"params\":[{\"from\":\"$ALICE_ADDR\",\"to\":\"$ALPHA_TOKEN1_ADDR\",\"data\":\"$(transfer_data "$DAVE_ADDR")\",\"visibleTo\":[\"$CHARLIE_DID\"]}],\"id\":3}" \
+        "$PROXY_URL" | jq -r '.result // empty')
+    if [[ -n "$TX3" ]]; then ok "TX3: $TX3"; else warn "TX3 failed"; fi
+    sleep 3
+
+    # TX4: Alice -> Bob (100 tokens), NO visibleTo (control)
+    info "Alice -> Bob: 100 tokens (no visibleTo - control)"
+    TX4=$(curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ALICE_TOKEN" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendTransaction\",\"params\":[{\"from\":\"$ALICE_ADDR\",\"to\":\"$ALPHA_TOKEN1_ADDR\",\"data\":\"$(transfer_data "$BOB_ADDR")\"}],\"id\":4}" \
+        "$PROXY_URL" | jq -r '.result // empty')
+    if [[ -n "$TX4" ]]; then ok "TX4: $TX4"; else warn "TX4 failed"; fi
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

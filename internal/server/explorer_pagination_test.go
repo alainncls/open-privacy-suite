@@ -525,11 +525,6 @@ func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
 	noClaimsGroupID := makeClaimsGroup("claims-none", "{}")
 
 	// --- Users ---
-	type testUser struct {
-		name          string
-		did           string
-		expectedTotal int64
-	}
 
 	// Create users and assign groups
 	createAndAssign := func(_, did string, groupIDs ...string) {
@@ -573,16 +568,29 @@ func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
 	// --- Table-driven subtests ---
 	// Any user with a contract_grant on privContract gets VisibilityFull, so privContract
 	// is in the visible set (allowlist). Txs involving privContract: tx1 (privContract->NULL)
-	// and tx2 (pubAddr->privContract) = 2 visible. tx3 (pubAddr->pubAddr2) is hidden
-	// because neither pubAddr nor pubAddr2 are in any visible set.
-	cases := []testUser{
-		{"readUser", "did:test:claims_read", 2},
-		{"writeUser", "did:test:claims_write", 2},
-		{"readWriteUser", "did:test:claims_rw", 2},
-		{"deployUser", "did:test:claims_deploy", 2},
-		{"readWriteDeployUser", "did:test:claims_rwd", 2},
-		{"noClaimsUser", "did:test:claims_none", 2},
-		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 2},
+	// and tx2 (pubAddr->privContract) = 2 visible at SQL level. tx3 is excluded (neither
+	// side visible).
+	//
+	// G10 post-query drop: tx2 has pubAddr (Hidden) as from — non-admin, non-participant
+	// viewers have this tx dropped. Only admins (is_org_admin) are exempt.
+	// Result: non-admins see 1 tx (tx1 only), admins see 2.
+	//
+	// Note: SQL-level total=2 for all users (SQL doesn't know about G10). The returned
+	// data count reflects the post-G10 result.
+	type claimTestUser struct {
+		name         string
+		did          string
+		expectedData int // post-G10 tx count in response data
+	}
+
+	cases := []claimTestUser{
+		{"readUser", "did:test:claims_read", 1},
+		{"writeUser", "did:test:claims_write", 1},
+		{"readWriteUser", "did:test:claims_rw", 1},
+		{"deployUser", "did:test:claims_deploy", 1},
+		{"readWriteDeployUser", "did:test:claims_rwd", 1},
+		{"noClaimsUser", "did:test:claims_none", 1},
+		{"fullClaimsUser (non-admin group with admin claim)", "did:test:claims_full", 1},
 		{"adminUser (is_org_admin group)", "did:test:claims_admin", 2},
 		{"multiGroupUser (read + admin groups)", "did:test:claims_multi", 2},
 	}
@@ -596,8 +604,9 @@ func TestExplorerVisibility_ClaimCombinations(t *testing.T) {
 			require.Equal(t, http.StatusOK, w.Code)
 
 			total, txs := parsePaginatedResponse(t, w.Body.Bytes())
-			assert.Equal(t, tc.expectedTotal, total, "%s: unexpected total", tc.name)
-			assert.Len(t, txs, int(tc.expectedTotal), "%s: unexpected tx count", tc.name)
+			// SQL total is always 2 (SQL filter doesn't account for G10).
+			assert.Equal(t, int64(2), total, "%s: SQL total should be 2", tc.name)
+			assert.Len(t, txs, tc.expectedData, "%s: unexpected post-G10 tx count", tc.name)
 		})
 	}
 }
