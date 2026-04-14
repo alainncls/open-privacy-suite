@@ -1528,3 +1528,224 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 		t.Errorf("I24: expected 2 logs (Transfer from X + user-addr from Z), got %d", len(*logs))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// visibleTo receipt and getLogs tests — RPC response filter gaps
+// ---------------------------------------------------------------------------
+
+// TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantSeesReceipt
+// verifies that a non-participant whose DID is in the tx's visibleTo list
+// receives the receipt (not null). This was a real bug: the participant gate
+// returned null even after the visibleTo check passed.
+func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantSeesReceipt(t *testing.T) {
+	contractAddr := "0xcontract0000000000000000000000000000001"
+	txHash := "0xaaaa000000000000000000000000000000000000000000000000000000000001"
+	viewerDID := "did:test:bank"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {
+				Claims: []rbac.Claim{},
+				EventRules: []rbac.EventRule{
+					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
+				},
+			},
+		},
+	}
+
+	receipt := map[string]any{
+		"transactionHash": txHash,
+		"from":            "0xsender0000000000000000000000000000001",
+		"to":              contractAddr,
+		"status":          "0x1",
+		"logsBloom":       "0x00",
+		"logs": []map[string]any{
+			{
+				"address":         contractAddr,
+				"transactionHash": txHash,
+				"topics":          []string{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "0x000000000000000000000000sender0000000000000000000000000000001", "0x000000000000000000000000receiver000000000000000000000000000001"},
+				"data":            "0x0000000000000000000000000000000000000000000000000000000000000064",
+			},
+		},
+	}
+	receiptJSON, _ := json.Marshal(receipt)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(receiptJSON) + `}`
+
+	// Viewer has no linked addresses — they're a DID-only entity (settlement bank)
+	visCtx := &rbac.TxVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			strings.ToLower(txHash): {viewerDID},
+		},
+	}
+
+	got := FilterReceiptLogsWithEventRules(
+		[]byte(rpcResponse),
+		nil, // no linked addresses
+		perms,
+		&testABIProviderServer{},
+		visCtx,
+	)
+
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	isNull := resp.Result == nil || string(*resp.Result) == "null"
+	if isNull {
+		t.Error("visibleTo non-participant should get receipt, not null")
+	}
+}
+
+// TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantWithoutVisibleTo_StillNull
+// verifies that a non-participant WITHOUT visibleTo still gets null.
+func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantWithoutVisibleTo_StillNull(t *testing.T) {
+	contractAddr := "0xcontract0000000000000000000000000000001"
+	txHash := "0xaaaa000000000000000000000000000000000000000000000000000000000001"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {Claims: []rbac.Claim{}},
+		},
+	}
+
+	receipt := map[string]any{
+		"transactionHash": txHash,
+		"from":            "0xsender0000000000000000000000000000001",
+		"to":              contractAddr,
+		"status":          "0x1",
+		"logsBloom":       "0x00",
+		"logs":            []map[string]any{},
+	}
+	receiptJSON, _ := json.Marshal(receipt)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(receiptJSON) + `}`
+
+	// No visibleTo context — viewer is a random non-participant
+	got := FilterReceiptLogsWithEventRules(
+		[]byte(rpcResponse),
+		[]string{"0xrandomuser00000000000000000000000000001"},
+		perms,
+		&testABIProviderServer{},
+		nil,
+	)
+
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	isNull := resp.Result == nil || string(*resp.Result) == "null"
+	if !isNull {
+		t.Error("non-participant without visibleTo should get null")
+	}
+}
+
+// TestFilterReceiptLogsWithEventRules_VisibleTo_WrongTxHash_StillNull
+// verifies visibleTo only matches the specific tx hash, not any tx.
+func TestFilterReceiptLogsWithEventRules_VisibleTo_WrongTxHash_StillNull(t *testing.T) {
+	contractAddr := "0xcontract0000000000000000000000000000001"
+	txHash := "0xaaaa000000000000000000000000000000000000000000000000000000000001"
+	otherHash := "0xbbbb000000000000000000000000000000000000000000000000000000000002"
+	viewerDID := "did:test:bank"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {Claims: []rbac.Claim{}},
+		},
+	}
+
+	receipt := map[string]any{
+		"transactionHash": txHash,
+		"from":            "0xsender0000000000000000000000000000001",
+		"to":              contractAddr,
+		"status":          "0x1",
+		"logsBloom":       "0x00",
+		"logs":            []map[string]any{},
+	}
+	receiptJSON, _ := json.Marshal(receipt)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(receiptJSON) + `}`
+
+	// visibleTo is for a DIFFERENT tx hash
+	visCtx := &rbac.TxVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			strings.ToLower(otherHash): {viewerDID},
+		},
+	}
+
+	got := FilterReceiptLogsWithEventRules(
+		[]byte(rpcResponse),
+		nil,
+		perms,
+		&testABIProviderServer{},
+		visCtx,
+	)
+
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	isNull := resp.Result == nil || string(*resp.Result) == "null"
+	if !isNull {
+		t.Error("visibleTo for wrong tx hash should still return null")
+	}
+}
+
+// TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks
+// verifies that users with no linked ETH addresses can still see visibleTo
+// logs via eth_getLogs. This was a real bug: empty addrs returned empty
+// immediately without checking visibleTo.
+func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testing.T) {
+	contractAddr := "0xcontract0000000000000000000000000000001"
+	txHash := "0xaaaa000000000000000000000000000000000000000000000000000000000001"
+	viewerDID := "did:test:bank"
+	transferTopic := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+	perms := &rbac.EffectivePermissions{
+		ContractAccess: map[string]rbac.ContractAccess{
+			contractAddr: {
+				Claims:     []rbac.Claim{},
+				EventRules: nil, // no event rules = default address filter + visibleTo
+			},
+		},
+	}
+
+	logJSON := `{"address":"` + contractAddr + `","transactionHash":"` + txHash + `","topics":["` + transferTopic + `","0x000000000000000000000000sender0000000000000000000000000000001","0x000000000000000000000000receiver000000000000000000000000000001"],"data":"0x0000000000000000000000000000000000000000000000000000000000000064"}`
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":[` + logJSON + `]}`
+
+	visCtx := &rbac.TxVisibilityContext{
+		ViewerDID: viewerDID,
+		TxVisibility: map[string][]string{
+			strings.ToLower(txHash): {viewerDID},
+		},
+	}
+
+	// No linked addresses — bank user has only a DID
+	got := FilterLogsWithEventRules(
+		[]byte(rpcResponse),
+		nil, // empty user addresses
+		perms,
+		&testABIProviderServer{},
+		visCtx,
+	)
+
+	var resp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+
+	var logs []json.RawMessage
+	if err := json.Unmarshal(resp.Result, &logs); err != nil {
+		t.Fatalf("result not a JSON array: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Errorf("expected 1 log (visibleTo), got %d", len(logs))
+	}
+}
