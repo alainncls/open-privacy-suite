@@ -69,7 +69,14 @@ export function AccountPage() {
     return new Date(ts).toLocaleString();
   };
 
-  const timeUntilExpiry = expiresAt ? expiresAt - Date.now() : 0;
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeUntilExpiry = expiresAt ? expiresAt - now : 0;
   const minutesLeft = Math.max(0, Math.round(timeUntilExpiry / 60000));
 
   return (
