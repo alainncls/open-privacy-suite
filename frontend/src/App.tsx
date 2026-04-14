@@ -2,8 +2,9 @@ import { ErrorInfo, Component, ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Shield, LayoutDashboard, ScrollText, Users, FileKey, Scale } from 'lucide-react';
+import { AccountDropdown } from './components/auth/AccountDropdown';
 
-type Tab = 'dashboard' | 'logs' | 'rbac' | 'compliance' | 'disclosure';
+type Tab = 'dashboard' | 'logs' | 'rbac' | 'compliance' | 'disclosure' | 'none';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -58,6 +59,7 @@ function App() {
 
   // Derive active tab from URL
   const getActiveTab = (): Tab => {
+    if (location.pathname.includes('/account')) return 'none';
     if (location.pathname.includes('/logs')) return 'logs';
     if (location.pathname.includes('/rbac')) return 'rbac';
     if (location.pathname.includes('/compliance')) return 'compliance';
@@ -134,6 +136,9 @@ function App() {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
+
+              {/* Account Menu */}
+              <AccountDropdown />
             </div>
           </div>
         </header>

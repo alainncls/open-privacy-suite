@@ -1,11 +1,22 @@
 import { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from 'react';
 
-interface AuthState {
+export interface ZKRoleClaims {
+  groups?: string[];
+  claims?: string[];
+  credential_refs?: string[];
+  proof_ts?: number;
+}
+
+export interface AuthState {
   isAuthenticated: boolean;
   accessToken: string | null;
   refreshToken: string | null;
   userDID: string | null;
   expiresAt: number | null;
+  kyc: boolean;
+  zkRoles: ZKRoleClaims | null;
+  issuedAt: number | null;
+  authProvider: 'azure_ad' | 'privado_id' | null;
 }
 
 interface AuthContextType extends AuthState {
@@ -25,7 +36,15 @@ interface StoredAuth {
   expiresAt: number;
 }
 
-function parseJWT(token: string): { sub?: string; exp?: number } | null {
+interface JWTPayload {
+  sub?: string;
+  exp?: number;
+  iat?: number;
+  kyc?: boolean;
+  zk_roles?: ZKRoleClaims;
+}
+
+function parseJWT(token: string): JWTPayload | null {
   try {
     const base64Url = token.split('.')[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -41,14 +60,39 @@ function parseJWT(token: string): { sub?: string; exp?: number } | null {
   }
 }
 
+function detectAuthProvider(did: string | undefined): 'azure_ad' | 'privado_id' | null {
+  if (!did) return null;
+  return did.startsWith('azuread:') ? 'azure_ad' : 'privado_id';
+}
+
+function buildAuthState(accessToken: string, refreshToken: string, expiresAt: number): AuthState {
+  const claims = parseJWT(accessToken);
+  return {
+    isAuthenticated: true,
+    accessToken,
+    refreshToken,
+    userDID: claims?.sub || null,
+    expiresAt,
+    kyc: claims?.kyc ?? false,
+    zkRoles: claims?.zk_roles ?? null,
+    issuedAt: claims?.iat ? claims.iat * 1000 : null,
+    authProvider: detectAuthProvider(claims?.sub),
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>({
+  const emptyState: AuthState = {
     isAuthenticated: false,
     accessToken: null,
     refreshToken: null,
     userDID: null,
     expiresAt: null,
-  });
+    kyc: false,
+    zkRoles: null,
+    issuedAt: null,
+    authProvider: null,
+  };
+  const [state, setState] = useState<AuthState>(emptyState);
   const [isLoading, setIsLoading] = useState(true);
 
   // Load auth state from sessionStorage on mount (per-tab isolation)
@@ -62,14 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           // Check if token is still valid (with 1 minute buffer)
           if (auth.expiresAt > now + 60000) {
-            const claims = parseJWT(auth.accessToken);
-            setState({
-              isAuthenticated: true,
-              accessToken: auth.accessToken,
-              refreshToken: auth.refreshToken,
-              userDID: claims?.sub || null,
-              expiresAt: auth.expiresAt,
-            });
+            setState(buildAuthState(auth.accessToken, auth.refreshToken, auth.expiresAt));
           } else if (auth.refreshToken) {
             // Token expired but we have refresh token - try to refresh
             await refreshWithToken(auth.refreshToken);
@@ -100,7 +137,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
       const expiresAt = Date.now() + data.expires_in * 1000;
-      const claims = parseJWT(data.access_token);
 
       const newAuth: StoredAuth = {
         accessToken: data.access_token,
@@ -109,31 +145,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(newAuth));
 
-      setState({
-        isAuthenticated: true,
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        userDID: claims?.sub || null,
-        expiresAt,
-      });
+      setState(buildAuthState(data.access_token, data.refresh_token, expiresAt));
 
       return true;
     } catch {
       sessionStorage.removeItem(STORAGE_KEY);
-      setState({
-        isAuthenticated: false,
-        accessToken: null,
-        refreshToken: null,
-        userDID: null,
-        expiresAt: null,
-      });
+      setState(emptyState);
       return false;
     }
   };
 
   const login = useCallback((accessToken: string, refreshToken: string, expiresIn: number) => {
     const expiresAt = Date.now() + expiresIn * 1000;
-    const claims = parseJWT(accessToken);
 
     const auth: StoredAuth = {
       accessToken,
@@ -142,13 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
 
-    setState({
-      isAuthenticated: true,
-      accessToken,
-      refreshToken,
-      userDID: claims?.sub || null,
-      expiresAt,
-    });
+    setState(buildAuthState(accessToken, refreshToken, expiresAt));
   }, []);
 
   const logout = useCallback(async () => {
@@ -170,13 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     sessionStorage.removeItem(STORAGE_KEY);
-    setState({
-      isAuthenticated: false,
-      accessToken: null,
-      refreshToken: null,
-      userDID: null,
-      expiresAt: null,
-    });
+    setState(emptyState);
   }, [state.refreshToken, state.accessToken]);
 
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
