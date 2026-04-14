@@ -611,32 +611,24 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionReceipt):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
-		if err != nil || len(addrs) == 0 {
-			// No linked addresses — check visibleTo before returning null
-			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-				// visibleTo viewer gets the full receipt with log filtering
-				perms := p.resolvePermsForFilter(ctx, result)
-				visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
-				return FilterReceiptLogsWithEventRules(responseBody, nil, perms, p.contractABIProvider(ctx), visCtx)
-			}
-			return FilterTransactionReceipt(responseBody, nil)
+		if err != nil {
+			addrs = nil // DB error — proceed with nil addrs, visCtx handles visibleTo
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
-		filtered := FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
-		// If participant check returned null, check visibleTo as fallback
-		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-			return FilterReceiptLogsWithEventRules(responseBody, nil, perms, p.contractABIProvider(ctx), visCtx)
-		}
-		return filtered
+		// FilterReceiptLogsWithEventRules handles both participant check and
+		// visibleTo bypass internally — no double-check needed here.
+		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
-		if err != nil || len(addrs) == 0 {
-			// No linked addresses -- return empty logs
+		if err != nil {
+			// DB error — fail closed
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":[]}`)
 		}
+		// Note: empty addrs is OK — user may have no linked ETH addresses but
+		// still has visibleTo entries. The filter handles this via visCtx.
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
 		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)

@@ -158,7 +158,29 @@ func FilterReceiptLogsWithEventRules(
 	from := strings.ToLower(receipt.From)
 	to := strings.ToLower(receipt.To)
 
-	if addrSet[from] || (to != "" && addrSet[to]) {
+	isParticipant := addrSet[from] || (to != "" && addrSet[to])
+
+	// visibleTo check: if the viewer is in this tx's visibleTo list,
+	// treat them as a participant for receipt access purposes.
+	isVisibleTo := false
+	if !isParticipant && visCtx != nil && visCtx.ViewerDID != "" {
+		var txHash struct {
+			TransactionHash string `json:"transactionHash"`
+		}
+		if json.Unmarshal(raw, &txHash) == nil && txHash.TransactionHash != "" {
+			hashLower := strings.ToLower(txHash.TransactionHash)
+			if dids, ok := visCtx.TxVisibility[hashLower]; ok {
+				for _, did := range dids {
+					if strings.EqualFold(did, visCtx.ViewerDID) {
+						isVisibleTo = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if isParticipant || isVisibleTo {
 		id := rpcResponseID(responseBody)
 
 		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
@@ -180,7 +202,7 @@ func FilterReceiptLogsWithEventRules(
 		return result
 	}
 
-	// Non-participant: return null.
+	// Non-participant and not in visibleTo: return null.
 	id := rpcResponseID(responseBody)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 }
