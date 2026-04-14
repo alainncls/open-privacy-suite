@@ -25,6 +25,7 @@ import GovernanceDashboard from './components/rbac/GovernanceDashboard';
 import PreregisteredAddressList from './components/rbac/PreregisteredAddressList';
 import AzureTenantList from './components/rbac/AzureTenantList';
 import { AdminDisclosureDashboard } from './pages/admin/AdminDisclosureDashboard';
+import { AccountPage } from './pages/AccountPage';
 import ComplianceManager from './components/compliance/ComplianceManager';
 import ComplianceConfig from './components/compliance/ComplianceConfig';
 import TokenPriceList from './components/compliance/TokenPriceList';
@@ -97,6 +98,7 @@ function Root() {
                     <Route path="logs" element={<ComplianceLogList />} />
                   </Route>
                   <Route path="disclosure" element={<AdminDisclosureDashboard />} />
+                  <Route path="account" element={<AccountPage />} />
                 </Route>
 
                 {/* Default redirect to login */}
