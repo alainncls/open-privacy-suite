@@ -304,21 +304,21 @@ func TestOrgScoping_SuperAdminBypassesOrgScoping(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestOrgScoping_JWTAdminDeniedCrossOrgEndpoints(t *testing.T) {
+func TestOrgScoping_JWTAdminCanAccessGenericRoutes(t *testing.T) {
 	srv, router := setupTieredAdminTestServer(t, "secret")
 
 	userDID, _, _ := createOrgAndAdminUser(t, srv)
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
-	// Cross-org endpoints (no :org_id in path) require super admin
+	// Generic routes (no :org_id) are allowed for JWT org admins —
+	// they don't expose cross-org data.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "super admin required")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // ---------------------------------------------------------------------------
