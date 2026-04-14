@@ -932,9 +932,12 @@ func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
 		// JWT admin: enforce org scoping.
 		orgID := c.Param("org_id")
 		if orgID == "" {
-			// Routes without :org_id (cross-org operations) require super admin.
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied: super admin required for cross-org operations"})
-			c.Abort()
+			// Routes without :org_id are either generic (status, logs, users,
+			// my admin status) or user-specific (user detail, memberships).
+			// These are safe for any authenticated org admin — they don't expose
+			// cross-org data. The individual handlers enforce further scoping
+			// where needed (e.g., user list filters by org).
+			c.Next()
 			return
 		}
 
