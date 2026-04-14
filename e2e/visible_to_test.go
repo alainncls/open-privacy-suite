@@ -303,13 +303,14 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 		visCtx, // has visibleTo
 	)
 
-	// Viewer is NOT a participant in from/to, so receipt must be null.
+	// Viewer is NOT a from/to participant but IS in visibleTo — receipt is
+	// returned (visibleTo bypasses the participant gate for receipts).
 	var receiptResp struct {
 		Result json.RawMessage `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal(receiptResult, &receiptResp))
-	assert.Equal(t, "null", string(receiptResp.Result),
-		"receipt should be null for viewer who is not a from/to participant, even with visibleTo")
+	assert.NotEqual(t, "null", string(receiptResp.Result),
+		"visibleTo viewer should receive receipt even without being a from/to participant")
 
 	// --- Test FilterLogsWithEventRules (eth_getLogs path) ---
 	// Build a fake eth_getLogs response with the same Transfer log.
