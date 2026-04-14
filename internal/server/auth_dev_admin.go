@@ -101,16 +101,23 @@ func bootstrapDevAdminGroup(ctx context.Context, store rbac.Store) (string, erro
 	}
 	if group == nil {
 		group = &rbac.Group{
-			ID:    uuid.New().String(),
-			OrgID: org.ID,
-			Slug:  groupSlug,
-			Name:  "Dev Admin Group (auto-created)",
-			Depth: 0,
-			Path:  groupSlug,
+			ID:         uuid.New().String(),
+			OrgID:      org.ID,
+			Slug:       groupSlug,
+			Name:       "Dev Admin Group (auto-created)",
+			Depth:      0,
+			Path:       groupSlug,
+			IsOrgAdmin: true, // Dev mode: full org admin for dashboard access
 		}
 		if err := store.CreateGroup(ctx, group); err != nil {
 			return "", err
 		}
+	}
+
+	// Ensure group is org admin (may have been created before 3-tier model)
+	if !group.IsOrgAdmin {
+		group.IsOrgAdmin = true
+		_ = store.UpdateGroup(ctx, group)
 	}
 
 	// Ensure admin claim on the group
