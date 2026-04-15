@@ -1091,7 +1091,8 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 			}
 		}
 
-		// Invalidate org cache
+		// Invalidate DB cache for all users in the org (must happen inside the tx
+		// so rollback also rolls back the cache delete).
 		if err := tx.InvalidateCacheForOrg(ctx, orgID); err != nil {
 			return fmt.Errorf("failed to invalidate cache: %w", err)
 		}
@@ -1108,6 +1109,10 @@ func (s *Server) batchMoveContracts(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Tx committed — drop the in-memory cache for this org so live requests
+	// see the new grant layout immediately (no TTL wait).
+	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
 
 	c.JSON(http.StatusOK, result)
 }

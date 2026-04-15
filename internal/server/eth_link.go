@@ -254,6 +254,11 @@ func (s *Server) handleEthLinkVerify(c *gin.Context) {
 		return
 	}
 
+	// Invalidate the RBAC permission cache for this user. Address ownership feeds
+	// into contract-auto-claim and deploy-grant decisions, so a freshly linked
+	// address may unlock (or lock) contract access on the next request.
+	s.invalidateUserCacheByDID(c.Request.Context(), userDID)
+
 	// Emit SIEM audit event. Escalate severity when the address was already
 	// claimed by another DID — this may indicate key sharing or key compromise.
 	if s.siemForwarder != nil {
@@ -360,6 +365,11 @@ func (s *Server) handleDeleteEthAddress(c *gin.Context) {
 		return
 	}
 
+	// Revoking an address may change what contracts the user is permitted to
+	// interact with (deploy-attribution, auto-grant). Drop the cached permissions
+	// so the next request re-resolves them from the DB.
+	s.invalidateUserCacheByDID(c.Request.Context(), userDID)
+
 	respondMessage(c, "address unlinked successfully")
 }
 
@@ -425,6 +435,23 @@ func (s *Server) handleRefreshENS(c *gin.Context) {
 		"address":  normalizedAddr,
 		"ens_name": ensNamePtr,
 	})
+}
+
+// invalidateUserCacheByDID looks up the RBAC user for a DID and drops their
+// cached effective permissions (both layers). Silent no-op if the DID has no
+// RBAC user record yet — nothing is cached for a user that doesn't exist.
+func (s *Server) invalidateUserCacheByDID(ctx context.Context, did string) {
+	user, err := s.db.GetUserByExternalID(ctx, did)
+	if err != nil {
+		slog.Warn("failed to look up user for cache invalidation", "did", did, "error", err)
+		return
+	}
+	if user == nil {
+		return
+	}
+	if err := s.rbacAccessCtrl.InvalidateUser(ctx, user.ID); err != nil {
+		slog.Warn("failed to invalidate rbac cache", "user_id", user.ID, "error", err)
+	}
 }
 
 // resolveAndStoreENS resolves the ENS name for an address and stores it in the database
