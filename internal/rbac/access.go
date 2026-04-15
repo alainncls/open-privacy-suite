@@ -2149,6 +2149,13 @@ func (c *AccessController) NotifyDeploymentMined(
 			// Grant contract to deployer's existing deploy group (non-fatal if it fails)
 			if err := c.store.GrantContractToDeployerGroup(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID); err != nil {
 				slog.Warn("failed to grant contract to deployer group", "address", contractAddress, "error", err)
+			} else {
+				// Drop the deployer's cached permissions so the next call to the
+				// freshly-deployed contract re-resolves and sees the new grant
+				// instead of waiting for cache TTL expiry.
+				if invErr := c.InvalidateUser(ctx, deployment.DeployerUserID); invErr != nil {
+					slog.Warn("failed to invalidate deployer cache after plain CREATE grant", "user_id", deployment.DeployerUserID, "error", invErr)
+				}
 			}
 		}
 		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {

@@ -1956,6 +1956,12 @@ func (p *JSONRPCProcessor) pollAndFinalizeRuntimeCreates(txHash string, preRegAd
 				} else if userID != "" {
 					if gErr := p.rbacAccessCtrl.Store().GrantContractToDeployerGroup(ctx, orgID, contract.ID, userID); gErr != nil {
 						slog.Warn("failed to grant contract to deployer group for runtime create", "address", addr, "error", gErr)
+					} else {
+						// Drop the deployer's cached permissions so the next call to the
+						// newly-registered contract re-resolves and sees the new grant.
+						if invErr := p.rbacAccessCtrl.InvalidateUser(ctx, userID); invErr != nil {
+							slog.Warn("failed to invalidate deployer cache after runtime create grant", "user_id", userID, "error", invErr)
+						}
 					}
 				}
 			}
