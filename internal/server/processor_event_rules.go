@@ -120,8 +120,17 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 }
 
 // extractTxHashesFromResponse extracts unique transaction hashes from a JSON-RPC
-// response body. Works for both eth_getLogs (array of logs) and
-// eth_getTransactionReceipt (single receipt with transactionHash + logs).
+// response body. Handles three shapes:
+//
+//   - eth_getLogs — array of log objects (hash field: "transactionHash")
+//   - eth_getTransactionReceipt — single receipt (hash field: "transactionHash")
+//   - eth_getTransactionByHash / ...ByBlockHashAndIndex / ...ByBlockNumberAndIndex —
+//     single transaction object (hash field: "hash", per the Ethereum JSON-RPC spec)
+//
+// All three shapes are attempted independently because Go's json.Unmarshal silently
+// tolerates missing fields — e.g. unmarshaling a tx body into the receipt struct
+// succeeds but produces an empty TransactionHash, so the tx-object branch is
+// required as an additional attempt (not a fallback). The seen map dedupes.
 func extractTxHashesFromResponse(responseBody []byte) []string {
 	var resp struct {
 		Result json.RawMessage `json:"result"`
@@ -131,38 +140,45 @@ func extractTxHashesFromResponse(responseBody []byte) []string {
 	}
 
 	seen := make(map[string]bool)
+	addHash := func(h string) {
+		h = strings.ToLower(h)
+		if h != "" && !seen[h] {
+			seen[h] = true
+		}
+	}
 
 	// Try as array of logs (eth_getLogs response).
 	var logs []struct {
 		TransactionHash string `json:"transactionHash"`
 	}
-	if err := json.Unmarshal(resp.Result, &logs); err == nil && len(logs) > 0 {
+	if err := json.Unmarshal(resp.Result, &logs); err == nil {
 		for _, log := range logs {
-			h := strings.ToLower(log.TransactionHash)
-			if h != "" && !seen[h] {
-				seen[h] = true
-			}
+			addHash(log.TransactionHash)
 		}
-	} else {
-		// Try as a single receipt (eth_getTransactionReceipt response).
-		var receipt struct {
+	}
+
+	// Try as a single receipt (eth_getTransactionReceipt response).
+	var receipt struct {
+		TransactionHash string `json:"transactionHash"`
+		Logs            []struct {
 			TransactionHash string `json:"transactionHash"`
-			Logs            []struct {
-				TransactionHash string `json:"transactionHash"`
-			} `json:"logs"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(resp.Result, &receipt); err == nil {
+		addHash(receipt.TransactionHash)
+		for _, log := range receipt.Logs {
+			addHash(log.TransactionHash)
 		}
-		if err := json.Unmarshal(resp.Result, &receipt); err == nil {
-			h := strings.ToLower(receipt.TransactionHash)
-			if h != "" {
-				seen[h] = true
-			}
-			for _, log := range receipt.Logs {
-				lh := strings.ToLower(log.TransactionHash)
-				if lh != "" && !seen[lh] {
-					seen[lh] = true
-				}
-			}
-		}
+	}
+
+	// Try as a single transaction object (eth_getTransactionByHash et al.).
+	// Transaction objects use "hash", not "transactionHash" — this branch is why
+	// the others can't be an if/else chain.
+	var tx struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(resp.Result, &tx); err == nil {
+		addHash(tx.Hash)
 	}
 
 	if len(seen) == 0 {

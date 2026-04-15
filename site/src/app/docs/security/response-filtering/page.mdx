@@ -66,9 +66,9 @@ Transaction data can be fetched by hash or by block position. All three methods 
 
 | Method | Participant check | Non-participant response |
 |--------|-------------------|-------------------------|
-| `eth_getTransactionByHash` | `from` or `to` matches linked address | `null` |
-| `eth_getTransactionByBlockHashAndIndex` | same | `null` |
-| `eth_getTransactionByBlockNumberAndIndex` | same | `null` |
+| `eth_getTransactionByHash` | `from` or `to` matches linked address | `null` (full tx if the viewer's DID is in the tx's `visibleTo` list) |
+| `eth_getTransactionByBlockHashAndIndex` | same | `null` (full tx if the viewer's DID is in the tx's `visibleTo` list) |
+| `eth_getTransactionByBlockNumberAndIndex` | same | `null` (full tx if the viewer's DID is in the tx's `visibleTo` list) |
 
 **What this protects:**
 
@@ -242,7 +242,12 @@ The proxy strips the `visibleTo` field before forwarding the transaction to the 
 `visibleTo` grants visibility at two layers:
 
 1. **Explorer views**: Transactions with `visibleTo` grants appear in the regular Transactions and Token Transfers pages for listed DIDs, alongside their own activity.
-2. **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs` and in `eth_getTransactionReceipt` logs. However, `visibleTo` does NOT override receipt participant checks -- a listed DID still receives `null` from `eth_getTransactionReceipt` if they are not a from/to participant.
+2. **JSON-RPC filtering**: Listed DIDs can see event logs from these transactions via `eth_getLogs` and can bypass the from/to participant check for:
+   - `eth_getTransactionReceipt` -- listed DID receives the full receipt (with logs filtered by the same event rules)
+   - `eth_getTransactionByHash` -- listed DID receives the full transaction object
+   - `eth_getTransactionByBlockHashAndIndex` / `eth_getTransactionByBlockNumberAndIndex` -- listed DID receives the full transaction object
+
+   This makes `visibleTo` a consistent cross-method override: whichever RPC the listed DID uses to fetch data for an allowed tx, they get the response they would get as a participant. Unlisted DIDs remain gated by the normal participant check.
 
 ---
 
@@ -251,10 +256,10 @@ The proxy strips the `visibleTo` field before forwarding the transaction to the 
 | Method | Participant behavior | Non-participant behavior |
 |--------|---------------------|--------------------------|
 | `eth_getStorageAt` | Admin: all slots; Read: EIP-1967 proxy slots only | Blocked (no claim) |
-| `eth_getTransactionByHash` | Full transaction | `null` |
-| `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` |
-| `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` |
-| `eth_getTransactionReceipt` | Receipt with filtered logs | `null` |
+| `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
+| `eth_getTransactionReceipt` | Receipt with filtered logs | `null` (or receipt with filtered logs if viewer is in `visibleTo`) |
 | `eth_getBlockByHash` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
 | `eth_getBlockByHash` (`fullTxObjects=false`) | Hashes of user's txs | Non-participant hashes removed from array |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block with all txs | Non-participant txs removed from array |
