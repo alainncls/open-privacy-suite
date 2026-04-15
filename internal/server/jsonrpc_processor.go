@@ -637,10 +637,19 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
 		if err != nil || len(addrs) == 0 {
+			// No linked addresses — check visibleTo before returning null
+			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+				return responseBody
+			}
 			id := rpcResponseID(responseBody)
 			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 		}
-		return FilterTransactionByHash(responseBody, addrs)
+		filtered := FilterTransactionByHash(responseBody, addrs)
+		// If participant check returned null, check visibleTo as fallback
+		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
+			return responseBody
+		}
+		return filtered
 
 	case strings.EqualFold(m, rbac.MethodGetBlockByHash),
 		strings.EqualFold(m, rbac.MethodGetBlockByNumber):
