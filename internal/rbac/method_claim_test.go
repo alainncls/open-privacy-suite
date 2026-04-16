@@ -346,3 +346,20 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	assert.True(t, expandedSet["linea_estimateGas"], "extra method should be in wildcard expansion")
 	assert.True(t, expandedSet["trace_transaction"], "extra method should be in wildcard expansion")
 }
+
+func TestAccessCheckRequest_EffectiveMethod(t *testing.T) {
+	t.Run("returns AccessMethod when set", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			Method:       "linea_estimateGas",
+			AccessMethod: "eth_estimateGas",
+		}
+		assert.Equal(t, "eth_estimateGas", req.EffectiveMethod())
+	})
+
+	t.Run("returns Method when AccessMethod empty", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			Method: "eth_call",
+		}
+		assert.Equal(t, "eth_call", req.EffectiveMethod())
+	})
+}

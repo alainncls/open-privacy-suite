@@ -93,6 +93,41 @@ func TestFilterTransactionByHash_EmptyAddresses(t *testing.T) {
 	}
 }
 
+// TestFilterTransactionByHash_LineaExclusionStatus verifies that FilterTransactionByHash
+// works on linea_getTransactionExclusionStatusV1 responses, which have a "from" field
+// but no "to" field. The alias system routes these through the same filter.
+func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
+	userAddrs := []string{"0x4d144d7b9c96b26361d6ac74dd1d8267edca4fc2"}
+
+	// Linea exclusion status response: has "from" but no "to"
+	participantResponse := `{"jsonrpc":"2.0","id":1,"result":{"txHash":"0x526e","from":"0x4d144d7b9c96b26361d6ac74dd1d8267edca4fc2","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"Transaction line count for module ADD=402 is above the limit 70","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
+	got := FilterTransactionByHash([]byte(participantResponse), userAddrs)
+	if string(got) != participantResponse {
+		t.Errorf("participant should see full response\n got: %s\nwant: %s", got, participantResponse)
+	}
+
+	// Non-participant should get null
+	nonParticipantResponse := `{"jsonrpc":"2.0","id":2,"result":{"txHash":"0x526e","from":"0xother","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"some reason","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
+	got = FilterTransactionByHash([]byte(nonParticipantResponse), userAddrs)
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	isNull := resp.Result == nil || string(*resp.Result) == "null"
+	if !isNull {
+		t.Errorf("non-participant should get null, got: %s", got)
+	}
+
+	// Null result passes through (tx not in exclusion list)
+	nullResponse := `{"jsonrpc":"2.0","id":3,"result":null}`
+	got = FilterTransactionByHash([]byte(nullResponse), userAddrs)
+	if string(got) != nullResponse {
+		t.Errorf("null result should pass through\n got: %s\nwant: %s", got, nullResponse)
+	}
+}
+
 func TestFilterTransactionReceipt(t *testing.T) {
 	userAddrs := []string{"0xabc1234567890123456789012345678901234567"}
 
