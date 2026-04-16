@@ -283,3 +283,53 @@ func TestExpandWildcardMethods(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisterExtraNamespaces(t *testing.T) {
+	// Clean up after test (extra methods are package-level state)
+	origExtra := ExtraMethods
+	origNS := ExtraNamespaces
+	defer func() {
+		ExtraMethods = origExtra
+		ExtraNamespaces = origNS
+	}()
+
+	// Reset state
+	ExtraMethods = map[string]bool{}
+	ExtraNamespaces = nil
+
+	namespaces := map[string][]string{
+		"Linea": {"linea_estimateGas", "linea_getProof"},
+		"Trace": {"trace_block", "trace_transaction"},
+	}
+
+	RegisterExtraNamespaces(namespaces)
+
+	// Verify ExtraMethods populated
+	assert.True(t, ExtraMethods["linea_estimateGas"])
+	assert.True(t, ExtraMethods["linea_getProof"])
+	assert.True(t, ExtraMethods["trace_block"])
+	assert.True(t, ExtraMethods["trace_transaction"])
+	assert.False(t, ExtraMethods["eth_call"]) // standard method not in ExtraMethods
+
+	// Verify ExtraNamespaces stored
+	assert.Equal(t, namespaces, ExtraNamespaces)
+
+	// Verify AllAllowedMethods includes extras
+	all := AllAllowedMethods()
+	allSet := make(map[string]bool)
+	for _, m := range all {
+		allSet[m] = true
+	}
+	assert.True(t, allSet["linea_estimateGas"], "extra method should be in AllAllowedMethods")
+	assert.True(t, allSet["trace_block"], "extra method should be in AllAllowedMethods")
+	assert.True(t, allSet["eth_call"], "standard method should still be in AllAllowedMethods")
+
+	// Verify wildcard expansion includes extras
+	expanded := ExpandWildcardMethods([]string{"*"})
+	expandedSet := make(map[string]bool)
+	for _, m := range expanded {
+		expandedSet[m] = true
+	}
+	assert.True(t, expandedSet["linea_estimateGas"], "extra method should be in wildcard expansion")
+	assert.True(t, expandedSet["trace_transaction"], "extra method should be in wildcard expansion")
+}

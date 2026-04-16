@@ -42,9 +42,12 @@ export default function GroupAccessForm({
   const [error, setError] = useState<string | null>(null);
   // Track whether the last method change came from a preset click (skip auto-detect)
   const [presetApplied, setPresetApplied] = useState(false);
+  // Extra RPC namespaces from server config (chain-specific methods)
+  const [extraNamespaces, setExtraNamespaces] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     loadAccess();
+    loadExtraNamespaces();
   }, [groupId]);
 
   // Auto-detect preset whenever methods change (but skip if a preset was just applied)
@@ -83,6 +86,18 @@ export default function GroupAccessForm({
       // No access settings yet, that's OK
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadExtraNamespaces = async () => {
+    try {
+      const response = await rbacApi.status.get();
+      const ns = response.data?.methods?.extra_namespaces;
+      if (ns && Object.keys(ns).length > 0) {
+        setExtraNamespaces(ns);
+      }
+    } catch {
+      // Non-critical — extra namespaces just won't show
     }
   };
 
@@ -245,6 +260,72 @@ export default function GroupAccessForm({
               <div className="border-t border-neutral-200 p-3">
                 <div className="grid grid-cols-2 gap-1.5">
                   {sectionMethods.map((method: string) => (
+                    <label
+                      key={method}
+                      className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer border border-transparent hover:border-neutral-100 transition-colors"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toggleMethod(method);
+                      }}
+                    >
+                      <div className={cn(
+                        'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors',
+                        allowedMethods.includes(method)
+                          ? 'bg-primary border-primary'
+                          : 'border-neutral-300 bg-white'
+                      )}>
+                        {allowedMethods.includes(method) && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                      </div>
+                      <span className="text-xs font-mono text-neutral-700 truncate" title={method}>
+                        {method}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Extra RPC namespaces (chain-specific, from server config) */}
+        {Object.entries(extraNamespaces).map(([nsName, nsMethods]) => {
+          const selectedCount = allowedMethods.filter(m => nsMethods.includes(m)).length;
+          return (
+            <div key={nsName} className="border rounded-lg border-neutral-200">
+              <div className="flex items-center justify-between p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-neutral-700">{nsName}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">
+                    {selectedCount} / {nsMethods.length}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
+                    Extension
+                  </span>
+                </div>
+                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:text-primary-600 font-medium"
+                    onClick={() => selectAllInSection(nsMethods)}
+                  >
+                    Select All
+                  </button>
+                  <span className="text-neutral-200">|</span>
+                  <button
+                    type="button"
+                    className="text-xs text-neutral-500 hover:text-neutral-700 font-medium"
+                    onClick={() => clearSection(nsMethods)}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="px-3 pb-2">
+                <p className="text-xs text-neutral-400">Chain-specific methods configured by the operator.</p>
+              </div>
+              <div className="border-t border-neutral-200 p-3">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {nsMethods.map((method) => (
                     <label
                       key={method}
                       className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer border border-transparent hover:border-neutral-100 transition-colors"

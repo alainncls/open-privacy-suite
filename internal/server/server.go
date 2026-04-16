@@ -279,6 +279,12 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
 
+	// Register extra RPC namespaces (chain-specific method extensions)
+	if cfg.ExtraRPCNamespaces != nil && len(cfg.ExtraRPCNamespaces.Namespaces) > 0 {
+		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.Namespaces)
+		slog.Info("extra RPC namespaces registered", "namespaces", len(cfg.ExtraRPCNamespaces.Namespaces))
+	}
+
 	// Configure RPC API key encryption for decrypting keys from the database
 	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
 		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
@@ -1044,9 +1050,15 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 
 // StatusResponse represents the system status
 type StatusResponse struct {
-	Proxy    ProxyStatus    `json:"proxy"`
-	Node     NodeStatus     `json:"node"`
-	Security SecurityStatus `json:"security"`
+	Proxy    ProxyStatus        `json:"proxy"`
+	Node     NodeStatus         `json:"node"`
+	Security SecurityStatus     `json:"security"`
+	Methods  MethodsStatus      `json:"methods"`
+}
+
+// MethodsStatus exposes available RPC methods to the admin frontend.
+type MethodsStatus struct {
+	ExtraNamespaces map[string][]string `json:"extra_namespaces,omitempty"`
 }
 
 // ProxyStatus represents the proxy status
@@ -1090,6 +1102,9 @@ func (s *Server) getStatus(c *gin.Context) {
 		},
 		Security: SecurityStatus{
 			TravelRuleEnabled: s.complianceChecker != nil,
+		},
+		Methods: MethodsStatus{
+			ExtraNamespaces: rbac.ExtraNamespaces,
 		},
 	}
 

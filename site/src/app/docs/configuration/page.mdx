@@ -89,6 +89,38 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 ---
 
+## Extra RPC Namespaces
+
+To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), set `EXTRA_RPC_NAMESPACES` to a JSON object:
+
+```json
+{
+  "version": 1,
+  "namespaces": {
+    "Linea": [
+      "linea_estimateGas",
+      "linea_getProof",
+      "linea_getTransactionExclusionStatusV1"
+    ],
+    "Trace": [
+      "trace_block",
+      "trace_transaction"
+    ]
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `version` | Schema version (currently `1`). Required for forward compatibility. |
+| `namespaces` | Map of display label to method list. The key appears as the section heading in the admin UI. |
+
+Extra methods are passthrough — forwarded to the node with no special handling. They appear as toggleable methods in the admin dashboard group access form, under their namespace heading. They do not require claims and are not included in the standard role presets (Wallet User, Service, Developer, Admin).
+
+When `*` (wildcard) is used in a group's allowed methods, extra methods are included in the expansion.
+
+---
+
 ## Token TTLs
 
 | Token | TTL | Notes |

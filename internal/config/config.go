@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -12,6 +14,15 @@ import (
 
 	"privacy-proxy/internal/audit"
 )
+
+// ExtraRPCNamespaces defines additional JSON-RPC method namespaces
+// that the proxy should accept and forward to the node.
+// This allows operators to support chain-specific methods (e.g. Linea's linea_*)
+// without code changes.
+type ExtraRPCNamespaces struct {
+	Version    int                 `json:"version"`
+	Namespaces map[string][]string `json:"namespaces"`
+}
 
 type Config struct {
 	Version                    string // Set by cmd/server/main.go from build-time constant
@@ -34,7 +45,8 @@ type Config struct {
 	MockSignatures             bool          // If true, accept any signature without verification (dev/demo only, NEVER in production)
 	AllowMockLogin             bool          // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
 	DemoAutoAuthDelay          time.Duration // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
-	TrustedFactoryHashes       []string      // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
+	TrustedFactoryHashes       []string              // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
+	ExtraRPCNamespaces         *ExtraRPCNamespaces   // Additional JSON-RPC method namespaces (e.g. Linea's linea_*)
 
 	// Runtime tracing configuration
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
@@ -162,6 +174,19 @@ func Load() *Config {
 		}
 	}
 
+	// Extra RPC namespaces (chain-specific method extensions)
+	var extraRPCNamespaces *ExtraRPCNamespaces
+	if raw := getEnv("EXTRA_RPC_NAMESPACES", ""); raw != "" {
+		var parsed ExtraRPCNamespaces
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES: invalid JSON: %v", err))
+		}
+		if parsed.Version != 1 {
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES: unsupported version %d (expected 1)", parsed.Version))
+		}
+		extraRPCNamespaces = &parsed
+	}
+
 	// Runtime tracing configuration
 	traceCacheTTL := 10 * time.Second
 	if ttlStr := getEnv("TRACE_CACHE_TTL", ""); ttlStr != "" {
@@ -263,6 +288,7 @@ func Load() *Config {
 		AllowMockLogin:           allowMockLogin,
 		DemoAutoAuthDelay:        demoDelay,
 		TrustedFactoryHashes:     trustedFactoryHashes,
+		ExtraRPCNamespaces:       extraRPCNamespaces,
 		TraceCacheTTL:            traceCacheTTL,
 		TraceTimeout:             traceTimeout,
 		TraceTieredValidation:    traceTiered,
