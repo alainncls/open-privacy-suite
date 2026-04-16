@@ -9,7 +9,7 @@
  * - Other org contracts should be denied (cross-org isolation)
  * - CREATE/CREATE2 in runtime should be rejected
  *
- * NOTE: These tests require ENABLE_RUNTIME_TRACING=true
+ * Runtime tracing is always enabled.
  */
 
 import { test, expect } from '@playwright/test';
@@ -17,9 +17,6 @@ import { getJWTToken } from '../../helpers/auth.js';
 import { randomAddress } from '../../helpers/address.js';
 
 const API_URL = process.env.PROXY_URL || 'http://localhost:8080';
-
-// Check if runtime tracing is enabled
-const RUNTIME_TRACING_ENABLED = process.env.ENABLE_RUNTIME_TRACING === 'true';
 
 // Helper to make authenticated RPC call
 async function rpcCall(request: any, token: string, method: string, params: any[] = []) {
@@ -87,13 +84,6 @@ const BYTECODE_WITH_CREATE2 = '0x6080604052348015600f57600080fd5b506040f5';
 const SIMPLE_BYTECODE = '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea165';
 
 test.describe('Runtime Transaction Tracing', () => {
-  // Skip all tests if runtime tracing is not enabled
-  test.beforeAll(async () => {
-    if (!RUNTIME_TRACING_ENABLED) {
-      console.log('SKIP: Runtime tracing tests require ENABLE_RUNTIME_TRACING=true');
-    }
-  });
-
   let orgAId: string;
   let orgBId: string;
   let contractA: string;
@@ -103,8 +93,6 @@ test.describe('Runtime Transaction Tracing', () => {
   let testRunId: string;
 
   test.beforeAll(async ({ request }) => {
-    test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
     // Generate unique test run ID
     testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
@@ -211,8 +199,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('Cross-Org Call Detection via Trace', () => {
     test('TRACE-001: Transaction calling another org\'s contract is denied', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // User A tries to call a transaction that internally calls org B's contract
       // This simulates a contract at contractA making a CALL to contractB
       // The trace would reveal this cross-org access
@@ -228,8 +214,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-002: Transaction touching only own org contracts is allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // User A calling their own org's contract should be allowed
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: contractA, data: '0x' },
@@ -243,8 +227,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('CREATE/CREATE2 in Runtime Rejection', () => {
     test('TRACE-003: Bytecode containing CREATE opcode is flagged', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // Attempt to deploy bytecode that contains CREATE opcode
       // Runtime tracing should detect and reject this
       const result = await rpcCall(request, userAToken, 'eth_sendTransaction', [
@@ -267,8 +249,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-004: Bytecode containing CREATE2 opcode is flagged', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       const result = await rpcCall(request, userAToken, 'eth_sendTransaction', [
         {
           from: '0x' + '1'.repeat(40),
@@ -282,8 +262,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('Precompile Calls Allowed', () => {
     test('TRACE-005: Calls to ecrecover precompile (0x01) are allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // ecrecover is a commonly used precompile for signature verification
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: PRECOMPILES.ECRECOVER, data: '0x' },
@@ -295,8 +273,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-006: Calls to sha256 precompile (0x02) are allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: PRECOMPILES.SHA256, data: '0x' },
         'latest'
@@ -306,8 +282,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-007: Calls to identity precompile (0x04) are allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: PRECOMPILES.IDENTITY, data: '0x' },
         'latest'
@@ -317,8 +291,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-008: Calls to all standard precompiles (0x01-0x09) are allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       const precompileAddresses = Object.values(PRECOMPILES);
 
       for (const precompile of precompileAddresses) {
@@ -334,8 +306,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('Shared Infrastructure Access', () => {
     test('TRACE-009: Shared infrastructure contracts are accessible', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // Use a well-known shared address that should be in the shared_infrastructure table
       // For testing, use an address that is not registered to any specific org
 
@@ -354,8 +324,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('Tiered Validation Optimization', () => {
     test('TRACE-010: Known addresses skip trace for performance', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // When calling a known org-owned contract, the system should
       // optimize by skipping full trace if the target is already validated
 
@@ -401,8 +369,6 @@ test.describe('Runtime Transaction Tracing', () => {
      * for a manual test of this scenario.
      */
     test('TRACE-011: Multi-hop calls through intermediary contracts are validated', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // This test documents the expected behavior for A -> B -> C call chains
       // where C belongs to a different org
 
@@ -422,8 +388,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-011b: CRITICAL - Org-owned contract making cross-org call must be denied', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       /**
        * THIS IS THE CRITICAL TEST FOR CROSS-ORG ISOLATION
        *
@@ -468,8 +432,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-012: Deep call stack within same org is allowed', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // Multiple calls within the same org should be allowed
       // even with deep call stacks
 
@@ -485,8 +447,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
   test.describe('Trace Error Handling', () => {
     test('TRACE-013: Invalid address in trace is handled gracefully', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       // Test behavior with malformed addresses
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: '0xinvalid', data: '0x' },
@@ -498,8 +458,6 @@ test.describe('Runtime Transaction Tracing', () => {
     });
 
     test('TRACE-014: Zero address handling in trace', async ({ request }) => {
-      test.skip(!RUNTIME_TRACING_ENABLED, 'Runtime tracing not enabled');
-
       const result = await rpcCall(request, userAToken, 'eth_call', [
         { to: '0x0000000000000000000000000000000000000000', data: '0x' },
         'latest'
@@ -514,14 +472,6 @@ test.describe('Runtime Transaction Tracing', () => {
 
 test.describe('Runtime Tracing Configuration', () => {
   test('TRACE-015: Verify tracing environment is correctly configured', async ({ request }) => {
-    // This test always runs to document the current configuration
-    console.log(`ENABLE_RUNTIME_TRACING=${process.env.ENABLE_RUNTIME_TRACING}`);
-    console.log(`Runtime tracing enabled: ${RUNTIME_TRACING_ENABLED}`);
-
-    if (!RUNTIME_TRACING_ENABLED) {
-      console.log('NOTE: Set ENABLE_RUNTIME_TRACING=true to run tracing tests');
-    }
-
     // Verify the API is reachable
     const resp = await request.get(`${API_URL}/health`);
     expect(resp.ok()).toBe(true);

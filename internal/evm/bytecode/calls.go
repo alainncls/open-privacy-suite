@@ -217,18 +217,6 @@ func ExtractPush20Addresses(bc *Bytecode) []string {
 	return addresses
 }
 
-// ContainsDangerousOpcodes checks if the bytecode contains opcodes that
-// could be considered dangerous for sandboxing (CREATE, CREATE2, DELEGATECALL, SELFDESTRUCT).
-func ContainsDangerousOpcodes(bc *Bytecode) bool {
-	for _, op := range bc.Opcodes {
-		switch op.Code {
-		case CREATE, CREATE2, DELEGATECALL, SELFDESTRUCT:
-			return true
-		}
-	}
-	return false
-}
-
 // SummarizeAnalysis returns a human-readable summary of the analysis result.
 func (r *AnalysisResult) SummarizeAnalysis() map[string]interface{} {
 	return map[string]interface{}{

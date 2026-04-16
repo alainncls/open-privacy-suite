@@ -498,32 +498,6 @@ export interface UpdateAzureTenantInput {
   auto_provision?: boolean;
 }
 
-// Preregistered Address - for CREATE3 address pre-registration
-export interface PreregisteredAddress {
-  id: string;
-  org_id: string;
-  address: string;
-  factory: string;
-  salt: string; // Hex-encoded
-  note?: string;
-  constructor_abi?: string; // Contract ABI JSON for constructor arg validation
-  created_at: string;
-  used_at?: string | null;
-}
-
-// Input for preregistering addresses
-export interface PreregisterInput {
-  factory: string;
-  salt_prefix: string;
-  count: number;
-  note?: string;
-}
-
-// Response from preregister endpoint
-export interface PreregisterResponse {
-  addresses: PreregisteredAddress[];
-}
-
 // Contract sync status - for checking contracts against chain
 export interface ContractSyncStatus {
   id: string;

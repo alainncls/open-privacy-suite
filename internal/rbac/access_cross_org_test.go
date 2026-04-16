@@ -288,18 +288,6 @@ func (m *MockCrossOrgStore) ListAuditLogsByActor(ctx context.Context, actorID st
 }
 
 // Preregistered address operations
-func (m *MockCrossOrgStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error {
-	return nil
-}
-func (m *MockCrossOrgStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) {
-	return nil, nil
-}
-func (m *MockCrossOrgStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) {
-	return nil, nil
-}
-func (m *MockCrossOrgStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
-	return nil
-}
 func (m *MockCrossOrgStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
 	return nil
 }
@@ -310,28 +298,6 @@ func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, a
 	return false, nil
 }
 func (m *MockCrossOrgStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
-
-// Managed proxy operations
-func (m *MockCrossOrgStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
-	return nil
-}
-func (m *MockCrossOrgStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
-	return nil, nil
-}
-func (m *MockCrossOrgStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error {
-	return nil
-}
-func (m *MockCrossOrgStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
-	return false, nil
-}
-
-// Constructor ABI operations
-func (m *MockCrossOrgStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
-	return "", nil
-}
-func (m *MockCrossOrgStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
-	return nil
-}
 
 // Shared infrastructure stubs
 func (m *MockCrossOrgStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {

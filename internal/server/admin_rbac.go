@@ -50,16 +50,6 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.POST("/orgs/:org_id/contracts/sync-delete", s.deleteStaleContracts)
 	api.GET("/orgs/:org_id/contracts/grant-summary", s.getContractGrantSummary)
 
-	// Preregistered Addresses (CREATE3)
-	api.POST("/orgs/:org_id/addresses/preregister", s.preregisterAddresses)
-	api.GET("/orgs/:org_id/addresses/preregistered", s.listPreregisteredAddresses)
-	api.DELETE("/orgs/:org_id/addresses/preregistered/:address", s.deletePreregisteredAddress)
-	api.PUT("/orgs/:org_id/addresses/preregistered/:address/abi", s.updatePreregisteredAddressABI)
-
-	// Managed Proxies (for upgrade validation)
-	api.POST("/orgs/:org_id/proxies", s.registerManagedProxy)
-	api.GET("/orgs/:org_id/proxies", s.listManagedProxies)
-
 	// CREATE3 Config (factory address per org)
 	api.GET("/orgs/:org_id/config/create3", s.getOrgCreate3Config)
 	api.PUT("/orgs/:org_id/config/create3", s.setOrgCreate3Config)

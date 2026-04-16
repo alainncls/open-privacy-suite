@@ -313,45 +313,6 @@ Check which registered contracts exist on-chain.
 #### `delete_grant`
 **Destructive — requires two-step confirmation.**
 
-### Preregistered Addresses (4 tools)
-
-#### `preregister_addresses`
-Pre-register contract addresses before deployment.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-| `addresses` | string[] | Yes | Addresses to preregister |
-
-#### `list_preregistered_addresses`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-
-#### `delete_preregistered_address`
-**Destructive — requires two-step confirmation.**
-
-#### `update_preregistered_abi`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-| `address` | string | Yes | Address |
-| `abi` | string | Yes | JSON ABI |
-
-### Managed Proxies (2 tools)
-
-#### `register_managed_proxy`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-| `address` | string | Yes | Proxy contract address |
-| `name` | string | No | Display name |
-
-#### `list_managed_proxies`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `org_id` | string | Yes | Organization UUID |
-
 ### CREATE3 Config (2 tools)
 
 #### `get_create3_config`

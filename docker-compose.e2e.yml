@@ -59,7 +59,7 @@ services:
       - JWT_REFRESH_SECRET=e2e-test-refresh-secret-not-for-production
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
-      - ENABLE_RUNTIME_TRACING=true
+
       - ENABLE_TRAVEL_RULE=true
       - ADMIN_API_TOKEN=e2e-test-admin-token
     depends_on:
@@ -114,7 +114,7 @@ services:
       - ADMIN_URL=http://proxy-backend:8080
       - FRONTEND_URL=http://proxy-frontend:80
       - CI=${CI:-false}
-      - ENABLE_RUNTIME_TRACING=true
+
       - ADMIN_API_TOKEN=e2e-test-admin-token
     depends_on:
       proxy-backend:

@@ -118,9 +118,6 @@ func (m *MockOrgContextStore) DeleteGroupAccess(ctx context.Context, groupID str
 func (m *MockOrgContextStore) GetCachedPermissions(ctx context.Context, userID, orgID string) (*EffectivePermissions, error) { return nil, nil }
 func (m *MockOrgContextStore) CreatePreregisteredAddress(ctx context.Context, addr *PreregisteredAddress) error { return nil }
 func (m *MockOrgContextStore) GetPreregisteredAddress(ctx context.Context, id string) (*PreregisteredAddress, error) { return nil, nil }
-func (m *MockOrgContextStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) { return nil, nil }
-func (m *MockOrgContextStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) { return nil, nil }
-func (m *MockOrgContextStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error { return nil }
 func (m *MockOrgContextStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error { return nil }
 func (m *MockOrgContextStore) DeletePreregisteredAddressByAddress(ctx context.Context, address string) error { return nil }
 func (m *MockOrgContextStore) ListGroupsPaginated(ctx context.Context, orgID string, limit, offset int) ([]*Group, int, error) { return nil, 0, nil }
@@ -137,15 +134,8 @@ func (m *MockOrgContextStore) CleanupExpiredCache(ctx context.Context) (int64, e
 func (m *MockOrgContextStore) CreateAuditLog(ctx context.Context, entry *AuditLogEntry) error { return nil }
 func (m *MockOrgContextStore) ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
 func (m *MockOrgContextStore) ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error) { return nil, nil }
-func (m *MockOrgContextStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error { return nil }
 func (m *MockOrgContextStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) { return false, nil }
 func (m *MockOrgContextStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
-func (m *MockOrgContextStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error { return nil }
-func (m *MockOrgContextStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) { return nil, nil }
-func (m *MockOrgContextStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error { return nil }
-func (m *MockOrgContextStore) IsManagedProxy(ctx context.Context, address string) (bool, error) { return false, nil }
-func (m *MockOrgContextStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) { return "", nil }
-func (m *MockOrgContextStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error { return nil }
 func (m *MockOrgContextStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) { return nil, nil }
 func (m *MockOrgContextStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
 func (m *MockOrgContextStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error { return nil }

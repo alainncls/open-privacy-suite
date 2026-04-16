@@ -314,18 +314,6 @@ func (c *AccessController) Store() Store {
 	return c.store
 }
 
-// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
-// When runtime tracing is enabled, contracts with dynamic calls are allowed at deploy time
-// because those calls will be validated at runtime via debug_traceCall.
-// Additionally, the managed proxy check is skipped for upgrade validation because
-// runtime tracing validates that upgrade targets are org-owned.
-// This must be called after NewAccessController to configure the behavior.
-func (c *AccessController) SetRuntimeTracingEnabled(enabled bool) {
-	c.deployValidator.SetRuntimeTracingEnabled(enabled)
-	c.upgradeValidator.SetRuntimeTracingEnabled(enabled)
-	c.factoryCallValidator.SetRuntimeTracingEnabled(enabled)
-}
-
 // SetEncryptionKey configures the AES-256 key used by the resolver to decrypt
 // RPC API keys stored in the database.
 func (c *AccessController) SetEncryptionKey(key []byte) {
@@ -2164,19 +2152,7 @@ func (c *AccessController) NotifyDeploymentMined(
 		return nil
 	}
 
-	// Only register if it's a proxy
-	if !deployment.IsProxy || deployment.ProxyInfo == nil {
-		return nil
-	}
-
-	// Register the deployed proxy
-	return c.deployValidator.RegisterDeployedProxy(
-		ctx,
-		deployment.OrgID,
-		contractAddress,
-		deployment.ProxyInfo,
-		"", // Initial implementation not known from deployment bytecode
-	)
+	return nil
 }
 
 // GetPendingDeployment retrieves a pending deployment without removing it.

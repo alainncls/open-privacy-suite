@@ -132,13 +132,6 @@ func (s *mockAccessControllerStore) ListContracts(ctx context.Context, orgID str
 	return nil, nil
 }
 
-func (s *mockAccessControllerStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) {
-	if addrs, ok := s.preregisteredAddrs[orgID]; ok {
-		return addrs[strings.ToLower(address)], nil
-	}
-	return nil, nil
-}
-
 func (s *mockAccessControllerStore) IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error) {
 	if addrs, ok := s.orgOwnedAddresses[orgID]; ok {
 		return addrs[strings.ToLower(address)], nil
@@ -357,11 +350,11 @@ func TestNonTrustedFactoryBlocked(t *testing.T) {
 
 	store.addMembership("admin1", &UserMembership{ID: "mem1", UserID: "admin1", GroupID: "admins"})
 
-	// Contract with CREATE opcode but NOT matching any trusted factory
-	// This should be blocked because it has CREATE but isn't whitelisted
+	// Contract with CREATE opcode but NOT matching any trusted factory.
+	// With runtime tracing always on, CREATE is allowed (validated at execution time).
 	bytecodeWithCreate := "0x6000600060006000f000" // PUSH1 0 x4, CREATE, STOP
 
-	t.Run("non-trusted factory blocked even for admin", func(t *testing.T) {
+	t.Run("non-trusted factory allowed for admin (runtime tracing validates)", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:admin1",
 			OrgSlug:        "test-org",
@@ -378,11 +371,8 @@ func TestNonTrustedFactoryBlocked(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if result.Allowed {
-			t.Error("expected non-trusted factory to be blocked")
-		}
-		if !strings.Contains(result.Reason, "CREATE") {
-			t.Errorf("expected reason to mention CREATE opcodes, got: %s", result.Reason)
+		if !result.Allowed {
+			t.Errorf("expected deployment to be allowed (runtime tracing validates at execution time), got: %s", result.Reason)
 		}
 	})
 }
@@ -630,10 +620,6 @@ func TestE2EDeploymentViaCreate3(t *testing.T) {
 
 // Additional store interface methods required for AccessController
 
-func (s *mockAccessControllerStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
-	return nil, nil
-}
-
 func (s *mockAccessControllerStore) ListContractGrantsByGroup(ctx context.Context, groupID string) ([]*ContractGrant, error) {
 	return nil, nil
 }
@@ -712,10 +698,6 @@ func (s *mockAccessControllerStore) IsAddressPreregistered(ctx context.Context, 
 		_, exists := addrs[strings.ToLower(address)]
 		return exists, nil
 	}
-	return false, nil
-}
-
-func (s *mockAccessControllerStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
 	return false, nil
 }
 

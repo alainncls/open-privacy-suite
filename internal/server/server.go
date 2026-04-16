@@ -279,13 +279,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
 
-	// Configure runtime tracing mode for deployment validation
-	// When enabled, contracts with dynamic calls are allowed at deploy time
-	// because those calls will be validated at runtime via debug_traceCall
-	if cfg.EnableRuntimeTracing {
-		rbacAccessCtrl.SetRuntimeTracingEnabled(true)
-	}
-
 	// Configure RPC API key encryption for decrypting keys from the database
 	if len(cfg.RPCAPIKeyEncryptionKey) > 0 {
 		rbacAccessCtrl.SetEncryptionKey(cfg.RPCAPIKeyEncryptionKey)
@@ -335,20 +328,16 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	// Initialize disclosure service
 	disclosureService := disclosure.NewService(database)
 
-	// Initialize runtime tracer (optional - only when enabled)
-	var runtimeTracer *tracer.RuntimeTracer
-	var traceValidator *rbac.TraceValidator
-	if cfg.EnableRuntimeTracing {
-		runtimeTracer = tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{
-			NodeURL:       cfg.NodeURL,
-			Enabled:       true,
-			CacheTTL:      cfg.TraceCacheTTL,
-			Timeout:       cfg.TraceTimeout,
-			TieredEnabled: cfg.TraceTieredValidation,
-		})
-		traceValidator = rbac.NewTraceValidator(database)
-		slog.Info("runtime tracing enabled", "cache_ttl", cfg.TraceCacheTTL, "timeout", cfg.TraceTimeout, "tiered", cfg.TraceTieredValidation)
-	}
+	// Initialize runtime tracer for cross-org isolation validation
+	runtimeTracer := tracer.NewRuntimeTracer(tracer.RuntimeTracerConfig{
+		NodeURL:       cfg.NodeURL,
+		Enabled:       true,
+		CacheTTL:      cfg.TraceCacheTTL,
+		Timeout:       cfg.TraceTimeout,
+		TieredEnabled: cfg.TraceTieredValidation,
+	})
+	traceValidator := rbac.NewTraceValidator(database)
+	slog.Info("runtime tracing enabled", "cache_ttl", cfg.TraceCacheTTL, "timeout", cfg.TraceTimeout, "tiered", cfg.TraceTieredValidation)
 
 	// Initialize Prometheus metrics
 	m := metrics.New(cfg.Version)
@@ -1068,8 +1057,7 @@ type ProxyStatus struct {
 
 // SecurityStatus represents the security configuration status
 type SecurityStatus struct {
-	RuntimeTracingEnabled bool `json:"runtime_tracing_enabled"`
-	TravelRuleEnabled     bool `json:"travel_rule_enabled"`
+	TravelRuleEnabled bool `json:"travel_rule_enabled"`
 }
 
 // NodeStatus represents the node status
@@ -1084,8 +1072,6 @@ func (s *Server) getStatus(c *gin.Context) {
 	// Check node health
 	nodeHealth := s.proxy.CheckHealth()
 
-	// Check if runtime tracing is enabled
-	runtimeTracingEnabled := s.runtimeTracer != nil && s.runtimeTracer.IsEnabled()
 	proxyPort := "8080"
 	if s.config != nil && s.config.Port != "" {
 		proxyPort = s.config.Port
@@ -1103,8 +1089,7 @@ func (s *Server) getStatus(c *gin.Context) {
 			Error:     nodeHealth.Error,
 		},
 		Security: SecurityStatus{
-			RuntimeTracingEnabled: runtimeTracingEnabled,
-			TravelRuleEnabled:     s.complianceChecker != nil,
+			TravelRuleEnabled: s.complianceChecker != nil,
 		},
 	}
 

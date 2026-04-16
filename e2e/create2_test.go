@@ -218,7 +218,6 @@ func setupCreate2Env(t *testing.T) *create2TestEnv {
 		VerifierID:           "did:privado:verifier:test",
 		BaseURL:              serverURL,
 		Environment:          "development",
-		EnableRuntimeTracing: true,
 		TraceCacheTTL:        5 * time.Second,
 		TraceTimeout:         30 * time.Second,
 		TraceTieredValidation: true,

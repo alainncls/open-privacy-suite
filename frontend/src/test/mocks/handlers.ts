@@ -14,8 +14,6 @@ import type {
   UserMembership,
   MembershipWithDetails,
   Claim,
-  PreregisteredAddress,
-  PreregisterInput,
 } from '@/types/rbac';
 
 // Mock data fixtures
@@ -198,34 +196,6 @@ export const mockMembershipWithDetails2: MembershipWithDetails = {
   membership: mockMembership2,
   group: mockChildGroup,
 };
-
-// Preregistered addresses for CREATE3 testing
-export const mockPreregisteredAddress: PreregisteredAddress = {
-  id: 'preregistered-1',
-  org_id: 'org-1',
-  address: '0xabcdef1234567890abcdef1234567890abcdef12',
-  factory: '0x1234567890123456789012345678901234567890',
-  salt: '0x6d79617070000000000000000000000000000000000000000000000000000000',
-  note: 'Test preregistered address',
-  created_at: '2024-01-01T00:00:00Z',
-  used_at: null,
-};
-
-export const mockPreregisteredAddressUsed: PreregisteredAddress = {
-  id: 'preregistered-2',
-  org_id: 'org-1',
-  address: '0xdeadbeef1234567890deadbeef1234567890dead',
-  factory: '0x1234567890123456789012345678901234567890',
-  salt: '0x6d79617070000000000000000000000000000000000000000000000000000001',
-  note: 'Used preregistered address',
-  created_at: '2024-01-01T00:00:00Z',
-  used_at: '2024-01-15T00:00:00Z',
-};
-
-export const mockPreregisteredAddresses: PreregisteredAddress[] = [
-  mockPreregisteredAddress,
-  mockPreregisteredAddressUsed,
-];
 
 // CREATE3 factory for dev mode testing
 export const mockCreate3Factory = {
@@ -739,34 +709,6 @@ export const handlers = [
       misses: 10,
       size: 50,
     });
-  }),
-
-  // Preregistered addresses endpoints
-  http.get('/api/v1/admin/orgs/:orgId/addresses/preregistered', () => {
-    return HttpResponse.json(mockPreregisteredAddresses);
-  }),
-
-  http.post('/api/v1/admin/orgs/:orgId/addresses/preregister', async ({ request, params }) => {
-    const body = await request.json() as PreregisterInput;
-    // Generate mock addresses based on input
-    const addresses: PreregisteredAddress[] = [];
-    for (let i = 0; i < body.count; i++) {
-      addresses.push({
-        id: `preregistered-new-${i}`,
-        org_id: params.orgId as string,
-        address: `0x${(i + 1).toString(16).padStart(40, 'a')}`,
-        factory: body.factory,
-        salt: `${body.salt_prefix}${i.toString(16).padStart(8, '0')}`,
-        note: body.note || undefined,
-        created_at: new Date().toISOString(),
-        used_at: null,
-      });
-    }
-    return HttpResponse.json({ addresses });
-  }),
-
-  http.delete('/api/v1/admin/orgs/:orgId/addresses/preregistered/:address', () => {
-    return HttpResponse.json({ message: 'Deleted' });
   }),
 
   // Org config endpoints for CREATE3 factory

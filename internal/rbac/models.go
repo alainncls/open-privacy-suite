@@ -561,15 +561,3 @@ type GovernanceApproverGroup struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ManagedProxy represents a proxy contract that is tracked for upgrade validation.
-// When a transaction targets a managed proxy with an upgrade selector, the upgrade
-// validator ensures the new implementation is owned by the same organization.
-type ManagedProxy struct {
-	ID           string    `json:"id"`
-	OrgID        string    `json:"org_id"`
-	ProxyAddress string    `json:"proxy_address"` // The proxy contract address (lowercase 0x-prefixed)
-	ProxyType    string    `json:"proxy_type"`    // Type of proxy (e.g., "transparent", "uups", "beacon")
-	CurrentImpl  string    `json:"current_impl"`  // Current implementation address
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}

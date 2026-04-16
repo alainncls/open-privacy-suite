@@ -153,7 +153,6 @@ BASE_URL=https://api.yourdomain.com      # Public URL for OAuth callbacks
 CORS_ALLOWED_ORIGINS=https://app.yourdomain.com
 BILLIONS_ISSUER_DID=did:...              # Billions PoH issuer DID
 REQUIRE_PROOF_OF_HUMANITY=true           # Default true in prod
-ENABLE_RUNTIME_TRACING=true              # Transaction validation
 ENABLE_TRAVEL_RULE=true                  # FATF compliance
 ```
 

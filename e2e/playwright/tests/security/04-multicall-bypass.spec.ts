@@ -11,15 +11,14 @@
  *
  * DEFENCE LAYERS:
  * 1. Address blocklist — three well-known Multicall addresses are always blocked.
- * 2. Runtime tracing (ENABLE_RUNTIME_TRACING=true, default) — every transaction is
- *    traced via debug_traceCall; all internal call targets are extracted and validated
- *    against org ownership. This catches custom-deployed Multicall contracts that are
- *    not on the blocklist, making the blocklist defence-in-depth rather than the only
- *    line of defence.
+ * 2. Runtime tracing — every transaction is traced via debug_traceCall; all internal
+ *    call targets are extracted and validated against org ownership. This catches
+ *    custom-deployed Multicall contracts that are not on the blocklist, making the
+ *    blocklist defence-in-depth rather than the only line of defence.
  *
  * BYPASS-001 documents that the address blocklist alone does not cover custom
  * Multicall addresses. That limitation is acceptable because runtime tracing
- * provides the primary protection when enabled.
+ * provides the primary protection.
  */
 
 import { test, expect } from '@playwright/test';
@@ -251,16 +250,11 @@ test.describe('Multicall Bypass Attempts', () => {
     // A custom-deployed Multicall at an unknown address is NOT blocked at the address-check
     // layer — the proxy has no way to know it is a Multicall contract.
     //
-    // MITIGATION: When ENABLE_RUNTIME_TRACING=true (the default), every transaction is
-    // traced via debug_traceCall before being forwarded. All internal CALL/DELEGATECALL
-    // targets produced by the custom Multicall are extracted from the trace and validated
-    // against org ownership. A custom Multicall routing calls to cross-org contracts will
-    // therefore be caught and rejected at the trace layer, even though the outer address
-    // itself is not on the blocklist.
-    //
-    // The address-level blocklist is defence-in-depth for the case where runtime tracing
-    // is disabled (ENABLE_RUNTIME_TRACING=false / preregistration mode). In that mode
-    // this is a genuine gap. The test below documents that current state.
+    // MITIGATION: Runtime tracing validates all transactions via debug_traceCall before
+    // forwarding. All internal CALL/DELEGATECALL targets produced by the custom Multicall
+    // are extracted from the trace and validated against org ownership. A custom Multicall
+    // routing calls to cross-org contracts will therefore be caught and rejected at the
+    // trace layer, even though the outer address itself is not on the blocklist.
     const customMulticallAddress = '0x' + 'dead'.repeat(10);
 
     // Using aggregate selector
@@ -269,12 +263,11 @@ test.describe('Multicall Bypass Attempts', () => {
       'latest'
     ]);
 
-    // The address-level check does not block this — expected when runtime tracing is on,
-    // because the trace layer provides the real protection. Log for visibility only.
+    // The address-level check does not block this — runtime tracing provides the
+    // real protection by validating all internal call targets per-transaction.
     if (result.status !== 403) {
       console.log('FINDING: Custom Multicall address bypasses address-level detection.');
       console.log('MITIGATED: runtime tracing validates all internal call targets per-transaction.');
-      console.log('RISK: Only a concern when ENABLE_RUNTIME_TRACING=false (preregistration mode).');
       console.log('Response:', result);
     }
 

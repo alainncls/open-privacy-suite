@@ -35,17 +35,13 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 
 ### eth\_sendRawTransaction Support
 
-`eth_sendRawTransaction` is supported **only when runtime tracing is enabled** (`ENABLE_RUNTIME_TRACING=true`).
-
-When runtime tracing is enabled, the proxy:
+`eth_sendRawTransaction` is fully supported. The proxy:
 
 1. **Decodes the RLP transaction** to extract `from`, `to`, `data`, and `value` fields
 2. **Recovers the sender address** from the transaction signature using the chain ID
 3. **Runs full RBAC access checks** using the extracted transaction fields
 4. **Executes runtime trace validation** via `debug_traceCall` to validate all call targets
 5. **Forwards the raw transaction** to the node only if all checks pass
-
-When runtime tracing is **disabled**, `eth_sendRawTransaction` is blocked with a 403 error.
 
 ### Batch Request Prevention
 
@@ -79,11 +75,11 @@ Contract deployments require the `deploy` claim:
 - No CREATE/CREATE2 opcodes (prevents nested deployments)
 - All static CALL targets must be org-owned or precompiles
 
-When `ENABLE_RUNTIME_TRACING=true` (the default), dynamic calls are allowed at deployment because they are validated at runtime via transaction tracing.
+Dynamic calls are allowed at deployment because they are validated at runtime via transaction tracing.
 
 ### Runtime Transaction Validation
 
-When `ENABLE_RUNTIME_TRACING=true`, every transaction is traced using `debug_traceCall` before being forwarded to the node:
+Every transaction is traced using `debug_traceCall` before being forwarded to the node:
 
 ```mermaid
 graph TD

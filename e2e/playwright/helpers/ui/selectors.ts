@@ -47,7 +47,6 @@ export const selectors = {
     tabGroups: '[data-testid="tab-groups"]',
     tabUsers: '[data-testid="tab-users"]',
     tabContracts: '[data-testid="tab-contracts"]',
-    tabPreregistered: '[data-testid="tab-preregistered"]',
   },
 
   // Common UI elements
