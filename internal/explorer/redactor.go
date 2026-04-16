@@ -46,6 +46,11 @@ type Database interface {
 	GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, addresses []string) (map[string]AddressVisibility, error)
 	// GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.
 	GetLinkedAddresses(ctx context.Context, did string) ([]string, error)
+	// GetBatchEventAccess checks which contracts the viewer has event/log access to.
+	// Returns a map of lowercase contract address -> bool (true = has event access).
+	// A viewer has event access if they are an org admin or have a contract_grant
+	// with non-empty event_rules (event_rules IS NOT NULL AND event_rules != '[]').
+	GetBatchEventAccess(ctx context.Context, viewerDID string, contractAddresses []string) (map[string]bool, error)
 }
 
 func NewRedactionEngine(store *Store, db Database) *RedactionEngine {
@@ -311,7 +316,48 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 		redactedTxs = append(redactedTxs, redactedTx)
 	}
 
+	// Strip token transfer info from transactions where the viewer lacks event access
+	// to the target contract. Token transfers are derived from Transfer event logs,
+	// so they should only be visible when the viewer has event/log access.
+	if !viewerIsAdmin {
+		tokenContractAddrs := make(map[string]bool)
+		for i := range redactedTxs {
+			if redactedTxs[i].TokenTransferCount > 0 && redactedTxs[i].HasRecipient() {
+				tokenContractAddrs[strings.ToLower(*redactedTxs[i].To)] = true
+			}
+		}
+		if len(tokenContractAddrs) > 0 {
+			addrs := make([]string, 0, len(tokenContractAddrs))
+			for a := range tokenContractAddrs {
+				addrs = append(addrs, a)
+			}
+			eventAccess, err := r.db.GetBatchEventAccess(ctx, viewerDID, addrs)
+			if err != nil {
+				return nil, err
+			}
+			for i := range redactedTxs {
+				if redactedTxs[i].TokenTransferCount > 0 && redactedTxs[i].HasRecipient() {
+					toAddr := strings.ToLower(*redactedTxs[i].To)
+					if !eventAccess[toAddr] {
+						redactedTxs[i].TokenTransferCount = 0
+						redactedTxs[i].TxCategories = removeCategory(redactedTxs[i].TxCategories, "token_transfer")
+					}
+				}
+			}
+		}
+	}
+
 	return redactedTxs, nil
+}
+
+func removeCategory(cats []string, remove string) []string {
+	var result []string
+	for _, c := range cats {
+		if c != remove {
+			result = append(result, c)
+		}
+	}
+	return result
 }
 
 // RedactTransfers applies privacy rules to a list of token transfers.
@@ -438,6 +484,34 @@ func (r *RedactionEngine) RedactTransfers(ctx context.Context, transfers []Token
 
 		result = append(result, redacted)
 	}
+
+	// Strip transfers where the viewer lacks event access to the token contract.
+	if !viewerIsAdminT && len(result) > 0 {
+		tokenAddrs := make(map[string]bool)
+		for _, t := range result {
+			if t.TokenAddress != "" {
+				tokenAddrs[strings.ToLower(t.TokenAddress)] = true
+			}
+		}
+		if len(tokenAddrs) > 0 {
+			addrs := make([]string, 0, len(tokenAddrs))
+			for a := range tokenAddrs {
+				addrs = append(addrs, a)
+			}
+			eventAccess, err := r.db.GetBatchEventAccess(ctx, viewerDID, addrs)
+			if err != nil {
+				return nil, err
+			}
+			var filtered []TokenTransfer
+			for _, t := range result {
+				if eventAccess[strings.ToLower(t.TokenAddress)] {
+					filtered = append(filtered, t)
+				}
+			}
+			result = filtered
+		}
+	}
+
 	return result, nil
 }
 

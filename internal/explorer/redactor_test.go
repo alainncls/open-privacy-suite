@@ -12,9 +12,10 @@ import (
 
 // mockDB implements Database for testing
 type mockDB struct {
-	visMap      VisibilityMap
-	err         error
-	linkedAddrs []string // addresses returned by GetLinkedAddresses
+	visMap         VisibilityMap
+	err            error
+	linkedAddrs    []string        // addresses returned by GetLinkedAddresses
+	eventAccessMap map[string]bool // addresses with event access
 }
 
 func (m *mockDB) GetBatchVisibility(_ context.Context, _ string, _ []string) (VisibilityMap, error) {
@@ -49,6 +50,22 @@ func (m *mockDB) GetLinkedAddresses(_ context.Context, _ string) ([]string, erro
 		return nil, m.err
 	}
 	return m.linkedAddrs, nil
+}
+
+func (m *mockDB) GetBatchEventAccess(_ context.Context, _ string, addrs []string) (map[string]bool, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.eventAccessMap == nil {
+		return make(map[string]bool), nil
+	}
+	result := make(map[string]bool)
+	for _, a := range addrs {
+		if m.eventAccessMap[strings.ToLower(a)] {
+			result[strings.ToLower(a)] = true
+		}
+	}
+	return result, nil
 }
 
 // mockContractStore implements ContractStore for testing
@@ -2415,6 +2432,10 @@ func (m *mockDBDetailed) GetLinkedAddresses(_ context.Context, _ string) ([]stri
 	return m.linkedAddrs, nil
 }
 
+func (m *mockDBDetailed) GetBatchEventAccess(_ context.Context, _ string, _ []string) (map[string]bool, error) {
+	return make(map[string]bool), nil
+}
+
 func newEngineDetailed(visMap VisibilityMap, detailedMap map[string]AddressVisibility, linkedAddrs []string) *RedactionEngine {
 	return &RedactionEngine{store: nil, db: &mockDBDetailed{
 		visMap:      visMap,
@@ -2857,5 +2878,150 @@ func TestRedactTransactions_G10_CalldataParticipantStillSees(t *testing.T) {
 	// Sender's address should be revealed via participant override
 	if result[0].From != sender {
 		t.Errorf("expected From=%s (participant override), got %s", sender, result[0].From)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Token transfer event access stripping
+// ---------------------------------------------------------------------------
+
+func newEngineWithEventAccess(visMap VisibilityMap, eventAccess map[string]bool) *RedactionEngine {
+	return &RedactionEngine{store: nil, db: &mockDB{visMap: visMap, eventAccessMap: eventAccess}}
+}
+
+func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T) {
+	contract := "0xcccccccccccccccccccccccccccccccccccccccc"
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	tests := []struct {
+		name               string
+		eventAccess        map[string]bool
+		viewerIsAdmin      bool
+		wantTransferCount  int
+		wantTokenTransfer  bool
+	}{
+		{
+			name:              "no event access strips token transfer info",
+			eventAccess:       map[string]bool{},
+			wantTransferCount: 0,
+			wantTokenTransfer: false,
+		},
+		{
+			name:              "with event access keeps token transfer info",
+			eventAccess:       map[string]bool{contract: true},
+			wantTransferCount: 3,
+			wantTokenTransfer: true,
+		},
+		{
+			name:              "admin bypasses event access check",
+			eventAccess:       map[string]bool{},
+			viewerIsAdmin:     true,
+			wantTransferCount: 3,
+			wantTokenTransfer: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := newEngineWithEventAccess(VisibilityMap{
+				from:     VisibilityFull,
+				contract: VisibilityFull,
+			}, tt.eventAccess)
+
+			txs := []Transaction{{
+				Hash:               "0x01",
+				From:               from,
+				To:                 strPtr(contract),
+				Value:              "1000",
+				TxCategories:       []string{"contract_call", "token_transfer"},
+				TokenTransferCount: 3,
+			}}
+
+			var opts []RedactOpts
+			if tt.viewerIsAdmin {
+				opts = append(opts, RedactOpts{ViewerIsAdmin: true})
+			}
+
+			result, err := engine.RedactTransactions(context.Background(), txs, "did:test", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result) != 1 {
+				t.Fatalf("expected 1 tx, got %d", len(result))
+			}
+			if result[0].TokenTransferCount != tt.wantTransferCount {
+				t.Errorf("TokenTransferCount = %d, want %d", result[0].TokenTransferCount, tt.wantTransferCount)
+			}
+			hasTokenTransfer := false
+			for _, c := range result[0].TxCategories {
+				if c == "token_transfer" {
+					hasTokenTransfer = true
+				}
+			}
+			if hasTokenTransfer != tt.wantTokenTransfer {
+				t.Errorf("token_transfer in categories = %v, want %v; categories = %v", hasTokenTransfer, tt.wantTokenTransfer, result[0].TxCategories)
+			}
+		})
+	}
+}
+
+func TestRedactTransfers_DroppedWithoutEventAccess(t *testing.T) {
+	tokenAddr := "0xcccccccccccccccccccccccccccccccccccccccc"
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	to := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	tests := []struct {
+		name          string
+		eventAccess   map[string]bool
+		viewerIsAdmin bool
+		wantCount     int
+	}{
+		{
+			name:        "no event access drops transfers",
+			eventAccess: map[string]bool{},
+			wantCount:   0,
+		},
+		{
+			name:        "with event access keeps transfers",
+			eventAccess: map[string]bool{tokenAddr: true},
+			wantCount:   1,
+		},
+		{
+			name:          "admin bypasses event access check",
+			eventAccess:   map[string]bool{},
+			viewerIsAdmin: true,
+			wantCount:     1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := newEngineWithEventAccess(VisibilityMap{
+				from:      VisibilityFull,
+				to:        VisibilityFull,
+				tokenAddr: VisibilityFull,
+			}, tt.eventAccess)
+
+			transfers := []TokenTransfer{{
+				TxHash:       "0x01",
+				TokenAddress: tokenAddr,
+				From:         from,
+				To:           to,
+				Value:        "1000",
+			}}
+
+			var opts []RedactOpts
+			if tt.viewerIsAdmin {
+				opts = append(opts, RedactOpts{ViewerIsAdmin: true})
+			}
+
+			result, err := engine.RedactTransfers(context.Background(), transfers, "did:test", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result) != tt.wantCount {
+				t.Fatalf("expected %d transfers, got %d", tt.wantCount, len(result))
+			}
+		})
 	}
 }

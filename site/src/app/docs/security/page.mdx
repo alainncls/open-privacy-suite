@@ -190,6 +190,10 @@ The log filter is fail-closed at every level:
 | Log data truncated or invalid | Param rule fails to match (log hidden) |
 | `eth_getLogs` response is not a JSON array | Empty array returned |
 
+### Token Transfer Metadata
+
+Token transfers shown in the block explorer are derived from `Transfer` event logs. The same event access rules apply: if a viewer does not have event/log access to a contract, token transfer counts and categories are stripped from transaction metadata, and the `/transactions/:hash/transfers` endpoint returns no results for that contract. Admins and org admins bypass this restriction.
+
 ### `eth_getTransactionReceipt` Log Filtering
 
 For transaction receipts, the proxy first checks whether the caller is a participant (`from` or `to` matches a linked address). Non-participants receive `null`. For participants, the receipt's `logs` array is filtered using the same `FilterEventLogs` logic described above, and the `logsBloom` is zeroed (since it no longer reflects the actual log set).

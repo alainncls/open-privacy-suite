@@ -1294,3 +1294,108 @@ func TestDisclosureGrant_MultipleAddresses(t *testing.T) {
 			"unlinked address must remain Hidden")
 	})
 }
+
+// ============================================================================
+// GetBatchEventAccess
+// ============================================================================
+
+func TestGetBatchEventAccess(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	const contractAddr = "0xeeee000000000000000000000000000000000001"
+	ctx := context.Background()
+
+	// Setup: org, group, contract, grant (no event_rules by default)
+	contractID, groupID := setupOrgContract(t, database, contractAddr)
+
+	const memberDID = "did:privado:event_member"
+	addMember(t, database, memberDID, groupID)
+
+	t.Run("empty addresses returns empty map", func(t *testing.T) {
+		result, err := database.GetBatchEventAccess(ctx, memberDID, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("empty viewer DID returns empty map", func(t *testing.T) {
+		result, err := database.GetBatchEventAccess(ctx, "", []string{contractAddr})
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("member without event_rules has no event access", func(t *testing.T) {
+		// Default contract_grant has NULL event_rules
+		result, err := database.GetBatchEventAccess(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.False(t, result[contractAddr], "NULL event_rules means no event access")
+	})
+
+	t.Run("member with empty array event_rules has no event access", func(t *testing.T) {
+		_, err := database.Conn().ExecContext(ctx,
+			"UPDATE contract_grants SET event_rules = '[]' WHERE contract_id = $1 AND group_id = $2",
+			contractID, groupID)
+		require.NoError(t, err)
+
+		result, err := database.GetBatchEventAccess(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.False(t, result[contractAddr], "empty array event_rules means no event access")
+	})
+
+	t.Run("member with non-empty event_rules has event access", func(t *testing.T) {
+		_, err := database.Conn().ExecContext(ctx,
+			`UPDATE contract_grants SET event_rules = '[{"topic0":"0xddf252"}]' WHERE contract_id = $1 AND group_id = $2`,
+			contractID, groupID)
+		require.NoError(t, err)
+
+		result, err := database.GetBatchEventAccess(ctx, memberDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.True(t, result[contractAddr], "non-empty event_rules grants event access")
+	})
+
+	t.Run("org admin always has event access", func(t *testing.T) {
+		// Reset event_rules to NULL
+		_, err := database.Conn().ExecContext(ctx,
+			"UPDATE contract_grants SET event_rules = NULL WHERE contract_id = $1 AND group_id = $2",
+			contractID, groupID)
+		require.NoError(t, err)
+
+		// Create admin group
+		const adminDID = "did:privado:event_admin"
+		adminGroupID := uuid.New().String()
+		var orgID string
+		err = database.Conn().QueryRowContext(ctx,
+			"SELECT org_id FROM groups WHERE id = $1", groupID).Scan(&orgID)
+		require.NoError(t, err)
+		_, err = database.Conn().ExecContext(ctx,
+			"INSERT INTO groups (id, org_id, slug, name, depth, path, is_org_admin) VALUES ($1, $2, 'event-admins', 'Event Admins', 0, 'event-admins', true)",
+			adminGroupID, orgID)
+		require.NoError(t, err)
+		addMember(t, database, adminDID, adminGroupID)
+
+		result, err := database.GetBatchEventAccess(ctx, adminDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.True(t, result[contractAddr], "org admin always has event access")
+	})
+
+	t.Run("expired member has no event access", func(t *testing.T) {
+		const expiredDID = "did:privado:event_expired"
+		// Set event_rules to non-empty so the grant would qualify
+		_, err := database.Conn().ExecContext(ctx,
+			`UPDATE contract_grants SET event_rules = '[{"topic0":"0xddf252"}]' WHERE contract_id = $1 AND group_id = $2`,
+			contractID, groupID)
+		require.NoError(t, err)
+
+		addExpiredMember(t, database, expiredDID, groupID)
+
+		result, err := database.GetBatchEventAccess(ctx, expiredDID, []string{contractAddr})
+		require.NoError(t, err)
+		assert.False(t, result[contractAddr], "expired member has no event access")
+	})
+
+	t.Run("non-member has no event access", func(t *testing.T) {
+		result, err := database.GetBatchEventAccess(ctx, "did:privado:stranger", []string{contractAddr})
+		require.NoError(t, err)
+		assert.False(t, result[contractAddr])
+	})
+}
