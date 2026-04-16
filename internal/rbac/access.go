@@ -387,7 +387,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// Everything in ReadOpsMap, WriteOpsMap, or DeployMethods could reveal
 		// transaction data, balances, logs, or contract state and requires auth.
 		methodLower := strings.ToLower(strings.TrimSpace(req.Method))
-		if !ReadOpsMap[methodLower] && !WriteOpsMap[methodLower] && !DeployMethods[methodLower] && !IsContractDeployment(req.Method, req.Params) {
+		if !ReadOpsMap[methodLower] && !WriteOpsMap[methodLower] && !DeployMethods[methodLower] && !ExtraMethods[req.Method] && !IsContractDeployment(req.Method, req.Params) {
 			rps, daily := 10, 1000
 			return &AccessCheckResult{
 				Allowed:        true,
@@ -545,7 +545,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Handle eth_getLogs specially - needs multi-address validation
 	// eth_getLogs can have multiple addresses in the filter, unlike other methods
 	// that target a single contract. We validate ALL addresses in the filter.
-	if req.Method == "eth_getLogs" {
+	if req.EffectiveMethod() == "eth_getLogs" {
 		if err := c.validateGetLogsWithOrgContext(ctx, perms, orgCtx, req.Params); err != nil {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -566,7 +566,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	}
 
 	// Determine required claim based on the operation
-	requiredClaim := ClassifyOperation(req.Method, req.Params)
+	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
 
 	// Track factory deploy info for auto-registration after successful tx
 	var factoryDeployInfo *FactoryDeployInfo
@@ -575,7 +575,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// addresses are treated as EOA transfers. No contract-level access check is
 	// needed since EOAs don't have code to execute; method allowlist already
 	// verified eth_sendTransaction is permitted.
-	if req.Method == "eth_sendTransaction" && req.TargetAddress != "" && isValueTransferParams(req.Params) {
+	if req.EffectiveMethod() == "eth_sendTransaction" && req.TargetAddress != "" && isValueTransferParams(req.Params) {
 		addr := strings.ToLower(req.TargetAddress)
 		// Check if this address is registered as a contract or preregistered address
 		if !perms.IsContractRegistered(addr) {
@@ -613,7 +613,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// eth_getStorageAt has tiered access (admin=all slots, non-admin=well-known only)
 	// enforced below. eth_getProof needs strict contract-level gating since
 	// both methods access contract-internal state that could leak sensitive data.
-	if req.TargetAddress != "" && isBasicAddressQuery(req.Method) {
+	if req.TargetAddress != "" && isBasicAddressQuery(req.EffectiveMethod()) {
 		addr := strings.ToLower(req.TargetAddress)
 		if !perms.IsContractRegistered(addr) {
 			ownerOrgID, err := c.store.GetContractOwnerOrgID(ctx, addr)
@@ -765,7 +765,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// This runs AFTER the contract access check (so we know the user has access
 		// to the contract) but BEFORE function selector checks (which don't apply
 		// to storage reads).
-		if req.Method == MethodGetStorageAt {
+		if req.EffectiveMethod() == MethodGetStorageAt {
 			if !containsClaim(access.Claims, ClaimAdmin) {
 				slot := extractStorageSlot(req.Params)
 				if !IsWellKnownStorageSlot(slot) {
@@ -799,7 +799,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				// Get calldata - from request field or extract from params
 				calldata := req.Calldata
 				if calldata == nil {
-					calldata = extractCalldata(req.Method, req.Params)
+					calldata = extractCalldata(req.EffectiveMethod(), req.Params)
 				}
 				if calldata == nil {
 					return &AccessCheckResult{
@@ -840,7 +840,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			// Other methods (eth_getCode, etc.) never produce a selector — applying this
 			// check to them would make access depend on ABI registration rather than the
 			// intended AllowedMethods + claim gates.
-			methodUsesSelector := req.Method == "eth_call" || req.Method == "eth_estimateGas" || req.Method == "eth_sendTransaction"
+			methodUsesSelector := req.EffectiveMethod() == "eth_call" || req.EffectiveMethod() == "eth_estimateGas" || req.EffectiveMethod() == "eth_sendTransaction"
 			if methodUsesSelector && access.Functions != nil {
 				return &AccessCheckResult{
 					Allowed: false,
@@ -851,8 +851,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 
 		// Validate proxy upgrades for eth_sendTransaction (not deployments)
 		// This must happen AFTER verifying write access
-		if req.Method == "eth_sendTransaction" {
-			calldata := extractCalldata(req.Method, req.Params)
+		if req.EffectiveMethod() == "eth_sendTransaction" {
+			calldata := extractCalldata(req.EffectiveMethod(), req.Params)
 			if len(calldata) > 0 {
 				// Check upgrade claim BEFORE proxy validation — if the calldata
 				// matches an upgrade selector, the user must have the upgrade claim
@@ -922,8 +922,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 
 		// For contract deployments, validate the bytecode
-		if requiredClaim == ClaimDeploy && IsContractDeployment(req.Method, req.Params) {
-			bytecodeHex := extractDeploymentBytecode(req.Method, req.Params)
+		if requiredClaim == ClaimDeploy && IsContractDeployment(req.EffectiveMethod(), req.Params) {
+			bytecodeHex := extractDeploymentBytecode(req.EffectiveMethod(), req.Params)
 			if bytecodeHex == "" {
 				return &AccessCheckResult{
 					Allowed: false,

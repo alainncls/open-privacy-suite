@@ -286,21 +286,27 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processDebugTrace(ctx, req)
 	}
 
-	// Build RBAC access check request
+	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
+	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
+	// while the original method name is kept for the RBAC allowlist check and node forwarding.
+	accessMethod := rbac.ResolveMethodAlias(req.Method)
+
+	// Build RBAC access check request using the alias for target/selector extraction
 	var requiredClaims []rbac.Claim
-	if claim := rbac.ClassifyOperation(req.Method, req.Params); claim != "" {
+	if claim := rbac.ClassifyOperation(accessMethod, req.Params); claim != "" {
 		requiredClaims = []rbac.Claim{claim}
 	}
 
-	targetAddr := rbac.GetTargetAddress(req.Method, req.Params)
+	targetAddr := rbac.GetTargetAddress(accessMethod, req.Params)
 
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
 		OrgID:            req.OrgID,
 		Method:           req.Method,
+		AccessMethod:     accessMethod,
 		Params:           req.Params,
 		TargetAddress:    targetAddr,
-		FunctionSelector: rbac.GetFunctionSelector(req.Method, req.Params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, req.Params),
 		RequiredClaims:   requiredClaims,
 	}
 

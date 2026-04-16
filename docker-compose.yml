@@ -80,6 +80,8 @@ services:
       - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
       - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
       - REDIS_URL=redis://:devpassword123@redis:6379
+    volumes:
+      - ./rpc-namespaces.json:/app/config/rpc-namespaces.json:ro
     depends_on:
       postgres:
         condition: service_healthy

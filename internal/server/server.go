@@ -281,8 +281,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 
 	// Register extra RPC namespaces (chain-specific method extensions)
 	if cfg.ExtraRPCNamespaces != nil && len(cfg.ExtraRPCNamespaces.Namespaces) > 0 {
-		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.Namespaces)
-		slog.Info("extra RPC namespaces registered", "namespaces", len(cfg.ExtraRPCNamespaces.Namespaces))
+		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.MethodNames(), cfg.ExtraRPCNamespaces.Aliases())
+		slog.Info("extra RPC namespaces registered",
+			"namespaces", len(cfg.ExtraRPCNamespaces.Namespaces),
+			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()))
 	}
 
 	// Configure RPC API key encryption for decrypting keys from the database

@@ -288,21 +288,28 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	// Clean up after test (extra methods are package-level state)
 	origExtra := ExtraMethods
 	origNS := ExtraNamespaces
+	origAliases := MethodAliases
 	defer func() {
 		ExtraMethods = origExtra
 		ExtraNamespaces = origNS
+		MethodAliases = origAliases
 	}()
 
 	// Reset state
 	ExtraMethods = map[string]bool{}
 	ExtraNamespaces = nil
+	MethodAliases = map[string]string{}
 
 	namespaces := map[string][]string{
 		"Linea": {"linea_estimateGas", "linea_getProof"},
 		"Trace": {"trace_block", "trace_transaction"},
 	}
+	aliases := map[string]string{
+		"linea_estimateGas": "eth_estimateGas",
+		"linea_getProof":    "eth_getProof",
+	}
 
-	RegisterExtraNamespaces(namespaces)
+	RegisterExtraNamespaces(namespaces, aliases)
 
 	// Verify ExtraMethods populated
 	assert.True(t, ExtraMethods["linea_estimateGas"])
@@ -313,6 +320,12 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 
 	// Verify ExtraNamespaces stored
 	assert.Equal(t, namespaces, ExtraNamespaces)
+
+	// Verify aliases stored and resolved
+	assert.Equal(t, "eth_estimateGas", ResolveMethodAlias("linea_estimateGas"))
+	assert.Equal(t, "eth_getProof", ResolveMethodAlias("linea_getProof"))
+	assert.Equal(t, "trace_block", ResolveMethodAlias("trace_block")) // no alias = returns self
+	assert.Equal(t, "eth_call", ResolveMethodAlias("eth_call"))       // standard method = returns self
 
 	// Verify AllAllowedMethods includes extras
 	all := AllAllowedMethods()

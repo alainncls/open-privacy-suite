@@ -20,8 +20,77 @@ import (
 // This allows operators to support chain-specific methods (e.g. Linea's linea_*)
 // without code changes.
 type ExtraRPCNamespaces struct {
-	Version    int                 `json:"version"`
-	Namespaces map[string][]string `json:"namespaces"`
+	Version    int                          `json:"version"`
+	Namespaces map[string][]ExtraRPCMethod  `json:"-"` // parsed from mixed JSON array
+}
+
+// ExtraRPCMethod represents a single extra RPC method entry.
+// It can be a plain method name (passthrough) or a method with an alias
+// (inherits access control from the alias target).
+type ExtraRPCMethod struct {
+	Method string `json:"method"`          // The chain-specific method name (e.g. "linea_estimateGas")
+	Alias  string `json:"alias,omitempty"` // Standard method to inherit access control from (e.g. "eth_estimateGas")
+}
+
+// UnmarshalJSON supports mixed arrays: plain strings and {"method":"...", "alias":"..."} objects.
+func (e *ExtraRPCNamespaces) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Version    int                        `json:"version"`
+		Namespaces map[string][]json.RawMessage `json:"namespaces"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	e.Version = raw.Version
+	e.Namespaces = make(map[string][]ExtraRPCMethod, len(raw.Namespaces))
+	for ns, entries := range raw.Namespaces {
+		methods := make([]ExtraRPCMethod, 0, len(entries))
+		for _, entry := range entries {
+			// Try as plain string first
+			var s string
+			if err := json.Unmarshal(entry, &s); err == nil {
+				methods = append(methods, ExtraRPCMethod{Method: s})
+				continue
+			}
+			// Try as object with method + alias
+			var m ExtraRPCMethod
+			if err := json.Unmarshal(entry, &m); err != nil {
+				return fmt.Errorf("namespace %q: invalid entry: %s", ns, string(entry))
+			}
+			if m.Method == "" {
+				return fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
+			}
+			methods = append(methods, m)
+		}
+		e.Namespaces[ns] = methods
+	}
+	return nil
+}
+
+// MethodNames returns a flat list of method names for a namespace (for the status API).
+func (e *ExtraRPCNamespaces) MethodNames() map[string][]string {
+	result := make(map[string][]string, len(e.Namespaces))
+	for ns, methods := range e.Namespaces {
+		names := make([]string, len(methods))
+		for i, m := range methods {
+			names[i] = m.Method
+		}
+		result[ns] = names
+	}
+	return result
+}
+
+// Aliases returns a map of method→alias for all methods that have aliases.
+func (e *ExtraRPCNamespaces) Aliases() map[string]string {
+	aliases := make(map[string]string)
+	for _, methods := range e.Namespaces {
+		for _, m := range methods {
+			if m.Alias != "" {
+				aliases[m.Method] = m.Alias
+			}
+		}
+	}
+	return aliases
 }
 
 type Config struct {

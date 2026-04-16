@@ -2,8 +2,8 @@
   "version": 1,
   "namespaces": {
     "Linea": [
-      "linea_estimateGas",
-      "linea_getProof",
+      {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+      {"method": "linea_getProof", "alias": "eth_getProof"},
       "linea_getTransactionExclusionStatusV1"
     ]
   }

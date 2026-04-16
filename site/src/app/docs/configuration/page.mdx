@@ -97,20 +97,16 @@ To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), creat
 EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
 ```
 
-The file format is a versioned JSON object:
+The file format is a versioned JSON object. Each method entry can be a plain string (passthrough) or an object with an `alias` field to inherit access control from a standard method:
 
 ```json
 {
   "version": 1,
   "namespaces": {
     "Linea": [
-      "linea_estimateGas",
-      "linea_getProof",
+      {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+      {"method": "linea_getProof", "alias": "eth_getProof"},
       "linea_getTransactionExclusionStatusV1"
-    ],
-    "Trace": [
-      "trace_block",
-      "trace_transaction"
     ]
   }
 }
@@ -121,7 +117,12 @@ The file format is a versioned JSON object:
 | `version` | Schema version (currently `1`). Required for forward compatibility. |
 | `namespaces` | Map of display label to method list. The key appears as the section heading in the admin UI. |
 
-Extra methods are passthrough — forwarded to the node with no special handling. They appear as toggleable methods in the admin dashboard group access form, under their namespace heading. They do not require claims and are not included in the standard role presets (Wallet User, Service, Developer, Admin).
+### Method entries
+
+- **Plain string** (e.g. `"linea_getTransactionExclusionStatusV1"`) — passthrough, forwarded to the node with no special handling beyond auth and method allowlist.
+- **Object with `alias`** (e.g. `{"method": "linea_estimateGas", "alias": "eth_estimateGas"}`) — inherits the same access control as the alias target: contract-level checks, storage slot tiering, deployment detection, and function selector extraction. Use this when the chain-specific method accepts the same parameters as a standard Ethereum method.
+
+Extra methods appear as toggleable methods in the admin dashboard group access form, under their namespace heading. They do not require claims and are not included in the standard role presets.
 
 When `*` (wildcard) is used in a group's allowed methods, extra methods are included in the expansion.
 
