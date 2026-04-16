@@ -158,9 +158,46 @@ func GetAllDeployMethods() []string {
 	return methods
 }
 
+// ExtraMethods holds operator-configured chain-specific methods (e.g. linea_*).
+// Populated at startup via RegisterExtraNamespaces.
+var ExtraMethods = map[string]bool{}
+
+// ExtraNamespaces holds the structured namespace→method names mapping from config.
+// Used by the status API to expose available methods to the frontend.
+var ExtraNamespaces map[string][]string
+
+// MethodAliases maps chain-specific methods to their standard equivalents
+// for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
+// Methods with aliases inherit the same contract access checks, storage slot
+// tiering, deployment detection, and function selector extraction as their target.
+var MethodAliases = map[string]string{}
+
+// RegisterExtraNamespaces registers operator-configured chain-specific methods
+// and their access control aliases. Called once at startup from server initialization.
+func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string) {
+	ExtraNamespaces = methodNames
+	for _, methods := range methodNames {
+		for _, m := range methods {
+			ExtraMethods[m] = true
+		}
+	}
+	for method, alias := range aliases {
+		MethodAliases[method] = alias
+	}
+}
+
+// ResolveMethodAlias returns the standard method name that a chain-specific method
+// should be treated as for access control. Returns the method itself if no alias exists.
+func ResolveMethodAlias(method string) string {
+	if alias, ok := MethodAliases[method]; ok {
+		return alias
+	}
+	return method
+}
+
 // AllAllowedMethods returns every RPC method that can legitimately appear in a
 // group's allowed_methods list. This is the union of ReadMethods, WriteMethods,
-// and DeployMethods, minus any method that is globally blocked.
+// DeployMethods, and ExtraMethods, minus any method that is globally blocked.
 // Used to expand a wildcard "*" into an explicit method list.
 func AllAllowedMethods() []string {
 	seen := make(map[string]bool)
@@ -179,6 +216,12 @@ func AllAllowedMethods() []string {
 		}
 	}
 	for method := range DeployMethods {
+		if !IsMethodBlocked(method) && !seen[method] {
+			seen[method] = true
+			methods = append(methods, method)
+		}
+	}
+	for method := range ExtraMethods {
 		if !IsMethodBlocked(method) && !seen[method] {
 			seen[method] = true
 			methods = append(methods, method)

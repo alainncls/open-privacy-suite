@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -427,4 +428,86 @@ func TestGetEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
+	t.Run("valid config with aliases", func(t *testing.T) {
+		input := `{
+			"version": 1,
+			"namespaces": {
+				"Linea": [
+					{"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+					{"method": "linea_getProof", "alias": "eth_getProof"}
+				]
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Version != 1 {
+			t.Errorf("Version = %d, want 1", cfg.Version)
+		}
+		methods := cfg.Namespaces["Linea"]
+		if len(methods) != 2 {
+			t.Fatalf("expected 2 methods, got %d", len(methods))
+		}
+		if methods[0].Method != "linea_estimateGas" || methods[0].Alias != "eth_estimateGas" {
+			t.Errorf("method[0] = %+v, want linea_estimateGas/eth_estimateGas", methods[0])
+		}
+	})
+
+	t.Run("plain string rejected — alias required", func(t *testing.T) {
+		input := `{
+			"version": 1,
+			"namespaces": {
+				"Linea": ["linea_estimateGas"]
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil {
+			t.Fatal("expected error for plain string method (no alias), got nil")
+		}
+	})
+
+	t.Run("object without alias rejected", func(t *testing.T) {
+		input := `{
+			"version": 1,
+			"namespaces": {
+				"Linea": [{"method": "linea_estimateGas"}]
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil {
+			t.Fatal("expected error for method without alias, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing 'alias'") {
+			t.Errorf("error should mention missing alias, got: %v", err)
+		}
+	})
+
+	t.Run("aliases helper", func(t *testing.T) {
+		input := `{
+			"version": 1,
+			"namespaces": {
+				"Linea": [
+					{"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+					{"method": "linea_getProof", "alias": "eth_getProof"}
+				]
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		aliases := cfg.Aliases()
+		if aliases["linea_estimateGas"] != "eth_estimateGas" {
+			t.Errorf("alias for linea_estimateGas = %q, want eth_estimateGas", aliases["linea_estimateGas"])
+		}
+		if aliases["linea_getProof"] != "eth_getProof" {
+			t.Errorf("alias for linea_getProof = %q, want eth_getProof", aliases["linea_getProof"])
+		}
+	})
 }

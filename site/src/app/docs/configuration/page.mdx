@@ -89,6 +89,56 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 ---
 
+## Extra RPC Namespaces
+
+To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), create a JSON config file and point to it with `EXTRA_RPC_NAMESPACES_FILE`:
+
+```bash
+EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
+```
+
+The file format is a versioned JSON object. Each method entry can be a plain string (passthrough) or an object with an `alias` field to inherit access control from a standard method:
+
+```json
+{
+  "version": 1,
+  "namespaces": {
+    "Linea": [
+      {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+      {"method": "linea_getProof", "alias": "eth_getProof"},
+      "linea_getTransactionExclusionStatusV1"
+    ]
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `version` | Schema version (currently `1`). Required for forward compatibility. |
+| `namespaces` | Map of display label to method list. The key appears as the section heading in the admin UI. |
+
+### Method entries
+
+Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently.
+
+```json
+{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
+```
+
+The proxy will reject the config at startup if any method is missing an alias.
+
+Extra methods appear as toggleable methods in the admin dashboard group access form, under their namespace heading. They do not require claims and are not included in the standard role presets.
+
+When `*` (wildcard) is used in a group's allowed methods, extra methods are included in the expansion.
+
+A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
+
+```bash
+cp rpc-namespaces.example.json rpc-namespaces.json
+```
+
+---
+
 ## Token TTLs
 
 | Token | TTL | Notes |

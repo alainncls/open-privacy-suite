@@ -34,6 +34,10 @@ node_modules/
 .env.*
 !.env.example
 
+# RPC namespaces config (keep example)
+rpc-namespaces.json
+!rpc-namespaces.example.json
+
 # IDE
 .vscode/
 .idea/

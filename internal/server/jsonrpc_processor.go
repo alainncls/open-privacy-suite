@@ -286,21 +286,27 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		return p.processDebugTrace(ctx, req)
 	}
 
-	// Build RBAC access check request
+	// Resolve method alias for access control (e.g. linea_estimateGas → eth_estimateGas).
+	// The alias determines which access control rules apply (contract checks, storage tiering, etc.)
+	// while the original method name is kept for the RBAC allowlist check and node forwarding.
+	accessMethod := rbac.ResolveMethodAlias(req.Method)
+
+	// Build RBAC access check request using the alias for target/selector extraction
 	var requiredClaims []rbac.Claim
-	if claim := rbac.ClassifyOperation(req.Method, req.Params); claim != "" {
+	if claim := rbac.ClassifyOperation(accessMethod, req.Params); claim != "" {
 		requiredClaims = []rbac.Claim{claim}
 	}
 
-	targetAddr := rbac.GetTargetAddress(req.Method, req.Params)
+	targetAddr := rbac.GetTargetAddress(accessMethod, req.Params)
 
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   req.UserID,
 		OrgID:            req.OrgID,
 		Method:           req.Method,
+		AccessMethod:     accessMethod,
 		Params:           req.Params,
 		TargetAddress:    targetAddr,
-		FunctionSelector: rbac.GetFunctionSelector(req.Method, req.Params),
+		FunctionSelector: rbac.GetFunctionSelector(accessMethod, req.Params),
 		RequiredClaims:   requiredClaims,
 	}
 
@@ -590,7 +596,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 //   - eth_getBlockByHash / eth_getBlockByNumber: remove non-participant txs from block
 //   - eth_getBlockReceipts: remove non-participant receipts from array
 func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *ProcessRequest, result *rbac.AccessCheckResult, responseBody []byte) []byte {
-	m := req.Method
+	// Resolve method alias so chain-specific methods (e.g. linea_getTransactionExclusionStatusV1)
+	// inherit the same response filtering as their standard equivalents.
+	m := rbac.ResolveMethodAlias(req.Method)
 	switch {
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)

@@ -283,3 +283,83 @@ func TestExpandWildcardMethods(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisterExtraNamespaces(t *testing.T) {
+	// Clean up after test (extra methods are package-level state)
+	origExtra := ExtraMethods
+	origNS := ExtraNamespaces
+	origAliases := MethodAliases
+	defer func() {
+		ExtraMethods = origExtra
+		ExtraNamespaces = origNS
+		MethodAliases = origAliases
+	}()
+
+	// Reset state
+	ExtraMethods = map[string]bool{}
+	ExtraNamespaces = nil
+	MethodAliases = map[string]string{}
+
+	namespaces := map[string][]string{
+		"Linea": {"linea_estimateGas", "linea_getProof"},
+		"Trace": {"trace_block", "trace_transaction"},
+	}
+	aliases := map[string]string{
+		"linea_estimateGas": "eth_estimateGas",
+		"linea_getProof":    "eth_getProof",
+	}
+
+	RegisterExtraNamespaces(namespaces, aliases)
+
+	// Verify ExtraMethods populated
+	assert.True(t, ExtraMethods["linea_estimateGas"])
+	assert.True(t, ExtraMethods["linea_getProof"])
+	assert.True(t, ExtraMethods["trace_block"])
+	assert.True(t, ExtraMethods["trace_transaction"])
+	assert.False(t, ExtraMethods["eth_call"]) // standard method not in ExtraMethods
+
+	// Verify ExtraNamespaces stored
+	assert.Equal(t, namespaces, ExtraNamespaces)
+
+	// Verify aliases stored and resolved
+	assert.Equal(t, "eth_estimateGas", ResolveMethodAlias("linea_estimateGas"))
+	assert.Equal(t, "eth_getProof", ResolveMethodAlias("linea_getProof"))
+	assert.Equal(t, "trace_block", ResolveMethodAlias("trace_block")) // no alias = returns self
+	assert.Equal(t, "eth_call", ResolveMethodAlias("eth_call"))       // standard method = returns self
+
+	// Verify AllAllowedMethods includes extras
+	all := AllAllowedMethods()
+	allSet := make(map[string]bool)
+	for _, m := range all {
+		allSet[m] = true
+	}
+	assert.True(t, allSet["linea_estimateGas"], "extra method should be in AllAllowedMethods")
+	assert.True(t, allSet["trace_block"], "extra method should be in AllAllowedMethods")
+	assert.True(t, allSet["eth_call"], "standard method should still be in AllAllowedMethods")
+
+	// Verify wildcard expansion includes extras
+	expanded := ExpandWildcardMethods([]string{"*"})
+	expandedSet := make(map[string]bool)
+	for _, m := range expanded {
+		expandedSet[m] = true
+	}
+	assert.True(t, expandedSet["linea_estimateGas"], "extra method should be in wildcard expansion")
+	assert.True(t, expandedSet["trace_transaction"], "extra method should be in wildcard expansion")
+}
+
+func TestAccessCheckRequest_EffectiveMethod(t *testing.T) {
+	t.Run("returns AccessMethod when set", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			Method:       "linea_estimateGas",
+			AccessMethod: "eth_estimateGas",
+		}
+		assert.Equal(t, "eth_estimateGas", req.EffectiveMethod())
+	})
+
+	t.Run("returns Method when AccessMethod empty", func(t *testing.T) {
+		req := &AccessCheckRequest{
+			Method: "eth_call",
+		}
+		assert.Equal(t, "eth_call", req.EffectiveMethod())
+	})
+}

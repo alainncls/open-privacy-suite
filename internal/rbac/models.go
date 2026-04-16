@@ -322,12 +322,23 @@ type AccessCheckRequest struct {
 	UserExternalID   string  `json:"user_external_id"`
 	OrgSlug          string  `json:"org_slug,omitempty"` // Optional org slug (deprecated, use OrgID)
 	OrgID            string  `json:"org_id,omitempty"`   // Optional org ID for explicit org selection
-	Method           string  `json:"method"`
+	Method           string  `json:"method"`             // Original JSON-RPC method name (used for RBAC allowlist)
+	AccessMethod     string  `json:"-"`                  // Resolved method for access control (alias target). Empty = same as Method.
 	Params           []any   `json:"params,omitempty"`            // JSON-RPC params for Multicall detection
 	TargetAddress    string  `json:"target_address,omitempty"`    // Target address (contract or EOA)
 	FunctionSelector string  `json:"function_selector,omitempty"` // First 4 bytes of calldata (e.g., "0xa9059cbb")
 	Calldata         []byte  `json:"-"`                           // Raw calldata bytes for parameter validation (not serialized)
 	RequiredClaims   []Claim `json:"required_claims,omitempty"`
+}
+
+// EffectiveMethod returns the method name to use for access control decisions.
+// Returns AccessMethod if set (for aliased chain-specific methods like linea_estimateGas
+// → eth_estimateGas), otherwise returns Method.
+func (r *AccessCheckRequest) EffectiveMethod() string {
+	if r.AccessMethod != "" {
+		return r.AccessMethod
+	}
+	return r.Method
 }
 
 // AccessCheckResult represents the result of an access check.
