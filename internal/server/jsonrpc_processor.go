@@ -596,7 +596,9 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 //   - eth_getBlockByHash / eth_getBlockByNumber: remove non-participant txs from block
 //   - eth_getBlockReceipts: remove non-participant receipts from array
 func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *ProcessRequest, result *rbac.AccessCheckResult, responseBody []byte) []byte {
-	m := req.Method
+	// Resolve method alias so chain-specific methods (e.g. linea_getTransactionExclusionStatusV1)
+	// inherit the same response filtering as their standard equivalents.
+	m := rbac.ResolveMethodAlias(req.Method)
 	switch {
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)

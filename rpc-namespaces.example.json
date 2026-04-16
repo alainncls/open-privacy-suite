@@ -4,7 +4,7 @@
     "Linea": [
       {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
       {"method": "linea_getProof", "alias": "eth_getProof"},
-      "linea_getTransactionExclusionStatusV1"
+      {"method": "linea_getTransactionExclusionStatusV1", "alias": "eth_getTransactionByHash"}
     ]
   }
 }
