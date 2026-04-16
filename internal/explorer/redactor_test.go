@@ -2933,6 +2933,7 @@ func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T
 				From:               from,
 				To:                 strPtr(contract),
 				Value:              "1000",
+				InputData:          "0xa9059cbb",
 				TxCategories:       []string{"contract_call", "token_transfer"},
 				TokenTransferCount: 3,
 			}}
@@ -2962,6 +2963,40 @@ func TestRedactTransactions_TokenTransferStrippedWithoutEventAccess(t *testing.T
 				t.Errorf("token_transfer in categories = %v, want %v; categories = %v", hasTokenTransfer, tt.wantTokenTransfer, result[0].TxCategories)
 			}
 		})
+	}
+}
+
+func TestRedactTransactions_TokenTransferStripped_RestoresContractCall(t *testing.T) {
+	// When the only category is "token_transfer" and it gets stripped,
+	// "contract_call" should be restored for transactions with a recipient.
+	// Note: InputData may already be stripped by the redaction loop, so we
+	// only check HasRecipient().
+	contract := "0xcccccccccccccccccccccccccccccccccccccccc"
+	from := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	engine := newEngineWithEventAccess(VisibilityMap{
+		from:     VisibilityFull,
+		contract: VisibilityFull,
+	}, map[string]bool{})
+
+	txs := []Transaction{{
+		Hash:               "0x01",
+		From:               from,
+		To:                 strPtr(contract),
+		Value:              "0",
+		TxCategories:       []string{"token_transfer"},
+		TokenTransferCount: 1,
+	}}
+
+	result, err := engine.RedactTransactions(context.Background(), txs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(result))
+	}
+	if len(result[0].TxCategories) != 1 || result[0].TxCategories[0] != "contract_call" {
+		t.Errorf("expected categories=[contract_call], got %v", result[0].TxCategories)
 	}
 }
 

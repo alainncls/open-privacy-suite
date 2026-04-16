@@ -341,6 +341,13 @@ func (r *RedactionEngine) RedactTransactions(ctx context.Context, txs []Transact
 					if !eventAccess[toAddr] {
 						redactedTxs[i].TokenTransferCount = 0
 						redactedTxs[i].TxCategories = removeCategory(redactedTxs[i].TxCategories, "token_transfer")
+						// If stripping "token_transfer" left no categories, restore
+						// "contract_call" — the tx still called a contract.
+						// Note: can't check InputData here because it may have been
+						// stripped by the redaction loop above.
+						if len(redactedTxs[i].TxCategories) == 0 && redactedTxs[i].HasRecipient() {
+							redactedTxs[i].TxCategories = []string{"contract_call"}
+						}
 					}
 				}
 			}
