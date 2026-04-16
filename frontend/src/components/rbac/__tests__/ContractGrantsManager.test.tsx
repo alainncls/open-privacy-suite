@@ -104,7 +104,7 @@ describe('ContractGrantsManager — event rules display', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows "All events visible" when grant has no event_rules', async () => {
+  it('shows "No events visible" when grant has null event_rules', async () => {
     const grant: ContractGrant = {
       id: 'grant-1',
       contract_id: 'contract-1',
@@ -121,7 +121,8 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(screen.getByText('Auditors')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('All events visible')).toBeInTheDocument();
+    expect(screen.getByText('No events visible')).toBeInTheDocument();
+    expect(screen.queryByText('All events visible')).not.toBeInTheDocument();
   });
 
   it('shows "No events visible" when event_rules is an empty array', async () => {
@@ -277,8 +278,8 @@ describe('ContractGrantsManager — event rules display', () => {
     expect(screen.queryByText('All events visible')).not.toBeInTheDocument();
   });
 
-  it('backward compat: grant without event_rules field shows "All events visible"', async () => {
-    // Simulate a legacy grant that predates event_rules — the field is undefined
+  it('grant without event_rules field shows "No events visible"', async () => {
+    // A grant where event_rules is undefined (field missing from API response)
     const legacyGrant = {
       id: 'grant-legacy',
       contract_id: 'contract-1',
@@ -294,7 +295,8 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(screen.getByText('Auditors')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('All events visible')).toBeInTheDocument();
+    expect(screen.getByText('No events visible')).toBeInTheDocument();
+    expect(screen.queryByText('All events visible')).not.toBeInTheDocument();
   });
 
   it('event rule pill has tooltip with topic0 hash', async () => {

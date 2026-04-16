@@ -169,7 +169,7 @@ export interface ContractGrant {
   contract_id: string;
   group_id: string;
   functions?: FunctionRule[] | null; // null = all functions, or structured rules with optional param constraints
-  event_rules?: EventRule[] | null;  // null = all events visible, or allowlist of events with optional param constraints
+  event_rules?: EventRule[] | null;  // null/[] = no events visible, [...] = allowlist
   created_at: string;
   updated_at: string;
 }
@@ -216,7 +216,7 @@ export interface UserMembership {
 export interface ContractAccess {
   claims: Claim[];
   functions?: FunctionRule[] | null;    // null = all functions allowed
-  event_rules?: EventRule[] | null;     // null = all events visible
+  event_rules?: EventRule[] | null;     // null/[] = no events visible, [...] = allowlist
 }
 
 // EffectivePermissions - computed permissions for a user

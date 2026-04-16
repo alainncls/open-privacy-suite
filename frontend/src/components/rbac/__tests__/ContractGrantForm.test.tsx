@@ -245,12 +245,12 @@ describe('ContractGrantForm', () => {
   // ===========================================================================
 
   describe('Event Rules', () => {
-    it('defaults to "All events visible" mode', async () => {
+    it('defaults to "No events visible" mode', async () => {
       stubListEvents();
       renderForm();
 
-      const allEventsRadio = screen.getByRole('radio', { name: /All events visible/i });
-      expect(allEventsRadio).toBeChecked();
+      const noneRadio = screen.getByRole('radio', { name: /No events visible/i });
+      expect(noneRadio).toBeChecked();
     });
 
     it('shows event picker when switching to "Specific events only"', async () => {
@@ -374,12 +374,12 @@ describe('ContractGrantForm', () => {
       // Don't add any events
       await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
-      const msgs = screen.getAllByText('Please add at least one event, or select "All events visible" or "No events visible"');
+      const msgs = screen.getAllByText('Please add at least one event, or select "No events visible"');
       expect(msgs.length).toBeGreaterThanOrEqual(1);
       expect(msgs[0]).toBeInTheDocument();
     });
 
-    it('submits event_rules as null when "All events visible" is selected', async () => {
+    it('submits event_rules as empty array when default "No events visible" is used', async () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       const createGrantSpy = vi
@@ -388,7 +388,7 @@ describe('ContractGrantForm', () => {
       renderForm();
 
       await user.selectOptions(screen.getByRole('combobox'), 'group-1');
-      // Leave default "All events visible"
+      // Default is "No events visible"
       await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
       await waitFor(() => {
@@ -396,7 +396,7 @@ describe('ContractGrantForm', () => {
           'org-1',
           '0x1111111111111111111111111111111111111111',
           expect.objectContaining({
-            event_rules: null,
+            event_rules: [],
           })
         );
       });
@@ -575,7 +575,6 @@ describe('ContractGrantForm', () => {
       });
 
       expect(screen.getByRole('radio', { name: /No events visible/i })).toBeChecked();
-      expect(screen.getByRole('radio', { name: /All events visible/i })).not.toBeChecked();
       expect(screen.getByRole('radio', { name: /Specific events only/i })).not.toBeChecked();
 
       // The event picker should not be visible
@@ -603,8 +602,8 @@ describe('ContractGrantForm', () => {
         },
       });
 
-      // Switch to "All events visible"
-      await user.click(screen.getByRole('radio', { name: /All events visible/i }));
+      // Switch to "No events visible"
+      await user.click(screen.getByRole('radio', { name: /No events visible/i }));
       await user.click(screen.getByRole('button', { name: 'Save Changes' }));
 
       await waitFor(() => {
@@ -612,7 +611,7 @@ describe('ContractGrantForm', () => {
           'org-1',
           '0x1111111111111111111111111111111111111111',
           'group-1',
-          { functions: null, event_rules: null }
+          { functions: null, event_rules: [] }
         );
       });
     });

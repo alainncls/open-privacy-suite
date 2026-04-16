@@ -240,7 +240,7 @@ export default function ContractGrantForm({
   const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
   const [eventMode, setEventMode] = useState<'all' | 'specific' | 'none'>(() => {
-    if (grant?.event_rules === undefined || grant?.event_rules === null) return 'all';
+    if (grant?.event_rules === undefined || grant?.event_rules === null) return 'none';
     if (grant.event_rules.length === 0) return 'none';
     return 'specific';
   });
@@ -419,14 +419,14 @@ export default function ContractGrantForm({
     }
 
     if (eventMode === 'specific' && eventRules.length === 0) {
-      setError('Please add at least one event, or select "All events visible" or "No events visible"');
+      setError('Please add at least one event, or select "No events visible"');
       return;
     }
 
     setSaving(true);
 
     try {
-      const resolvedEventRules = eventMode === 'all' ? null : eventMode === 'none' ? [] : eventRules;
+      const resolvedEventRules = eventMode === 'none' ? [] : eventRules;
       const input: CreateContractGrantInput = {
         group_id: selectedGroupId,
         // claims field is deprecated - permissions come from the group's GroupAccess.claims
@@ -751,21 +751,6 @@ export default function ContractGrantForm({
 
         {/* Radio options */}
         <div className="space-y-2">
-          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
-            <input
-              type="radio"
-              name="eventMode"
-              value="all"
-              checked={eventMode === 'all'}
-              onChange={() => setEventMode('all')}
-              className="w-4 h-4 text-primary focus:ring-primary"
-            />
-            <div>
-              <p className="text-sm font-medium text-neutral-900">All events visible</p>
-              <p className="text-xs text-neutral-500">Group can see all event logs from this contract</p>
-            </div>
-          </label>
-
           <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
             <input
               type="radio"
