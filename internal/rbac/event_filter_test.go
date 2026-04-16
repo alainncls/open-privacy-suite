@@ -18,9 +18,9 @@ func (p *testABIProvider) GetContractABI(address string) string {
 	return p.abis[address]
 }
 
-func TestFilterEventLogs_NoEventRules_DefaultAddressFilter(t *testing.T) {
-	// When no event rules are configured (nil), default address-based filtering
-	// applies: log visible only if user's address appears in a topic.
+func TestFilterEventLogs_NoEventRules_DenyAll(t *testing.T) {
+	// When no event rules are configured (nil), all logs are denied.
+	// nil and [] are equivalent — both mean "no events visible."
 	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	userTopic := "0x000000000000000000000000" + userAddr[2:]
 	otherTopic := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -30,21 +30,21 @@ func TestFilterEventLogs_NoEventRules_DefaultAddressFilter(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // no event rules = default address-based filtering
+				EventRules: nil, // no event rules = deny all
 			},
 		},
 	}
 
 	logs := []json.RawMessage{
-		// User's address in topic — should be visible.
+		// User's address in topic — still denied (no event rules configured).
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + eventSig + `","` + userTopic + `"],"data":"0x"}`),
-		// No user address in any topic — should be hidden.
+		// No user address in any topic — denied.
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + eventSig + `","` + otherTopic + `"],"data":"0x"}`),
 	}
 
 	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
-	if len(result) != 1 {
-		t.Errorf("expected 1 log (only where user address in topic), got %d", len(result))
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (nil event rules = deny all), got %d", len(result))
 	}
 }
 
@@ -171,9 +171,8 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 	}
 }
 
-func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
-	// nil EventRules means "default address-based filtering" (user's address must be in a topic).
-	// Empty slice [] means "allowlist mode with nothing allowed" (all events blocked).
+func TestFilterEventLogs_NilAndEmptyEventRulesEquivalent(t *testing.T) {
+	// nil and [] EventRules are equivalent — both deny all logs.
 	contractAddr := "0xcontract1"
 	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	userTopic := "0x000000000000000000000000" + userAddr[2:]
@@ -182,38 +181,30 @@ func TestFilterEventLogs_NilVsEmptyEventRules(t *testing.T) {
 	logWithUser := json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000","` + userTopic + `"],"data":"0x"}`)
 	logWithoutUser := json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000","` + otherTopic + `"],"data":"0x"}`)
 
-	// nil EventRules: address-based filtering — only log with user's address passes.
-	permsNil := &EffectivePermissions{
-		ContractAccess: map[string]ContractAccess{
-			contractAddr: {
-				Claims:     []Claim{ClaimRead},
-				EventRules: nil,
-			},
-		},
-	}
-	result := FilterEventLogs(
-		[]json.RawMessage{logWithUser, logWithoutUser},
-		permsNil, []string{userAddr}, nil, nil,
-	)
-	if len(result) != 1 {
-		t.Errorf("nil EventRules: expected 1 log (address-based filter), got %d", len(result))
-	}
-
-	// Empty slice EventRules: allowlist mode, nothing allowed.
-	permsEmpty := &EffectivePermissions{
-		ContractAccess: map[string]ContractAccess{
-			contractAddr: {
-				Claims:     []Claim{ClaimRead},
-				EventRules: []EventRule{},
-			},
-		},
-	}
-	result = FilterEventLogs(
-		[]json.RawMessage{logWithUser, logWithoutUser},
-		permsEmpty, []string{userAddr}, nil, nil,
-	)
-	if len(result) != 0 {
-		t.Errorf("empty EventRules: expected 0 logs (allowlist with nothing), got %d", len(result))
+	for _, tc := range []struct {
+		name  string
+		rules []EventRule
+	}{
+		{"nil", nil},
+		{"empty", []EventRule{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			perms := &EffectivePermissions{
+				ContractAccess: map[string]ContractAccess{
+					contractAddr: {
+						Claims:     []Claim{ClaimRead},
+						EventRules: tc.rules,
+					},
+				},
+			}
+			result := FilterEventLogs(
+				[]json.RawMessage{logWithUser, logWithoutUser},
+				perms, []string{userAddr}, nil, nil,
+			)
+			if len(result) != 0 {
+				t.Errorf("EventRules=%v: expected 0 logs (deny all), got %d", tc.rules, len(result))
+			}
+		})
 	}
 }
 
@@ -716,7 +707,7 @@ func TestContractGrant_JSON_NilEventRules(t *testing.T) {
 		ID:         "test-id",
 		ContractID: "contract-id",
 		GroupID:    "group-id",
-		EventRules: nil, // nil = all events visible
+		EventRules: nil, // nil = no events visible (serializes as null)
 	}
 
 	b, err := json.Marshal(grant)
@@ -1660,29 +1651,30 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUnionEventRules_OneNil_OneRestricted(t *testing.T) {
-	// U36: Grant A has rules [Transfer], Grant B has nil → unrestricted wins.
+	// U36: Grant A has rules [Transfer], Grant B has nil (no events).
+	// nil contributes nothing — the result is the non-nil grant's rules.
 	a := []EventRule{
 		{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
 	}
-	var b []EventRule // nil
+	var b []EventRule // nil = no events
 
 	result := unionEventRules(a, b)
-	if result != nil {
-		t.Errorf("U36: nil + restricted should yield nil (unrestricted), got %v", result)
+	if len(result) != 1 || result[0].Name != "Transfer" {
+		t.Errorf("U36: rules + nil should yield the rules, got %v", result)
 	}
 
 	// Also test reversed order.
 	result = unionEventRules(b, a)
-	if result != nil {
-		t.Errorf("U36 reversed: restricted + nil should yield nil (unrestricted), got %v", result)
+	if len(result) != 1 || result[0].Name != "Transfer" {
+		t.Errorf("U36 reversed: nil + rules should yield the rules, got %v", result)
 	}
 }
 
 func TestUnionEventRules_BothNil(t *testing.T) {
-	// U37: Both grants nil → all visible (nil).
+	// U37: Both grants nil → no events (nil).
 	result := unionEventRules(nil, nil)
 	if result != nil {
-		t.Errorf("U37: nil + nil should yield nil, got %v", result)
+		t.Errorf("U37: nil + nil should yield nil (no events), got %v", result)
 	}
 }
 
@@ -1815,8 +1807,8 @@ func TestUnionEventRules_DifferentEvents(t *testing.T) {
 // We test the effective behavior through GetEventRules and FilterEventLogs.
 // ---------------------------------------------------------------------------
 
-func TestGetEventRules_NilUnrestricted(t *testing.T) {
-	// U41: nil EventRules means unrestricted — true for any topic0.
+func TestGetEventRules_NilDenyAll(t *testing.T) {
+	// U41: nil EventRules means deny all (same as empty slice).
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
@@ -1828,7 +1820,7 @@ func TestGetEventRules_NilUnrestricted(t *testing.T) {
 
 	rules := perms.GetEventRules("0xcontract1")
 	if rules != nil {
-		t.Errorf("U41: nil EventRules should return nil (unrestricted), got %v", rules)
+		t.Errorf("U41: nil EventRules should return nil, got %v", rules)
 	}
 }
 
@@ -2063,15 +2055,16 @@ func TestFilterEventLogs_MultipleContracts_PartialAccess(t *testing.T) {
 	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	userTopic := "0x000000000000000000000000" + userAddr[2:]
 
+	transferRule := []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontractx": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // unrestricted
+				EventRules: transferRule,
 			},
 			"0xcontractz": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil,
+				EventRules: transferRule,
 			},
 			// No entry for 0xcontracty
 		},
@@ -2273,21 +2266,23 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules(t *testing.T) {
 // Union across grants: E2E simulation through FilterEventLogs
 // ---------------------------------------------------------------------------
 
-func TestFilterEventLogs_UnionGrants_UnrestrictedWins(t *testing.T) {
-	// U36 applied to filtering: when effective permissions have nil EventRules
-	// (because one grant was unrestricted), all logs with user's address pass.
+func TestFilterEventLogs_UnionGrants_BothEventsAllowed(t *testing.T) {
+	// When effective permissions have both Transfer and Approval in EventRules
+	// (result of union across two grants), both event types pass.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 
 	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	userTopic := "0x000000000000000000000000" + userAddr[2:]
 
-	// After union: nil (unrestricted) wins
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // result of union where one grant was nil
+				Claims: []Claim{ClaimRead},
+				EventRules: []EventRule{
+					{Topic0: transferTopic0, Name: "Transfer"},
+					{Topic0: approvalTopic0, Name: "Approval"},
+				},
 			},
 		},
 	}
@@ -2299,7 +2294,7 @@ func TestFilterEventLogs_UnionGrants_UnrestrictedWins(t *testing.T) {
 
 	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
 	if len(result) != 2 {
-		t.Errorf("Union unrestricted: expected 2 logs (all with user address), got %d", len(result))
+		t.Errorf("Union both events: expected 2 logs, got %d", len(result))
 	}
 }
 
@@ -2369,7 +2364,7 @@ func TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
-				EventRules: nil, // no event rules = would normally require address in topics
+				EventRules: nil, // no event rules = deny all (but admin bypasses)
 			},
 		},
 	}
@@ -2401,7 +2396,7 @@ func TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // default address-based filtering
+				EventRules: nil, // no event rules = deny all
 			},
 		},
 	}
@@ -2527,14 +2522,14 @@ func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil,
+				EventRules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}},
 			},
 			// 0xcontract_other_org is NOT in ContractAccess → no access
 		},
 	}
 
 	logs := []json.RawMessage{
-		// Own contract — user address in topic → visible.
+		// Own contract — Transfer event in allowlist → visible.
 		json.RawMessage(`{"address":"0xcontract1","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
 		// Other org's contract — even though user address appears in topic → hidden.
 		json.RawMessage(`{"address":"0xcontract_other_org","topics":["` + transferTopic0 + `","` + userTopic + `"],"data":"0x"}`),
@@ -2787,10 +2782,10 @@ func TestFilterEventLogs_VisibleTo_AdminStillBypasses(t *testing.T) {
 	}
 }
 
-func TestFilterEventLogs_VisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *testing.T) {
-	// When no event rules are configured (default address filtering),
-	// visibleTo extends the filter: if user address is NOT in topics
-	// but viewer DID IS in visibleTo, the log should be visible.
+func TestFilterEventLogs_NilEventRules_DenyAll_EvenWithVisibleTo(t *testing.T) {
+	// When no event rules are configured (nil), all logs are denied.
+	// visibleTo does NOT override this because there are no event rules
+	// to match against — the log is blocked at the allowlist level.
 	contractAddr := "0xcontract1"
 	viewerDID := "did:privado:viewer1"
 	txHash := "0xdeadbeef"
@@ -2801,7 +2796,7 @@ func TestFilterEventLogs_VisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *t
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims:     []Claim{ClaimRead},
-				EventRules: nil, // default address filtering
+				EventRules: nil, // no event rules = deny all
 			},
 		},
 	}
@@ -2810,13 +2805,14 @@ func TestFilterEventLogs_VisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *t
 		json.RawMessage(`{"address":"` + contractAddr + `","topics":["` + eventSig + `","` + otherTopic + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
 	}
 
-	// Without visCtx: should be hidden (address not in topics)
+	// Without visCtx: denied (no event rules)
 	resultWithout := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, nil)
 	if len(resultWithout) != 0 {
 		t.Errorf("without visCtx: expected 0 logs, got %d", len(resultWithout))
 	}
 
-	// With visCtx: should be visible (viewer in visibleTo)
+	// With visCtx: still denied — nil event rules means deny all,
+	// visibleTo only extends existing event rule matching.
 	visCtx := &TxVisibilityContext{
 		ViewerDID: viewerDID,
 		TxVisibility: map[string][]string{
@@ -2824,7 +2820,7 @@ func TestFilterEventLogs_VisibleTo_DefaultAddressFilter_FallbackToVisibleTo(t *t
 		},
 	}
 	resultWith := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, visCtx)
-	if len(resultWith) != 1 {
-		t.Errorf("with visCtx: expected 1 log (viewer in visibleTo), got %d", len(resultWith))
+	if len(resultWith) != 0 {
+		t.Errorf("with visCtx: expected 0 logs (nil event rules = deny all, visibleTo cannot override), got %d", len(resultWith))
 	}
 }

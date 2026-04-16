@@ -143,14 +143,14 @@ Event logs emitted by smart contracts are filtered before being returned to the 
 
 ### Filtering Modes
 
-The proxy uses two filtering modes, selected per-contract based on whether event rules are configured:
+The proxy uses allowlist-based log filtering. Only logs matching explicitly configured event rules are visible:
 
-| Mode | When active | Behavior |
-|------|------------|----------|
-| **Default (address-based)** | No event rules configured (`event_rules: null`) | Log visible only if user's linked ETH address appears in any topic (zero-padded address match) |
-| **Allowlist (event rules)** | Event rules configured (`event_rules: [...]`) | Only logs whose `topic0` matches an allowed event rule pass; optional `param_rules` with `"self"` constraints further restrict by requiring the user's address in specific parameter positions |
+| Configuration | Behavior |
+|------|----------|
+| **No event rules** (`event_rules: null` or `[]`) | All logs denied -- no events visible |
+| **Event rules configured** (`event_rules: [...]`) | Only logs whose `topic0` matches an allowed event rule pass; optional `param_rules` with `"self"` constraints further restrict by requiring the user's address in specific parameter positions |
 
-An **empty event rules array** (`event_rules: []`) means "deny all events" -- no logs pass regardless of their content.
+To grant a group access to specific events, add event rules to their contract grant. Unconstrained address parameters are automatically restricted with `must_be: "self"` when the contract has an ABI.
 
 ### Admin Bypass
 

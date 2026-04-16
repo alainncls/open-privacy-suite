@@ -43,8 +43,8 @@ type logEntry struct {
 // event rules from their effective permissions.
 //
 // Semantics:
-//   - If no grants have event_rules for a log's contract: pass the log through (backward compat).
-//   - If any grant has event_rules: allowlist mode — only listed topic0s pass.
+//   - If no event_rules are configured (nil or []): deny all logs for that contract.
+//   - If event_rules are configured: allowlist mode — only listed topic0s pass.
 //   - For rules with ParamRules ("self" constraints): the log must also have
 //     the caller's address in the constrained parameter positions (OR semantics
 //     across multiple ParamRules on the same event).
@@ -106,20 +106,8 @@ func FilterEventLogs(
 			continue
 		}
 
-		// If no event rules configured on this contract access, apply default
-		// address-based filtering: log visible only if user's address appears
-		// in any topic (backward compat with pre-event-rules behavior).
-		if access.EventRules == nil {
-			if logHasUserAddress(entry, addrSet) {
-				filtered = append(filtered, rawLog)
-			} else if isViewerInVisibleTo(visCtx, rawLog) {
-				// visibleTo extends default address filtering too.
-				filtered = append(filtered, rawLog)
-			}
-			continue
-		}
-
 		// Allowlist mode: the log's topic0 must match one of the allowed event rules.
+		// nil and [] both mean "no events allowed" — deny all.
 		if len(entry.Topics) == 0 {
 			// Anonymous event (no topic0) — blocked in allowlist mode.
 			continue
@@ -168,18 +156,6 @@ func isViewerInVisibleTo(visCtx *TxVisibilityContext, rawLog json.RawMessage) bo
 func eventTopic0Matches(topic0 string, rules []EventRule) bool {
 	for _, rule := range rules {
 		if strings.EqualFold(rule.Topic0, topic0) {
-			return true
-		}
-	}
-	return false
-}
-
-// logHasUserAddress checks if any topic in the log entry encodes one of the
-// user's linked addresses. This is the default filtering when no event rules
-// are configured (backward compat).
-func logHasUserAddress(entry logEntry, addrSet map[string]bool) bool {
-	for _, topic := range entry.Topics {
-		if topicMatchesAddr(topic, addrSet) {
 			return true
 		}
 	}

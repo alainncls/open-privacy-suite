@@ -662,7 +662,7 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	var input struct {
 		GroupID    string              `json:"group_id" binding:"required"`
 		Functions  []rbac.FunctionRule `json:"functions"`   // nil = all functions
-		EventRules []rbac.EventRule   `json:"event_rules"` // nil = all events visible
+		EventRules []rbac.EventRule   `json:"event_rules"` // nil/[] = no events visible, [...] = allowlist
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

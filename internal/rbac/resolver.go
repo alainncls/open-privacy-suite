@@ -691,15 +691,21 @@ func unionFunctions(a, b []FunctionRule) []FunctionRule {
 }
 
 // unionEventRules returns the union of two EventRule slices by topic0.
-// If either is nil, it means "all events visible" - return nil.
-// If both have values, return the union (user can see events from any grant).
+// nil and [] both mean "no events" — they contribute nothing to the union.
+// If both are nil/empty, returns nil (no events). Otherwise returns the
+// union so the user benefits from all granted event rules.
 func unionEventRules(a, b []EventRule) []EventRule {
-	// nil means "all events allowed" - if either is unrestricted, result is unrestricted
-	if a == nil || b == nil {
+	if len(a) == 0 && len(b) == 0 {
 		return nil
 	}
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
 
-	// Both have restrictions - union them
+	// Both have rules - union them
 	seen := make(map[string]EventRule, len(a))
 	for _, rule := range a {
 		seen[strings.ToLower(rule.Topic0)] = rule
