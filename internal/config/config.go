@@ -46,19 +46,15 @@ func (e *ExtraRPCNamespaces) UnmarshalJSON(data []byte) error {
 	for ns, entries := range raw.Namespaces {
 		methods := make([]ExtraRPCMethod, 0, len(entries))
 		for _, entry := range entries {
-			// Try as plain string first
-			var s string
-			if err := json.Unmarshal(entry, &s); err == nil {
-				methods = append(methods, ExtraRPCMethod{Method: s})
-				continue
-			}
-			// Try as object with method + alias
 			var m ExtraRPCMethod
 			if err := json.Unmarshal(entry, &m); err != nil {
-				return fmt.Errorf("namespace %q: invalid entry: %s", ns, string(entry))
+				return fmt.Errorf("namespace %q: invalid entry (must be {\"method\":..., \"alias\":...}): %s", ns, string(entry))
 			}
 			if m.Method == "" {
 				return fmt.Errorf("namespace %q: entry missing 'method' field: %s", ns, string(entry))
+			}
+			if m.Alias == "" {
+				return fmt.Errorf("namespace %q: method %q missing 'alias' field — all extra methods must have an alias to a standard Ethereum method for access control and response filtering", ns, m.Method)
 			}
 			methods = append(methods, m)
 		}
