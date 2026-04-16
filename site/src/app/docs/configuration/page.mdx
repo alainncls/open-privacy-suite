@@ -91,7 +91,13 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 ## Extra RPC Namespaces
 
-To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), set `EXTRA_RPC_NAMESPACES` to a JSON object:
+To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), create a JSON config file and point to it with `EXTRA_RPC_NAMESPACES_FILE`:
+
+```bash
+EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
+```
+
+The file format is a versioned JSON object:
 
 ```json
 {
@@ -119,7 +125,11 @@ Extra methods are passthrough — forwarded to the node with no special handling
 
 When `*` (wildcard) is used in a group's allowed methods, extra methods are included in the expansion.
 
-See `.env.example` for a ready-to-use configuration line.
+A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
+
+```bash
+cp rpc-namespaces.example.json rpc-namespaces.json
+```
 
 ---
 

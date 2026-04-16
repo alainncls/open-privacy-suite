@@ -46,7 +46,8 @@ type Config struct {
 	AllowMockLogin             bool          // If true, accept mock JWZ tokens for testing (dev/demo only, NEVER in production)
 	DemoAutoAuthDelay          time.Duration // Auto-complete auth sessions for demo recording (0 = disabled, forced off in production)
 	TrustedFactoryHashes       []string              // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
-	ExtraRPCNamespaces         *ExtraRPCNamespaces   // Additional JSON-RPC method namespaces (e.g. Linea's linea_*)
+	ExtraRPCNamespacesFile     string                // Path to JSON file with additional RPC method namespaces (e.g. Linea's linea_*)
+	ExtraRPCNamespaces         *ExtraRPCNamespaces   // Parsed from ExtraRPCNamespacesFile
 
 	// Runtime tracing configuration
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
@@ -174,15 +175,20 @@ func Load() *Config {
 		}
 	}
 
-	// Extra RPC namespaces (chain-specific method extensions)
+	// Extra RPC namespaces (chain-specific method extensions, loaded from file)
+	extraRPCNamespacesFile := getEnv("EXTRA_RPC_NAMESPACES_FILE", "")
 	var extraRPCNamespaces *ExtraRPCNamespaces
-	if raw := getEnv("EXTRA_RPC_NAMESPACES", ""); raw != "" {
+	if extraRPCNamespacesFile != "" {
+		raw, err := os.ReadFile(extraRPCNamespacesFile)
+		if err != nil {
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: failed to read %s: %v", extraRPCNamespacesFile, err))
+		}
 		var parsed ExtraRPCNamespaces
-		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES: invalid JSON: %v", err))
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: invalid JSON in %s: %v", extraRPCNamespacesFile, err))
 		}
 		if parsed.Version != 1 {
-			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES: unsupported version %d (expected 1)", parsed.Version))
+			panic(fmt.Sprintf("EXTRA_RPC_NAMESPACES_FILE: unsupported version %d in %s (expected 1)", parsed.Version, extraRPCNamespacesFile))
 		}
 		extraRPCNamespaces = &parsed
 	}
@@ -288,6 +294,7 @@ func Load() *Config {
 		AllowMockLogin:           allowMockLogin,
 		DemoAutoAuthDelay:        demoDelay,
 		TrustedFactoryHashes:     trustedFactoryHashes,
+		ExtraRPCNamespacesFile:   extraRPCNamespacesFile,
 		ExtraRPCNamespaces:       extraRPCNamespaces,
 		TraceCacheTTL:            traceCacheTTL,
 		TraceTimeout:             traceTimeout,

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "namespaces": {
+    "Linea": [
+      "linea_estimateGas",
+      "linea_getProof",
+      "linea_getTransactionExclusionStatusV1"
+    ]
+  }
+}
