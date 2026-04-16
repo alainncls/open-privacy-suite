@@ -32,59 +32,6 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
-// PreregisteredAddress represents a preregistered address in the API response.
-type PreregisteredAddress struct {
-	ID             string  `json:"id"`
-	OrgID          string  `json:"org_id"`
-	Address        string  `json:"address"`
-	Factory        string  `json:"factory"`
-	Salt           string  `json:"salt"` // Hex-encoded
-	Note           string  `json:"note,omitempty"`
-	ConstructorABI string  `json:"constructor_abi,omitempty"`
-	CreatedAt      string  `json:"created_at"`
-	UsedAt         *string `json:"used_at,omitempty"`
-}
-
-// RegisterAddressesRequest is the request body for registering addresses.
-type RegisterAddressesRequest struct {
-	Addresses []AddressToRegister `json:"addresses"`
-}
-
-// AddressToRegister represents a single address to register.
-type AddressToRegister struct {
-	Address        string `json:"address"`
-	ContractName   string `json:"contract_name,omitempty"`
-	DeploymentType string `json:"deployment_type,omitempty"`
-	Note           string `json:"note,omitempty"`
-}
-
-// RegisterAddressesResponse is the response from registering addresses.
-type RegisterAddressesResponse struct {
-	Registered []PreregisteredAddress `json:"registered"`
-	Skipped    []SkippedAddress       `json:"skipped,omitempty"`
-}
-
-// SkippedAddress represents an address that was skipped during registration.
-type SkippedAddress struct {
-	Address string `json:"address"`
-	Reason  string `json:"reason"`
-}
-
-// PreregisterRequest is the request body for the preregister endpoint.
-// This uses CREATE3 address generation.
-type PreregisterRequest struct {
-	Factory        string `json:"factory"`
-	SaltPrefix     string `json:"salt_prefix"`
-	Count          int    `json:"count"`
-	Note           string `json:"note,omitempty"`
-	ConstructorABI string `json:"constructor_abi,omitempty"`
-}
-
-// PreregisterResponse is the response from the preregister endpoint.
-type PreregisterResponse struct {
-	Addresses []PreregisteredAddress `json:"addresses"`
-}
-
 // APIError represents an error response from the API.
 type APIError struct {
 	StatusCode int
@@ -145,69 +92,6 @@ func handleResponse(resp *http.Response, result any) error {
 	}
 
 	return nil
-}
-
-// PreregisterAddresses registers new CREATE3 addresses for an organization.
-// This endpoint generates addresses using the specified factory and salt prefix.
-func (c *Client) PreregisterAddresses(orgID string, req *PreregisterRequest) (*PreregisterResponse, error) {
-	path := fmt.Sprintf("/api/v1/orgs/%s/addresses/preregister", orgID)
-
-	resp, err := c.doRequest(http.MethodPost, path, req)
-	if err != nil {
-		return nil, err
-	}
-
-	var result PreregisterResponse
-	if err := handleResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// ListPreregisteredAddresses returns all preregistered addresses for an organization.
-func (c *Client) ListPreregisteredAddresses(orgID string) ([]PreregisteredAddress, error) {
-	path := fmt.Sprintf("/api/v1/orgs/%s/addresses/preregistered", orgID)
-
-	resp, err := c.doRequest(http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []PreregisteredAddress
-	if err := handleResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// DeletePreregisteredAddress deletes a preregistered address.
-func (c *Client) DeletePreregisteredAddress(orgID, address string) error {
-	path := fmt.Sprintf("/api/v1/orgs/%s/addresses/preregistered/%s", orgID, address)
-
-	resp, err := c.doRequest(http.MethodDelete, path, nil)
-	if err != nil {
-		return err
-	}
-
-	return handleResponse(resp, nil)
-}
-
-// UpdateConstructorABI updates the constructor ABI for a preregistered address.
-func (c *Client) UpdateConstructorABI(orgID, address, abi string) error {
-	path := fmt.Sprintf("/api/v1/orgs/%s/addresses/preregistered/%s/abi", orgID, address)
-
-	body := struct {
-		ConstructorABI string `json:"constructor_abi"`
-	}{ConstructorABI: abi}
-
-	resp, err := c.doRequest(http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-
-	return handleResponse(resp, nil)
 }
 
 // Create3Config represents the CREATE3 configuration for an organization.

@@ -29,8 +29,6 @@ func main() {
 	registerGroupTools(s, client, confirms)
 	registerUserTools(s, client, confirms)
 	registerContractTools(s, client, confirms)
-	registerPreregisterTools(s, client, confirms)
-	registerProxyTools(s, client)
 	registerSessionTools(s, client, confirms)
 	registerDisclosureTools(s, client, confirms)
 	registerComplianceTools(s, client, confirms)

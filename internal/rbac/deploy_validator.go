@@ -12,21 +12,12 @@ import (
 
 // DeploymentValidator validates contract deployments against org security rules.
 type DeploymentValidator struct {
-	store                  Store
-	runtimeTracingEnabled  bool // When true, dynamic calls are allowed (validated at runtime instead)
+	store Store
 }
 
 // NewDeploymentValidator creates a new deployment validator.
 func NewDeploymentValidator(store Store) *DeploymentValidator {
 	return &DeploymentValidator{store: store}
-}
-
-// SetRuntimeTracingEnabled configures whether runtime tracing is enabled.
-// When runtime tracing is enabled, contracts with dynamic calls are ALLOWED at deploy time
-// because those calls will be validated at runtime via debug_traceCall.
-// This aligns with the security model documented in RUNTIME_VALIDATION_ANALYSIS.md.
-func (v *DeploymentValidator) SetRuntimeTracingEnabled(enabled bool) {
-	v.runtimeTracingEnabled = enabled
 }
 
 // ValidationResult contains the result of deployment validation.
@@ -55,9 +46,11 @@ type ValidationResult struct {
 
 // ValidateDeployment checks if a contract deployment is allowed.
 // It analyzes the bytecode to ensure:
-// 1. No CREATE/CREATE2 opcodes (prevents nested deployments) unless user has admin claim
-// 2. No dynamic call targets (addresses from storage/calldata)
-// 3. All constant call targets are allowed for the org
+// 1. Trusted factory detection (CREATE/CREATE2 allowed for whitelisted factories)
+// 2. All constant call targets are allowed for the org
+//
+// Dynamic calls and CREATE/CREATE2 are allowed because runtime tracing validates
+// them at execution time via debug_traceCall.
 //
 // The hasAdminClaim parameter allows admin users to deploy factory contracts
 // that contain CREATE/CREATE2 opcodes.
@@ -114,10 +107,8 @@ func (v *DeploymentValidator) ValidateDeployment(
 		ProxyInfo:       proxyInfo,
 	}
 
-	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
-	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
+	// Check 1: Detect trusted factory contracts with CREATE/CREATE2
 	// Note: Trusted factory deployment still requires admin claim (checked in access.go)
-	// The hasAdminClaim parameter is reserved for future use.
 	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
 		// Check if this is a trusted factory contract
@@ -131,30 +122,11 @@ func (v *DeploymentValidator) ValidateDeployment(
 			result.Allowed = true
 			return result, nil
 		}
-
-		// When runtime tracing is enabled, allow CREATE/CREATE2 — the trace validator
-		// will validate the actual execution and auto-register created addresses.
-		if v.runtimeTracingEnabled {
-			// Fall through to remaining checks (dynamic calls, etc.)
-		} else {
-			result.Allowed = false
-			result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
-			return result, nil
-		}
+		// Non-trusted CREATE/CREATE2 are allowed — runtime tracing validates
+		// the actual execution and auto-registers created addresses.
 	}
 
-	// Check 2: Block contracts with dynamic call targets
-	// Exception 1: Proxy contracts are expected to have dynamic DELEGATECALL patterns
-	// (they load the implementation address from storage and delegatecall to it)
-	// Exception 2: When runtime tracing is enabled, dynamic calls are validated at execution time
-	// via debug_traceCall, so we allow them at deploy time (see RUNTIME_VALIDATION_ANALYSIS.md)
-	if analysis.HasDynamicCall && !proxyInfo.IsProxy && !v.runtimeTracingEnabled {
-		result.Allowed = false
-		result.Reason = "contract contains dynamic external calls (address from storage/calldata)"
-		return result, nil
-	}
-
-	// Check 3: Verify all constant call targets are allowed
+	// Check 2: Verify all constant call targets are allowed
 	for _, target := range analysis.CallTargets {
 		if target.TargetType != bytecode.CallTargetConstant {
 			continue
@@ -203,7 +175,7 @@ func (v *DeploymentValidator) ValidateDeployment(
 //
 // This method performs all the same validations as ValidateDeployment, plus:
 // - Detects if bytecode has constructor arguments
-// - If args exist and no ABI provided: REJECTS deployment
+// - If args exist and no ABI provided: skips constructor validation (runtime tracing catches cross-org calls)
 // - If args exist and ABI provided: decodes args and validates any addresses
 //
 // The hasAdminClaim parameter allows admin users to deploy factory contracts.
@@ -234,9 +206,6 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	}
 
 	// Parse again with CBOR stripping for security analysis.
-	// This is important because Solidity's CBOR metadata at the end of contracts
-	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2,
-	// 0x73 = PUSH20 which is 's' in "solc") but are actually just data, not executable code.
 	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
@@ -259,48 +228,22 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 		IsProxy:         proxyInfo.IsProxy,
 		ProxyType:       string(proxyInfo.ProxyType),
 		ProxyInfo:       proxyInfo,
-		// HasConstructorArgs will be set after constructor extraction
 	}
 
-	// Check 1: Block contracts with CREATE/CREATE2 (prevents nested deployments)
-	// Exception: Whitelisted factory contracts (e.g., CREATE3 factories) are allowed
-	// Note: Trusted factory deployment still requires admin claim (checked in access.go)
-	// The hasAdminClaim parameter is reserved for future use.
+	// Check 1: Detect trusted factory contracts with CREATE/CREATE2
 	_ = hasAdminClaim // Silence unused warning
 	if analysis.HasCreate || analysis.HasCreate2 {
-		// Check if this is a trusted factory contract
-		// Use the ORIGINAL bytecode (with CBOR) for hash checking since the
-		// trusted factory hash was computed from the original bytecode.
 		trustedFactory := create3.IsTrustedFactoryBytecode(bcOriginal.Raw)
 		if trustedFactory != nil {
-			// This is a whitelisted factory - allow it (admin check happens in access.go)
 			result.IsTrustedFactory = true
 			result.FactoryName = trustedFactory.Name
 			result.Allowed = true
 			return result, nil
 		}
-
-		// When runtime tracing is enabled, allow CREATE/CREATE2 — the trace validator
-		// will validate the actual execution and auto-register created addresses.
-		if v.runtimeTracingEnabled {
-			// Fall through to remaining checks (dynamic calls, etc.)
-		} else {
-			result.Allowed = false
-			result.Reason = "contract contains CREATE/CREATE2 opcodes (nested deployments not allowed)"
-			return result, nil
-		}
+		// Non-trusted CREATE/CREATE2 are allowed — runtime tracing validates at execution time.
 	}
 
-	// Check 2: Block contracts with dynamic call targets
-	// Exception 1: Proxy contracts are expected to have dynamic DELEGATECALL patterns
-	// Exception 2: When runtime tracing is enabled, dynamic calls are validated at execution time
-	if analysis.HasDynamicCall && !proxyInfo.IsProxy && !v.runtimeTracingEnabled {
-		result.Allowed = false
-		result.Reason = "contract contains dynamic external calls (address from storage/calldata)"
-		return result, nil
-	}
-
-	// Check 3: Verify all constant call targets are allowed
+	// Check 2: Verify all constant call targets are allowed
 	for _, target := range analysis.CallTargets {
 		if target.TargetType != bytecode.CallTargetConstant {
 			continue
@@ -339,13 +282,12 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 		}
 	}
 
-	// Check 4: Constructor argument validation
-	// When runtime tracing is enabled and no ABI is provided, skip constructor validation.
-	// Any addresses in constructor args will be validated at runtime when the contract makes calls.
-	if constructorABI == "" && v.runtimeTracingEnabled {
-		// Skip constructor validation - runtime tracing will catch any cross-org calls
+	// Check 3: Constructor argument validation
+	// When no ABI is provided, skip constructor validation — runtime tracing
+	// will catch any cross-org calls at execution time.
+	if constructorABI == "" {
 		result.ConstructorValidated = false
-		result.HasConstructorArgs = false // We don't know without ABI
+		result.HasConstructorArgs = false
 		result.Allowed = true
 		return result, nil
 	}
@@ -410,45 +352,4 @@ func (v *DeploymentValidator) isAddressAllowedForOrg(ctx context.Context, addr, 
 
 	// Address is neither owned nor preregistered - deny
 	return false, nil
-}
-
-// RegisterDeployedProxy registers a deployed proxy contract for upgrade interception.
-// This should be called by the caller (access controller or RPC handler) after the
-// deployment transaction succeeds, not during validation.
-//
-// Parameters:
-//   - orgID: The organization that owns the proxy
-//   - proxyAddress: The deployed proxy contract address (will be normalized to lowercase)
-//   - proxyInfo: The proxy detection info from validation (contains proxy type and slots)
-//   - initialImpl: The initial implementation address (if known, empty string if not detectable)
-func (v *DeploymentValidator) RegisterDeployedProxy(
-	ctx context.Context,
-	orgID string,
-	proxyAddress string,
-	proxyInfo *bytecode.ProxyInfo,
-	initialImpl string,
-) error {
-	if proxyInfo == nil || !proxyInfo.IsProxy {
-		return fmt.Errorf("cannot register non-proxy contract as managed proxy")
-	}
-
-	// Normalize addresses to lowercase with 0x prefix
-	normalizedProxyAddr := strings.ToLower(proxyAddress)
-	if !strings.HasPrefix(normalizedProxyAddr, "0x") {
-		normalizedProxyAddr = "0x" + normalizedProxyAddr
-	}
-
-	normalizedImpl := strings.ToLower(initialImpl)
-	if normalizedImpl != "" && !strings.HasPrefix(normalizedImpl, "0x") {
-		normalizedImpl = "0x" + normalizedImpl
-	}
-
-	proxy := &ManagedProxy{
-		OrgID:        orgID,
-		ProxyAddress: normalizedProxyAddr,
-		ProxyType:    string(proxyInfo.ProxyType),
-		CurrentImpl:  normalizedImpl,
-	}
-
-	return v.store.CreateManagedProxy(ctx, proxy)
 }

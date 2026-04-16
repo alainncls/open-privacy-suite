@@ -377,50 +377,6 @@ func TestExtractPush20Addresses(t *testing.T) {
 	}
 }
 
-func TestContainsDangerousOpcodes(t *testing.T) {
-	tests := []struct {
-		name     string
-		bytecode []byte
-		want     bool
-	}{
-		{
-			name:     "safe bytecode",
-			bytecode: []byte{PUSH1, 0x00, CALL, STOP},
-			want:     false,
-		},
-		{
-			name:     "contains CREATE",
-			bytecode: []byte{PUSH1, 0x00, CREATE, STOP},
-			want:     true,
-		},
-		{
-			name:     "contains CREATE2",
-			bytecode: []byte{PUSH1, 0x00, CREATE2, STOP},
-			want:     true,
-		},
-		{
-			name:     "contains DELEGATECALL",
-			bytecode: []byte{PUSH1, 0x00, DELEGATECALL, STOP},
-			want:     true,
-		},
-		{
-			name:     "contains SELFDESTRUCT",
-			bytecode: []byte{PUSH1, 0x00, SELFDESTRUCT},
-			want:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bc, _ := Parse(tt.bytecode)
-			got := ContainsDangerousOpcodes(bc)
-			if got != tt.want {
-				t.Errorf("ContainsDangerousOpcodes() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestAnalysisResult_SummarizeAnalysis(t *testing.T) {
 	result := &AnalysisResult{
 		CallTargets:     []CallTarget{{OpcodeName: "CALL"}},

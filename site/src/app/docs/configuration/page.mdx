@@ -69,11 +69,7 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
 
 ## Runtime Tracing
 
-<EnvTable vars={[
-  { name: "ENABLE_RUNTIME_TRACING", default: "true (docker)", description: "Enable runtime transaction tracing for cross-org isolation" },
-]} />
-
-When enabled, the proxy uses `debug_traceCall` to validate all addresses touched by transactions before forwarding them to the node. This provides comprehensive cross-organization isolation:
+The proxy uses `debug_traceCall` to validate all addresses touched by transactions before forwarding them to the node. This provides comprehensive cross-organization isolation:
 
 - **All internal CALL/DELEGATECALL/STATICCALL targets are validated** against RBAC permissions
 - **Custom Multicall contracts are detected** -- any contract batching calls will have all targets validated
@@ -231,9 +227,6 @@ PRIVADO_RPC_URL=https://rpc-mainnet.privado.id
 # ProofOfHumanity (optional)
 BILLIONS_ISSUER_DID=did:polygonid:polygon:main:billions-issuer-did
 REQUIRE_PROOF_OF_HUMANITY=true
-
-# Runtime Tracing (recommended for production)
-ENABLE_RUNTIME_TRACING=true
 
 # Admin API
 ADMIN_API_TOKEN=your-admin-token-here

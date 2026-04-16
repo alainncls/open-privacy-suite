@@ -23,9 +23,6 @@ import type {
   CreateContractGrantInput,
   UpdateContractGrantInput,
   MembershipWithDetails,
-  PreregisteredAddress,
-  PreregisterInput,
-  PreregisterResponse,
   ContractSyncCheckResponse,
   ContractSyncDeleteResponse,
   PaginatedResponse,
@@ -170,20 +167,6 @@ export const rbacApi = {
           access: GroupAccess | null;
         }>;
       }>(`/contracts/by-address/${address}`),
-  },
-
-  // Preregistered Addresses (CREATE3)
-  preregisteredAddresses: {
-    list: (orgId: string) =>
-      api.get<PreregisteredAddress[]>(`/orgs/${orgId}/addresses/preregistered`),
-    create: (orgId: string, input: PreregisterInput) =>
-      api.post<PreregisterResponse>(`/orgs/${orgId}/addresses/preregister`, input),
-    delete: (orgId: string, address: string) =>
-      api.delete(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}`),
-    updateABI: (orgId: string, address: string, constructorABI: string) =>
-      api.put(`/orgs/${orgId}/addresses/preregistered/${encodeURIComponent(address)}/abi`, {
-        constructor_abi: constructorABI,
-      }),
   },
 
   // Utilities

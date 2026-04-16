@@ -2,21 +2,6 @@ import { test, expect } from '@playwright/test';
 import { selectors, roles } from '../../helpers/ui/selectors';
 import { navigateToAdminAuthenticated, mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
 
-// Helper to check if runtime tracing is enabled (preregistered tab is hidden when enabled)
-async function isRuntimeTracingEnabled(request: import('@playwright/test').APIRequestContext): Promise<boolean> {
-  const ADMIN_URL = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
-  try {
-    const response = await request.get(`${ADMIN_URL}/api/v1/admin/status`);
-    if (response.ok()) {
-      const data = await response.json();
-      return data?.security?.runtime_tracing_enabled === true;
-    }
-  } catch {
-    // If we can't check, assume it's disabled
-  }
-  return false;
-}
-
 test.describe('Admin Navigation', () => {
   test.beforeEach(async ({ page }) => {
     // Authenticate before each test
@@ -100,7 +85,7 @@ test.describe('Admin Navigation', () => {
     await expect(page.getByRole('heading', { name: 'Node', exact: true })).toBeVisible();
   });
 
-  test('RBAC manager shows sub-tabs', async ({ page, request }) => {
+  test('RBAC manager shows sub-tabs', async ({ page }) => {
     await page.goto('/admin/rbac');
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
@@ -112,14 +97,6 @@ test.describe('Admin Navigation', () => {
     await expect(page.locator(selectors.rbac.tabGroups)).toBeVisible();
     await expect(page.locator(selectors.rbac.tabUsers)).toBeVisible();
     await expect(page.locator(selectors.rbac.tabContracts)).toBeVisible();
-
-    // Pre-registered tab is only visible when runtime tracing is disabled
-    const runtimeTracingEnabled = await isRuntimeTracingEnabled(request);
-    if (runtimeTracingEnabled) {
-      await expect(page.locator(selectors.rbac.tabPreregistered)).not.toBeVisible();
-    } else {
-      await expect(page.locator(selectors.rbac.tabPreregistered)).toBeVisible();
-    }
   });
 
   test('navigating between RBAC sub-tabs updates URL', async ({ page }) => {

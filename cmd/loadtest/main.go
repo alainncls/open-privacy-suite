@@ -6,7 +6,7 @@
 // to ensure cross-org isolation before forwarding to the node.
 //
 // Requirements:
-//   - Privacy proxy with ENABLE_RUNTIME_TRACING=true
+//   - Privacy proxy running (runtime tracing is always enabled)
 //   - Node with eth_sendRawTransaction and debug_traceCall support
 //
 // Usage:

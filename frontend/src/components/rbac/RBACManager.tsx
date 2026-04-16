@@ -21,13 +21,12 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
-  Hash,
   Scale,
 } from 'lucide-react';
 import { rbacApi } from '@/api/rbac';
 import type { Organization } from '@/types/rbac';
 
-type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'governance' | 'preregistered' | 'azure-tenants';
+type RBACTab = 'organizations' | 'groups' | 'users' | 'contracts' | 'governance' | 'azure-tenants';
 
 // Context for sharing organization selection across sub-tabs
 interface OrgContextType {
@@ -55,7 +54,6 @@ export default function RBACManager() {
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
-  const [runtimeTracingEnabled, setRuntimeTracingEnabled] = useState(true);
 
   // Feature Flags
   const isGovernanceUIEnabled = import.meta.env.VITE_FEATURE_GOVERNANCE_UI === 'true';
@@ -66,20 +64,12 @@ export default function RBACManager() {
     if (path.includes('/azure-tenants')) return 'azure-tenants';
     if (path.includes('/groups')) return 'groups';
     if (path.includes('/users')) return 'users';
-    if (path.includes('/preregistered')) return 'preregistered';
     if (path.includes('/contracts')) return 'contracts';
     if (path.includes('/governance')) return 'governance';
     return 'organizations';
   };
 
   const activeTab = getActiveTab();
-
-  // Redirect away from preregistered tab if runtime tracing is enabled
-  useEffect(() => {
-    if (runtimeTracingEnabled && activeTab === 'preregistered') {
-      navigate('/admin/rbac/contracts' + (selectedOrg ? `?org=${selectedOrg.id}` : ''));
-    }
-  }, [runtimeTracingEnabled, activeTab, navigate, selectedOrg]);
 
   const loadOrganizations = async () => {
     try {
@@ -119,16 +109,6 @@ export default function RBACManager() {
 
   useEffect(() => {
     loadOrganizations();
-    // Load runtime tracing status to determine if preregistration tab should be shown
-    const loadStatus = async () => {
-      try {
-        const response = await rbacApi.status.get();
-        setRuntimeTracingEnabled(response.data?.security?.runtime_tracing_enabled ?? false);
-      } catch {
-        // If we can't check, keep default (runtime tracing enabled, hide preregistration)
-      }
-    };
-    loadStatus();
   }, []);
 
   // Sync org from URL when search params change
@@ -158,7 +138,7 @@ export default function RBACManager() {
 
   const handleTabChange = (value: string) => {
     const tab = value as RBACTab;
-    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance', 'preregistered'];
+    const orgTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance'];
     const needsOrg = orgTabs.includes(tab);
 
     const path = `/admin/rbac/${tab === 'organizations' ? 'organizations' : tab}`;
@@ -170,10 +150,10 @@ export default function RBACManager() {
   };
 
   // Tabs that show org selector (users shows it but doesn't block without one)
-  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance', 'preregistered'];
+  const orgRequiredTabs: RBACTab[] = ['groups', 'users', 'contracts', 'governance'];
   const requiresOrg = orgRequiredTabs.includes(activeTab);
   // Tabs that are completely blocked without org selection
-  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'governance', 'preregistered'];
+  const orgBlockedTabs: RBACTab[] = ['groups', 'contracts', 'governance'];
   const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
   return (
@@ -347,13 +327,6 @@ export default function RBACManager() {
                 <TabsTrigger value="governance" className="gap-2" data-testid="tab-governance">
                   <Scale className="w-4 h-4" />
                   <span>Governance</span>
-                </TabsTrigger>
-              )}
-              {/* Pre-registered tab is hidden when runtime tracing is enabled */}
-              {!runtimeTracingEnabled && (
-                <TabsTrigger value="preregistered" className="gap-2" data-testid="tab-preregistered">
-                  <Hash className="w-4 h-4" />
-                  <span>Pre-registered</span>
                 </TabsTrigger>
               )}
               <TabsTrigger value="azure-tenants" className="gap-2" data-testid="tab-azure-tenants">

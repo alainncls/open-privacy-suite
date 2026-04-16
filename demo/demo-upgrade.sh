@@ -468,9 +468,8 @@ ROUTER_PROXY_CONSTRUCTOR=$(cast abi-encode "constructor(address,bytes)" "$ROUTER
 ROUTER_PROXY_INITCODE="${PROXY_BYTECODE}${ROUTER_PROXY_CONSTRUCTOR:2}"
 deploy_create3 "$ROUTER_PROXY_SALT" "$ROUTER_PROXY_INITCODE" "Router Proxy"
 
-# Note: With runtime tracing enabled (ENABLE_RUNTIME_TRACING=true in docker-compose.yml),
-# managed proxy registration is not required. Runtime tracing validates that upgrade
-# targets are org-owned at transaction time.
+# Note: Runtime tracing validates that upgrade targets are org-owned at transaction time.
+# Managed proxy registration is not required.
 
 # =============================================================================
 # Step 8: Interact with V1

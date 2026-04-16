@@ -37,7 +37,6 @@ type Config struct {
 	TrustedFactoryHashes       []string      // Additional CREATE3 factory bytecode hashes to whitelist (comma-separated in env)
 
 	// Runtime tracing configuration
-	EnableRuntimeTracing  bool          // If true, enable debug_traceCall validation (default: false)
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
 	TraceTimeout          time.Duration // Timeout for debug_traceCall requests (default: 30s)
 	TraceTieredValidation bool          // If true, skip trace for known org addresses (default: true)
@@ -164,7 +163,6 @@ func Load() *Config {
 	}
 
 	// Runtime tracing configuration
-	enableTracing := getEnv("ENABLE_RUNTIME_TRACING", "false") == "true"
 	traceCacheTTL := 10 * time.Second
 	if ttlStr := getEnv("TRACE_CACHE_TTL", ""); ttlStr != "" {
 		if d, err := time.ParseDuration(ttlStr); err == nil {
@@ -265,7 +263,6 @@ func Load() *Config {
 		AllowMockLogin:           allowMockLogin,
 		DemoAutoAuthDelay:        demoDelay,
 		TrustedFactoryHashes:     trustedFactoryHashes,
-		EnableRuntimeTracing:     enableTracing,
 		TraceCacheTTL:            traceCacheTTL,
 		TraceTimeout:             traceTimeout,
 		TraceTieredValidation:    traceTiered,

@@ -67,7 +67,7 @@ func registerStatus(s *mcp.Server, client *httpClient) {
 		}
 
 		if sec := getMap(m, "security"); sec != nil {
-			lines += kvf("Runtime Tracing", boolYesNo(getBool(sec, "runtime_tracing_enabled")))
+			lines += kvf("Travel Rule", boolYesNo(getBool(sec, "travel_rule_enabled")))
 		}
 
 		return textResult(lines)

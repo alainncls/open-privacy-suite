@@ -62,7 +62,6 @@ type deployValidatorTestStore struct {
 	orgOwnedAddresses      map[string]map[string]bool // orgID -> address -> owned
 	anyOrgRegistrations    map[string]bool            // address -> registered to any org
 	preregisteredAddresses map[string]map[string]bool // orgID -> address -> preregistered
-	managedProxies         []*ManagedProxy            // Registered managed proxies
 }
 
 func newDeployValidatorTestStore() *deployValidatorTestStore {
@@ -71,7 +70,6 @@ func newDeployValidatorTestStore() *deployValidatorTestStore {
 		orgOwnedAddresses:      make(map[string]map[string]bool),
 		anyOrgRegistrations:    make(map[string]bool),
 		preregisteredAddresses: make(map[string]map[string]bool),
-		managedProxies:         make([]*ManagedProxy, 0),
 	}
 }
 
@@ -140,24 +138,6 @@ func (s *deployValidatorTestStore) IsAddressPreregistered(ctx context.Context, o
 	return false, nil
 }
 
-func (s *deployValidatorTestStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
-	s.managedProxies = append(s.managedProxies, proxy)
-	return nil
-}
-
-func (s *deployValidatorTestStore) getManagedProxies() []*ManagedProxy {
-	return s.managedProxies
-}
-
-// Constructor ABI stubs (use parent MockStore implementation)
-func (s *deployValidatorTestStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
-	return "", nil
-}
-
-func (s *deployValidatorTestStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
-	return nil
-}
-
 func (s *deployValidatorTestStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
 	return nil
 }
@@ -202,14 +182,12 @@ func TestDeploymentValidator_CreateOpcode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied due to CREATE opcode")
+	// CREATE is allowed — runtime tracing validates at execution time
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if !result.HasCreate {
 		t.Error("expected HasCreate to be true")
-	}
-	if !strings.Contains(result.Reason, "CREATE") {
-		t.Errorf("expected reason to mention CREATE, got: %s", result.Reason)
 	}
 }
 
@@ -222,14 +200,12 @@ func TestDeploymentValidator_Create2Opcode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied due to CREATE2 opcode")
+	// CREATE2 is allowed — runtime tracing validates at execution time
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if !result.HasCreate2 {
 		t.Error("expected HasCreate2 to be true")
-	}
-	if !strings.Contains(result.Reason, "CREATE2") {
-		t.Errorf("expected reason to mention CREATE2, got: %s", result.Reason)
 	}
 }
 
@@ -242,33 +218,9 @@ func TestDeploymentValidator_DynamicCall(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied due to dynamic call")
-	}
-	if !result.HasDynamicCalls {
-		t.Error("expected HasDynamicCalls to be true")
-	}
-	if !strings.Contains(result.Reason, "dynamic") {
-		t.Errorf("expected reason to mention dynamic, got: %s", result.Reason)
-	}
-}
-
-func TestDeploymentValidator_DynamicCallWithRuntimeTracing(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	// Enable runtime tracing - this should allow dynamic calls
-	validator.SetRuntimeTracingEnabled(true)
-
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithDynamicCall, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// With runtime tracing enabled, dynamic calls should be ALLOWED
-	// because they will be validated at execution time via debug_traceCall
+	// Dynamic calls are allowed — runtime tracing validates at execution time
 	if !result.Allowed {
-		t.Errorf("expected deployment to be ALLOWED when runtime tracing is enabled, got denied: %s", result.Reason)
+		t.Errorf("expected deployment to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if !result.HasDynamicCalls {
 		t.Error("expected HasDynamicCalls to be true")
@@ -661,7 +613,8 @@ func TestDeploymentValidator_ProxyDetection_TransparentProxy(t *testing.T) {
 	}
 }
 
-// TestDeploymentValidator_NonProxyWithDynamicCall tests that non-proxy contracts with dynamic calls are blocked.
+// TestDeploymentValidator_NonProxyWithDynamicCall tests that non-proxy contracts with dynamic calls
+// are allowed (runtime tracing validates at execution time).
 func TestDeploymentValidator_NonProxyWithDynamicCall(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
@@ -672,14 +625,15 @@ func TestDeploymentValidator_NonProxyWithDynamicCall(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected non-proxy with dynamic call to be denied")
+	// Dynamic calls are allowed — runtime tracing validates at execution time
+	if !result.Allowed {
+		t.Errorf("expected non-proxy with dynamic call to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if result.IsProxy {
 		t.Error("expected IsProxy to be false for non-proxy contract")
 	}
-	if !strings.Contains(result.Reason, "dynamic") {
-		t.Errorf("expected reason to mention dynamic, got: %s", result.Reason)
+	if !result.HasDynamicCalls {
+		t.Error("expected HasDynamicCalls to be true")
 	}
 }
 
@@ -709,161 +663,19 @@ func TestDeploymentValidator_ProxyResultFieldsPopulated(t *testing.T) {
 	}
 }
 
-// TestDeploymentValidator_RegisterDeployedProxy tests the RegisterDeployedProxy method.
-func TestDeploymentValidator_RegisterDeployedProxy(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	// First, validate a proxy deployment to get ProxyInfo
-	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !result.IsProxy || result.ProxyInfo == nil {
-		t.Fatal("expected proxy to be detected")
-	}
-
-	// Now register the deployed proxy
-	proxyAddress := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	initialImpl := "0x1111111111111111111111111111111111111111"
-
-	err = validator.RegisterDeployedProxy(context.Background(), "org1", proxyAddress, result.ProxyInfo, initialImpl)
-	if err != nil {
-		t.Fatalf("RegisterDeployedProxy error: %v", err)
-	}
-
-	// Verify the proxy was registered
-	proxies := store.getManagedProxies()
-	if len(proxies) != 1 {
-		t.Fatalf("expected 1 managed proxy, got %d", len(proxies))
-	}
-
-	proxy := proxies[0]
-	if proxy.OrgID != "org1" {
-		t.Errorf("expected OrgID org1, got %s", proxy.OrgID)
-	}
-	if proxy.ProxyAddress != "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
-		t.Errorf("expected proxy address to be normalized, got %s", proxy.ProxyAddress)
-	}
-	if proxy.ProxyType != "ERC1967" {
-		t.Errorf("expected ProxyType ERC1967, got %s", proxy.ProxyType)
-	}
-	if proxy.CurrentImpl != "0x1111111111111111111111111111111111111111" {
-		t.Errorf("expected CurrentImpl to be normalized, got %s", proxy.CurrentImpl)
-	}
-}
-
-// TestDeploymentValidator_RegisterDeployedProxy_NormalizesAddresses tests address normalization.
-func TestDeploymentValidator_RegisterDeployedProxy_NormalizesAddresses(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Use uppercase address without 0x prefix
-	proxyAddress := "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"
-	initialImpl := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-
-	err = validator.RegisterDeployedProxy(context.Background(), "org1", proxyAddress, result.ProxyInfo, initialImpl)
-	if err != nil {
-		t.Fatalf("RegisterDeployedProxy error: %v", err)
-	}
-
-	proxies := store.getManagedProxies()
-	if len(proxies) != 1 {
-		t.Fatalf("expected 1 managed proxy, got %d", len(proxies))
-	}
-
-	proxy := proxies[0]
-	// Should be normalized to lowercase with 0x prefix
-	if proxy.ProxyAddress != "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
-		t.Errorf("expected lowercase with 0x prefix, got %s", proxy.ProxyAddress)
-	}
-	if proxy.CurrentImpl != "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Errorf("expected lowercase with 0x prefix, got %s", proxy.CurrentImpl)
-	}
-}
-
-// TestDeploymentValidator_RegisterDeployedProxy_EmptyImpl tests registration with empty implementation.
-func TestDeploymentValidator_RegisterDeployedProxy_EmptyImpl(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	bytecodeHex := buildERC1967ProxyBytecode()
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeHex, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	proxyAddress := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-
-	// Register with empty implementation (implementation not known at deploy time)
-	err = validator.RegisterDeployedProxy(context.Background(), "org1", proxyAddress, result.ProxyInfo, "")
-	if err != nil {
-		t.Fatalf("RegisterDeployedProxy error: %v", err)
-	}
-
-	proxies := store.getManagedProxies()
-	if len(proxies) != 1 {
-		t.Fatalf("expected 1 managed proxy, got %d", len(proxies))
-	}
-
-	if proxies[0].CurrentImpl != "" {
-		t.Errorf("expected empty CurrentImpl, got %s", proxies[0].CurrentImpl)
-	}
-}
-
-// TestDeploymentValidator_RegisterDeployedProxy_RejectsNonProxy tests that non-proxy contracts cannot be registered.
-func TestDeploymentValidator_RegisterDeployedProxy_RejectsNonProxy(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	// Get ProxyInfo for a non-proxy contract
-	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeNoExternalCalls, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Try to register a non-proxy - should fail
-	err = validator.RegisterDeployedProxy(context.Background(), "org1", "0xdeadbeef", result.ProxyInfo, "")
-	if err == nil {
-		t.Error("expected error when registering non-proxy contract")
-	}
-	if !strings.Contains(err.Error(), "non-proxy") {
-		t.Errorf("expected error to mention non-proxy, got: %v", err)
-	}
-}
-
-// TestDeploymentValidator_RegisterDeployedProxy_RejectsNilProxyInfo tests that nil ProxyInfo is rejected.
-func TestDeploymentValidator_RegisterDeployedProxy_RejectsNilProxyInfo(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	err := validator.RegisterDeployedProxy(context.Background(), "org1", "0xdeadbeef", nil, "")
-	if err == nil {
-		t.Error("expected error when registering with nil ProxyInfo")
-	}
-}
-
 // TestDeploymentValidator_TrustedFactoryWhitelist tests that whitelisted factory contracts
 // with CREATE/CREATE2 opcodes are allowed to be deployed.
 func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	// First, verify that a contract with CREATE is normally blocked
+	// Non-trusted CREATE is allowed (runtime tracing validates), but IsTrustedFactory should be false
 	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Allowed {
-		t.Error("expected CREATE contract to be blocked when not whitelisted")
+	if !result.Allowed {
+		t.Errorf("expected CREATE contract to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if !result.HasCreate {
 		t.Error("expected HasCreate to be true")
@@ -1175,12 +987,13 @@ func TestValidateDeploymentWithABI_DynamicTypeRejected(t *testing.T) {
 	}
 }
 
-// TestValidateDeploymentWithABI_NoABIProvided tests that deployment is rejected when no ABI is provided.
+// TestValidateDeploymentWithABI_NoABIProvided tests that deployment is allowed when no ABI is provided
+// (runtime tracing validates constructor args at execution time).
 func TestValidateDeploymentWithABI_NoABIProvided(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	// No ABI provided
+	// No ABI provided — allowed, runtime tracing catches cross-org calls
 	bytecodeHex := "0x" + encodeHex(simpleInitCode)
 
 	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
@@ -1188,11 +1001,11 @@ func TestValidateDeploymentWithABI_NoABIProvided(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied when no ABI provided")
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed when no ABI provided (runtime tracing), got reason: %s", result.Reason)
 	}
-	if !strings.Contains(result.Reason, "ABI is required") {
-		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
+	if result.ConstructorValidated {
+		t.Error("expected ConstructorValidated to be false when ABI is skipped")
 	}
 }
 
@@ -1229,24 +1042,21 @@ func TestValidateDeploymentWithABI_StillValidatesOtherRules(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should still be denied for CREATE opcode
-	if result.Allowed {
-		t.Error("expected CREATE to still be blocked")
+	// CREATE is allowed (runtime tracing validates), but HasCreate should still be flagged
+	if !result.Allowed {
+		t.Errorf("expected CREATE to be allowed (runtime tracing), got denied: %s", result.Reason)
 	}
 	if !result.HasCreate {
 		t.Error("expected HasCreate to be true")
 	}
 }
 
-// TestValidateDeploymentWithABI_NoABIWithRuntimeTracing tests that ABI is optional when runtime tracing is enabled.
-func TestValidateDeploymentWithABI_NoABIWithRuntimeTracing(t *testing.T) {
+// TestValidateDeploymentWithABI_NoABI tests that ABI is optional (runtime tracing validates at execution time).
+func TestValidateDeploymentWithABI_NoABI(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	// Enable runtime tracing
-	validator.SetRuntimeTracingEnabled(true)
-
-	// No ABI provided - should be allowed when runtime tracing is enabled
+	// No ABI provided - should be allowed (runtime tracing catches cross-org calls)
 	bytecodeHex := "0x" + encodeHex(simpleInitCode)
 
 	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
@@ -1254,35 +1064,11 @@ func TestValidateDeploymentWithABI_NoABIWithRuntimeTracing(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should be allowed - runtime tracing will catch any cross-org calls at execution time
 	if !result.Allowed {
-		t.Errorf("expected deployment to be allowed when runtime tracing is enabled, got reason: %s", result.Reason)
+		t.Errorf("expected deployment to be allowed when no ABI provided (runtime tracing), got reason: %s", result.Reason)
 	}
 	if result.ConstructorValidated {
 		t.Error("expected ConstructorValidated to be false when ABI is skipped")
-	}
-}
-
-// TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing tests that ABI is required when runtime tracing is disabled.
-func TestValidateDeploymentWithABI_NoABIWithoutRuntimeTracing(t *testing.T) {
-	store := newDeployValidatorTestStore()
-	validator := NewDeploymentValidator(store)
-
-	// Runtime tracing is disabled by default
-	// No ABI provided - should be denied
-	bytecodeHex := "0x" + encodeHex(simpleInitCode)
-
-	result, err := validator.ValidateDeploymentWithABI(context.Background(), "org1", bytecodeHex, "", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should be denied - ABI is required without runtime tracing
-	if result.Allowed {
-		t.Error("expected deployment to be denied when ABI is required but not provided")
-	}
-	if !strings.Contains(result.Reason, "ABI is required") {
-		t.Errorf("expected reason to mention ABI requirement, got: %s", result.Reason)
 	}
 }
 
@@ -1372,9 +1158,9 @@ func TestValidateDeployment_SingleSTOP(t *testing.T) {
 	}
 }
 
-// TestValidateDeployment_SingleCREATE_Blocked verifies that a bare CREATE opcode
-// is correctly detected and blocked.
-func TestValidateDeployment_SingleCREATE_Blocked(t *testing.T) {
+// TestValidateDeployment_SingleCREATE_Allowed verifies that a bare CREATE opcode
+// is detected but allowed (runtime tracing validates at execution time).
+func TestValidateDeployment_SingleCREATE_Allowed(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
@@ -1386,17 +1172,17 @@ func TestValidateDeployment_SingleCREATE_Blocked(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied for bare CREATE opcode")
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed (runtime tracing validates), got: %s", result.Reason)
 	}
 	if !result.HasCreate {
 		t.Error("expected HasCreate to be true")
 	}
 }
 
-// TestValidateDeployment_SingleCREATE2_Blocked verifies that a bare CREATE2 opcode
-// is correctly detected and blocked.
-func TestValidateDeployment_SingleCREATE2_Blocked(t *testing.T) {
+// TestValidateDeployment_SingleCREATE2_Allowed verifies that a bare CREATE2 opcode
+// is detected but allowed (runtime tracing validates at execution time).
+func TestValidateDeployment_SingleCREATE2_Allowed(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
@@ -1408,8 +1194,8 @@ func TestValidateDeployment_SingleCREATE2_Blocked(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Allowed {
-		t.Error("expected deployment to be denied for bare CREATE2 opcode")
+	if !result.Allowed {
+		t.Errorf("expected deployment to be allowed (runtime tracing validates), got: %s", result.Reason)
 	}
 	if !result.HasCreate2 {
 		t.Error("expected HasCreate2 to be true")

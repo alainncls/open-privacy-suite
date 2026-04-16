@@ -319,18 +319,6 @@ func (m *MockStore) ListAuditLogsByActor(ctx context.Context, actorID string, li
 }
 
 // Preregistered address stubs
-func (m *MockStore) CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error {
-	return nil
-}
-func (m *MockStore) ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error) {
-	return nil, nil
-}
-func (m *MockStore) GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error) {
-	return nil, nil
-}
-func (m *MockStore) DeletePreregisteredAddress(ctx context.Context, orgID, address string) error {
-	return nil
-}
 func (m *MockStore) PreRegisterPlainCreate(ctx context.Context, orgID, address, note string) error {
 	return nil
 }
@@ -342,28 +330,6 @@ func (m *MockStore) IsAddressPreregistered(ctx context.Context, orgID, address s
 }
 func (m *MockStore) MarkAddressUsed(ctx context.Context, address string) error {
 	return nil
-}
-
-// Constructor ABI stubs
-func (m *MockStore) GetConstructorABI(ctx context.Context, orgID, address string) (string, error) {
-	return "", nil
-}
-func (m *MockStore) UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error {
-	return nil
-}
-
-// Managed proxy stubs
-func (m *MockStore) CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error {
-	return nil
-}
-func (m *MockStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
-	return nil, nil
-}
-func (m *MockStore) UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error {
-	return nil
-}
-func (m *MockStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
-	return false, nil
 }
 
 // Shared infrastructure stubs

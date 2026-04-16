@@ -117,11 +117,7 @@ type Store interface {
 	ListAuditLogs(ctx context.Context, resourceType string, resourceID *string, limit, offset int) ([]*AuditLogEntry, error)
 	ListAuditLogsByActor(ctx context.Context, actorID string, limit, offset int) ([]*AuditLogEntry, error)
 
-	// Preregistered Address operations (for CREATE3 deployments)
-	CreatePreregisteredAddresses(ctx context.Context, addresses []*PreregisteredAddress) error
-	ListPreregisteredAddresses(ctx context.Context, orgID string) ([]*PreregisteredAddress, error)
-	GetPreregisteredAddressByAddress(ctx context.Context, orgID, address string) (*PreregisteredAddress, error)
-	DeletePreregisteredAddress(ctx context.Context, orgID, address string) error
+	// Preregistered Address operations (used by plain CREATE pre-reg flow)
 	IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error)
 	MarkAddressUsed(ctx context.Context, address string) error
 	// PreRegisterPlainCreate inserts a temporary preregistered_addresses row for a plain
@@ -132,15 +128,6 @@ type Store interface {
 	// (without org filter, since addresses are unique). Used to clean up plain CREATE
 	// pre-registrations when the tx is rejected or reverts.
 	DeletePreregisteredAddressByAddress(ctx context.Context, address string) error
-	// Constructor ABI operations (for immutable address validation)
-	GetConstructorABI(ctx context.Context, orgID, address string) (string, error)
-	UpdateConstructorABI(ctx context.Context, orgID, address, abi string) error
-
-	// Managed Proxy operations (for upgrade validation)
-	CreateManagedProxy(ctx context.Context, proxy *ManagedProxy) error
-	GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error)
-	UpdateManagedProxyImpl(ctx context.Context, address, newImpl string) error
-	IsManagedProxy(ctx context.Context, address string) (bool, error)
 
 	// Shared infrastructure operations (for runtime tracing)
 	// These contracts are globally accessible (e.g., Uniswap router) and do not require org ownership.

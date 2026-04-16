@@ -185,7 +185,7 @@ func TestFactoryCallValidator_DeployToNonPreregisteredAddress(t *testing.T) {
 	creationCode, _ := hex.DecodeString("600000")
 	calldata := buildDeployCalldata(salt, creationCode)
 
-	t.Run("deploy to non-preregistered address fails", func(t *testing.T) {
+	t.Run("deploy to non-preregistered address allowed (runtime tracing validates)", func(t *testing.T) {
 		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -197,11 +197,8 @@ func TestFactoryCallValidator_DeployToNonPreregisteredAddress(t *testing.T) {
 		if !result.IsDeployCall {
 			t.Error("expected IsDeployCall to be true")
 		}
-		if result.Allowed {
-			t.Error("expected deployment to non-preregistered address to be denied")
-		}
-		if !strings.Contains(result.Reason, "not preregistered") {
-			t.Errorf("expected reason to mention 'not preregistered', got: %s", result.Reason)
+		if !result.Allowed {
+			t.Errorf("expected deployment to be allowed (runtime tracing validates at execution time), got: %s", result.Reason)
 		}
 	})
 }
@@ -352,17 +349,14 @@ func TestFactoryCallValidator_DeployWithCreateOpcodes(t *testing.T) {
 
 	calldata := buildDeployCalldata(salt, creationCode)
 
-	t.Run("deploy bytecode with CREATE opcode fails (non-trusted factory)", func(t *testing.T) {
+	t.Run("deploy bytecode with CREATE opcode allowed (runtime tracing validates)", func(t *testing.T) {
 		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if result.Allowed {
-			t.Error("expected deployment with CREATE opcode to be denied (not a trusted factory)")
-		}
-		if !strings.Contains(result.Reason, "CREATE") {
-			t.Errorf("expected reason to mention CREATE, got: %s", result.Reason)
+		if !result.Allowed {
+			t.Errorf("expected deployment with CREATE opcode to be allowed (runtime tracing validates), got: %s", result.Reason)
 		}
 	})
 }
@@ -387,28 +381,14 @@ func TestFactoryCallValidator_CrossOrgPreregisteredAddress(t *testing.T) {
 	creationCode, _ := hex.DecodeString("600000")
 	calldata := buildDeployCalldata(salt, creationCode)
 
-	t.Run("deploy to address preregistered for different org fails", func(t *testing.T) {
+	t.Run("deploy allowed for any org (runtime tracing validates at execution time)", func(t *testing.T) {
 		result, err := validator.ValidateFactoryCall(ctx(), org1ID, factoryAddress, factoryAddress, calldata)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if result.Allowed {
-			t.Error("expected deployment to address preregistered for different org to be denied")
-		}
-		if !strings.Contains(result.Reason, "not preregistered") {
-			t.Errorf("expected reason to mention 'not preregistered', got: %s", result.Reason)
-		}
-	})
-
-	t.Run("same address deployment allowed for correct org", func(t *testing.T) {
-		result, err := validator.ValidateFactoryCall(ctx(), org2ID, factoryAddress, factoryAddress, calldata)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
 		if !result.Allowed {
-			t.Errorf("expected deployment to be allowed for org that preregistered the address, got: %s", result.Reason)
+			t.Errorf("expected deployment to be allowed (runtime tracing validates at execution time), got: %s", result.Reason)
 		}
 	})
 }
@@ -635,31 +615,8 @@ func TestFactoryCallValidator_RuntimeTracingAllowsDynamicCalls(t *testing.T) {
 	// PUSH1 0x00 SLOAD ... CALL STOP - the SLOAD makes the call target dynamic
 	bytecodeWithDynamicCall, _ := hex.DecodeString("600054600060006000600060006000f100")
 
-	t.Run("without runtime tracing - dynamic calls are blocked", func(t *testing.T) {
+	t.Run("dynamic calls are allowed (validated at runtime)", func(t *testing.T) {
 		deployValidator := NewDeploymentValidator(store)
-		// Runtime tracing NOT enabled (default)
-
-		validator := NewFactoryCallValidator(store, deployValidator)
-		calldata := buildDeployCalldata(salt, bytecodeWithDynamicCall)
-
-		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddr, factoryAddr, calldata)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.Allowed {
-			t.Error("expected dynamic call to be BLOCKED without runtime tracing")
-		}
-		if !strings.Contains(result.Reason, "dynamic") {
-			t.Errorf("expected reason to mention dynamic calls, got: %s", result.Reason)
-		}
-	})
-
-	t.Run("with runtime tracing - dynamic calls are allowed", func(t *testing.T) {
-		deployValidator := NewDeploymentValidator(store)
-		// Enable runtime tracing
-		deployValidator.SetRuntimeTracingEnabled(true)
-
 		validator := NewFactoryCallValidator(store, deployValidator)
 		calldata := buildDeployCalldata(salt, bytecodeWithDynamicCall)
 
@@ -674,9 +631,8 @@ func TestFactoryCallValidator_RuntimeTracingAllowsDynamicCalls(t *testing.T) {
 	})
 }
 
-func TestFactoryCallValidator_RuntimeTracingSkipsPreregistration(t *testing.T) {
-	// This tests the bug where FactoryCallValidator.runtimeTracingEnabled was missing,
-	// so preregistration was always enforced even when runtime tracing was on.
+func TestFactoryCallValidator_NoPreregistrationRequired(t *testing.T) {
+	// Preregistration is no longer required — runtime tracing validates at execution time.
 	store := newFactoryCallTestStore()
 	factoryAddress := "0x1234567890123456789012345678901234567890"
 	orgID := "org1"
@@ -689,41 +645,19 @@ func TestFactoryCallValidator_RuntimeTracingSkipsPreregistration(t *testing.T) {
 	creationCode, _ := hex.DecodeString("600000") // PUSH1 0x00, STOP
 	calldata := buildDeployCalldata(salt, creationCode)
 
-	t.Run("without runtime tracing", func(t *testing.T) {
-		deployValidator := NewDeploymentValidator(store)
-		validator := NewFactoryCallValidator(store, deployValidator)
+	deployValidator := NewDeploymentValidator(store)
+	validator := NewFactoryCallValidator(store, deployValidator)
 
-		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !result.IsDeployCall {
-			t.Error("expected IsDeployCall to be true")
-		}
-		if result.Allowed {
-			t.Error("expected deploy to be DENIED without runtime tracing and no preregistered address")
-		}
-		if !strings.Contains(result.Reason, "not preregistered") {
-			t.Errorf("expected reason to mention 'not preregistered', got: %s", result.Reason)
-		}
-	})
-
-	t.Run("with runtime tracing", func(t *testing.T) {
-		deployValidator := NewDeploymentValidator(store)
-		validator := NewFactoryCallValidator(store, deployValidator)
-		validator.SetRuntimeTracingEnabled(true)
-
-		result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !result.IsDeployCall {
-			t.Error("expected IsDeployCall to be true")
-		}
-		if !result.Allowed {
-			t.Errorf("expected deploy to be ALLOWED with runtime tracing (preregistration skipped), got: %s", result.Reason)
-		}
-	})
+	result, err := validator.ValidateFactoryCall(ctx(), orgID, factoryAddress, factoryAddress, calldata)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsDeployCall {
+		t.Error("expected IsDeployCall to be true")
+	}
+	if !result.Allowed {
+		t.Errorf("expected deploy to be ALLOWED (runtime tracing validates at execution time), got: %s", result.Reason)
+	}
 }
 
 func TestValidateFactoryCallOrgs_ReturnsCorrectOrgID(t *testing.T) {
@@ -763,7 +697,7 @@ func TestValidateFactoryCallOrgs_ReturnsCorrectOrgID(t *testing.T) {
 	// Create FactoryCallValidator with runtime tracing enabled so preregistration is skipped
 	deployValidator := NewDeploymentValidator(store)
 	validator := NewFactoryCallValidator(store, deployValidator)
-	validator.SetRuntimeTracingEnabled(true)
+
 
 	// Construct OrgContext directly (same package) with user in both orgs
 	oc := &OrgContext{

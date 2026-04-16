@@ -10,27 +10,14 @@ import (
 // MockUpgradeStore implements the Store interface for upgrade validator tests
 type MockUpgradeStore struct {
 	MockStore
-	managedProxies map[string]*ManagedProxy
 	ownedAddresses map[string]map[string]bool // orgID -> address -> owned
 }
 
 func NewMockUpgradeStore() *MockUpgradeStore {
 	return &MockUpgradeStore{
 		MockStore:      *NewMockStore(),
-		managedProxies: make(map[string]*ManagedProxy),
 		ownedAddresses: make(map[string]map[string]bool),
 	}
-}
-
-func (m *MockUpgradeStore) IsManagedProxy(ctx context.Context, address string) (bool, error) {
-	addr := strings.ToLower(address)
-	_, ok := m.managedProxies[addr]
-	return ok, nil
-}
-
-func (m *MockUpgradeStore) GetManagedProxy(ctx context.Context, address string) (*ManagedProxy, error) {
-	addr := strings.ToLower(address)
-	return m.managedProxies[addr], nil
 }
 
 func (m *MockUpgradeStore) IsAddressOwnedByOrg(ctx context.Context, address string, orgID string) (bool, error) {
@@ -49,16 +36,6 @@ func (m *MockUpgradeStore) GetContractOwnerOrgID(ctx context.Context, address st
 		}
 	}
 	return "", nil
-}
-
-func (m *MockUpgradeStore) AddManagedProxy(address, orgID, proxyType string) {
-	addr := strings.ToLower(address)
-	m.managedProxies[addr] = &ManagedProxy{
-		ID:           "test-id",
-		OrgID:        orgID,
-		ProxyAddress: addr,
-		ProxyType:    proxyType,
-	}
 }
 
 func (m *MockUpgradeStore) AddOwnedAddress(orgID, address string) {
@@ -126,63 +103,40 @@ func TestValidateUpgrade(t *testing.T) {
 	ctx := context.Background()
 
 	// Build test calldata for upgradeTo(0x1234567890123456789012345678901234567890)
-	// Selector: 0x3659cfe6
-	// Argument: address (32 bytes, zero-padded)
 	newImplAddr := "0x1234567890123456789012345678901234567890"
 	upgradeToCalldata := buildUpgradeToCalldata(newImplAddr)
 
 	tests := []struct {
-		name           string
-		setupStore     func(*MockUpgradeStore)
-		proxyAddress   string
-		calldata       []byte
-		orgID          string
-		expectAllowed  bool
+		name            string
+		setupStore      func(*MockUpgradeStore)
+		proxyAddress    string
+		calldata        []byte
+		orgID           string
+		expectAllowed   bool
 		expectIsUpgrade bool
-		expectIsManaged bool
-		expectReason   string
+		expectReason    string
 	}{
 		{
-			name: "Non-upgrade call passes through",
-			setupStore: func(s *MockUpgradeStore) {
-				s.AddManagedProxy("0xproxy", "org1", "transparent")
-			},
+			name:            "Non-upgrade call passes through",
+			setupStore:      func(s *MockUpgradeStore) {},
 			proxyAddress:    "0xproxy",
 			calldata:        []byte{0xab, 0xcd, 0xef, 0x12, 0x00, 0x00}, // Random selector
 			orgID:           "org1",
 			expectAllowed:   true,
 			expectIsUpgrade: false,
-			expectIsManaged: false,
 		},
 		{
-			name: "Short calldata passes through",
-			setupStore: func(s *MockUpgradeStore) {
-				s.AddManagedProxy("0xproxy", "org1", "transparent")
-			},
+			name:            "Short calldata passes through",
+			setupStore:      func(s *MockUpgradeStore) {},
 			proxyAddress:    "0xproxy",
 			calldata:        []byte{0x36, 0x59}, // Too short
 			orgID:           "org1",
 			expectAllowed:   true,
 			expectIsUpgrade: false,
-			expectIsManaged: false,
-		},
-		{
-			name: "Upgrade to unmanaged proxy denied",
-			setupStore: func(s *MockUpgradeStore) {
-				// No managed proxy registered
-			},
-			proxyAddress:    "0xproxy",
-			calldata:        upgradeToCalldata,
-			orgID:           "org1",
-			expectAllowed:   false,
-			expectIsUpgrade: true,
-			expectIsManaged: false,
-			expectReason:    "proxy is not registered as a managed proxy",
 		},
 		{
 			name: "Upgrade with unowned implementation denied",
 			setupStore: func(s *MockUpgradeStore) {
-				s.AddManagedProxy("0xproxy", "org1", "transparent")
 				// New implementation is NOT owned by org
 			},
 			proxyAddress:    "0xproxy",
@@ -190,13 +144,11 @@ func TestValidateUpgrade(t *testing.T) {
 			orgID:           "org1",
 			expectAllowed:   false,
 			expectIsUpgrade: true,
-			expectIsManaged: true,
 			expectReason:    "not owned by the organization",
 		},
 		{
 			name: "Valid upgrade allowed",
 			setupStore: func(s *MockUpgradeStore) {
-				s.AddManagedProxy("0xproxy", "org1", "transparent")
 				s.AddOwnedAddress("org1", newImplAddr)
 			},
 			proxyAddress:    "0xproxy",
@@ -204,7 +156,6 @@ func TestValidateUpgrade(t *testing.T) {
 			orgID:           "org1",
 			expectAllowed:   true,
 			expectIsUpgrade: true,
-			expectIsManaged: true,
 		},
 	}
 
@@ -223,90 +174,6 @@ func TestValidateUpgrade(t *testing.T) {
 				t.Errorf("IsUpgradeCall = %v, want %v", result.IsUpgradeCall, tt.expectIsUpgrade)
 			}
 
-			if result.IsManagedProxy != tt.expectIsManaged {
-				t.Errorf("IsManagedProxy = %v, want %v", result.IsManagedProxy, tt.expectIsManaged)
-			}
-
-			if result.Allowed != tt.expectAllowed {
-				t.Errorf("Allowed = %v, want %v (reason: %s)", result.Allowed, tt.expectAllowed, result.Reason)
-			}
-
-			if tt.expectReason != "" && !strings.Contains(result.Reason, tt.expectReason) {
-				t.Errorf("Reason = %q, want to contain %q", result.Reason, tt.expectReason)
-			}
-		})
-	}
-}
-
-func TestValidateUpgradeWithRuntimeTracing(t *testing.T) {
-	ctx := context.Background()
-
-	// Build test calldata for upgradeTo(0x1234567890123456789012345678901234567890)
-	newImplAddr := "0x1234567890123456789012345678901234567890"
-	upgradeToCalldata := buildUpgradeToCalldata(newImplAddr)
-
-	tests := []struct {
-		name                  string
-		setupStore            func(*MockUpgradeStore)
-		runtimeTracingEnabled bool
-		proxyAddress          string
-		calldata              []byte
-		orgID                 string
-		expectAllowed         bool
-		expectReason          string
-	}{
-		{
-			name: "Without runtime tracing - unmanaged proxy is denied",
-			setupStore: func(s *MockUpgradeStore) {
-				// No managed proxy registered, but impl is owned
-				s.AddOwnedAddress("org1", newImplAddr)
-			},
-			runtimeTracingEnabled: false,
-			proxyAddress:          "0xproxy",
-			calldata:              upgradeToCalldata,
-			orgID:                 "org1",
-			expectAllowed:         false,
-			expectReason:          "proxy is not registered as a managed proxy",
-		},
-		{
-			name: "With runtime tracing - unmanaged proxy is allowed (tracing validates targets)",
-			setupStore: func(s *MockUpgradeStore) {
-				// No managed proxy registered, but impl is owned
-				s.AddOwnedAddress("org1", newImplAddr)
-			},
-			runtimeTracingEnabled: true,
-			proxyAddress:          "0xproxy",
-			calldata:              upgradeToCalldata,
-			orgID:                 "org1",
-			expectAllowed:         true,
-		},
-		{
-			name: "With runtime tracing - still validates impl ownership",
-			setupStore: func(s *MockUpgradeStore) {
-				// No managed proxy, no impl ownership
-			},
-			runtimeTracingEnabled: true,
-			proxyAddress:          "0xproxy",
-			calldata:              upgradeToCalldata,
-			orgID:                 "org1",
-			expectAllowed:         false,
-			expectReason:          "not owned by the organization",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := NewMockUpgradeStore()
-			tt.setupStore(store)
-
-			validator := NewUpgradeValidator(store)
-			validator.SetRuntimeTracingEnabled(tt.runtimeTracingEnabled)
-
-			result, err := validator.ValidateUpgrade(ctx, tt.orgID, tt.proxyAddress, tt.calldata)
-			if err != nil {
-				t.Fatalf("ValidateUpgrade failed: %v", err)
-			}
-
 			if result.Allowed != tt.expectAllowed {
 				t.Errorf("Allowed = %v, want %v (reason: %s)", result.Allowed, tt.expectAllowed, result.Reason)
 			}
@@ -320,10 +187,10 @@ func TestValidateUpgradeWithRuntimeTracing(t *testing.T) {
 
 func TestExtractImplementationAddress(t *testing.T) {
 	tests := []struct {
-		name           string
-		selector       string
-		buildCalldata  func(string) []byte
-		expectedAddr   string
+		name          string
+		selector      string
+		buildCalldata func(string) []byte
+		expectedAddr  string
 	}{
 		{
 			name:     "upgradeTo extracts address",

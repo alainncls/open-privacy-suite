@@ -73,7 +73,6 @@ services:
       - MOCK_SIGNATURES=false
       - ALLOW_MOCK_LOGIN=false
       - DEMO_AUTO_AUTH_DELAY=
-      - ENABLE_RUNTIME_TRACING=true
       - ENABLE_TRAVEL_RULE=true
       - JWT_SECRET=${JWT_SECRET:-}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}

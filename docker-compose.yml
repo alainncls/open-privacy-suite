@@ -71,7 +71,6 @@ services:
       - MOCK_SIGNATURES=true  # Allow mock signatures for demo recordings (never enable in production)
       - ALLOW_MOCK_LOGIN=true  # Allow mock JWZ tokens for dev/testing (never enable in production)
       - DEMO_AUTO_AUTH_DELAY=${DEMO_AUTO_AUTH_DELAY:-}  # Auto-complete auth after N seconds for demos (empty = disabled)
-      - ENABLE_RUNTIME_TRACING=true  # Enable runtime tracing for cross-org isolation validation (validates dynamic calls at execution time)
       - ENABLE_TRAVEL_RULE=true  # Enable travel rule compliance enforcement (threshold-based transfer checks)
       - DISABLE_COINGECKO=${DISABLE_COINGECKO:-false}  # Set true to disable CoinGecko price fetching
       - EXPLORER_DATABASE_URL=${EXPLORER_DATABASE_URL:-postgres://postgres:postgres@explorer-postgres:5432/explorer?sslmode=disable}
