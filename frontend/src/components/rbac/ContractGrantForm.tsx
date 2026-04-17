@@ -378,7 +378,11 @@ export default function ContractGrantForm({
 
   const handleAddEvent = (event: EventSignature) => {
     if (!hasEventTopic(event.topic0)) {
-      setEventRules([...eventRules, { topic0: event.topic0, name: event.name }]);
+      setEventRules([...eventRules, {
+        topic0: event.topic0,
+        name: event.name,
+        param_rules: event.default_param_rules || null,
+      }]);
     }
   };
 
@@ -608,14 +612,17 @@ export default function ContractGrantForm({
                                 <span className="text-primary-300 truncate max-w-[120px]">({label})</span>
                               )}
                             </span>
-                            {(rule.param_rules || []).map(pr => (
-                              <span
-                                key={pr.index}
-                                className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap"
-                              >
-                                param[{pr.index}]={pr.must_be}
-                              </span>
-                            ))}
+                            {(rule.param_rules || []).map((pr, i) => {
+                              const fnParamName = abiFunc?.inputs?.find(inp => inp.index === pr.index)?.name || `param[${pr.index}]`;
+                              return (
+                                <span key={pr.index} className="inline-flex items-center gap-1">
+                                  {i > 0 && <span className="text-[10px] text-amber-600">AND</span>}
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap">
+                                    {fnParamName}={pr.must_be}
+                                  </span>
+                                </span>
+                              );
+                            })}
                           </div>
                           <button
                             type="button"
@@ -803,6 +810,10 @@ export default function ContractGrantForm({
         {/* Event picker (shown when specific mode) */}
         {eventMode === 'specific' && (
           <div className="space-y-3 pt-2">
+            {/* Warning when no events selected */}
+            {eventRules.length === 0 && (
+              <p className="text-xs text-amber-600">Select at least one event from the list below, or switch to &quot;No events visible&quot;</p>
+            )}
             {/* Selected event rules */}
             {eventRules.length > 0 && (
               <div className="space-y-3">
@@ -953,7 +964,7 @@ export default function ContractGrantForm({
         </Button>
         <Button
           type="submit"
-          disabled={saving || !selectedGroupId || (!isEditing && availableGroups.length === 0)}
+          disabled={saving || !selectedGroupId || (!isEditing && availableGroups.length === 0) || (eventMode === 'specific' && eventRules.length === 0) || (functionMode === 'specific' && functions.length === 0)}
           className="gap-2"
         >
           {saving ? (

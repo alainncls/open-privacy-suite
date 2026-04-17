@@ -114,18 +114,16 @@ describe('ContractGrantForm', () => {
     expect(screen.getByRole('button', { name: 'Add Group Access' })).toBeDisabled();
   });
 
-  it('requires at least one selector in specific mode', async () => {
+  it('disables save button when in specific functions mode with no selectors', async () => {
     const user = userEvent.setup();
     stubListEvents();
     renderForm();
 
     await user.selectOptions(screen.getByRole('combobox'), 'group-1');
     await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
-    await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
-    const msgs = screen.getAllByText('Please add at least one function selector, or select "All functions"');
-    expect(msgs.length).toBeGreaterThanOrEqual(1);
-    expect(msgs[0]).toBeInTheDocument();
+    const saveBtn = screen.getByRole('button', { name: 'Add Group Access' });
+    expect(saveBtn).toBeDisabled();
   });
 
   it('creates a grant with selected function rules', async () => {
@@ -148,7 +146,7 @@ describe('ContractGrantForm', () => {
         {
           group_id: 'group-1',
           functions: [{ selector: '0x70a08231' }],
-          event_rules: null,
+          event_rules: [],
         }
       );
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -181,7 +179,7 @@ describe('ContractGrantForm', () => {
               param_rules: [{ index: 0, must_be: 'self' }],
             },
           ],
-          event_rules: null,
+          event_rules: [],
         }
       );
     });
@@ -213,7 +211,7 @@ describe('ContractGrantForm', () => {
         'org-1',
         '0x1111111111111111111111111111111111111111',
         'group-2',
-        { functions: null, event_rules: null }
+        { functions: null, event_rules: [] }
       );
       expect(onSave).toHaveBeenCalledTimes(1);
     });
@@ -364,19 +362,16 @@ describe('ContractGrantForm', () => {
       });
     });
 
-    it('requires at least one event when in specific mode', async () => {
+    it('disables save button when in specific events mode with no events', async () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       renderForm();
 
       await user.selectOptions(screen.getByRole('combobox'), 'group-1');
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
-      // Don't add any events
-      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
 
-      const msgs = screen.getAllByText('Please add at least one event, or select "No events visible"');
-      expect(msgs.length).toBeGreaterThanOrEqual(1);
-      expect(msgs[0]).toBeInTheDocument();
+      const saveBtn = screen.getByRole('button', { name: 'Add Group Access' });
+      expect(saveBtn).toBeDisabled();
     });
 
     it('submits event_rules as empty array when default "No events visible" is used', async () => {
@@ -426,7 +421,7 @@ describe('ContractGrantForm', () => {
           '0x1111111111111111111111111111111111111111',
           expect.objectContaining({
             event_rules: [
-              { topic0: mockEvents[0].topic0, name: 'Transfer' },
+              { topic0: mockEvents[0].topic0, name: 'Transfer', param_rules: null },
             ],
           })
         );
@@ -507,16 +502,12 @@ describe('ContractGrantForm', () => {
       expect(screen.getByText('Transfer')).toBeInTheDocument();
     });
 
-    it('"No events visible" radio appears and is selectable', async () => {
-      const user = userEvent.setup();
+    it('"No events visible" is the default mode', async () => {
       stubListEvents();
       renderForm();
 
       const noneRadio = screen.getByRole('radio', { name: /No events visible/i });
       expect(noneRadio).toBeInTheDocument();
-      expect(noneRadio).not.toBeChecked();
-
-      await user.click(noneRadio);
       expect(noneRadio).toBeChecked();
     });
 

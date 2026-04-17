@@ -414,6 +414,53 @@ func TestAdminEventRulesABIEndpoint(t *testing.T) {
 		}
 	})
 
+	// I09b: GET events -> default_param_rules populated for address-typed inputs
+	t.Run("I09b_DefaultParamRules_AddressInputs", func(t *testing.T) {
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events []rbac.EventSignature `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		// Find Transfer event — has 2 address inputs (from, to) and 1 uint256 (value).
+		var transfer *rbac.EventSignature
+		for i := range resp.Events {
+			if resp.Events[i].Name == "Transfer" {
+				transfer = &resp.Events[i]
+				break
+			}
+		}
+		require.NotNil(t, transfer, "Transfer event should be present")
+		require.Len(t, transfer.DefaultParamRules, 2,
+			"Transfer has 2 address inputs -> 2 default_param_rules")
+		assert.Equal(t, 0, transfer.DefaultParamRules[0].Index)
+		assert.Equal(t, "self", transfer.DefaultParamRules[0].MustBe)
+		assert.Equal(t, 1, transfer.DefaultParamRules[1].Index)
+		assert.Equal(t, "self", transfer.DefaultParamRules[1].MustBe)
+
+		// Find Approval event — also has 2 address inputs (owner, spender).
+		var approval *rbac.EventSignature
+		for i := range resp.Events {
+			if resp.Events[i].Name == "Approval" {
+				approval = &resp.Events[i]
+				break
+			}
+		}
+		require.NotNil(t, approval, "Approval event should be present")
+		require.Len(t, approval.DefaultParamRules, 2,
+			"Approval has 2 address inputs -> 2 default_param_rules")
+		assert.Equal(t, 0, approval.DefaultParamRules[0].Index)
+		assert.Equal(t, "self", approval.DefaultParamRules[0].MustBe)
+		assert.Equal(t, 1, approval.DefaultParamRules[1].Index)
+		assert.Equal(t, "self", approval.DefaultParamRules[1].MustBe)
+	})
+
 	// I10: GET events, no ABI stored -> empty array
 	t.Run("I10_NoABI_EmptyArray", func(t *testing.T) {
 		// Create a second contract without an ABI
@@ -774,6 +821,11 @@ func TestContractEventsBuiltInABI(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		require.Len(t, resp.Events, 1, "custom ABI should take precedence over built-in")
 		assert.Equal(t, "CustomEvent", resp.Events[0].Name)
+
+		// CustomEvent has only uint256 inputs — no address params — so
+		// default_param_rules should be empty (nil serializes as null).
+		assert.Empty(t, resp.Events[0].DefaultParamRules,
+			"event with no address inputs should have empty default_param_rules")
 	})
 }
 

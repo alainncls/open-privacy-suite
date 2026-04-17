@@ -72,6 +72,17 @@ func TestExtractEventSignatures(t *testing.T) {
 	if transferSig.Inputs[2].Indexed {
 		t.Error("expected value to not be indexed")
 	}
+
+	// Verify DefaultParamRules: Transfer has 2 address inputs (from, to).
+	if len(transferSig.DefaultParamRules) != 2 {
+		t.Fatalf("expected 2 default_param_rules for Transfer, got %d", len(transferSig.DefaultParamRules))
+	}
+	if transferSig.DefaultParamRules[0].Index != 0 || transferSig.DefaultParamRules[0].MustBe != "self" {
+		t.Errorf("default_param_rules[0] = %+v, want {Index:0, MustBe:self}", transferSig.DefaultParamRules[0])
+	}
+	if transferSig.DefaultParamRules[1].Index != 1 || transferSig.DefaultParamRules[1].MustBe != "self" {
+		t.Errorf("default_param_rules[1] = %+v, want {Index:1, MustBe:self}", transferSig.DefaultParamRules[1])
+	}
 }
 
 func TestExtractEventSignatures_EmptyABI(t *testing.T) {

@@ -211,7 +211,7 @@ describe('ContractGrantsManager — event rules display', () => {
     // Event name
     expect(screen.getByText('Transfer')).toBeInTheDocument();
 
-    // Param constraint annotation: [param[0]=self]
+    // Param constraint annotation
     expect(screen.getByText('[param[0]=self]')).toBeInTheDocument();
   });
 
@@ -241,8 +241,8 @@ describe('ContractGrantsManager — event rules display', () => {
       expect(screen.getByText('Transfer')).toBeInTheDocument();
     });
 
-    // Should show both param constraints joined
-    expect(screen.getByText('[param[0]=self, param[1]=self]')).toBeInTheDocument();
+    // Should show both param constraints joined with OR
+    expect(screen.getByText('[param[0]=self OR param[1]=self]')).toBeInTheDocument();
   });
 
   it('shows both function rules and event rules on the same grant', async () => {

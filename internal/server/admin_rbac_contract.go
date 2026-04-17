@@ -690,11 +690,6 @@ func (s *Server) createContractGrant(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}
-
-			// Auto-add self constraints for unconstrained address params (fail-closed default).
-			abiJSON2 := resolveContractABI(contract)
-			updatedRules := autoAddSelfConstraints(rules, abiJSON2)
-			input.EventRules = &rbac.EventRulesField{Rules: updatedRules}
 		}
 	}
 
@@ -816,9 +811,9 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 					return
 				}
 
-				// NOTE: autoAddSelfConstraints is NOT called on update — only on create.
-				// Updating a grant preserves the admin's explicit constraint choices.
-				// Re-running auto-add on update would silently tighten existing grants.
+				// NOTE: autoAddSelfConstraints is not called on create or update.
+				// The frontend pre-populates defaults from default_param_rules;
+				// the admin's explicit choices are authoritative.
 
 				grant.EventRules = &rbac.EventRulesField{Rules: rules}
 			}

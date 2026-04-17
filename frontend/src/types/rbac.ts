@@ -152,6 +152,7 @@ export interface EventSignature {
   signature: string;   // e.g. "Transfer(address,address,uint256)"
   topic0: string;      // keccak256 of signature, hex-encoded with 0x prefix
   inputs: EventInput[];
+  default_param_rules?: ParamRule[]; // self constraints for address params (from backend)
 }
 
 // EventInput describes one parameter of an event
@@ -327,12 +328,12 @@ export interface UpdateContractInput {
 export interface CreateContractGrantInput {
   group_id: string;
   functions?: FunctionRule[] | null;
-  event_rules?: EventRule[] | null;
+  event_rules?: EventRule[] | '*' | null;
 }
 
 export interface UpdateContractGrantInput {
   functions?: FunctionRule[] | null;
-  event_rules?: EventRule[] | null;
+  event_rules?: EventRule[] | '*' | null;
 }
 
 // Paginated response envelope from backend list endpoints

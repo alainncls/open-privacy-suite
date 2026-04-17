@@ -357,7 +357,7 @@ export default function ContractGrantsManager({
                             {name || rule.selector}
                             {paramLabels.length > 0 && (
                               <span className="ml-1 text-[10px] text-amber-700">
-                                [{paramLabels.join(', ')}]
+                                [{paramLabels.join(' AND ')}]
                               </span>
                             )}
                           </span>

@@ -11,10 +11,11 @@ import (
 
 // EventSignature represents a parsed event definition from a contract ABI.
 type EventSignature struct {
-	Name      string       `json:"name"`      // e.g. "Transfer"
-	Signature string       `json:"signature"` // e.g. "Transfer(address,address,uint256)"
-	Topic0    string       `json:"topic0"`    // keccak256 of signature, hex-encoded with 0x prefix
-	Inputs    []EventInput `json:"inputs"`
+	Name              string      `json:"name"`                // e.g. "Transfer"
+	Signature         string      `json:"signature"`           // e.g. "Transfer(address,address,uint256)"
+	Topic0            string      `json:"topic0"`              // keccak256 of signature, hex-encoded with 0x prefix
+	Inputs            []EventInput `json:"inputs"`
+	DefaultParamRules []ParamRule `json:"default_param_rules"` // suggested "self" constraint for each address-typed input
 }
 
 // EventInput describes one parameter of an event.
@@ -50,11 +51,23 @@ func ExtractEventSignatures(abiJSON string) ([]EventSignature, error) {
 
 		topic0 := "0x" + hex.EncodeToString(crypto.Keccak256([]byte(event.Sig)))
 
+		// Build default param rules: "self" for every address-typed input.
+		var defaultRules []ParamRule
+		for i, inp := range event.Inputs {
+			if inp.Type.String() == "address" {
+				defaultRules = append(defaultRules, ParamRule{
+					Index:  i,
+					MustBe: "self",
+				})
+			}
+		}
+
 		sigs = append(sigs, EventSignature{
-			Name:      event.Name,
-			Signature: event.Sig,
-			Topic0:    topic0,
-			Inputs:    inputs,
+			Name:              event.Name,
+			Signature:         event.Sig,
+			Topic0:            topic0,
+			Inputs:            inputs,
+			DefaultParamRules: defaultRules,
 		})
 	}
 
