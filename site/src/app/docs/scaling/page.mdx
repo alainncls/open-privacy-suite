@@ -3,12 +3,12 @@ import { Callout } from "@/components/mdx/callout";
 export const metadata = {
   title: "Scaling",
   description:
-    "Running multiple Open Privacy Suite instances behind a load balancer with shared Postgres and Redis.",
+    "Running multiple Open Privacy Suite instances with shared Postgres and Redis.",
 };
 
 # Scaling
 
-The Open Privacy Suite supports horizontal scaling — multiple proxy instances sharing a single Postgres database and Redis instance behind a load balancer. All instances serve identical requests with consistent RBAC, sessions, and caching.
+The Open Privacy Suite supports horizontal scaling — multiple proxy instances sharing a single Postgres database and Redis instance. All instances serve identical requests with consistent RBAC, sessions, and caching. How traffic is routed to the instances (load balancer, DNS, Kubernetes Service, etc.) is up to your infrastructure.
 
 ---
 
@@ -19,10 +19,9 @@ The Open Privacy Suite supports horizontal scaling — multiple proxy instances 
 | **Postgres** | RBAC, contracts, users, audit logs — source of truth | Yes — all instances connect to the same database |
 | **Redis** | Sessions, OAuth state, RBAC permission cache | Yes — all instances connect to the same Redis |
 | **Ethereum node** | JSON-RPC endpoint (e.g. Geth, Anvil) | Yes — all instances forward to the same node |
-| **Load balancer** | Distributes requests across instances | Sits in front of the proxy instances |
 
 <Callout variant="info" title="No sticky sessions required">
-  Any instance can serve any request. Sessions and RBAC state are stored in shared Redis and Postgres, so the load balancer does not need session affinity.
+  Any instance can serve any request. Sessions and RBAC state are stored in shared Redis and Postgres, so traffic routing does not need session affinity.
 </Callout>
 
 ---
