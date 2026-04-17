@@ -132,14 +132,7 @@ func (t *Tx) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
-	var eventRules any
-	if grant.EventRules != nil {
-		b, err := json.Marshal(grant.EventRules)
-		if err != nil {
-			return fmt.Errorf("failed to marshal event_rules: %w", err)
-		}
-		eventRules = b
-	}
+	eventRules := marshalEventRulesForDB(grant.EventRules)
 
 	return t.tx.QueryRowContext(ctx, query,
 		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
@@ -346,14 +339,7 @@ func (t *Tx) CreateContractGrantIfNotExists(ctx context.Context, grant *rbac.Con
 		functions = b
 	}
 
-	var eventRules any
-	if grant.EventRules != nil {
-		b, err := json.Marshal(grant.EventRules)
-		if err != nil {
-			return fmt.Errorf("failed to marshal event_rules: %w", err)
-		}
-		eventRules = b
-	}
+	eventRules := marshalEventRulesForDB(grant.EventRules)
 
 	_, err := t.tx.ExecContext(ctx, query,
 		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
@@ -518,11 +504,7 @@ func scanContractGrantRow(row *sql.Row) (*rbac.ContractGrant, error) {
 			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
 		}
 	}
-	if len(eventRulesJSON) > 0 {
-		if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
-		}
-	}
+	grant.EventRules = unmarshalEventRulesFromDB(eventRulesJSON)
 
 	return grant, nil
 }

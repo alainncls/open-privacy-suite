@@ -146,9 +146,11 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 
 		var grant rbac.ContractGrant
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
-		require.Len(t, grant.EventRules, 1, "event_rules should have 1 rule")
-		assert.Equal(t, transferTopic0, grant.EventRules[0].Topic0)
-		assert.Equal(t, "Transfer", grant.EventRules[0].Name)
+		require.NotNil(t, grant.EventRules, "event_rules should not be nil")
+		rules := grant.EventRules.GetRules()
+		require.Len(t, rules, 1, "event_rules should have 1 rule")
+		assert.Equal(t, transferTopic0, rules[0].Topic0)
+		assert.Equal(t, "Transfer", rules[0].Name)
 	})
 
 	// I02: POST grant with invalid topic0 -> 400
@@ -187,9 +189,11 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 
 		var grant rbac.ContractGrant
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
-		require.Len(t, grant.EventRules, 2)
-		assert.Equal(t, transferTopic0, grant.EventRules[0].Topic0)
-		assert.Equal(t, approvalTopic0, grant.EventRules[1].Topic0)
+		require.NotNil(t, grant.EventRules)
+		rules := grant.EventRules.GetRules()
+		require.Len(t, rules, 2)
+		assert.Equal(t, transferTopic0, rules[0].Topic0)
+		assert.Equal(t, approvalTopic0, rules[1].Topic0)
 	})
 
 	// I04: PUT with event_rules: null -> 200, response has event_rules key present with null value.
@@ -214,8 +218,8 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 		assert.Equal(t, "null", string(eventRulesRaw), "event_rules value must be null, not omitted")
 	})
 
-	// I05: PUT with event_rules: [] -> 200, response has event_rules key present with empty array.
-	// Empty array means deny-all; it must not be omitted from JSON.
+	// I05: PUT with event_rules: [] -> 200, response has event_rules as null.
+	// Both [] and null mean deny-all; the DB normalizes to null.
 	t.Run("I05_UpdateGrant_EmptyRules_DenyAll", func(t *testing.T) {
 		body := []byte(`{"event_rules": []}`)
 		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
@@ -226,13 +230,13 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		// Parse raw JSON to verify event_rules is present and is an empty array
+		// Parse raw JSON to verify event_rules is present as null (normalized deny-all)
 		var rawResp map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rawResp))
 
 		eventRulesRaw, keyExists := rawResp["event_rules"]
-		assert.True(t, keyExists, "event_rules key must be present in response JSON (omitempty bug)")
-		assert.Equal(t, "[]", string(eventRulesRaw), "event_rules value must be [], not omitted")
+		assert.True(t, keyExists, "event_rules key must be present in response JSON")
+		assert.Equal(t, "null", string(eventRulesRaw), "event_rules value must be null ([] normalized to null)")
 	})
 
 	// I06: PUT with param_rules -> 200, param_rules persisted
@@ -258,10 +262,12 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 
 		var grant rbac.ContractGrant
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &grant))
-		require.Len(t, grant.EventRules, 1)
-		require.Len(t, grant.EventRules[0].ParamRules, 1, "param_rules should be persisted")
-		assert.Equal(t, 0, grant.EventRules[0].ParamRules[0].Index)
-		assert.Equal(t, "self", grant.EventRules[0].ParamRules[0].MustBe)
+		require.NotNil(t, grant.EventRules)
+		rules := grant.EventRules.GetRules()
+		require.Len(t, rules, 1)
+		require.Len(t, rules[0].ParamRules, 1, "param_rules should be persisted")
+		assert.Equal(t, 0, rules[0].ParamRules[0].Index)
+		assert.Equal(t, "self", rules[0].ParamRules[0].MustBe)
 	})
 
 	// Create a second grant for I07 verification
@@ -302,15 +308,19 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 		// First grant (group-alpha): has Transfer with param_rules from I06
 		g1 := grantByGroup[f.groupID]
 		require.NotNil(t, g1, "grant for group-alpha should exist")
-		require.Len(t, g1.EventRules, 1)
-		assert.Equal(t, transferTopic0, g1.EventRules[0].Topic0)
-		require.Len(t, g1.EventRules[0].ParamRules, 1)
+		require.NotNil(t, g1.EventRules)
+		g1Rules := g1.EventRules.GetRules()
+		require.Len(t, g1Rules, 1)
+		assert.Equal(t, transferTopic0, g1Rules[0].Topic0)
+		require.Len(t, g1Rules[0].ParamRules, 1)
 
 		// Second grant (group-beta): has Approval
 		g2 := grantByGroup[f.secondGroupID]
 		require.NotNil(t, g2, "grant for group-beta should exist")
-		require.Len(t, g2.EventRules, 1)
-		assert.Equal(t, approvalTopic0, g2.EventRules[0].Topic0)
+		require.NotNil(t, g2.EventRules)
+		g2Rules := g2.EventRules.GetRules()
+		require.Len(t, g2Rules, 1)
+		assert.Equal(t, approvalTopic0, g2Rules[0].Topic0)
 	})
 
 	// I08: GET contract by-address -> includes grants with event_rules
@@ -336,7 +346,7 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 		// Verify at least one grant has event_rules populated
 		var foundRules bool
 		for _, gi := range resp.Grants {
-			if gi.Grant != nil && len(gi.Grant.EventRules) > 0 {
+			if gi.Grant != nil && gi.Grant.EventRules != nil && !gi.Grant.EventRules.IsDeny() {
 				foundRules = true
 				break
 			}
@@ -402,6 +412,53 @@ func TestAdminEventRulesABIEndpoint(t *testing.T) {
 				assert.False(t, ev.Inputs[2].Indexed)
 			}
 		}
+	})
+
+	// I09b: GET events -> default_param_rules populated for address-typed inputs
+	t.Run("I09b_DefaultParamRules_AddressInputs", func(t *testing.T) {
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/events"
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var resp struct {
+			Events []rbac.EventSignature `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		// Find Transfer event — has 2 address inputs (from, to) and 1 uint256 (value).
+		var transfer *rbac.EventSignature
+		for i := range resp.Events {
+			if resp.Events[i].Name == "Transfer" {
+				transfer = &resp.Events[i]
+				break
+			}
+		}
+		require.NotNil(t, transfer, "Transfer event should be present")
+		require.Len(t, transfer.DefaultParamRules, 2,
+			"Transfer has 2 address inputs -> 2 default_param_rules")
+		assert.Equal(t, 0, transfer.DefaultParamRules[0].Index)
+		assert.Equal(t, "self", transfer.DefaultParamRules[0].MustBe)
+		assert.Equal(t, 1, transfer.DefaultParamRules[1].Index)
+		assert.Equal(t, "self", transfer.DefaultParamRules[1].MustBe)
+
+		// Find Approval event — also has 2 address inputs (owner, spender).
+		var approval *rbac.EventSignature
+		for i := range resp.Events {
+			if resp.Events[i].Name == "Approval" {
+				approval = &resp.Events[i]
+				break
+			}
+		}
+		require.NotNil(t, approval, "Approval event should be present")
+		require.Len(t, approval.DefaultParamRules, 2,
+			"Approval has 2 address inputs -> 2 default_param_rules")
+		assert.Equal(t, 0, approval.DefaultParamRules[0].Index)
+		assert.Equal(t, "self", approval.DefaultParamRules[0].MustBe)
+		assert.Equal(t, 1, approval.DefaultParamRules[1].Index)
+		assert.Equal(t, "self", approval.DefaultParamRules[1].MustBe)
 	})
 
 	// I10: GET events, no ABI stored -> empty array
@@ -764,6 +821,11 @@ func TestContractEventsBuiltInABI(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		require.Len(t, resp.Events, 1, "custom ABI should take precedence over built-in")
 		assert.Equal(t, "CustomEvent", resp.Events[0].Name)
+
+		// CustomEvent has only uint256 inputs — no address params — so
+		// default_param_rules should be empty (nil serializes as null).
+		assert.Empty(t, resp.Events[0].DefaultParamRules,
+			"event with no address inputs should have empty default_param_rules")
 	})
 }
 

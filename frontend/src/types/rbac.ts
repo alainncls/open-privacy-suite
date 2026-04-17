@@ -152,6 +152,7 @@ export interface EventSignature {
   signature: string;   // e.g. "Transfer(address,address,uint256)"
   topic0: string;      // keccak256 of signature, hex-encoded with 0x prefix
   inputs: EventInput[];
+  default_param_rules?: ParamRule[]; // self constraints for address params (from backend)
 }
 
 // EventInput describes one parameter of an event
@@ -169,7 +170,7 @@ export interface ContractGrant {
   contract_id: string;
   group_id: string;
   functions?: FunctionRule[] | null; // null = all functions, or structured rules with optional param constraints
-  event_rules?: EventRule[] | null;  // null = all events visible, or allowlist of events with optional param constraints
+  event_rules?: EventRule[] | '*' | null;  // "*" = all events, null/[] = no events, [...] = allowlist
   created_at: string;
   updated_at: string;
 }
@@ -216,7 +217,7 @@ export interface UserMembership {
 export interface ContractAccess {
   claims: Claim[];
   functions?: FunctionRule[] | null;    // null = all functions allowed
-  event_rules?: EventRule[] | null;     // null = all events visible
+  event_rules?: EventRule[] | null;     // null/[] = no events visible, [...] = allowlist
 }
 
 // EffectivePermissions - computed permissions for a user
@@ -327,12 +328,12 @@ export interface UpdateContractInput {
 export interface CreateContractGrantInput {
   group_id: string;
   functions?: FunctionRule[] | null;
-  event_rules?: EventRule[] | null;
+  event_rules?: EventRule[] | '*' | null;
 }
 
 export interface UpdateContractGrantInput {
   functions?: FunctionRule[] | null;
-  event_rules?: EventRule[] | null;
+  event_rules?: EventRule[] | '*' | null;
 }
 
 // Paginated response envelope from backend list endpoints

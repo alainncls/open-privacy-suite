@@ -451,14 +451,7 @@ func (d *DB) CreateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
-	var eventRules any
-	if grant.EventRules != nil {
-		b, err := json.Marshal(grant.EventRules)
-		if err != nil {
-			return fmt.Errorf("failed to marshal event_rules: %w", err)
-		}
-		eventRules = b
-	}
+	eventRules := marshalEventRulesForDB(grant.EventRules)
 
 	return d.conn.QueryRowContext(ctx, query,
 		grant.ID, grant.ContractID, grant.GroupID, functions, eventRules,
@@ -492,14 +485,7 @@ func (d *DB) UpdateContractGrant(ctx context.Context, grant *rbac.ContractGrant)
 		functions = b
 	}
 
-	var eventRules any
-	if grant.EventRules != nil {
-		b, err := json.Marshal(grant.EventRules)
-		if err != nil {
-			return fmt.Errorf("failed to marshal event_rules: %w", err)
-		}
-		eventRules = b
-	}
+	eventRules := marshalEventRulesForDB(grant.EventRules)
 
 	_, err := d.conn.ExecContext(ctx, query, grant.ID, functions, eventRules)
 	return err
@@ -611,11 +597,7 @@ func (d *DB) ListContractGrantsByGroupWithContract(ctx context.Context, groupID 
 				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
 			}
 		}
-		if len(eventRulesJSON) > 0 {
-			if err := json.Unmarshal(eventRulesJSON, &result.Grant.EventRules); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
-			}
-		}
+		result.Grant.EventRules = unmarshalEventRulesFromDB(eventRulesJSON)
 		if parentID.Valid {
 			result.Group.ParentID = &parentID.String
 		}
@@ -658,11 +640,7 @@ func scanContractGrant(row *sql.Row) (*rbac.ContractGrant, error) {
 			return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
 		}
 	}
-	if len(eventRulesJSON) > 0 {
-		if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
-		}
-	}
+	grant.EventRules = unmarshalEventRulesFromDB(eventRulesJSON)
 
 	return grant, nil
 }
@@ -685,11 +663,7 @@ func scanContractGrants(rows *sql.Rows) ([]*rbac.ContractGrant, error) {
 				return nil, fmt.Errorf("failed to unmarshal functions: %w", err)
 			}
 		}
-		if len(eventRulesJSON) > 0 {
-			if err := json.Unmarshal(eventRulesJSON, &grant.EventRules); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal event_rules: %w", err)
-			}
-		}
+		grant.EventRules = unmarshalEventRulesFromDB(eventRulesJSON)
 
 		grants = append(grants, grant)
 	}
@@ -740,4 +714,37 @@ func (d *DB) GetContractGrantSummary(ctx context.Context, orgID string) (map[str
 		result[contractID].Groups = append(result[contractID].Groups, rbac.GroupSummary{ID: groupID, Name: groupName})
 	}
 	return result, rows.Err()
+}
+
+// marshalEventRulesForDB converts an *EventRulesField to a value suitable for
+// a JSONB column. Returns nil (SQL NULL) for deny state, or the JSON bytes
+// for wildcard ("*") or allowlist ([{...}]).
+func marshalEventRulesForDB(f *rbac.EventRulesField) any {
+	if f == nil || f.IsDeny() {
+		return nil // SQL NULL
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// unmarshalEventRulesFromDB converts raw JSONB bytes from the DB into an
+// *EventRulesField. Returns nil (deny) when the DB value is NULL (empty bytes).
+// Handles legacy array values and the new "*" wildcard string.
+func unmarshalEventRulesFromDB(data []byte) *rbac.EventRulesField {
+	if len(data) == 0 {
+		return nil // SQL NULL → deny
+	}
+	var f rbac.EventRulesField
+	if err := json.Unmarshal(data, &f); err != nil {
+		// If unmarshal fails, treat as deny (fail-closed).
+		return nil
+	}
+	// Normalize: if the parsed result is deny, return nil pointer for consistency.
+	if f.IsDeny() {
+		return nil
+	}
+	return &f
 }

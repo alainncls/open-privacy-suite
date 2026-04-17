@@ -118,7 +118,7 @@ func setupVisibleToTest(t *testing.T, database *db.DB) *visibleToTestSetup {
 		ID:         uuid.New().String(),
 		ContractID: contract.ID,
 		GroupID:    setup.groupID,
-		EventRules: []rbac.EventRule{
+		EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 			{
 				Topic0: transferTopic0,
 				Name:   "Transfer",
@@ -126,7 +126,7 @@ func setupVisibleToTest(t *testing.T, database *db.DB) *visibleToTestSetup {
 					{Index: 0, MustBe: "self"},
 				},
 			},
-		},
+		}},
 	}))
 
 	return setup
@@ -196,7 +196,7 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -204,7 +204,7 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -269,7 +269,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -277,7 +277,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -359,7 +359,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -367,7 +367,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}

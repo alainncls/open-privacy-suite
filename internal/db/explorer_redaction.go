@@ -481,6 +481,56 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 	return addrs, rows.Err()
 }
 
+// GetBatchEventAccess checks which contracts the viewer has event/log access to.
+// Returns a map of lowercase contract address -> bool (true = has event access).
+func (d *DB) GetBatchEventAccess(ctx context.Context, viewerDID string, contractAddresses []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(contractAddresses) == 0 || viewerDID == "" {
+		return result, nil
+	}
+
+	// Normalize
+	uniqueAddrs := make([]string, 0, len(contractAddresses))
+	seen := make(map[string]bool)
+	for _, a := range contractAddresses {
+		lower := strings.ToLower(a)
+		if !seen[lower] {
+			seen[lower] = true
+			uniqueAddrs = append(uniqueAddrs, lower)
+		}
+	}
+
+	query := `
+		SELECT DISTINCT LOWER(c.address)
+		FROM contracts c
+		JOIN groups g ON g.org_id = c.org_id
+		LEFT JOIN contract_grants cg ON cg.contract_id = c.id AND cg.group_id = g.id
+		JOIN user_memberships m ON m.group_id = g.id
+		JOIN users u ON u.id = m.user_id
+		WHERE LOWER(c.address) = ANY($1)
+		  AND u.external_id = $2
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		  AND (
+		    g.is_org_admin = true
+		    OR (cg.event_rules IS NOT NULL AND cg.event_rules::text != '[]' AND cg.event_rules::text != 'null')
+		  )`
+
+	rows, err := d.conn.QueryContext(ctx, query, pq.Array(uniqueAddrs), viewerDID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return nil, err
+		}
+		result[addr] = true
+	}
+	return result, rows.Err()
+}
+
 // GetLinkedAddresses returns the lowercase ETH addresses linked to a DID.
 func (d *DB) GetLinkedAddresses(ctx context.Context, did string) ([]string, error) {
 	if did == "" {

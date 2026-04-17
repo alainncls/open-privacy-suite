@@ -217,12 +217,12 @@ func TestFilterLogsWithEventRules_VisibleTo_DoesNotLeakOtherTxs(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0, Name: "Transfer",
 						ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
 					},
-				},
+				}},
 			},
 		},
 	}

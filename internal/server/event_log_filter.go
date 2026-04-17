@@ -52,8 +52,8 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 //
 // When event rules are configured for a contract: allowlist mode — only listed
 // topic0s pass (with optional "self" param constraints).
-// When no event rules are configured (nil): default address-based filtering —
-// log visible only if user's address appears in any topic.
+// When no event rules are configured (nil or empty []): deny all — no logs
+// pass for that contract.
 //
 // If perms is nil (user/org resolution failed), FilterEventLogs returns empty
 // (fail-closed).

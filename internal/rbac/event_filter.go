@@ -43,8 +43,8 @@ type logEntry struct {
 // event rules from their effective permissions.
 //
 // Semantics:
-//   - If no grants have event_rules for a log's contract: pass the log through (backward compat).
-//   - If any grant has event_rules: allowlist mode — only listed topic0s pass.
+//   - If no event_rules are configured (nil or []): deny all logs for that contract.
+//   - If event_rules are configured: allowlist mode — only listed topic0s pass.
 //   - For rules with ParamRules ("self" constraints): the log must also have
 //     the caller's address in the constrained parameter positions (OR semantics
 //     across multiple ParamRules on the same event).
@@ -106,16 +106,16 @@ func FilterEventLogs(
 			continue
 		}
 
-		// If no event rules configured on this contract access, apply default
-		// address-based filtering: log visible only if user's address appears
-		// in any topic (backward compat with pre-event-rules behavior).
-		if access.EventRules == nil {
-			if logHasUserAddress(entry, addrSet) {
-				filtered = append(filtered, rawLog)
-			} else if isViewerInVisibleTo(visCtx, rawLog) {
-				// visibleTo extends default address filtering too.
-				filtered = append(filtered, rawLog)
-			}
+		// Wildcard: all events visible for this contract.
+		if access.EventRules != nil && access.EventRules.IsWildcard() {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
+		// Deny all: no event rules configured or empty rules.
+		// nil pointer and nil/empty Rules both mean deny.
+		rules := eventRulesGetRules(access.EventRules)
+		if len(rules) == 0 {
 			continue
 		}
 
@@ -126,9 +126,9 @@ func FilterEventLogs(
 		}
 
 		topic0 := strings.ToLower(entry.Topics[0])
-		if eventAllowed(topic0, entry, access.EventRules, addrSet, contractAddr, abiProvider) {
+		if eventAllowed(topic0, entry, rules, addrSet, contractAddr, abiProvider) {
 			filtered = append(filtered, rawLog)
-		} else if eventTopic0Matches(topic0, access.EventRules) && isViewerInVisibleTo(visCtx, rawLog) {
+		} else if eventTopic0Matches(topic0, rules) && isViewerInVisibleTo(visCtx, rawLog) {
 			// Topic0 is in the allowlist but param rules failed.
 			// visibleTo extends param rule checks as a fallback.
 			filtered = append(filtered, rawLog)
@@ -174,18 +174,6 @@ func eventTopic0Matches(topic0 string, rules []EventRule) bool {
 	return false
 }
 
-// logHasUserAddress checks if any topic in the log entry encodes one of the
-// user's linked addresses. This is the default filtering when no event rules
-// are configured (backward compat).
-func logHasUserAddress(entry logEntry, addrSet map[string]bool) bool {
-	for _, topic := range entry.Topics {
-		if topicMatchesAddr(topic, addrSet) {
-			return true
-		}
-	}
-	return false
-}
-
 // eventAllowed checks if a log with the given topic0 is allowed by any of the
 // event rules. Returns true if the event is in the allowlist and all param
 // constraints are satisfied.
@@ -203,13 +191,9 @@ func eventAllowed(
 		}
 
 		// Topic0 matches this rule.
-		// nil ParamRules = no constraints intended, topic0 match is sufficient.
-		// Empty non-nil slice = constraints intended but none valid — fail closed.
-		if rule.ParamRules == nil {
-			return true
-		}
+		// nil or empty ParamRules = no constraints, topic0 match is sufficient.
 		if len(rule.ParamRules) == 0 {
-			return false
+			return true
 		}
 
 		// Check param rules: at least one "self" constraint must match (OR semantics).
@@ -587,6 +571,15 @@ func dataParamMatchesAddr(
 	}
 
 	return addrSet[strings.ToLower(addr.Hex())]
+}
+
+// eventRulesGetRules safely extracts the rules slice from an EventRulesField pointer.
+// Returns nil if the pointer is nil or if the field is in wildcard/deny mode.
+func eventRulesGetRules(f *EventRulesField) []EventRule {
+	if f == nil {
+		return nil
+	}
+	return f.GetRules()
 }
 
 // findEventByTopic0 finds the event in a contract ABI that matches the given topic0.

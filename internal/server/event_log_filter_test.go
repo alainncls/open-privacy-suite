@@ -36,9 +36,9 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic0, Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -111,10 +111,9 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 	}
 }
 
-// TestFilterReceiptLogsWithEventRules_NoEventRules_AddressFilter verifies the
-// fallback behavior when no event rules are configured: only logs with the
-// user's address in a topic are preserved.
-func TestFilterReceiptLogsWithEventRules_NoEventRules_AddressFilter(t *testing.T) {
+// TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll verifies that
+// nil event rules deny all logs (same as empty []). No address-based fallback.
+func TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractAddr := "0xcontract0000000000000000000000000000001"
@@ -123,7 +122,7 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_AddressFilter(t *testing.T
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil, // no event rules = address-based filtering
+				EventRules: nil, // nil = deny all (same as empty [])
 			},
 		},
 	}
@@ -169,8 +168,8 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_AddressFilter(t *testing.T
 	if resp.Result == nil {
 		t.Fatalf("expected non-null result for participant")
 	}
-	if len(resp.Result.Logs) != 1 {
-		t.Errorf("expected 1 log (user address in topic), got %d", len(resp.Result.Logs))
+	if len(resp.Result.Logs) != 0 {
+		t.Errorf("nil EventRules: expected 0 logs (deny all), got %d", len(resp.Result.Logs))
 	}
 }
 
@@ -184,9 +183,9 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -287,15 +286,15 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contract1: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic, Name: "NumberSet"},
-				},
+				}},
 			},
 			contract2: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: otherTopic, Name: "OtherEvent"},
-				},
+				}},
 			},
 		},
 	}
@@ -355,8 +354,8 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // empty = block all events
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
+			}},
 		},
 	}
 
@@ -419,8 +418,8 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // empty = block all events
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
+			}},
 		},
 	}
 
@@ -471,9 +470,9 @@ func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -619,8 +618,8 @@ func parseReceiptLogs(t *testing.T, body []byte) *[]json.RawMessage {
 // These test FilterLogsWithEventRules with realistic RPC response payloads.
 // ---------------------------------------------------------------------------
 
-func TestFilterLogs_I14_NoRules_Fallback(t *testing.T) {
-	// I14: No event rules configured (nil) — backward compatible address-based filtering.
+func TestFilterLogs_I14_NoRules_DenyAll(t *testing.T) {
+	// I14: No event rules configured (nil) — deny all logs (same as empty []).
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractAddr := "0xcontract0000000000000000000000000000001"
@@ -630,7 +629,7 @@ func TestFilterLogs_I14_NoRules_Fallback(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil, // no rules = backward compat
+				EventRules: nil, // nil = deny all
 			},
 		},
 	}
@@ -644,8 +643,8 @@ func TestFilterLogs_I14_NoRules_Fallback(t *testing.T) {
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
-	if len(result) != 1 {
-		t.Errorf("I14: expected 1 log (only where user address in topic), got %d", len(result))
+	if len(result) != 0 {
+		t.Errorf("I14: expected 0 logs (nil event rules = deny all), got %d", len(result))
 	}
 }
 
@@ -658,9 +657,9 @@ func TestFilterLogs_I15_AllowTransferOnly(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -697,7 +696,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -705,7 +704,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -733,7 +732,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -741,7 +740,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -769,8 +768,8 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // deny all
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // deny all
+			}},
 		},
 	}
 
@@ -814,8 +813,8 @@ func TestFilterLogs_I19_NoGrant_NoLogs(t *testing.T) {
 }
 
 func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
-	// I20: Contract X has [Transfer] rules, Contract Z has nil (fallback).
-	// Logs from X: only Transfer passes. Logs from Z: address-based filter.
+	// I20: Contract X has [Transfer] rules, Contract Z has nil (deny all).
+	// Logs from X: only Transfer passes. Logs from Z: all denied.
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractX := "0xcontractx000000000000000000000000000001"
@@ -825,13 +824,13 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			contractZ: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil, // fallback address-based
+				EventRules: nil, // nil = deny all
 			},
 		},
 	}
@@ -841,17 +840,17 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 		{"address": contractX, "topics": []string{integTransferTopic0}, "data": "0x"},
 		// X: Approval — blocked by rules (not in allowlist)
 		{"address": contractX, "topics": []string{integApprovalTopic0}, "data": "0x"},
-		// Z: log with user address in topic — allowed by address-based fallback
+		// Z: log with user address in topic — blocked (nil = deny all)
 		{"address": contractZ, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
-		// Z: log without user address — blocked by address-based fallback
+		// Z: log without user address — blocked (nil = deny all)
 		{"address": contractZ, "topics": []string{integApprovalTopic0, "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "data": "0x"},
 	}
 
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
-	if len(result) != 2 {
-		t.Errorf("I20: expected 2 logs (Transfer from X + user-addr from Z), got %d", len(result))
+	if len(result) != 1 {
+		t.Errorf("I20: expected 1 log (Transfer from X only, Z denied), got %d", len(result))
 	}
 }
 
@@ -868,8 +867,10 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			"0x5555555555555555555555555555555555555555": {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil,
+				Claims: []rbac.Claim{rbac.ClaimRead},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
+					{Topic0: integTransferTopic0, Name: "Transfer"},
+				}},
 			},
 		},
 	}
@@ -889,23 +890,32 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 func TestFilterLogs_I26_PartialContractAccess(t *testing.T) {
 	// I26: User has grants on X and Z but not Y — only X and Z logs appear.
 	userAddr := "0xaaaa000000000000000000000000000000000001"
-	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractX := "0xcontractx000000000000000000000000000001"
 	contractY := "0xcontracty000000000000000000000000000001"
 	contractZ := "0xcontractz000000000000000000000000000001"
 
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
-			contractX: {Claims: []rbac.Claim{rbac.ClaimRead}, EventRules: nil},
-			contractZ: {Claims: []rbac.Claim{rbac.ClaimRead}, EventRules: nil},
+			contractX: {
+				Claims: []rbac.Claim{rbac.ClaimRead},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
+					{Topic0: integTransferTopic0, Name: "Transfer"},
+				}},
+			},
+			contractZ: {
+				Claims: []rbac.Claim{rbac.ClaimRead},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
+					{Topic0: integTransferTopic0, Name: "Transfer"},
+				}},
+			},
 			// No entry for contractY
 		},
 	}
 
 	logs := []map[string]any{
-		{"address": contractX, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
-		{"address": contractY, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
-		{"address": contractZ, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
+		{"address": contractX, "topics": []string{integTransferTopic0}, "data": "0x"},
+		{"address": contractY, "topics": []string{integTransferTopic0}, "data": "0x"},
+		{"address": contractZ, "topics": []string{integTransferTopic0}, "data": "0x"},
 	}
 
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
@@ -927,9 +937,9 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			orgAContract: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			// No access for orgBContract
 		},
@@ -971,9 +981,9 @@ func TestFilterLogs_I28_AdminClaim_Bypass(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimAdmin, rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1004,7 +1014,7 @@ func TestFilterLogs_I29_OrgAdmin_Bypass(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     rbac.AllClaims(),
-				EventRules: nil, // org admin: no restrictions
+				EventRules: nil, // nil = deny all, but admin claim bypasses
 			},
 		},
 	}
@@ -1032,9 +1042,9 @@ func TestFilterLogs_I30_ReadClaim_NoBypass(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1067,10 +1077,10 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -1088,9 +1098,9 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 	}
 }
 
-func TestFilterLogs_I32_OneUnrestricted(t *testing.T) {
-	// I32: Group1 allows [Transfer], Group2 has nil → union is nil (unrestricted).
-	// Resolved ContractAccess has nil EventRules (unrestricted wins).
+func TestFilterLogs_I32_NilRulesDenyAll(t *testing.T) {
+	// I32: Group1 allows [Transfer], Group2 has nil → resolved to nil.
+	// nil = deny all — no logs pass.
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractAddr := "0xcontract0000000000000000000000000000001"
@@ -1099,7 +1109,7 @@ func TestFilterLogs_I32_OneUnrestricted(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil, // nil = unrestricted (union with nil = nil)
+				EventRules: nil, // nil = deny all
 			},
 		},
 	}
@@ -1113,8 +1123,8 @@ func TestFilterLogs_I32_OneUnrestricted(t *testing.T) {
 	got := FilterLogsWithEventRules(buildLogsRPCResponse(t, logs), []string{userAddr}, perms, &testABIProviderServer{}, nil)
 	result := parseLogsResult(t, got)
 
-	if len(result) != 3 {
-		t.Errorf("I32: unrestricted (nil) should show all logs (where addr matches), got %d", len(result))
+	if len(result) != 0 {
+		t.Errorf("I32: nil event rules should deny all logs, got %d", len(result))
 	}
 }
 
@@ -1130,7 +1140,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -1139,7 +1149,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1182,7 +1192,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1190,7 +1200,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // recipient (non-indexed)
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1227,7 +1237,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1235,7 +1245,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1269,7 +1279,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1277,7 +1287,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // non-indexed param
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1316,9 +1326,9 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1340,10 +1350,10 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -1368,9 +1378,9 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1407,9 +1417,9 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1440,8 +1450,8 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 	}
 }
 
-func TestFilterReceipt_I23_NoRules_CurrentBehavior(t *testing.T) {
-	// I23: No event rules (nil) — topic-address based filtering on receipt logs.
+func TestFilterReceipt_I23_NilRules_DenyAll(t *testing.T) {
+	// I23: No event rules (nil) — deny all logs (same as empty []).
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractAddr := "0xcontract0000000000000000000000000000001"
@@ -1450,7 +1460,7 @@ func TestFilterReceipt_I23_NoRules_CurrentBehavior(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil,
+				EventRules: nil, // nil = deny all
 			},
 		},
 	}
@@ -1473,13 +1483,14 @@ func TestFilterReceipt_I23_NoRules_CurrentBehavior(t *testing.T) {
 	if logs == nil {
 		t.Fatal("I23: expected non-null result for participant")
 	}
-	if len(*logs) != 1 {
-		t.Errorf("I23: expected 1 log (address-based filter), got %d", len(*logs))
+	if len(*logs) != 0 {
+		t.Errorf("I23: nil EventRules should deny all logs, got %d", len(*logs))
 	}
 }
 
 func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
-	// I24: Tx touches X (rules) and Z (no rules) — each filtered appropriately.
+	// I24: Tx touches X (rules) and Z (nil = deny all).
+	// Only Transfer from X passes; all Z logs are denied.
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	paddedUser := "0x000000000000000000000000" + userAddr[2:]
 	contractX := "0xcontractx000000000000000000000000000001"
@@ -1489,13 +1500,13 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			contractZ: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: nil, // fallback address-based
+				EventRules: nil, // nil = deny all
 			},
 		},
 	}
@@ -1510,9 +1521,9 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 			{"address": contractX, "topics": []string{integTransferTopic0}, "data": "0x"},
 			// X: Approval -> strip (not in X's allowlist)
 			{"address": contractX, "topics": []string{integApprovalTopic0}, "data": "0x"},
-			// Z: log with user address -> keep (address-based)
+			// Z: log with user address -> blocked (nil = deny all)
 			{"address": contractZ, "topics": []string{integTransferTopic0, paddedUser}, "data": "0x"},
-			// Z: log without user address -> strip (address-based)
+			// Z: log without user address -> blocked (nil = deny all)
 			{"address": contractZ, "topics": []string{integApprovalTopic0, "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "data": "0x"},
 		},
 	}
@@ -1524,8 +1535,8 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 	if logs == nil {
 		t.Fatal("I24: expected non-null result for participant")
 	}
-	if len(*logs) != 2 {
-		t.Errorf("I24: expected 2 logs (Transfer from X + user-addr from Z), got %d", len(*logs))
+	if len(*logs) != 1 {
+		t.Errorf("I24: expected 1 log (Transfer from X only, Z denied), got %d", len(*logs))
 	}
 }
 
@@ -1546,9 +1557,9 @@ func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantSeesReceipt(t *
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1709,8 +1720,16 @@ func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testi
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{},
-				EventRules: nil, // no event rules = default address filter + visibleTo
+				Claims: []rbac.Claim{},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
+					{
+						Topic0: transferTopic,
+						Name:   "Transfer",
+						ParamRules: []rbac.ParamRule{
+							{Index: 0, MustBe: "self"}, // param rule requires self — will fail for DID-only user
+						},
+					},
+				}},
 			},
 		},
 	}

@@ -660,40 +660,37 @@ func (s *Server) createContractGrant(c *gin.Context) {
 	}
 
 	var input struct {
-		GroupID    string              `json:"group_id" binding:"required"`
-		Functions  []rbac.FunctionRule `json:"functions"`   // nil = all functions
-		EventRules []rbac.EventRule   `json:"event_rules"` // nil = all events visible
+		GroupID    string               `json:"group_id" binding:"required"`
+		Functions  []rbac.FunctionRule  `json:"functions"`   // nil = all functions
+		EventRules *rbac.EventRulesField `json:"event_rules"` // nil = deny, "*" = wildcard, [...] = allowlist
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Validate event rules if provided
-	if input.EventRules != nil {
-		if errMsg := validateEventRules(input.EventRules); errMsg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-			return
-		}
+	// Validate event rules if provided and not wildcard
+	if input.EventRules != nil && !input.EventRules.IsWildcard() {
+		rules := input.EventRules.GetRules()
+		if len(rules) > 0 {
+			if errMsg := validateEventRules(rules); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
 
-		// Validate param_rules against ABI if available
-		abiJSON := resolveContractABI(contract)
-		if errMsg := validateEventRulesWithABI(input.EventRules, abiJSON); errMsg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-			return
-		}
+			// Validate param_rules against ABI if available
+			abiJSON := resolveContractABI(contract)
+			if errMsg := validateEventRulesWithABI(rules, abiJSON); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
 
-		// Reject custom hex param rules if no ABI is available
-		if errMsg := rejectCustomParamRulesWithoutABI(input.EventRules, abiJSON); errMsg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-			return
+			// Reject custom hex param rules if no ABI is available
+			if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
 		}
-	}
-
-	// Auto-add self constraints for unconstrained address params (fail-closed default).
-	if input.EventRules != nil {
-		abiJSON := resolveContractABI(contract)
-		input.EventRules = autoAddSelfConstraints(input.EventRules, abiJSON)
 	}
 
 	// Verify group exists and belongs to the same org
@@ -776,40 +773,50 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 		}
 	}
 
-	// Same pattern for event_rules.
+	// Same pattern for event_rules, but also handle "*" wildcard string.
 	if input.EventRules != nil {
 		if string(input.EventRules) == "null" {
 			grant.EventRules = nil
 		} else {
-			var rules []rbac.EventRule
-			if err := json.Unmarshal(input.EventRules, &rules); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_rules format"})
-				return
-			}
-			// Validate topic0 hashes and param rules
-			if errMsg := validateEventRules(rules); errMsg != "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			// Try to unmarshal as EventRulesField (handles "*", null, and arrays).
+			var erf rbac.EventRulesField
+			if err := json.Unmarshal(input.EventRules, &erf); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_rules format: must be \"*\", null, or an array"})
 				return
 			}
 
-			// Validate param_rules against ABI if available
-			abiJSON := resolveContractABI(contract)
-			if errMsg := validateEventRulesWithABI(rules, abiJSON); errMsg != "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-				return
+			if erf.IsWildcard() {
+				grant.EventRules = &erf
+			} else if erf.IsDeny() {
+				grant.EventRules = nil
+			} else {
+				rules := erf.GetRules()
+
+				// Validate topic0 hashes and param rules
+				if errMsg := validateEventRules(rules); errMsg != "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
+
+				// Validate param_rules against ABI if available
+				abiJSON := resolveContractABI(contract)
+				if errMsg := validateEventRulesWithABI(rules, abiJSON); errMsg != "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
+
+				// Reject custom hex param rules if no ABI is available
+				if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
+
+				// NOTE: autoAddSelfConstraints is not called on create or update.
+				// The frontend pre-populates defaults from default_param_rules;
+				// the admin's explicit choices are authoritative.
+
+				grant.EventRules = &rbac.EventRulesField{Rules: rules}
 			}
-
-			// Reject custom hex param rules if no ABI is available
-			if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-				return
-			}
-
-			// NOTE: autoAddSelfConstraints is NOT called on update — only on create.
-			// Updating a grant preserves the admin's explicit constraint choices.
-			// Re-running auto-add on update would silently tighten existing grants.
-
-			grant.EventRules = rules
 		}
 	}
 
