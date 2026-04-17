@@ -1,10 +1,13 @@
 package redis
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // ErrCircuitOpen is returned when the circuit breaker is open (Redis unreachable).
@@ -74,13 +77,20 @@ func (cb *CircuitBreaker) Allow() error {
 }
 
 // ReportResult implements the go-redis Limiter interface.
-// nil result = success, non-nil = failure.
+// Connection failures count as failures. Normal Redis responses (nil, context
+// cancellation, etc.) count as successes — they mean Redis is responsive.
 func (cb *CircuitBreaker) ReportResult(result error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	if result == nil {
-		// Success
+	// Treat the following as success (Redis is reachable):
+	//   - nil: operation succeeded
+	//   - redis.Nil: key not found (normal cache miss)
+	//   - context.Canceled / context.DeadlineExceeded: caller gave up, not a Redis fault
+	if result == nil ||
+		errors.Is(result, redis.Nil) ||
+		errors.Is(result, context.Canceled) ||
+		errors.Is(result, context.DeadlineExceeded) {
 		if cb.state == stateHalfOpen {
 			slog.Info("redis circuit breaker: closed (probe succeeded)")
 		}
@@ -89,7 +99,7 @@ func (cb *CircuitBreaker) ReportResult(result error) {
 		return
 	}
 
-	// Failure
+	// Connection/network/protocol failure
 	cb.consecutiveFails++
 	cb.lastFailTime = time.Now()
 
