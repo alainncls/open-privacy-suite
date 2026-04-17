@@ -81,6 +81,7 @@ services:
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
       - DISABLE_COINGECKO=true
+      - ADMIN_API_TOKEN=scale-test-admin-token
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,6 +118,7 @@ services:
       - MOCK_SIGNATURES=true
       - ALLOW_MOCK_LOGIN=true
       - DISABLE_COINGECKO=true
+      - ADMIN_API_TOKEN=scale-test-admin-token
     depends_on:
       postgres:
         condition: service_healthy

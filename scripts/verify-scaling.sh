@@ -28,10 +28,13 @@ ok()   { echo -e "  ${GREEN}PASS${NC}  $1"; }
 fail() { echo -e "  ${RED}FAIL${NC}  $1"; FAILURES=$((FAILURES + 1)); }
 info() { echo -e "  ${YELLOW}....${NC}  $1"; }
 
-# Helper: call admin API (no token needed in dev mode)
+# Admin API token (must match ADMIN_API_TOKEN in compose)
+ADMIN_TOKEN="${ADMIN_TOKEN:-scale-test-admin-token}"
+
+# Helper: call admin API
 admin() {
     local url="$1"; shift
-    curl -s "$url" "$@"
+    curl -s -H "X-Admin-Token: ${ADMIN_TOKEN}" "$url" "$@"
 }
 
 # Helper: mock-login and get JWT tokens
@@ -75,6 +78,16 @@ print(qs.get('code',[''])[0])
 
     ACCESS_TOKEN=$(echo "$token_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
     REFRESH_TOKEN=$(echo "$token_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))")
+
+    # Grant KYC to the user (mock-login creates with kyc=false)
+    local user_id
+    user_id=$(admin "${proxy}/api/v1/admin/users?search=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$did'))")" \
+        | python3 -c "import sys,json; users=json.load(sys.stdin).get('data',[]); print(users[0]['id'] if users else '')" 2>/dev/null)
+    if [[ -n "$user_id" ]]; then
+        admin "${proxy}/api/v1/admin/users/${user_id}" \
+            -X PUT -H "Content-Type: application/json" \
+            -d '{"kyc":true}' > /dev/null 2>&1
+    fi
 }
 
 # Helper: authenticated RPC call
@@ -102,7 +115,7 @@ echo ""
 # --- Test 1: Sessions — login on instance 1, use token on instance 2 ---
 echo "=== Test 1: Session Sharing ==="
 info "Logging in on instance 1..."
-DID_USER1="did:test:scale-user-1"
+DID_USER1="did:mock:scale-user-1"
 if login "$PROXY1" "$DID_USER1"; then
     TOKEN1="$ACCESS_TOKEN"
     ok "Got JWT from instance 1"
@@ -123,19 +136,10 @@ echo ""
 
 # --- Test 2: RBAC — default group methods enforced on both instances ---
 echo "=== Test 2: RBAC Sharing ==="
-# Use the dev-admin default org — mock-login auto-provisions users here.
-# The default group already has a method allowlist. A fresh mock user
-# inherits it immediately (no cache staleness for new users).
-ORG_ID="00000000-0000-0000-0000-000000000001"
-DEFAULT_GROUP_ID="00000000-0000-0000-0000-000000000001"
-
-# Get current allowed methods for the default group
-ALLOWED=$(admin "${PROXY1}/api/v1/admin/orgs/${ORG_ID}/groups/${DEFAULT_GROUP_ID}/access" \
-    | python3 -c "import sys,json; m=json.load(sys.stdin).get('allowed_methods',[]); print(','.join(m[:3])+'...' if len(m)>3 else ','.join(m))" 2>/dev/null)
-ok "Default group methods: ${ALLOWED}"
-
-# Create a fresh user — no cached permissions anywhere
-DID_USER2="did:test:scale-rbac-$(date +%s)"
+# Mock-login users (did:mock:*) get auto-provisioned into the dev-admin group
+# with wildcard (*) method access + admin claim. This tests that the provisioning
+# and RBAC resolution work consistently across both instances.
+DID_USER2="did:mock:scale-rbac-$(date +%s)"
 info "Logging in as fresh user on instance 1..."
 if login "$PROXY1" "$DID_USER2"; then
     TOKEN2_I1="$ACCESS_TOKEN"
