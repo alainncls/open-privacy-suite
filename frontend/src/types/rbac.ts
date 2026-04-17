@@ -169,7 +169,7 @@ export interface ContractGrant {
   contract_id: string;
   group_id: string;
   functions?: FunctionRule[] | null; // null = all functions, or structured rules with optional param constraints
-  event_rules?: EventRule[] | null;  // null/[] = no events visible, [...] = allowlist
+  event_rules?: EventRule[] | '*' | null;  // "*" = all events, null/[] = no events, [...] = allowlist
   created_at: string;
   updated_at: string;
 }

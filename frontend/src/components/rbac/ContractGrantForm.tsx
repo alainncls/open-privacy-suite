@@ -240,11 +240,14 @@ export default function ContractGrantForm({
   const [functions, setFunctions] = useState<FunctionRule[]>(grant?.functions || []);
   const [newSelector, setNewSelector] = useState('');
   const [eventMode, setEventMode] = useState<'all' | 'specific' | 'none'>(() => {
+    if (grant?.event_rules === '*') return 'all';
     if (grant?.event_rules === undefined || grant?.event_rules === null) return 'none';
     if (grant.event_rules.length === 0) return 'none';
     return 'specific';
   });
-  const [eventRules, setEventRules] = useState<EventRule[]>(grant?.event_rules || []);
+  const [eventRules, setEventRules] = useState<EventRule[]>(
+    grant?.event_rules && grant.event_rules !== '*' ? grant.event_rules : []
+  );
   const [availableEvents, setAvailableEvents] = useState<EventSignature[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -426,7 +429,7 @@ export default function ContractGrantForm({
     setSaving(true);
 
     try {
-      const resolvedEventRules = eventMode === 'none' ? [] : eventRules;
+      const resolvedEventRules = eventMode === 'all' ? '*' : eventMode === 'none' ? [] : eventRules;
       const input: CreateContractGrantInput = {
         group_id: selectedGroupId,
         // claims field is deprecated - permissions come from the group's GroupAccess.claims
@@ -755,6 +758,21 @@ export default function ContractGrantForm({
             <input
               type="radio"
               name="eventMode"
+              value="all"
+              checked={eventMode === 'all'}
+              onChange={() => setEventMode('all')}
+              className="w-4 h-4 text-primary focus:ring-primary"
+            />
+            <div>
+              <p className="text-sm font-medium text-neutral-900">All events visible</p>
+              <p className="text-xs text-neutral-500">Group can see all event logs from this contract</p>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-3 p-3 border border-neutral-200 rounded-lg cursor-pointer hover:bg-neutral-100 transition-colors">
+            <input
+              type="radio"
+              name="eventMode"
               value="specific"
               checked={eventMode === 'specific'}
               onChange={() => setEventMode('specific')}
@@ -813,14 +831,17 @@ export default function ContractGrantForm({
                             {eventSig && (
                               <span className="text-[10px] text-primary-300 truncate max-w-[180px]">({eventSig.signature})</span>
                             )}
-                            {(rule.param_rules || []).map(pr => (
-                              <span
-                                key={pr.index}
-                                className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap"
-                              >
-                                param[{pr.index}]={pr.must_be}
-                              </span>
-                            ))}
+                            {(rule.param_rules || []).map((pr, i) => {
+                              const pName = eventSig?.inputs?.[pr.index]?.name || `param[${pr.index}]`;
+                              return (
+                                <span key={pr.index} className="inline-flex items-center gap-1">
+                                  {i > 0 && <span className="text-[10px] text-amber-600">OR</span>}
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-200 font-medium whitespace-nowrap">
+                                    {pName}={pr.must_be}
+                                  </span>
+                                </span>
+                              );
+                            })}
                           </div>
                           <button
                             type="button"

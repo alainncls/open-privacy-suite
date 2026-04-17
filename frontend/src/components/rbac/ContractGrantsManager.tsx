@@ -370,7 +370,9 @@ export default function ContractGrantsManager({
                 {/* Event visibility */}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-neutral-500">Events:</span>
-                  {grant.event_rules === null || grant.event_rules === undefined || grant.event_rules.length === 0 ? (
+                  {grant.event_rules === '*' ? (
+                    <span className="text-xs text-success font-medium">All events visible</span>
+                  ) : grant.event_rules === null || grant.event_rules === undefined || grant.event_rules.length === 0 ? (
                     grant.group?.is_org_admin || grant.groupAccess?.claims?.includes('admin') ? (
                       <span className="text-xs text-success font-medium">All events (admin bypass)</span>
                     ) : (
@@ -392,7 +394,7 @@ export default function ContractGrantsManager({
                             {rule.name}
                             {paramLabels.length > 0 && (
                               <span className="ml-1 text-[10px] text-violet-700">
-                                [{paramLabels.join(', ')}]
+                                [{paramLabels.join(' OR ')}]
                               </span>
                             )}
                           </span>

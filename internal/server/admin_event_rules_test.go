@@ -218,8 +218,8 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 		assert.Equal(t, "null", string(eventRulesRaw), "event_rules value must be null, not omitted")
 	})
 
-	// I05: PUT with event_rules: [] -> 200, response has event_rules key present with empty array.
-	// Empty array means deny-all; it must not be omitted from JSON.
+	// I05: PUT with event_rules: [] -> 200, response has event_rules as null.
+	// Both [] and null mean deny-all; the DB normalizes to null.
 	t.Run("I05_UpdateGrant_EmptyRules_DenyAll", func(t *testing.T) {
 		body := []byte(`{"event_rules": []}`)
 		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants/" + f.groupID
@@ -230,13 +230,13 @@ func TestAdminEventRulesCRUD(t *testing.T) {
 
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-		// Parse raw JSON to verify event_rules is present and is an empty array
+		// Parse raw JSON to verify event_rules is present as null (normalized deny-all)
 		var rawResp map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rawResp))
 
 		eventRulesRaw, keyExists := rawResp["event_rules"]
-		assert.True(t, keyExists, "event_rules key must be present in response JSON (omitempty bug)")
-		assert.Equal(t, "[]", string(eventRulesRaw), "event_rules value must be [], not omitted")
+		assert.True(t, keyExists, "event_rules key must be present in response JSON")
+		assert.Equal(t, "null", string(eventRulesRaw), "event_rules value must be null ([] normalized to null)")
 	})
 
 	// I06: PUT with param_rules -> 200, param_rules persisted
