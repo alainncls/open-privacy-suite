@@ -54,9 +54,9 @@ func TestFilterEventLogs_AllowlistMode(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "AllowedEvent"},
-				},
+				}},
 			},
 		},
 	}
@@ -78,9 +78,9 @@ func TestFilterEventLogs_AnonymousEventsBlocked(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -92,6 +92,140 @@ func TestFilterEventLogs_AnonymousEventsBlocked(t *testing.T) {
 	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
 	if len(result) != 0 {
 		t.Errorf("expected 0 logs (anonymous blocked), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_WildcardPassesAll(t *testing.T) {
+	// When event_rules is "*" (wildcard), all logs from the contract pass.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: &EventRulesField{Wildcard: true},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xdef0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0x"}`), // anonymous event
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil)
+	if len(result) != 3 {
+		t.Errorf("wildcard: expected all 3 logs to pass, got %d", len(result))
+	}
+}
+
+func TestEventRulesField_MarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wildcard bool
+		deny     bool
+		nRules   int
+	}{
+		{"wildcard", `"*"`, true, false, 0},
+		{"null", `null`, false, true, 0},
+		{"empty array", `[]`, false, true, 0},
+		{"one rule", `[{"topic0":"0xabc","name":"Transfer"}]`, false, false, 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var f EventRulesField
+			err := json.Unmarshal([]byte(tc.input), &f)
+			if err != nil {
+				t.Fatalf("unmarshal %s: %v", tc.input, err)
+			}
+			if f.IsWildcard() != tc.wildcard {
+				t.Errorf("expected wildcard=%v, got %v", tc.wildcard, f.IsWildcard())
+			}
+			if f.IsDeny() != tc.deny {
+				t.Errorf("expected deny=%v, got %v", tc.deny, f.IsDeny())
+			}
+			if len(f.GetRules()) != tc.nRules {
+				t.Errorf("expected %d rules, got %d", tc.nRules, len(f.GetRules()))
+			}
+		})
+	}
+}
+
+func TestEventRulesField_MarshalRoundtrip(t *testing.T) {
+	// Wildcard round-trips through JSON.
+	wc := EventRulesField{Wildcard: true}
+	b, err := json.Marshal(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `"*"` {
+		t.Fatalf("expected \"*\", got %s", string(b))
+	}
+
+	var wc2 EventRulesField
+	if err := json.Unmarshal(b, &wc2); err != nil {
+		t.Fatal(err)
+	}
+	if !wc2.IsWildcard() {
+		t.Error("expected wildcard after roundtrip")
+	}
+
+	// Allowlist round-trips.
+	al := EventRulesField{Rules: []EventRule{{Topic0: "0xabc", Name: "Transfer"}}}
+	b, err = json.Marshal(al)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var al2 EventRulesField
+	if err := json.Unmarshal(b, &al2); err != nil {
+		t.Fatal(err)
+	}
+	if al2.IsWildcard() || al2.IsDeny() {
+		t.Error("allowlist should not be wildcard or deny after roundtrip")
+	}
+	if len(al2.GetRules()) != 1 {
+		t.Errorf("expected 1 rule after roundtrip, got %d", len(al2.GetRules()))
+	}
+}
+
+func TestEventRulesField_UnmarshalInvalidString(t *testing.T) {
+	var f EventRulesField
+	err := json.Unmarshal([]byte(`"wildcard"`), &f)
+	if err == nil {
+		t.Fatal("expected error for invalid string, got nil")
+	}
+}
+
+func TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow(t *testing.T) {
+	// Verify that nil and empty ParamRules both mean "no constraints" (topic0 match is sufficient).
+	topic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	for _, tc := range []struct {
+		name   string
+		params []ParamRule
+	}{
+		{"nil", nil},
+		{"empty", []ParamRule{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			perms := &EffectivePermissions{
+				ContractAccess: map[string]ContractAccess{
+					"0xcontract1": {
+						Claims: []Claim{ClaimRead},
+						EventRules: &EventRulesField{Rules: []EventRule{
+							{Topic0: topic0, Name: "Transfer", ParamRules: tc.params},
+						}},
+					},
+				},
+			}
+			logs := []json.RawMessage{
+				json.RawMessage(`{"address":"0xcontract1","topics":["` + topic0 + `"],"data":"0x"}`),
+			}
+			result := FilterEventLogs(logs, perms, []string{"0xuser"}, nil, nil)
+			if len(result) != 1 {
+				t.Errorf("ParamRules=%v: expected 1 log (topic0 match sufficient), got %d", tc.params, len(result))
+			}
+		})
 	}
 }
 
@@ -132,7 +266,7 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -141,7 +275,7 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // OR to must be self
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -183,10 +317,10 @@ func TestFilterEventLogs_NilAndEmptyEventRulesEquivalent(t *testing.T) {
 
 	for _, tc := range []struct {
 		name  string
-		rules []EventRule
+		rules *EventRulesField
 	}{
 		{"nil", nil},
-		{"empty", []EventRule{}},
+		{"empty", &EventRulesField{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			perms := &EffectivePermissions{
@@ -214,9 +348,9 @@ func TestFilterEventLogs_EmptyTopicsArray(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "SomeEvent"},
-				},
+				}},
 			},
 		},
 	}
@@ -253,7 +387,7 @@ func TestFilterEventLogs_MalformedDataWithParamRules(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -261,7 +395,7 @@ func TestFilterEventLogs_MalformedDataWithParamRules(t *testing.T) {
 							{Index: 2, MustBe: "self"}, // value param (non-indexed) — but data is truncated
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -302,7 +436,7 @@ func TestFilterEventLogs_MultipleParamRules_OneMatches(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -311,7 +445,7 @@ func TestFilterEventLogs_MultipleParamRules_OneMatches(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // OR to must be self
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -351,7 +485,7 @@ func TestFilterEventLogs_MultipleParamRules_NoneMatch(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -360,7 +494,7 @@ func TestFilterEventLogs_MultipleParamRules_NoneMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -399,7 +533,7 @@ func TestFilterEventLogs_ParamRuleIndexOutOfRange(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -407,7 +541,7 @@ func TestFilterEventLogs_ParamRuleIndexOutOfRange(t *testing.T) {
 							{Index: 99, MustBe: "self"}, // way out of range
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -448,7 +582,7 @@ func TestFilterEventLogs_CaseInsensitiveAddressMatching(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -456,7 +590,7 @@ func TestFilterEventLogs_CaseInsensitiveAddressMatching(t *testing.T) {
 							{Index: 0, MustBe: "self"}, // from must be self
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -480,10 +614,10 @@ func TestFilterEventLogs_UnionAcrossGrants(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "EventA"},
 					{Topic0: "0xdef0000000000000000000000000000000000000000000000000000000000000", Name: "EventB"},
-				},
+				}},
 			},
 		},
 	}
@@ -515,9 +649,9 @@ func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"}, // no param_rules
-				},
+				}},
 			},
 		},
 	}
@@ -534,10 +668,9 @@ func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
 	}
 }
 
-func TestFilterEventLogs_EmptyParamRules_FailClosed(t *testing.T) {
-	// Empty non-nil ParamRules means constraints were intended but none are valid.
-	// This MUST deny (fail-closed), not allow. Prevents malformed JSON from
-	// granting full access when param restrictions were intended.
+func TestFilterEventLogs_EmptyParamRules_NoConstraints(t *testing.T) {
+	// Empty ParamRules (nil or []) means no constraints — topic0 match is sufficient.
+	// Consistent with Ethereum convention: unspecified = wildcard.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	userAddr := "0x1234567890abcdef1234567890abcdef12345678"
 	otherTopic1 := "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -547,13 +680,13 @@ func TestFilterEventLogs_EmptyParamRules_FailClosed(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0:     transferTopic0,
 						Name:       "Transfer",
-						ParamRules: []ParamRule{}, // empty non-nil = broken constraints
+						ParamRules: []ParamRule{}, // empty = no constraints (same as nil)
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -562,8 +695,8 @@ func TestFilterEventLogs_EmptyParamRules_FailClosed(t *testing.T) {
 
 	logs := []json.RawMessage{json.RawMessage(logJSON)}
 	result := FilterEventLogs(logs, perms, []string{userAddr}, nil, nil)
-	if len(result) != 0 {
-		t.Errorf("expected 0 logs (empty ParamRules must fail-closed), got %d", len(result))
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (empty ParamRules = no constraints), got %d", len(result))
 	}
 }
 
@@ -579,13 +712,13 @@ func TestFilterEventLogs_NilParamRules_AllowsAll(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0:     transferTopic0,
 						Name:       "Transfer",
 						ParamRules: nil, // nil = no constraints, allow all
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -624,7 +757,7 @@ func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -633,7 +766,7 @@ func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // OR to must be self
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -668,46 +801,14 @@ func TestFilterEventLogs_NilPerms_FailClosed(t *testing.T) {
 	}
 }
 
-// TestContractGrant_JSON_EmptyEventRules verifies that empty event_rules []
-// is preserved in JSON serialization (not omitted). This is critical: null means
-// "all events visible" while [] means "no events visible" — omitempty would
-// silently convert [] to null in API responses.
-func TestContractGrant_JSON_EmptyEventRules(t *testing.T) {
-	grant := ContractGrant{
-		ID:         "test-id",
-		ContractID: "contract-id",
-		GroupID:    "group-id",
-		EventRules: []EventRule{}, // explicitly empty = block all events
-	}
-
-	b, err := json.Marshal(grant)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Must contain "event_rules":[] — NOT omit the field
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatal(err)
-	}
-
-	raw, ok := m["event_rules"]
-	if !ok {
-		t.Fatal("event_rules field missing from JSON — omitempty bug")
-	}
-	if string(raw) != "[]" {
-		t.Fatalf("expected event_rules to be [], got %s", string(raw))
-	}
-}
-
 // TestContractGrant_JSON_NilEventRules verifies that nil event_rules
-// serializes as null (all events visible).
+// serializes as null (deny all events).
 func TestContractGrant_JSON_NilEventRules(t *testing.T) {
 	grant := ContractGrant{
 		ID:         "test-id",
 		ContractID: "contract-id",
 		GroupID:    "group-id",
-		EventRules: nil, // nil = no events visible (serializes as null)
+		EventRules: nil, // nil pointer = deny (serializes as null)
 	}
 
 	b, err := json.Marshal(grant)
@@ -726,6 +827,64 @@ func TestContractGrant_JSON_NilEventRules(t *testing.T) {
 	}
 	if string(raw) != "null" {
 		t.Fatalf("expected event_rules to be null, got %s", string(raw))
+	}
+}
+
+// TestContractGrant_JSON_WildcardEventRules verifies that wildcard event_rules
+// serializes as "*" (all events visible).
+func TestContractGrant_JSON_WildcardEventRules(t *testing.T) {
+	grant := ContractGrant{
+		ID:         "test-id",
+		ContractID: "contract-id",
+		GroupID:    "group-id",
+		EventRules: &EventRulesField{Wildcard: true},
+	}
+
+	b, err := json.Marshal(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := m["event_rules"]
+	if !ok {
+		t.Fatal("event_rules field missing from JSON")
+	}
+	if string(raw) != `"*"` {
+		t.Fatalf("expected event_rules to be \"*\", got %s", string(raw))
+	}
+}
+
+// TestContractGrant_JSON_DenyEventRules verifies that deny event_rules
+// (empty rules) serializes as null.
+func TestContractGrant_JSON_DenyEventRules(t *testing.T) {
+	grant := ContractGrant{
+		ID:         "test-id",
+		ContractID: "contract-id",
+		GroupID:    "group-id",
+		EventRules: &EventRulesField{Rules: []EventRule{}}, // explicitly empty = deny
+	}
+
+	b, err := json.Marshal(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := m["event_rules"]
+	if !ok {
+		t.Fatal("event_rules field missing from JSON")
+	}
+	if string(raw) != "null" {
+		t.Fatalf("expected deny event_rules to be null, got %s", string(raw))
 	}
 }
 
@@ -787,7 +946,7 @@ func TestFilterEventLogs_CustomHex_IndexedAddress_Match(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -795,7 +954,7 @@ func TestFilterEventLogs_CustomHex_IndexedAddress_Match(t *testing.T) {
 							{Index: 0, MustBe: targetAddr}, // from must be the specific address
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -842,7 +1001,7 @@ func TestFilterEventLogs_CustomHex_IndexedUint256_Match(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
 						Name:   "ValueChanged",
@@ -850,7 +1009,7 @@ func TestFilterEventLogs_CustomHex_IndexedUint256_Match(t *testing.T) {
 							{Index: 0, MustBe: "0x000000000000000000000000000000000000000000000000000000000000002a"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -895,7 +1054,7 @@ func TestFilterEventLogs_CustomHex_Mismatch(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -903,7 +1062,7 @@ func TestFilterEventLogs_CustomHex_Mismatch(t *testing.T) {
 							{Index: 0, MustBe: targetAddr}, // from must be target — but actual is different
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -945,7 +1104,7 @@ func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -954,7 +1113,7 @@ func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
 							{Index: 1, MustBe: targetToAddr},  // OR to must be the specific address
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1006,7 +1165,7 @@ func TestFilterEventLogs_CustomHex_CaseInsensitive(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -1014,7 +1173,7 @@ func TestFilterEventLogs_CustomHex_CaseInsensitive(t *testing.T) {
 							{Index: 0, MustBe: targetAddr},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1061,7 +1220,7 @@ func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
 						Name:   "Deposit",
@@ -1069,7 +1228,7 @@ func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
 							{Index: 2, MustBe: targetRefund}, // refundAddr must be target
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1132,13 +1291,13 @@ func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
 				ContractAccess: map[string]ContractAccess{
 					"0xcontract1": {
 						Claims: []Claim{ClaimRead},
-						EventRules: []EventRule{
+						EventRules: &EventRulesField{Rules: []EventRule{
 							{
 								Topic0:     transferTopic0,
 								Name:       "Transfer",
 								ParamRules: []ParamRule{{Index: 2, MustBe: mustBe}},
 							},
-						},
+						}},
 					},
 				},
 			}
@@ -1155,13 +1314,13 @@ func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
 			ContractAccess: map[string]ContractAccess{
 				"0xcontract1": {
 					Claims: []Claim{ClaimRead},
-					EventRules: []EventRule{
+					EventRules: &EventRulesField{Rules: []EventRule{
 						{
 							Topic0:     transferTopic0,
 							Name:       "Transfer",
 							ParamRules: []ParamRule{{Index: 2, MustBe: "0x2b"}},
 						},
-					},
+					}},
 				},
 			},
 		}
@@ -1192,7 +1351,7 @@ func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
 						Name:   "StatusChanged",
@@ -1200,7 +1359,7 @@ func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
 							{Index: 0, MustBe: "0x01"}, // active must be true
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1231,7 +1390,7 @@ func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
 						Name:   "SomeEvent",
@@ -1239,7 +1398,7 @@ func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
 							{Index: 0, MustBe: targetValue}, // topics[1] must match
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1329,7 +1488,7 @@ func TestFilterEventLogs_UnknownMustBe_FailClosed(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -1337,7 +1496,7 @@ func TestFilterEventLogs_UnknownMustBe_FailClosed(t *testing.T) {
 							{Index: 0, MustBe: "admin"}, // unknown constraint
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1375,7 +1534,7 @@ func TestFilterEventLogs_NegativeParamIndex_FailClosed(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -1383,7 +1542,7 @@ func TestFilterEventLogs_NegativeParamIndex_FailClosed(t *testing.T) {
 							{Index: -1, MustBe: "self"}, // negative index
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1467,9 +1626,9 @@ func TestFilterEventLogs_Allowlist_MixedLogs(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1528,7 +1687,7 @@ func TestFilterEventLogs_NonIndexedParam_Match(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1536,7 +1695,7 @@ func TestFilterEventLogs_NonIndexedParam_Match(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // recipient (non-indexed, param index 1)
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1580,7 +1739,7 @@ func TestFilterEventLogs_NonIndexedParam_NoMatch(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1588,7 +1747,7 @@ func TestFilterEventLogs_NonIndexedParam_NoMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1618,7 +1777,7 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1629,7 +1788,7 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1651,96 +1810,92 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUnionEventRules_OneNil_OneRestricted(t *testing.T) {
-	// U36: Grant A has rules [Transfer], Grant B has nil (no events).
+	// U36: Grant A has rules [Transfer], Grant B has nil (deny).
 	// nil contributes nothing — the result is the non-nil grant's rules.
-	a := []EventRule{
+	a := &EventRulesField{Rules: []EventRule{
 		{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
-	}
-	var b []EventRule // nil = no events
+	}}
+	var b *EventRulesField // nil = deny
 
 	result := unionEventRules(a, b)
-	if len(result) != 1 || result[0].Name != "Transfer" {
+	rules := result.GetRules()
+	if len(rules) != 1 || rules[0].Name != "Transfer" {
 		t.Errorf("U36: rules + nil should yield the rules, got %v", result)
 	}
 
 	// Also test reversed order.
 	result = unionEventRules(b, a)
-	if len(result) != 1 || result[0].Name != "Transfer" {
+	rules = result.GetRules()
+	if len(rules) != 1 || rules[0].Name != "Transfer" {
 		t.Errorf("U36 reversed: nil + rules should yield the rules, got %v", result)
 	}
 }
 
 func TestUnionEventRules_BothNil(t *testing.T) {
-	// U37: Both grants nil → no events (nil).
+	// U37: Both grants nil → deny (nil).
 	result := unionEventRules(nil, nil)
 	if result != nil {
-		t.Errorf("U37: nil + nil should yield nil (no events), got %v", result)
+		t.Errorf("U37: nil + nil should yield nil (deny), got %v", result)
 	}
 }
 
 func TestUnionEventRules_SameEvent_BothParams(t *testing.T) {
 	// U39: Same event, Grant A: param 0 self, Grant B: param 1 self.
 	// Current implementation: when both have param rules, keeps existing (Grant A).
-	// This means only param 0 self is checked. The filter itself uses OR semantics
-	// within a single rule's ParamRules, so ideally the union should merge both
-	// param rules. This test documents current behavior.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-	a := []EventRule{
+	a := &EventRulesField{Rules: []EventRule{
 		{
 			Topic0:     transferTopic0,
 			Name:       "Transfer",
 			ParamRules: []ParamRule{{Index: 0, MustBe: "self"}},
 		},
-	}
-	b := []EventRule{
+	}}
+	b := &EventRulesField{Rules: []EventRule{
 		{
 			Topic0:     transferTopic0,
 			Name:       "Transfer",
 			ParamRules: []ParamRule{{Index: 1, MustBe: "self"}},
 		},
-	}
+	}}
 
 	result := unionEventRules(a, b)
 	if result == nil {
 		t.Fatal("U39: expected non-nil result")
 	}
-	if len(result) != 1 {
-		t.Fatalf("U39: expected 1 rule, got %d", len(result))
+	rules := result.GetRules()
+	if len(rules) != 1 {
+		t.Fatalf("U39: expected 1 rule, got %d", len(rules))
 	}
 
-	// Current behavior: keeps Grant A's param rules (arbitrary but consistent).
-	// Both param rules should ideally be present for true OR semantics across grants.
-	// Document this as the current behavior; a future fix could merge param rules.
-	rule := result[0]
+	rule := rules[0]
 	if !strings.EqualFold(rule.Topic0, transferTopic0) {
 		t.Errorf("U39: expected topic0 %s, got %s", transferTopic0, rule.Topic0)
 	}
-	// The rule should have param rules (not nil/empty — that would mean unrestricted).
 	if len(rule.ParamRules) == 0 {
 		t.Error("U39: expected param rules on merged rule, got none (would mean unrestricted)")
 	}
 }
 
 func TestUnionEventRules_EmptySlice_vs_Rules(t *testing.T) {
-	// U40: Grant A: [] (empty), Grant B: [Transfer] → Transfer visible.
-	// Empty slice means "deny all". Union with [Transfer] = [Transfer].
+	// U40: Grant A: deny (nil), Grant B: [Transfer] → Transfer visible.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-	a := []EventRule{} // deny all
-	b := []EventRule{
+	var a *EventRulesField // deny
+	b := &EventRulesField{Rules: []EventRule{
 		{Topic0: transferTopic0, Name: "Transfer"},
-	}
+	}}
 
 	result := unionEventRules(a, b)
 	if result == nil {
-		t.Fatal("U40: expected non-nil result (not unrestricted)")
+		t.Fatal("U40: expected non-nil result (not deny)")
 	}
-	if len(result) != 1 {
-		t.Fatalf("U40: expected 1 rule (Transfer), got %d", len(result))
+	rules := result.GetRules()
+	if len(rules) != 1 {
+		t.Fatalf("U40: expected 1 rule (Transfer), got %d", len(rules))
 	}
-	if !strings.EqualFold(result[0].Topic0, transferTopic0) {
-		t.Errorf("U40: expected Transfer topic0, got %s", result[0].Topic0)
+	if !strings.EqualFold(rules[0].Topic0, transferTopic0) {
+		t.Errorf("U40: expected Transfer topic0, got %s", rules[0].Topic0)
 	}
 }
 
@@ -1749,26 +1904,27 @@ func TestUnionEventRules_SameEvent_OneNoParams(t *testing.T) {
 	// Union should pick the less restrictive: Transfer with no params.
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-	a := []EventRule{
+	a := &EventRulesField{Rules: []EventRule{
 		{
 			Topic0:     transferTopic0,
 			Name:       "Transfer",
 			ParamRules: []ParamRule{{Index: 0, MustBe: "self"}},
 		},
-	}
-	b := []EventRule{
+	}}
+	b := &EventRulesField{Rules: []EventRule{
 		{Topic0: transferTopic0, Name: "Transfer"}, // no param rules = less restrictive
-	}
+	}}
 
 	result := unionEventRules(a, b)
 	if result == nil {
 		t.Fatal("U38: expected non-nil result")
 	}
-	if len(result) != 1 {
-		t.Fatalf("U38: expected 1 rule, got %d", len(result))
+	rules := result.GetRules()
+	if len(rules) != 1 {
+		t.Fatalf("U38: expected 1 rule, got %d", len(rules))
 	}
-	if len(result[0].ParamRules) != 0 {
-		t.Errorf("U38: expected no param rules (less restrictive wins), got %d", len(result[0].ParamRules))
+	if len(rules[0].ParamRules) != 0 {
+		t.Errorf("U38: expected no param rules (less restrictive wins), got %d", len(rules[0].ParamRules))
 	}
 }
 
@@ -1777,19 +1933,20 @@ func TestUnionEventRules_DifferentEvents(t *testing.T) {
 	transferTopic0 := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 	approvalTopic0 := "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925"
 
-	a := []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}
-	b := []EventRule{{Topic0: approvalTopic0, Name: "Approval"}}
+	a := &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}}
+	b := &EventRulesField{Rules: []EventRule{{Topic0: approvalTopic0, Name: "Approval"}}}
 
 	result := unionEventRules(a, b)
 	if result == nil {
 		t.Fatal("U35: expected non-nil result")
 	}
-	if len(result) != 2 {
-		t.Fatalf("U35: expected 2 rules (Transfer + Approval), got %d", len(result))
+	rules := result.GetRules()
+	if len(rules) != 2 {
+		t.Fatalf("U35: expected 2 rules (Transfer + Approval), got %d", len(rules))
 	}
 
 	topics := make(map[string]bool)
-	for _, r := range result {
+	for _, r := range rules {
 		topics[strings.ToLower(r.Topic0)] = true
 	}
 	if !topics[transferTopic0] {
@@ -1797,6 +1954,34 @@ func TestUnionEventRules_DifferentEvents(t *testing.T) {
 	}
 	if !topics[approvalTopic0] {
 		t.Error("U35: Approval missing from union")
+	}
+}
+
+func TestUnionEventRules_WildcardWins(t *testing.T) {
+	// Wildcard + rules → wildcard wins.
+	a := &EventRulesField{Wildcard: true}
+	b := &EventRulesField{Rules: []EventRule{
+		{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
+	}}
+
+	result := unionEventRules(a, b)
+	if result == nil || !result.IsWildcard() {
+		t.Error("wildcard + rules should yield wildcard")
+	}
+
+	// Reversed.
+	result = unionEventRules(b, a)
+	if result == nil || !result.IsWildcard() {
+		t.Error("rules + wildcard should yield wildcard")
+	}
+}
+
+func TestUnionEventRules_WildcardPlusNil(t *testing.T) {
+	// Wildcard + nil → wildcard wins.
+	a := &EventRulesField{Wildcard: true}
+	result := unionEventRules(a, nil)
+	if result == nil || !result.IsWildcard() {
+		t.Error("wildcard + nil should yield wildcard")
 	}
 }
 
@@ -1825,22 +2010,22 @@ func TestGetEventRules_NilDenyAll(t *testing.T) {
 }
 
 func TestGetEventRules_EmptyDenyAll(t *testing.T) {
-	// U42: empty slice means deny all — false for any topic0.
+	// U42: empty rules means deny all.
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: []EventRule{},
+				EventRules: &EventRulesField{}, // empty = deny
 			},
 		},
 	}
 
 	rules := perms.GetEventRules("0xcontract1")
 	if rules == nil {
-		t.Fatal("U42: empty EventRules should return non-nil empty slice, got nil")
+		t.Fatal("U42: non-nil EventRulesField pointer should be returned")
 	}
-	if len(rules) != 0 {
-		t.Errorf("U42: expected empty slice, got %d rules", len(rules))
+	if !rules.IsDeny() {
+		t.Errorf("U42: empty rules should be deny, got wildcard=%v rules=%v", rules.Wildcard, rules.Rules)
 	}
 }
 
@@ -1852,14 +2037,18 @@ func TestGetEventRules_PopulatedAllowlist(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
 
-	rules := perms.GetEventRules("0xcontract1")
+	erf := perms.GetEventRules("0xcontract1")
+	if erf == nil {
+		t.Fatal("U43: expected non-nil EventRulesField")
+	}
+	rules := erf.GetRules()
 	if len(rules) != 1 {
 		t.Fatalf("U43: expected 1 rule, got %d", len(rules))
 	}
@@ -1878,7 +2067,7 @@ func TestGetEventRules_FindByTopic0(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -1886,12 +2075,13 @@ func TestGetEventRules_FindByTopic0(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
 
-	rules := perms.GetEventRules("0xcontract1")
+	erf := perms.GetEventRules("0xcontract1")
+	rules := erf.GetRules()
 
 	// U44: Found — Transfer with ParamRules
 	var found *EventRule
@@ -1936,10 +2126,10 @@ func TestFilterEventLogs_AdminClaim_Bypass(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy}, // admin!
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					// Approval is NOT in the allowlist — but admin bypasses
-				},
+				}},
 			},
 		},
 	}
@@ -1999,9 +2189,9 @@ func TestFilterEventLogs_ReadClaim_NoByppass(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -2055,7 +2245,7 @@ func TestFilterEventLogs_MultipleContracts_PartialAccess(t *testing.T) {
 	userAddr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	userTopic := "0x000000000000000000000000" + userAddr[2:]
 
-	transferRule := []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}
+	transferRule := &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}}}
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontractx": {
@@ -2110,7 +2300,7 @@ func TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -2119,7 +2309,7 @@ func TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // OR to must be self
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -2160,7 +2350,7 @@ func TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom(t *testing.T
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -2168,7 +2358,7 @@ func TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom(t *testing.T
 							{Index: 0, MustBe: "self"}, // ONLY from must be self (no "to" constraint)
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -2209,7 +2399,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
 						Name:   "Transfer",
@@ -2218,7 +2408,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -2246,9 +2436,9 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"}, // no param rules
-				},
+				}},
 			},
 		},
 	}
@@ -2279,10 +2469,10 @@ func TestFilterEventLogs_UnionGrants_BothEventsAllowed(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					{Topic0: approvalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -2309,10 +2499,10 @@ func TestFilterEventLogs_UnionGrants_BothRestricted(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					{Topic0: approvalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -2424,10 +2614,10 @@ func TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					// Only Transfer is in the allowlist — but admin bypasses
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -2453,8 +2643,8 @@ func TestFilterEventLogs_AdminBypassWithEmptyEventRules(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimAdmin, ClaimRead},
-				EventRules: []EventRule{}, // deny all — but admin overrides
-			},
+				EventRules: &EventRulesField{Rules: []EventRule{}, // deny all — but admin overrides
+			}},
 		},
 	}
 
@@ -2485,9 +2675,9 @@ func TestFilterEventLogs_AdminOnOneContract_ReadOnAnother(t *testing.T) {
 			},
 			"0xcontract_read": {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -2522,8 +2712,8 @@ func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims:     []Claim{ClaimRead},
-				EventRules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}},
-			},
+				EventRules: &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}},
+			}},
 			// 0xcontract_other_org is NOT in ContractAccess → no access
 		},
 	}
@@ -2548,9 +2738,9 @@ func TestFilterEventLogs_AdminBypassWithAnonymousEvent(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimAdmin, ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -2576,9 +2766,9 @@ func TestFilterEventLogs_DeployWriteClaims_NoBypass(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
 				Claims: []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -2614,11 +2804,11 @@ func TestFilterEventLogs_VisibleTo_ParamRulesFail_ViewerInList(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
 					}},
-				},
+				}},
 			},
 		},
 	}
@@ -2660,11 +2850,11 @@ func TestFilterEventLogs_VisibleTo_ViewerNotInList(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
 					}},
-				},
+				}},
 			},
 		},
 	}
@@ -2696,11 +2886,11 @@ func TestFilterEventLogs_VisibleTo_NilContext_BackwardCompat(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
 					}},
-				},
+				}},
 			},
 		},
 	}
@@ -2728,9 +2918,9 @@ func TestFilterEventLogs_VisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims: []Claim{ClaimRead},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: allowedTopic0, Name: "AllowedEvent"},
-				},
+				}},
 			},
 		},
 	}
@@ -2762,11 +2952,11 @@ func TestFilterEventLogs_VisibleTo_AdminStillBypasses(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
 				Claims: []Claim{ClaimAdmin},
-				EventRules: []EventRule{
+				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
 					}},
-				},
+				}},
 			},
 		},
 	}

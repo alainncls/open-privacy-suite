@@ -690,27 +690,46 @@ func unionFunctions(a, b []FunctionRule) []FunctionRule {
 	return result
 }
 
-// unionEventRules returns the union of two EventRule slices by topic0.
-// nil and [] both mean "no events" — they contribute nothing to the union.
-// If both are nil/empty, returns nil (no events). Otherwise returns the
-// union so the user benefits from all granted event rules.
-func unionEventRules(a, b []EventRule) []EventRule {
-	if len(a) == 0 && len(b) == 0 {
-		return nil
+// unionEventRules returns the union of two EventRulesField pointers.
+// nil pointer means "deny" (no contribution to the union).
+// If either is wildcard → return wildcard.
+// If both are deny → return nil (deny).
+// If one is deny → return the other.
+// Both have rules → union by topic0 (existing merge logic).
+func unionEventRules(a, b *EventRulesField) *EventRulesField {
+	// nil means deny — no contribution
+	aDeny := a == nil || a.IsDeny()
+	bDeny := b == nil || b.IsDeny()
+
+	// If either is wildcard, result is wildcard
+	if a != nil && a.IsWildcard() {
+		return a
 	}
-	if len(a) == 0 {
+	if b != nil && b.IsWildcard() {
 		return b
 	}
-	if len(b) == 0 {
+
+	// Both deny → deny
+	if aDeny && bDeny {
+		return nil
+	}
+	// One deny → return the other
+	if aDeny {
+		return b
+	}
+	if bDeny {
 		return a
 	}
 
-	// Both have rules - union them
-	seen := make(map[string]EventRule, len(a))
-	for _, rule := range a {
+	// Both have rules — union them by topic0
+	aRules := a.GetRules()
+	bRules := b.GetRules()
+
+	seen := make(map[string]EventRule, len(aRules))
+	for _, rule := range aRules {
 		seen[strings.ToLower(rule.Topic0)] = rule
 	}
-	for _, rule := range b {
+	for _, rule := range bRules {
 		key := strings.ToLower(rule.Topic0)
 		if existing, ok := seen[key]; ok {
 			// Both sides allow this event. If either side has no param rules,
@@ -724,11 +743,11 @@ func unionEventRules(a, b []EventRule) []EventRule {
 		}
 	}
 
-	result := make([]EventRule, 0, len(seen))
+	rules := make([]EventRule, 0, len(seen))
 	for _, rule := range seen {
-		result = append(result, rule)
+		rules = append(rules, rule)
 	}
-	return result
+	return &EventRulesField{Rules: rules}
 }
 
 // unionContractAccess merges two ContractAccess maps, taking the UNION of claims and functions.

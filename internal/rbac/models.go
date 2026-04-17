@@ -3,6 +3,7 @@ package rbac
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -217,19 +218,96 @@ type EventRule struct {
 	ParamRules []ParamRule `json:"param_rules,omitempty"` // optional "self" constraints (reuse existing ParamRule)
 }
 
+// EventRulesField represents event access configuration for a contract grant.
+// Three states:
+//   - Wildcard ("*" in JSON) = all events visible
+//   - Deny (null or [] in JSON) = no events visible (fail-closed)
+//   - Allowlist ([{...}] in JSON) = only listed events visible
+type EventRulesField struct {
+	Wildcard bool        // true when the JSON value is the string "*"
+	Rules    []EventRule // allowlist rules; only meaningful when Wildcard is false
+}
+
+// IsWildcard returns true if all events are visible (wildcard mode).
+func (f EventRulesField) IsWildcard() bool { return f.Wildcard }
+
+// IsDeny returns true if no events are visible (deny mode).
+func (f EventRulesField) IsDeny() bool { return !f.Wildcard && len(f.Rules) == 0 }
+
+// GetRules returns the allowlist rules. Returns nil for wildcard or deny states.
+func (f EventRulesField) GetRules() []EventRule {
+	if f.Wildcard {
+		return nil
+	}
+	return f.Rules
+}
+
+// MarshalJSON encodes the EventRulesField to JSON:
+//   - Wildcard → "*" (quoted string)
+//   - Deny (nil/empty rules) → null
+//   - Allowlist → JSON array of EventRule
+func (f EventRulesField) MarshalJSON() ([]byte, error) {
+	if f.Wildcard {
+		return json.Marshal("*")
+	}
+	if len(f.Rules) == 0 {
+		return []byte("null"), nil
+	}
+	return json.Marshal(f.Rules)
+}
+
+// UnmarshalJSON decodes JSON into EventRulesField:
+//   - "*" string → Wildcard=true
+//   - null → Wildcard=false, Rules=nil (deny)
+//   - [] → Wildcard=false, Rules=nil (deny)
+//   - [{...}] → Wildcard=false, Rules=parsed
+func (f *EventRulesField) UnmarshalJSON(data []byte) error {
+	// Handle null
+	if string(data) == "null" {
+		f.Wildcard = false
+		f.Rules = nil
+		return nil
+	}
+
+	// Try string first (for "*")
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s == "*" {
+			f.Wildcard = true
+			f.Rules = nil
+			return nil
+		}
+		return fmt.Errorf("invalid event_rules string: %q (only \"*\" is supported)", s)
+	}
+
+	// Try array
+	var rules []EventRule
+	if err := json.Unmarshal(data, &rules); err != nil {
+		return fmt.Errorf("event_rules must be \"*\", null, or an array: %w", err)
+	}
+
+	f.Wildcard = false
+	if len(rules) == 0 {
+		f.Rules = nil // empty array = deny (same as null)
+	} else {
+		f.Rules = rules
+	}
+	return nil
+}
+
 // ContractGrant links a group to a contract, enabling access.
 // The group's claims (from GroupAccess) apply to this contract.
 // Functions can optionally restrict which contract functions are accessible.
 // EventRules can optionally restrict which event logs are visible.
 // Claims are inherited from the group's GroupAccess.claims - grants just link groups to contracts.
 type ContractGrant struct {
-	ID         string         `json:"id"`
-	ContractID string         `json:"contract_id"`
-	GroupID    string         `json:"group_id"`
-	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions, or structured rules with optional param constraints
-	EventRules []EventRule   `json:"event_rules"` // null/[] = no events visible, [...] = allowlist
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	ID         string           `json:"id"`
+	ContractID string           `json:"contract_id"`
+	GroupID    string           `json:"group_id"`
+	Functions  []FunctionRule   `json:"functions,omitempty"` // nil = all functions, or structured rules with optional param constraints
+	EventRules *EventRulesField `json:"event_rules"`        // nil = deny, wildcard = all events, allowlist = specific events
+	CreatedAt  time.Time        `json:"created_at"`
+	UpdatedAt  time.Time        `json:"updated_at"`
 }
 
 // GroupAccess represents RPC method permissions and rate limits for a group.
@@ -280,9 +358,9 @@ type UserMembership struct {
 
 // ContractAccess represents access permissions for a specific contract.
 type ContractAccess struct {
-	Claims     []Claim        `json:"claims"`
-	Functions  []FunctionRule `json:"functions,omitempty"`   // nil = all functions allowed
-	EventRules []EventRule   `json:"event_rules"` // null/[] = no events visible, [...] = allowlist
+	Claims     []Claim          `json:"claims"`
+	Functions  []FunctionRule   `json:"functions,omitempty"` // nil = all functions allowed
+	EventRules *EventRulesField `json:"event_rules"`        // nil = deny, wildcard = all events, allowlist = specific events
 }
 
 // EffectivePermissions represents the computed permissions for a user in an organization.
@@ -497,8 +575,8 @@ func (e *EffectivePermissions) GetFunctionRule(address, selector string) *Functi
 }
 
 // GetEventRules returns the event rules for a specific contract address.
-// Returns nil if no event rules are configured (all events allowed).
-func (e *EffectivePermissions) GetEventRules(address string) []EventRule {
+// Returns nil if no event rules are configured (deny all).
+func (e *EffectivePermissions) GetEventRules(address string) *EventRulesField {
 	access := e.GetContractAccess(address)
 	if access == nil {
 		return nil

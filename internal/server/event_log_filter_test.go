@@ -36,9 +36,9 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic0, Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -183,9 +183,9 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -286,15 +286,15 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contract1: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic, Name: "NumberSet"},
-				},
+				}},
 			},
 			contract2: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: otherTopic, Name: "OtherEvent"},
-				},
+				}},
 			},
 		},
 	}
@@ -354,8 +354,8 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // empty = block all events
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
+			}},
 		},
 	}
 
@@ -418,8 +418,8 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // empty = block all events
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
+			}},
 		},
 	}
 
@@ -470,9 +470,9 @@ func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
-				},
+				}},
 			},
 		},
 	}
@@ -657,9 +657,9 @@ func TestFilterLogs_I15_AllowTransferOnly(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -696,7 +696,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -704,7 +704,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -732,7 +732,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -740,7 +740,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 							{Index: 0, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -768,8 +768,8 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{}, // deny all
-			},
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // deny all
+			}},
 		},
 	}
 
@@ -824,9 +824,9 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			contractZ: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
@@ -868,9 +868,9 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			"0x5555555555555555555555555555555555555555": {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -898,15 +898,15 @@ func TestFilterLogs_I26_PartialContractAccess(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			contractZ: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			// No entry for contractY
 		},
@@ -937,9 +937,9 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			orgAContract: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			// No access for orgBContract
 		},
@@ -981,9 +981,9 @@ func TestFilterLogs_I28_AdminClaim_Bypass(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimAdmin, rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1042,9 +1042,9 @@ func TestFilterLogs_I30_ReadClaim_NoBypass(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1077,10 +1077,10 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -1140,7 +1140,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
 						Name:   "Transfer",
@@ -1149,7 +1149,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1192,7 +1192,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1200,7 +1200,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // recipient (non-indexed)
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1237,7 +1237,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1245,7 +1245,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 							{Index: 1, MustBe: "self"},
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1279,7 +1279,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
 						Name:   "CustomEvent",
@@ -1287,7 +1287,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 							{Index: 1, MustBe: "self"}, // non-indexed param
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -1326,9 +1326,9 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1350,10 +1350,10 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
-				},
+				}},
 			},
 		},
 	}
@@ -1378,9 +1378,9 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1417,9 +1417,9 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1500,9 +1500,9 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
 				Claims: []rbac.Claim{rbac.ClaimRead},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
-				},
+				}},
 			},
 			contractZ: {
 				Claims:     []rbac.Claim{rbac.ClaimRead},
@@ -1557,9 +1557,9 @@ func TestFilterReceiptLogsWithEventRules_VisibleTo_NonParticipantSeesReceipt(t *
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
-				},
+				}},
 			},
 		},
 	}
@@ -1721,7 +1721,7 @@ func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testi
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
 				Claims: []rbac.Claim{},
-				EventRules: []rbac.EventRule{
+				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic,
 						Name:   "Transfer",
@@ -1729,7 +1729,7 @@ func TestFilterLogsWithEventRules_NoLinkedAddresses_VisibleToStillWorks(t *testi
 							{Index: 0, MustBe: "self"}, // param rule requires self — will fail for DID-only user
 						},
 					},
-				},
+				}},
 			},
 		},
 	}
