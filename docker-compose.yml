@@ -60,7 +60,7 @@ services:
       - "127.0.0.1:${HOST_PORT_PROXY:-8080}:8080"
     environment:
       - NODE_URL=${NODE_URL:-http://anvil:8545}
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/privacy_proxy?sslmode=disable}
       - PORT=8080
       - ENVIRONMENT=development
       - VERIFIER_ID=did:privado:verifier:dev-0000000000000000
@@ -79,7 +79,7 @@ services:
       - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
       - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
       - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
-      - REDIS_URL=redis://:devpassword123@redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://:devpassword123@redis:6379}
     volumes:
       - ./rpc-namespaces.json:/app/config/rpc-namespaces.json:ro
     depends_on:

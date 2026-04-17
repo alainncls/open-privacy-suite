@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 	"github.com/jackc/tern/v2/migrate"
 
 	"privacy-proxy/internal/db/migrations"
+)
+
+const (
+	// dbMaxRetries is the number of connection attempts before giving up.
+	dbMaxRetries = 15
+	// dbRetryInterval is the delay between connection attempts.
+	dbRetryInterval = 2 * time.Second
 )
 
 // ErrAddressLinkRevoked is returned when an ETH address link was revoked by an administrator
@@ -47,11 +55,29 @@ func New(databaseURL string) (*DB, error) {
 	conn.SetMaxIdleConns(25)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
-	// Test connection
+	// Retry initial connection — Postgres may not be ready at startup
+	// (e.g. external database still booting, or built-in Postgres starting in parallel).
 	ctx := context.Background()
-	if err := conn.PingContext(ctx); err != nil {
+	var lastErr error
+	for attempt := 1; attempt <= dbMaxRetries; attempt++ {
+		if err := conn.PingContext(ctx); err != nil {
+			lastErr = err
+			if attempt < dbMaxRetries {
+				slog.Warn("postgres not ready, retrying",
+					"attempt", attempt,
+					"max", dbMaxRetries,
+					"next_retry_in", dbRetryInterval,
+					"error", err)
+				time.Sleep(dbRetryInterval)
+			}
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("postgres connection failed after %d attempts: %w", dbMaxRetries, lastErr)
 	}
 
 	db := &DB{conn: conn, databaseURL: databaseURL}
