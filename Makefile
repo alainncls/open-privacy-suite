@@ -31,13 +31,20 @@ run: ensure-hooks
 	docker-compose up --build -d
 	@./scripts/print-urls.sh
 
-# Start an isolated dev stack — auto-assigns offset ports so parallel stacks don't conflict
+# Start an isolated dev stack — auto-assigns offset ports so parallel stacks don't conflict.
+# If REDIS_URL is set in .env or the environment, the built-in Redis is skipped
+# and the backend connects to the external Redis instance.
 dev-stack: ensure-hooks
 	@if [ ! -f .env ] && [ "$$(basename "$$(pwd)")" != "privacy-proxy" ]; then \
 		./scripts/stack-ports.sh auto > .env; \
 		echo "Generated .env with offset ports (worktree detected)"; \
 	fi
-	docker-compose up --build -d
+	@if grep -q '^REDIS_URL=' .env 2>/dev/null || [ -n "$${REDIS_URL}" ]; then \
+		echo "External REDIS_URL detected — skipping built-in Redis"; \
+		docker-compose up --build -d postgres anvil proxy-backend proxy-frontend; \
+	else \
+		docker-compose up --build -d; \
+	fi
 	@./scripts/print-urls.sh
 
 # Stop all services

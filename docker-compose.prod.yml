@@ -60,8 +60,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis for shared state stores (sessions, OAuth state, RBAC cache, rate limiting).
-  # Required — backend aborts on startup if REDIS_URL is set but unreachable.
+  # Built-in Redis for shared state stores (sessions, OAuth state, RBAC cache).
+  # To use an external Redis, set REDIS_URL in .env and remove this service.
+  # The backend retries the initial connection for up to 20s at startup.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -83,8 +84,6 @@ services:
       - "${HOST_PORT_PROXY:-8080}:8080"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     environment:
       - ENVIRONMENT=production
