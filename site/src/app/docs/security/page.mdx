@@ -255,6 +255,18 @@ Users can be members of multiple organizations. The system:
 2. Loads permissions from the correct organization
 3. Rejects requests where the target contract belongs to an org the user is not a member of
 
+### Event Param Rule Cross-Org Enforcement
+
+Event rules on contract grants can include `param_rules` with custom hex addresses (e.g., `Transfer(from=0xAlice)`). These are validated at grant creation and update time:
+
+- Custom hex addresses on address-type parameters must belong to the grant's organization (verified against registered contracts, preregistered addresses, and linked EOAs)
+- Addresses belonging to a different organization are rejected with a 403 error
+- Unregistered addresses (not in any org) are rejected (fail-closed)
+- `"self"` constraints and non-address parameter types are not subject to cross-org checks
+- Multi-org users: an EOA is allowed if its owner belongs to the grant's organization (even if also in other orgs)
+
+This prevents admins from configuring event filters that target users or contracts in other organizations, which would bypass the disclosure request flow.
+
 ### eth\_getLogs Cross-Org Protection
 
 - All addresses in the filter are validated against org membership
