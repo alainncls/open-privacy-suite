@@ -14,9 +14,18 @@ Last updated: 2026-04-20
 
 ## 2. Legacy Code / Docs to Clean Up
 
-| # | What | Location | Priority |
-|---|------|----------|----------|
-| — | _(none currently)_ | | |
+| # | What | Location | Notes |
+|---|------|----------|-------|
+| A | `ClaimRead` / `ClaimWrite` constants + test usage | `internal/rbac/models.go:18-19`, ~30 test files | Marked "retained for DB compatibility." Removing requires a migration to strip read/write from all existing `group_access.claims` arrays in the DB. Not just a code change. |
+
+### Already cleaned up (this PR)
+
+- ~~"read claim" / "write claim" references in docs site~~ — replaced with "non-admin" / AllowedMethods language
+- ~~"reader" / "writer" in API docs claims list~~ — removed
+- ~~Deprecated `GenerateAddressPool` / `GenerateAddressPoolFromHex`~~ — removed
+- ~~Entire `internal/evm/create3/` package~~ — removed (redundant with runtime tracing)
+- ~~CREATE3 factory infrastructure~~ — factory_call_validator, per-org factory config API, dev endpoints, CLI compute-address command, factory trace skip, TRUSTED_FACTORY_HASHES config (~3,700 lines removed)
+- ~~SIEM `Start()` never called~~ — fixed
 
 ---
 
