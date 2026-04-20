@@ -64,7 +64,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	}
 
 	t.Run("read-only user DENIED on unregistered contract (private by default)", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -81,7 +81,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("write user DENIED on unregistered contract (private by default)", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead, ClaimWrite})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID:   "did:test:user",
@@ -99,7 +99,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("user CANNOT call contract registered to another org", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead, ClaimWrite})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -134,7 +134,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("deploy user DENIED on unregistered contract (private by default)", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimDeploy, ClaimRead, ClaimWrite})
+		_, controller := setup([]Claim{ClaimDeploy})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -151,7 +151,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("read user DENIED eth_getLogs on unregistered contract", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -167,7 +167,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("read user DENIED eth_getCode on unregistered address (all private)", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -202,7 +202,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 	// Precompile tests — precompiles are always accessible
 	t.Run("read user can call precompile address", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -219,7 +219,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("eth_getLogs on precompile is allowed", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -236,7 +236,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 	// Value transfer and basic address query paths must still work for unregistered EOAs
 	t.Run("value transfer to unregistered EOA still allowed", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead, ClaimWrite})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
@@ -253,7 +253,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 	})
 
 	t.Run("eth_getBalance on unregistered address still allowed (basic query)", func(t *testing.T) {
-		_, controller := setup([]Claim{ClaimRead})
+		_, controller := setup([]Claim{})
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",

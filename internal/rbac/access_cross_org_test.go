@@ -358,13 +358,13 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 
 	// Define contract addresses
@@ -393,9 +393,9 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{
-			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
+			contractA: {Claims: []Claim{}}, // Explicit grant for user's own org contract
 		},
-		Claims:     []Claim{ClaimRead},
+		Claims:     []Claim{},
 		ComputedAt: time.Now(),
 		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
@@ -405,9 +405,9 @@ func setupCrossOrgTestScenario(store *MockCrossOrgStore) {
 		OrgID:          "org-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{
-			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for user's own org contract
+			contractB: {Claims: []Claim{}}, // Explicit grant for user's own org contract
 		},
-		Claims:     []Claim{ClaimRead},
+		Claims:     []Claim{},
 		ComputedAt: time.Now(),
 		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
@@ -684,7 +684,7 @@ func TestCheckAccessCrossOrgWithClaims(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs", "eth_getCode", "eth_getStorageAt", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{},
-		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin}, // Very permissive
+		Claims:         []Claim{ClaimAdmin}, // Very permissive
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -733,7 +733,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // NO explicit grant for contractA
-			Claims:         []Claim{ClaimRead},          // Has read claim only — no deploy/admin
+			Claims:         []Claim{},          // Has read claim only — no deploy/admin
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -768,7 +768,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},                 // NO explicit grant for contractA
-			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
+			Claims:         []Claim{ClaimDeploy}, // Deploy user
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -800,9 +800,9 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{
-				contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for contractA
+				contractA: {Claims: []Claim{}}, // Explicit grant for contractA
 			},
-			Claims:     []Claim{ClaimRead},
+			Claims:     []Claim{},
 			ComputedAt: time.Now(),
 			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
@@ -835,7 +835,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // No explicit grants
-			Claims:         []Claim{ClaimRead},          // Read only
+			Claims:         []Claim{},          // Read only
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -868,7 +868,7 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{}, // No explicit grants
-			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			Claims:         []Claim{ClaimDeploy},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -989,13 +989,13 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 	store.groupAccess["group-b"] = &GroupAccess{
 		ID:             "access-b",
 		GroupID:        "group-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 
 	// Define contracts
@@ -1018,9 +1018,9 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
 		ContractAccess: map[string]ContractAccess{
-			contractA: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-a contract
+			contractA: {Claims: []Claim{}}, // Explicit grant for org-a contract
 		},
-		Claims:     []Claim{ClaimRead},
+		Claims:     []Claim{},
 		ComputedAt: time.Now(),
 		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
@@ -1030,9 +1030,9 @@ func TestCheckAccessMultiOrgUser(t *testing.T) {
 		OrgID:          "org-b",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
 		ContractAccess: map[string]ContractAccess{
-			contractB: {Claims: []Claim{ClaimRead}}, // Explicit grant for org-b contract
+			contractB: {Claims: []Claim{}}, // Explicit grant for org-b contract
 		},
-		Claims:     []Claim{ClaimRead},
+		Claims:     []Claim{},
 		ComputedAt: time.Now(),
 		ExpiresAt:  time.Now().Add(1 * time.Hour),
 	}
@@ -1089,7 +1089,7 @@ func TestUnregisteredAddressesDenied(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_getLogs"},
 		ContractAccess: map[string]ContractAccess{},
-		Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+		Claims:         []Claim{ClaimDeploy},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -1333,7 +1333,7 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		ID:             "access-a",
 		GroupID:        "group-a",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead}, // Only read by default
+		Claims:         []Claim{}, // Only read by default
 	}
 
 	// Define deployed contract
@@ -1355,7 +1355,7 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		OrgID:          "org-a",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 		ContractAccess: map[string]ContractAccess{},
-		Claims:         []Claim{ClaimRead}, // Only read claim
+		Claims:         []Claim{}, // Only read claim
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(1 * time.Hour),
 	}
@@ -1414,7 +1414,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ID:             "access-a",
 			GroupID:        "group-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			Claims:         []Claim{ClaimRead, ClaimWrite}, // No upgrade
+			Claims:         []Claim{}, // No upgrade
 		}
 
 		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
@@ -1423,9 +1423,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant, no upgrade
+				contractAddr: {Claims: []Claim{}}, // Explicit grant, no upgrade
 			},
-			Claims:     []Claim{ClaimRead, ClaimWrite},
+			Claims:     []Claim{},
 			ComputedAt: time.Now(),
 			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
@@ -1461,7 +1461,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ID:             "access-a",
 			GroupID:        "group-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
+			Claims:         []Claim{ClaimUpgrade},
 		}
 
 		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
@@ -1470,9 +1470,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite, ClaimUpgrade}}, // Explicit grant with upgrade
+				contractAddr: {Claims: []Claim{ClaimUpgrade}}, // Explicit grant with upgrade
 			},
-			Claims:     []Claim{ClaimRead, ClaimWrite, ClaimUpgrade},
+			Claims:     []Claim{ClaimUpgrade},
 			ComputedAt: time.Now(),
 			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
@@ -1503,7 +1503,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ID:             "access-a",
 			GroupID:        "group-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			Claims:         []Claim{ClaimRead, ClaimWrite},
+			Claims:         []Claim{},
 		}
 
 		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
@@ -1512,9 +1512,9 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite}}, // Explicit grant
+				contractAddr: {Claims: []Claim{}}, // Explicit grant
 			},
-			Claims:     []Claim{ClaimRead, ClaimWrite},
+			Claims:     []Claim{},
 			ComputedAt: time.Now(),
 			ExpiresAt:  time.Now().Add(1 * time.Hour),
 		}
@@ -1543,7 +1543,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			ID:             "access-a",
 			GroupID:        "group-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy}, // No upgrade
+			Claims:         []Claim{ClaimDeploy}, // No upgrade
 		}
 
 		store.cachedPermissions["user-1:org-a"] = &EffectivePermissions{
@@ -1552,7 +1552,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+			Claims:         []Claim{ClaimDeploy},
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -1742,7 +1742,7 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 	store.groupAccess["group-a"] = &GroupAccess{
 		GroupID:        "group-a",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 	store.memberships["reader-user"] = []*MembershipWithDetails{
 		{Membership: &UserMembership{ID: "mem-1", UserID: "reader-user", GroupID: "group-a"}, Group: groupA},
@@ -1753,7 +1753,7 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 		UserID:         "reader-user",
 		OrgID:          "org-a",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 		ContractAccess: map[string]ContractAccess{},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(5 * time.Minute),
@@ -1811,7 +1811,7 @@ func TestBasicAddressQueryOnOrgContract(t *testing.T) {
 	store.groupAccess["group-a"] = &GroupAccess{
 		GroupID:        "group-a",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 	store.memberships["user-a"] = []*MembershipWithDetails{
 		{Membership: &UserMembership{ID: "mem-1", UserID: "user-a", GroupID: "group-a"}, Group: groupA},
@@ -1821,7 +1821,7 @@ func TestBasicAddressQueryOnOrgContract(t *testing.T) {
 		UserID:         "user-a",
 		OrgID:          "org-a",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 		ContractAccess: map[string]ContractAccess{},
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(5 * time.Minute),
@@ -1877,12 +1877,12 @@ func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
 	store.groupAccess["sys-group"] = &GroupAccess{
 		GroupID:        "sys-group",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 	}
 	store.groupAccess["demo-group"] = &GroupAccess{
 		GroupID:        "demo-group",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
+		Claims:         []Claim{ClaimAdmin},
 	}
 
 	// A stablecoin contract owned by the demo org
@@ -1900,9 +1900,9 @@ func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
 		UserID:         "alice",
 		OrgID:          "demo-org",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
+		Claims:         []Claim{ClaimAdmin},
 		ContractAccess: map[string]ContractAccess{
-			contractAddr: {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+			contractAddr: {Claims: []Claim{ClaimAdmin}},
 		},
 		ComputedAt: time.Now(),
 		ExpiresAt:  time.Now().Add(5 * time.Minute),
@@ -1913,7 +1913,7 @@ func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
 		UserID:         "alice",
 		OrgID:          "system-org",
 		AllowedMethods: []string{"*"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{},
 		ContractAccess: map[string]ContractAccess{}, // empty!
 		ComputedAt:     time.Now(),
 		ExpiresAt:      time.Now().Add(5 * time.Minute),

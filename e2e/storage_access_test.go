@@ -73,7 +73,7 @@ func setupStorageAccessTest(t *testing.T, database *db.DB) *storageAccessTestSet
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID: uuid.New().String(), GroupID: setup.readGroupID,
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId", "eth_getStorageAt", "eth_getCode"},
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{},
 	}))
 
 	// Admin group (admin claim — implies read+write)

@@ -56,7 +56,7 @@ func TestCheckAccess_VisibleTo_DoesNotBypassMethodAllowlist(t *testing.T) {
 	require.NoError(t, ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID:             uuid.New().String(),
 		GroupID:        groupID,
-		Claims:         []rbac.Claim{rbac.ClaimRead},
+		Claims:         []rbac.Claim{},
 		AllowedMethods: []string{"eth_getLogs"}, // deliberately missing eth_getTransactionByHash
 	}))
 
@@ -115,7 +115,7 @@ func TestCheckAccess_VisibleTo_GetLogs_DoesNotBypassCrossOrgContract(t *testing.
 	require.NoError(t, ts.db.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID:             uuid.New().String(),
 		GroupID:        groupID,
-		Claims:         []rbac.Claim{rbac.ClaimRead},
+		Claims:         []rbac.Claim{},
 		AllowedMethods: []string{"eth_getLogs"},
 	}))
 	viewer := &rbac.User{ID: uuid.New().String(), ExternalID: viewerDID, KYC: true}
@@ -146,7 +146,7 @@ func TestCheckAccess_VisibleTo_GetLogs_DoesNotBypassCrossOrgContract(t *testing.
 			"toBlock":   "latest",
 		}},
 		TargetAddress:  contractAddr,
-		RequiredClaims: []rbac.Claim{rbac.ClaimRead},
+		RequiredClaims: []rbac.Claim{},
 	})
 	require.NoError(t, err)
 
@@ -216,7 +216,7 @@ func TestFilterLogsWithEventRules_VisibleTo_DoesNotLeakOtherTxs(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0, Name: "Transfer",

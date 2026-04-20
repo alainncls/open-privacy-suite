@@ -69,7 +69,7 @@ func setupVisibleToTest(t *testing.T, database *db.DB) *visibleToTestSetup {
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID:             uuid.New().String(),
 		GroupID:        setup.groupID,
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{},
 		AllowedMethods: []string{},
 	}))
 
@@ -195,7 +195,7 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,
@@ -268,7 +268,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,
@@ -358,7 +358,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			setup.contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: transferTopic0,

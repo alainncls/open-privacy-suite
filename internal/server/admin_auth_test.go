@@ -248,7 +248,7 @@ func TestAdminAuth_JWT_ContractAdminGets403(t *testing.T) {
 func TestAdminAuth_JWT_NoAdminClaimGets403(t *testing.T) {
 	srv, router := setupAdminAuthTestServer(t, "my-secret-token")
 
-	userDID := createTestUserWithClaims(t, srv, []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite})
+	userDID := createTestUserWithClaims(t, srv, []rbac.Claim{})
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 
@@ -368,7 +368,7 @@ func TestAdminStatus_ContractAdminUser(t *testing.T) {
 func TestAdminStatus_NonAdminUser(t *testing.T) {
 	srv, router := setupAdminAuthTestServer(t, "")
 
-	userDID := createTestUserWithClaims(t, srv, []rbac.Claim{rbac.ClaimRead})
+	userDID := createTestUserWithClaims(t, srv, []rbac.Claim{})
 	token, err := srv.jwtService.IssueAccessToken(userDID, true)
 	require.NoError(t, err)
 

@@ -16,10 +16,11 @@ Last updated: 2026-04-20
 
 | # | What | Location | Notes |
 |---|------|----------|-------|
-| A | `ClaimRead` / `ClaimWrite` constants + test usage | `internal/rbac/models.go:18-19`, ~30 test files | Marked "retained for DB compatibility." Removing requires a migration to strip read/write from all existing `group_access.claims` arrays in the DB. Not just a code change. |
+| — | _(none currently)_ | | |
 
 ### Already cleaned up (this PR)
 
+- ~~`ClaimRead` / `ClaimWrite` constants~~ — removed entirely, along with `FilterOperationalClaims` and `OperationalClaims`. ~24 test files updated.
 - ~~"read claim" / "write claim" references in docs site~~ — replaced with "non-admin" / AllowedMethods language
 - ~~"reader" / "writer" in API docs claims list~~ — removed
 - ~~Deprecated `GenerateAddressPool` / `GenerateAddressPoolFromHex`~~ — removed

@@ -29,7 +29,7 @@ func TestFilterEventLogs_NoEventRules_DenyAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: nil, // no event rules = deny all
 			},
 		},
@@ -53,7 +53,7 @@ func TestFilterEventLogs_AllowlistMode(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "AllowedEvent"},
 				}},
@@ -77,7 +77,7 @@ func TestFilterEventLogs_AnonymousEventsBlocked(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "Transfer"},
 				}},
@@ -100,7 +100,7 @@ func TestFilterEventLogs_WildcardPassesAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: &EventRulesField{Wildcard: true},
 			},
 		},
@@ -211,7 +211,7 @@ func TestFilterEventLogs_ParamRulesNilAndEmptyBothAllow(t *testing.T) {
 			perms := &EffectivePermissions{
 				ContractAccess: map[string]ContractAccess{
 					"0xcontract1": {
-						Claims: []Claim{ClaimRead},
+						Claims: []Claim{},
 						EventRules: &EventRulesField{Rules: []EventRule{
 							{Topic0: topic0, Name: "Transfer", ParamRules: tc.params},
 						}},
@@ -233,7 +233,7 @@ func TestFilterEventLogs_NoContractAccess(t *testing.T) {
 	// Logs from contracts the user has no access to are hidden.
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
-			"0xcontract1": {Claims: []Claim{ClaimRead}},
+			"0xcontract1": {Claims: []Claim{}},
 		},
 	}
 
@@ -265,7 +265,7 @@ func TestFilterEventLogs_ParamRules_IndexedParam(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -326,7 +326,7 @@ func TestFilterEventLogs_NilAndEmptyEventRulesEquivalent(t *testing.T) {
 			perms := &EffectivePermissions{
 				ContractAccess: map[string]ContractAccess{
 					contractAddr: {
-						Claims:     []Claim{ClaimRead},
+						Claims:     []Claim{},
 						EventRules: tc.rules,
 					},
 				},
@@ -347,7 +347,7 @@ func TestFilterEventLogs_EmptyTopicsArray(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "SomeEvent"},
 				}},
@@ -386,7 +386,7 @@ func TestFilterEventLogs_MalformedDataWithParamRules(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -435,7 +435,7 @@ func TestFilterEventLogs_MultipleParamRules_OneMatches(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -484,7 +484,7 @@ func TestFilterEventLogs_MultipleParamRules_NoneMatch(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -532,7 +532,7 @@ func TestFilterEventLogs_ParamRuleIndexOutOfRange(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -581,7 +581,7 @@ func TestFilterEventLogs_CaseInsensitiveAddressMatching(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -613,7 +613,7 @@ func TestFilterEventLogs_UnionAcrossGrants(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "EventA"},
 					{Topic0: "0xdef0000000000000000000000000000000000000000000000000000000000000", Name: "EventB"},
@@ -648,7 +648,7 @@ func TestFilterEventLogs_EventRulesNoParamRules_WidensAccess(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"}, // no param_rules
 				}},
@@ -679,7 +679,7 @@ func TestFilterEventLogs_EmptyParamRules_NoConstraints(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0:     transferTopic0,
@@ -711,7 +711,7 @@ func TestFilterEventLogs_NilParamRules_AllowsAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0:     transferTopic0,
@@ -756,7 +756,7 @@ func TestFilterEventLogs_EventRulesWithSelfConstraint(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -945,7 +945,7 @@ func TestFilterEventLogs_CustomHex_IndexedAddress_Match(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1000,7 +1000,7 @@ func TestFilterEventLogs_CustomHex_IndexedUint256_Match(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
@@ -1053,7 +1053,7 @@ func TestFilterEventLogs_CustomHex_Mismatch(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1103,7 +1103,7 @@ func TestFilterEventLogs_MixedRules_SelfAndCustom(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1164,7 +1164,7 @@ func TestFilterEventLogs_CustomHex_CaseInsensitive(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1219,7 +1219,7 @@ func TestFilterEventLogs_CustomHex_NonIndexedAddress(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
@@ -1290,7 +1290,7 @@ func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
 			perms := &EffectivePermissions{
 				ContractAccess: map[string]ContractAccess{
 					"0xcontract1": {
-						Claims: []Claim{ClaimRead},
+						Claims: []Claim{},
 						EventRules: &EventRulesField{Rules: []EventRule{
 							{
 								Topic0:     transferTopic0,
@@ -1313,7 +1313,7 @@ func TestFilterEventLogs_CustomHex_ShortFormEquivalence(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				"0xcontract1": {
-					Claims: []Claim{ClaimRead},
+					Claims: []Claim{},
 					EventRules: &EventRulesField{Rules: []EventRule{
 						{
 							Topic0:     transferTopic0,
@@ -1350,7 +1350,7 @@ func TestFilterEventLogs_CustomHex_Bool(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
@@ -1389,7 +1389,7 @@ func TestFilterEventLogs_CustomHex_NoABI_FallbackTopicCompare(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: topic0,
@@ -1487,7 +1487,7 @@ func TestFilterEventLogs_UnknownMustBe_FailClosed(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1533,7 +1533,7 @@ func TestFilterEventLogs_NegativeParamIndex_FailClosed(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -1625,7 +1625,7 @@ func TestFilterEventLogs_Allowlist_MixedLogs(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 				}},
@@ -1686,7 +1686,7 @@ func TestFilterEventLogs_NonIndexedParam_Match(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
@@ -1738,7 +1738,7 @@ func TestFilterEventLogs_NonIndexedParam_NoMatch(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
@@ -1776,7 +1776,7 @@ func TestFilterEventLogs_NonIndexedParam_NoABI_FailClosed(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: customTopic0,
@@ -1997,7 +1997,7 @@ func TestGetEventRules_NilDenyAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: nil,
 			},
 		},
@@ -2014,7 +2014,7 @@ func TestGetEventRules_EmptyDenyAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: &EventRulesField{}, // empty = deny
 			},
 		},
@@ -2036,7 +2036,7 @@ func TestGetEventRules_PopulatedAllowlist(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 				}},
@@ -2066,7 +2066,7 @@ func TestGetEventRules_FindByTopic0(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -2125,7 +2125,7 @@ func TestFilterEventLogs_AdminClaim_Bypass(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy}, // admin!
+				Claims: []Claim{ClaimAdmin, ClaimDeploy}, // admin!
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					// Approval is NOT in the allowlist — but admin bypasses
@@ -2188,7 +2188,7 @@ func TestFilterEventLogs_ReadClaim_NoByppass(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 				}},
@@ -2222,7 +2222,7 @@ func TestFilterEventLogs_CrossOrg_NoAccess(t *testing.T) {
 		ContractAccess: map[string]ContractAccess{
 			// Only Alpha's contract
 			"0x5555555555555555555555555555555555555555": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: nil,
 			},
 			// No entry for Beta's contract
@@ -2249,11 +2249,11 @@ func TestFilterEventLogs_MultipleContracts_PartialAccess(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontractx": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: transferRule,
 			},
 			"0xcontractz": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: transferRule,
 			},
 			// No entry for 0xcontracty
@@ -2299,7 +2299,7 @@ func TestFilterEventLogs_ViewerDimension_SenderSeesOwnTransfer(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -2349,7 +2349,7 @@ func TestFilterEventLogs_ViewerDimension_ReceiverDeniedBySelfOnFrom(t *testing.T
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -2398,7 +2398,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamMatch(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{
 						Topic0: transferTopic0,
@@ -2435,7 +2435,7 @@ func TestFilterEventLogs_ViewerDimension_ThirdParty_NoParamRules(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"}, // no param rules
 				}},
@@ -2468,7 +2468,7 @@ func TestFilterEventLogs_UnionGrants_BothEventsAllowed(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					{Topic0: approvalTopic0, Name: "Approval"},
@@ -2498,7 +2498,7 @@ func TestFilterEventLogs_UnionGrants_BothRestricted(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 					{Topic0: approvalTopic0, Name: "Approval"},
@@ -2553,7 +2553,7 @@ func TestFilterEventLogs_AdminSeesAllLogs_NoAddressInTopics(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimAdmin, ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+				Claims:     []Claim{ClaimAdmin, ClaimDeploy, ClaimUpgrade},
 				EventRules: nil, // no event rules = deny all (but admin bypasses)
 			},
 		},
@@ -2585,7 +2585,7 @@ func TestFilterEventLogs_ReadUser_NoAddressInTopics_Filtered(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: nil, // no event rules = deny all
 			},
 		},
@@ -2613,7 +2613,7 @@ func TestFilterEventLogs_AdminBypassWithEventRulesStillSeesAll(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimAdmin, ClaimRead, ClaimWrite},
+				Claims: []Claim{ClaimAdmin},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					// Only Transfer is in the allowlist — but admin bypasses
 					{Topic0: transferTopic0, Name: "Transfer"},
@@ -2642,7 +2642,7 @@ func TestFilterEventLogs_AdminBypassWithEmptyEventRules(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimAdmin, ClaimRead},
+				Claims:     []Claim{ClaimAdmin},
 				EventRules: &EventRulesField{Rules: []EventRule{}, // deny all — but admin overrides
 			}},
 		},
@@ -2670,11 +2670,11 @@ func TestFilterEventLogs_AdminOnOneContract_ReadOnAnother(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract_admin": {
-				Claims:     []Claim{ClaimAdmin, ClaimRead},
+				Claims:     []Claim{ClaimAdmin},
 				EventRules: nil, // no rules
 			},
 			"0xcontract_read": {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 				}},
@@ -2711,7 +2711,7 @@ func TestFilterEventLogs_CrossOrgIsolation_NoAccessToOtherOrg(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{{Topic0: transferTopic0, Name: "Transfer"}},
 			}},
 			// 0xcontract_other_org is NOT in ContractAccess → no access
@@ -2737,7 +2737,7 @@ func TestFilterEventLogs_AdminBypassWithAnonymousEvent(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimAdmin, ClaimRead},
+				Claims: []Claim{ClaimAdmin},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", Name: "Transfer"},
 				}},
@@ -2765,7 +2765,7 @@ func TestFilterEventLogs_DeployWriteClaims_NoBypass(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			"0xcontract1": {
-				Claims: []Claim{ClaimRead, ClaimWrite, ClaimDeploy, ClaimUpgrade},
+				Claims: []Claim{ClaimDeploy, ClaimUpgrade},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer"},
 				}},
@@ -2803,7 +2803,7 @@ func TestFilterEventLogs_VisibleTo_ParamRulesFail_ViewerInList(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
@@ -2849,7 +2849,7 @@ func TestFilterEventLogs_VisibleTo_ViewerNotInList(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
@@ -2885,7 +2885,7 @@ func TestFilterEventLogs_VisibleTo_NilContext_BackwardCompat(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: transferTopic0, Name: "Transfer", ParamRules: []ParamRule{
 						{Index: 0, MustBe: "self"},
@@ -2917,7 +2917,7 @@ func TestFilterEventLogs_VisibleTo_DoesNotBypassTopic0Allowlist(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
-				Claims: []Claim{ClaimRead},
+				Claims: []Claim{},
 				EventRules: &EventRulesField{Rules: []EventRule{
 					{Topic0: allowedTopic0, Name: "AllowedEvent"},
 				}},
@@ -2985,7 +2985,7 @@ func TestFilterEventLogs_NilEventRules_DenyAll_EvenWithVisibleTo(t *testing.T) {
 	perms := &EffectivePermissions{
 		ContractAccess: map[string]ContractAccess{
 			contractAddr: {
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				EventRules: nil, // no event rules = deny all
 			},
 		},

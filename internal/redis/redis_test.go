@@ -343,7 +343,7 @@ func TestPermissionCache_SetGetRoundtrip(t *testing.T) {
 		UserID:         "user-1",
 		OrgID:          "org-1",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimUpgrade},
 		RPCAPIKey:      "secret-api-key-12345",
 		RateLimitRPS:   &rps,
 		RateLimitDaily: &daily,
@@ -359,7 +359,7 @@ func TestPermissionCache_SetGetRoundtrip(t *testing.T) {
 	assert.Equal(t, "user-1", got.UserID)
 	assert.Equal(t, "org-1", got.OrgID)
 	assert.Equal(t, []string{"eth_call", "eth_sendTransaction"}, got.AllowedMethods)
-	assert.Equal(t, []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite}, got.Claims)
+	assert.Equal(t, []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimUpgrade}, got.Claims)
 	assert.Equal(t, "secret-api-key-12345", got.RPCAPIKey, "RPCAPIKey must survive cache roundtrip")
 	assert.Equal(t, 100, *got.RateLimitRPS)
 	assert.Equal(t, 10000, *got.RateLimitDaily)
@@ -504,7 +504,7 @@ func TestPermissionCache_ContractAccess(t *testing.T) {
 		OrgID:  "org-ca",
 		ContractAccess: map[string]rbac.ContractAccess{
 			"0x1234": {
-				Claims: []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+				Claims: []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimUpgrade},
 			},
 		},
 	}
@@ -514,7 +514,7 @@ func TestPermissionCache_ContractAccess(t *testing.T) {
 	got := cache.Get("user-ca", "org-ca")
 	require.NotNil(t, got)
 	require.Contains(t, got.ContractAccess, "0x1234")
-	assert.Equal(t, []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite}, got.ContractAccess["0x1234"].Claims)
+	assert.Equal(t, []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimUpgrade}, got.ContractAccess["0x1234"].Claims)
 }
 
 // ---------------------------------------------------------------------------

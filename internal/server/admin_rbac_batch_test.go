@@ -50,7 +50,7 @@ func TestBatchMoveContracts(t *testing.T) {
 			ID:             uuid.New().String(),
 			GroupID:        g.ID,
 			AllowedMethods: []string{"*"},
-			Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimRead, rbac.ClaimWrite},
+			Claims:         []rbac.Claim{rbac.ClaimDeploy},
 		}))
 	}
 
@@ -149,7 +149,7 @@ func TestBatchMovePreservesManualGrants(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        autoGroup.ID,
 		AllowedMethods: []string{"*"},
-		Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{rbac.ClaimDeploy},
 	}))
 
 	// Create a contract with grants to both groups
@@ -224,7 +224,7 @@ func TestBatchMoveDoesNotDeleteNonEmptyAutoGroups(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        autoGroup.ID,
 		AllowedMethods: []string{"*"},
-		Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{rbac.ClaimDeploy},
 	}))
 
 	addr1 := "0x4444444444444444444444444444444444444444"
@@ -314,7 +314,7 @@ func TestBatchDeleteGroups(t *testing.T) {
 			ID:             uuid.New().String(),
 			GroupID:        g.ID,
 			AllowedMethods: []string{"eth_call"},
-			Claims:         []rbac.Claim{rbac.ClaimRead},
+			Claims:         []rbac.Claim{},
 		}))
 	}
 
@@ -522,7 +522,7 @@ func TestGrantContractToDeployerGroup(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        deployGroup.ID,
 		AllowedMethods: []string{"*"},
-		Claims:         []rbac.Claim{rbac.ClaimDeploy, rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{rbac.ClaimDeploy},
 	}))
 	require.NoError(t, server.db.CreateMembership(ctx, &rbac.UserMembership{
 		ID:      uuid.New().String(),

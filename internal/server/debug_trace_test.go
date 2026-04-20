@@ -146,8 +146,8 @@ func TestDebugTrace_DeniedWithoutDeployClaim(t *testing.T) {
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
-	// Create a user with read-only access (no deploy claim)
-	externalID := createOrgGroupUserMembership(t, ctx, ts.db, []rbac.Claim{rbac.ClaimRead})
+	// Create a user with no operational claims (no deploy claim)
+	externalID := createOrgGroupUserMembership(t, ctx, ts.db, []rbac.Claim{})
 
 	req := &ProcessRequest{
 		UserID: externalID,
@@ -218,11 +218,11 @@ func TestDebugTrace_AdminClaimAlsoAllowed(t *testing.T) {
 	assert.NotContains(t, result.Error.Message, "deploy or admin claims")
 }
 
-func TestDebugTrace_WriteOnlyClaimDenied(t *testing.T) {
+func TestDebugTrace_NoOperationalClaimDenied(t *testing.T) {
 	proc, ts := setupProcessorWithTracing(t)
 	ctx := context.Background()
 
-	externalID := createOrgGroupUserMembership(t, ctx, ts.db, []rbac.Claim{rbac.ClaimWrite})
+	externalID := createOrgGroupUserMembership(t, ctx, ts.db, []rbac.Claim{})
 
 	req := &ProcessRequest{
 		UserID: externalID,

@@ -8,21 +8,21 @@ import (
 // TestFactoryAutoAllowLogic tests the auto-allow logic for org factory access.
 func TestFactoryAutoAllowLogic(t *testing.T) {
 	t.Run("containsClaim helper works correctly", func(t *testing.T) {
-		claims := []Claim{ClaimRead, ClaimWrite, ClaimDeploy}
+		claims := []Claim{ClaimDeploy, ClaimUpgrade}
 
-		if !containsClaim(claims, ClaimRead) {
-			t.Error("containsClaim should find ClaimRead")
-		}
 		if !containsClaim(claims, ClaimDeploy) {
 			t.Error("containsClaim should find ClaimDeploy")
+		}
+		if !containsClaim(claims, ClaimUpgrade) {
+			t.Error("containsClaim should find ClaimUpgrade")
 		}
 		if containsClaim(claims, ClaimAdmin) {
 			t.Error("containsClaim should NOT find ClaimAdmin")
 		}
-		if containsClaim(nil, ClaimRead) {
+		if containsClaim(nil, ClaimDeploy) {
 			t.Error("containsClaim should return false for nil slice")
 		}
-		if containsClaim([]Claim{}, ClaimRead) {
+		if containsClaim([]Claim{}, ClaimDeploy) {
 			t.Error("containsClaim should return false for empty slice")
 		}
 	})
@@ -31,7 +31,7 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:  []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+			Claims:  []Claim{ClaimDeploy},
 		}
 
 		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
@@ -44,10 +44,10 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{ClaimRead}},
-				"0xbbbb000000000000000000000000000000000002": {Claims: []Claim{ClaimRead, ClaimDeploy}},
+				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{}},
+				"0xbbbb000000000000000000000000000000000002": {Claims: []Claim{ClaimDeploy}},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: []Claim{},
 		}
 
 		hasDeployOnAnyContract := false
@@ -66,9 +66,9 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa": {Claims: []Claim{ClaimRead, ClaimWrite}},
+				"0xaaaa": {Claims: []Claim{}},
 			},
-			Claims: []Claim{ClaimRead, ClaimWrite},
+			Claims: []Claim{},
 		}
 
 		hasDeployInDefault := containsClaim(perms.Claims, ClaimDeploy)
@@ -98,10 +98,10 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa": {Claims: []Claim{ClaimWrite, ClaimAdmin}},
+				"0xaaaa": {Claims: []Claim{ClaimAdmin}},
 				"0xbbbb": {Claims: []Claim{ClaimDeploy}},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: []Claim{},
 		}
 
 		allClaims := collectAllClaims(perms)
@@ -111,12 +111,6 @@ func TestFactoryAutoAllowLogic(t *testing.T) {
 			claimSet[c] = true
 		}
 
-		if !claimSet[ClaimRead] {
-			t.Error("Should include ClaimRead from default_claims")
-		}
-		if !claimSet[ClaimWrite] {
-			t.Error("Should include ClaimWrite from contract 0xaaaa")
-		}
 		if !claimSet[ClaimAdmin] {
 			t.Error("Should include ClaimAdmin from contract 0xaaaa")
 		}
@@ -141,9 +135,9 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa": {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+				"0xaaaa": {Claims: []Claim{ClaimAdmin}},
 			},
-			Claims: []Claim{ClaimRead, ClaimWrite},
+			Claims: []Claim{},
 		}
 
 		hasDeploy := containsClaim(perms.Claims, ClaimDeploy)
@@ -163,7 +157,7 @@ func TestFactoryAutoAllowSecurityProperties(t *testing.T) {
 		daily := 10000
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_sendTransaction"},
-			Claims:  []Claim{ClaimRead, ClaimDeploy},
+			Claims:  []Claim{ClaimDeploy},
 			RateLimitRPS:   &rps,
 			RateLimitDaily: &daily,
 		}

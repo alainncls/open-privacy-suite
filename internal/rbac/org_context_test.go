@@ -555,13 +555,13 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		// Deploy users can access registered contracts in their own org without explicit grants
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{ClaimDeploy})
 		if err != nil {
 			t.Errorf("unexpected error for own-org contract with deploy claim: %v", err)
 		}
 
 		// But read-only users still need explicit grants
-		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{ClaimRead})
+		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{})
 		if err == nil {
 			t.Fatal("expected error for read-only user without explicit grant")
 		}
@@ -592,7 +592,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOtherOrgs", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOtherOrgs", false, []Claim{ClaimDeploy})
 		if err == nil {
 			t.Fatal("expected error for cross-org contract")
 		}
@@ -622,7 +622,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xPublic", false, []Claim{ClaimRead})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xPublic", false, []Claim{})
 		if err == nil {
 			t.Error("expected error for unregistered contract (private by default)")
 		}
@@ -646,7 +646,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		// ecrecover precompile (0x01)
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0x0000000000000000000000000000000000000001", false, []Claim{ClaimRead})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0x0000000000000000000000000000000000000001", false, []Claim{})
 		if err != nil {
 			t.Errorf("unexpected error for precompile: %v", err)
 		}
@@ -676,13 +676,13 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		// Deploy user in org-b can access org-b contracts via default claims
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{ClaimDeploy})
 		if err != nil {
 			t.Errorf("unexpected error for deploy user's other org contract: %v", err)
 		}
 
 		// But read-only user in org-b still needs explicit grants
-		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{ClaimRead})
+		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{})
 		if err == nil {
 			t.Fatal("expected error for read-only user without explicit grant")
 		}
