@@ -299,13 +299,12 @@ func DetectMulticall(method string, params []any) (bool, string) {
 
 // AccessController handles access control decisions for RBAC.
 type AccessController struct {
-	store                Store
-	resolver             *Resolver
-	cache                PermissionCache
-	deployValidator      *DeploymentValidator
-	upgradeValidator     *UpgradeValidator
-	factoryCallValidator *FactoryCallValidator
-	pendingTracker       *PendingDeploymentTracker
+	store            Store
+	resolver         *Resolver
+	cache            PermissionCache
+	deployValidator  *DeploymentValidator
+	upgradeValidator *UpgradeValidator
+	pendingTracker   *PendingDeploymentTracker
 }
 
 // Store returns the underlying RBAC store for the access controller.
@@ -324,13 +323,12 @@ func (c *AccessController) SetEncryptionKey(key []byte) {
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
-		store:                store,
-		resolver:             NewResolver(store, cacheTTL),
-		cache:                NewCache(CacheConfig{TTL: cacheTTL}),
-		deployValidator:      deployValidator,
-		upgradeValidator:     NewUpgradeValidator(store),
-		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),
-		pendingTracker:       NewPendingDeploymentTracker(1 * time.Hour),
+		store:           store,
+		resolver:        NewResolver(store, cacheTTL),
+		cache:           NewCache(CacheConfig{TTL: cacheTTL}),
+		deployValidator: deployValidator,
+		upgradeValidator: NewUpgradeValidator(store),
+		pendingTracker:  NewPendingDeploymentTracker(1 * time.Hour),
 	}
 }
 
@@ -339,13 +337,12 @@ func NewAccessController(store Store, cacheTTL time.Duration) *AccessController 
 func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache PermissionCache) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
-		store:                store,
-		resolver:             NewResolver(store, cacheTTL),
-		cache:                cache,
-		deployValidator:      deployValidator,
-		upgradeValidator:     NewUpgradeValidator(store),
-		factoryCallValidator: NewFactoryCallValidator(store, deployValidator),
-		pendingTracker:       NewPendingDeploymentTracker(1 * time.Hour),
+		store:            store,
+		resolver:         NewResolver(store, cacheTTL),
+		cache:            cache,
+		deployValidator:  deployValidator,
+		upgradeValidator: NewUpgradeValidator(store),
+		pendingTracker:   NewPendingDeploymentTracker(1 * time.Hour),
 	}
 }
 
@@ -568,9 +565,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	// Determine required claim based on the operation
 	requiredClaim := ClassifyOperation(req.EffectiveMethod(), req.Params)
 
-	// Track factory deploy info for auto-registration after successful tx
-	var factoryDeployInfo *FactoryDeployInfo
-
 	// Simple value transfers (eth_sendTransaction with no calldata) to unregistered
 	// addresses are treated as EOA transfers. No contract-level access check is
 	// needed since EOAs don't have code to execute; method allowlist already
@@ -671,7 +665,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}
 
 		// If no access from explicit registration or default_claims, check if it's a preregistered address.
-		// Preregistered addresses are planned CREATE3 deployments and should be accessible to the org that owns them.
+		// Preregistered addresses are planned deployments and should be accessible to the org that owns them.
 		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables.
 		if access == nil {
 			if !ownerOrgIDFetched {
@@ -877,36 +871,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 						Reason:  fmt.Sprintf("proxy upgrade denied: %s", upgradeResult.Reason),
 					}, nil
 				}
-
-				// Validate CREATE3 factory deploy() calls using OrgContext
-				// Check ALL orgs the user is a member of, not just their primary org.
-				// This ensures that if a user sends a tx to an org's factory, we validate
-				// using that org's settings (preregistered addresses, bytecode rules).
-				factoryResult, err := orgCtx.ValidateFactoryCallOrgs(ctx, addr, calldata, c.factoryCallValidator)
-				if err != nil {
-					return nil, fmt.Errorf("failed to validate factory call: %w", err)
-				}
-				if factoryResult != nil && !factoryResult.Allowed {
-					return &AccessCheckResult{
-						Allowed: false,
-						Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
-					}, nil
-				}
-				// If this is an allowed factory deploy, capture info for auto-registration.
-				// Use factoryResult.OrgID (the org that owns the factory) rather than org.ID,
-				// which may be the user's default org (unrelated to the factory's owner org).
-				if factoryResult != nil && factoryResult.IsFactoryCall && factoryResult.IsDeployCall && factoryResult.Allowed {
-					factoryOrgID := factoryResult.OrgID
-					if factoryOrgID == "" {
-						factoryOrgID = org.ID
-					}
-					factoryDeployInfo = &FactoryDeployInfo{
-						OrgID:         factoryOrgID,
-						TargetAddress: factoryResult.TargetAddress,
-						FactoryAddr:   addr,
-						Salt:          factoryResult.Salt,
-					}
-				}
 			}
 		}
 	} else if requiredClaim == ClaimDeploy {
@@ -944,15 +908,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				return &AccessCheckResult{
 					Allowed: false,
 					Reason:  fmt.Sprintf("deployment validation failed: %s", validationResult.Reason),
-				}, nil
-			}
-
-			// Trusted factory deployment still requires admin claim
-			// (validated inside ValidateDeployment, but we double-check here for clarity)
-			if validationResult.IsTrustedFactory && !hasAdminClaim {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  "CREATE3 factory deployment requires admin claim",
 				}, nil
 			}
 
@@ -996,14 +951,13 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	allClaims := collectAllClaims(perms)
 
 	return &AccessCheckResult{
-		Allowed:           true,
-		OrgID:             org.ID,
-		UserID:            user.ID,
-		RateLimitRPS:      perms.RateLimitRPS,
-		RateLimitDaily:    perms.RateLimitDaily,
-		RPCAPIKey:         perms.RPCAPIKey,
-		Claims:            allClaims,
-		FactoryDeployInfo: factoryDeployInfo, // Set if this was a factory deploy
+		Allowed:        true,
+		OrgID:          org.ID,
+		UserID:         user.ID,
+		RateLimitRPS:   perms.RateLimitRPS,
+		RateLimitDaily: perms.RateLimitDaily,
+		RPCAPIKey:      perms.RPCAPIKey,
+		Claims:         allClaims,
 	}, nil
 }
 
@@ -1285,62 +1239,6 @@ func accessGetFunctionRule(access *ContractAccess, selector string) *FunctionRul
 		}
 	}
 	return nil
-}
-
-// validateFactoryCallForUserOrgs checks if the target address is a factory for any org
-// the user is a member of, and validates the factory call using that org's settings.
-// Returns nil if the target is not a factory for any of the user's orgs.
-// Returns an AccessCheckResult with Allowed=false if the factory call is invalid.
-func (c *AccessController) validateFactoryCallForUserOrgs(ctx context.Context, userID string, targetAddr string, calldata []byte) (*AccessCheckResult, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user memberships: %w", err)
-	}
-
-	// Collect unique org IDs
-	orgIDs := make(map[string]bool)
-	for _, m := range memberships {
-		if m.Group != nil {
-			orgIDs[m.Group.OrgID] = true
-		}
-	}
-
-	// Check each org the user is a member of
-	for orgID := range orgIDs {
-		org, err := c.store.GetOrganization(ctx, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get organization: %w", err)
-		}
-		if org == nil {
-			continue
-		}
-
-		factoryAddress := GetOrgFactoryAddress(org)
-		if factoryAddress == "" {
-			continue
-		}
-
-		// Check if target matches this org's factory
-		factoryResult, err := c.factoryCallValidator.ValidateFactoryCall(ctx, org.ID, factoryAddress, targetAddr, calldata)
-		if err != nil {
-			return nil, fmt.Errorf("failed to validate factory call for org %s: %w", org.Slug, err)
-		}
-
-		// If this is a factory call to this org's factory, return the validation result
-		if factoryResult.IsFactoryCall && factoryResult.IsDeployCall {
-			if !factoryResult.Allowed {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  fmt.Sprintf("factory deploy denied: %s", factoryResult.Reason),
-				}, nil
-			}
-			// Factory call is allowed - return nil to continue with normal processing
-			return nil, nil
-		}
-	}
-
-	// Target is not a factory for any of the user's orgs - not a factory call
-	return nil, nil
 }
 
 // getUserOrganizationIDs returns the set of organization IDs the user is a member of.

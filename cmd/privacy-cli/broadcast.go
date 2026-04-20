@@ -70,8 +70,7 @@ type ContractDeployment struct {
 	Bytecode        string   `json:"bytecode"`
 	BytecodeHash    string   `json:"bytecode_hash"`
 	ConstructorArgs string   `json:"constructor_args"` // Hex-encoded constructor args
-	Dependencies    []string `json:"dependencies"`     // Addresses this contract depends on
-	Salt            string   `json:"salt,omitempty"`   // For CREATE3 deployments
+	Dependencies    []string `json:"dependencies"` // Addresses this contract depends on
 	DeployerAddress string   `json:"deployer_address"`
 }
 
@@ -222,13 +221,11 @@ func FindBroadcastFile(scriptPath string, chainID uint64) (string, error) {
 // PrepareRequest represents the request to register a deployment with the proxy.
 type PrepareRequest struct {
 	Contracts []ContractPrepareInfo `json:"contracts"`
-	Factory   string                `json:"factory,omitempty"`
 }
 
 // ContractPrepareInfo represents a single contract in the prepare request.
 type ContractPrepareInfo struct {
 	Name            string `json:"name"`
-	Salt            string `json:"salt"`
 	BytecodeHash    string `json:"bytecode_hash"`
 	ConstructorABI  []any  `json:"constructor_abi,omitempty"`
 	ConstructorArgs []any  `json:"constructor_args,omitempty"`

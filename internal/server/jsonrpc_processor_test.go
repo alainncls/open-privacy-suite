@@ -10,37 +10,28 @@ import (
 //
 // This test documents the security invariant that MUST be maintained:
 //
-// Even when calling an org-owned contract, if that contract makes internal
-// calls to another org's contract, the transaction MUST be denied.
+// ALL contract calls are traced by the runtime tracer. No contract is exempt
+// from tracing, regardless of ownership. This prevents cross-org isolation
+// violations where an org-owned contract makes internal calls to another
+// org's contract:
 //
-// The bug we caught: Tiered validation was skipping tracing entirely for
-// org-owned contracts, allowing this attack:
+//   User -> OrgA_Contract.attack(OrgB_Addr) -> OrgB_Contract  (DENIED by trace)
 //
-//   User → OrgA_Contract.attack(OrgB_Addr) → OrgB_Contract  ❌ VIOLATION
-//
-// The fix: Only skip tracing for the CREATE3 factory (audited, deterministic).
-// All other contracts MUST be traced regardless of ownership.
-//
-// NOTE: Full integration test for this is in e2e tests. This documents the
-// invariant that tiered validation ONLY skips for factory, not org-owned.
+// The only exception to tracing is simple value transfers to EOAs (no code),
+// which cannot make external calls.
 
-func TestTieredValidation_OnlySkipsFactory(t *testing.T) {
+func TestAllContractCallsAreTraced(t *testing.T) {
 	// This test documents the security requirement:
-	// Tiered validation should ONLY skip tracing for:
-	// 1. CREATE3 factory (audited, deterministic, no arbitrary calls)
+	// ALL contract calls must be traced. No contract is exempt.
 	//
-	// It should NOT skip for:
-	// 1. General org-owned contracts (could make cross-org calls via user input)
-	// 2. Unknown contracts
-	//
-	// The implementation is in validateWithTracing() in jsonrpc_processor.go
+	// The implementation is in validateWithTracing() in jsonrpc_processor.go.
 	// A full integration test requires mocking the entire tracer infrastructure.
 	//
 	// Key code path to verify:
 	// - jsonrpc_processor.go: validateWithTracing()
-	// - Only checks for factory address match
-	// - Does NOT check IsAddressOwnedByOrg for general contracts
-	t.Log("Security invariant: tiered validation only skips CREATE3 factory")
+	// - No special-casing for any contract address
+	// - Only simple value transfers to EOAs skip tracing
+	t.Log("Security invariant: all contract calls are traced for cross-org isolation")
 	t.Log("See jsonrpc_processor.go:validateWithTracing() for implementation")
 }
 

@@ -17,9 +17,6 @@ type Config struct {
 
 	// Organization configuration
 	Org OrgConfig `toml:"org"`
-
-	// CREATE3 factory configuration
-	Create3 Create3Config `toml:"create3"`
 }
 
 // APIConfig contains API connection settings.
@@ -34,14 +31,6 @@ type APIConfig struct {
 type OrgConfig struct {
 	// ID is the organization ID to use for operations
 	ID string `toml:"id"`
-}
-
-// Create3Config contains CREATE3 factory settings.
-type Create3Config struct {
-	// Factory is the CREATE3 factory contract address
-	Factory string `toml:"factory"`
-	// SaltPrefix is the default prefix for salt generation
-	SaltPrefix string `toml:"salt_prefix"`
 }
 
 // DefaultConfigPath is the default configuration file path.
@@ -130,19 +119,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ValidateForPreregister checks that configuration required for preregistration is set.
-func (c *Config) ValidateForPreregister() error {
-	if err := c.Validate(); err != nil {
-		return err
-	}
-
-	if c.Create3.Factory == "" {
-		return fmt.Errorf("missing required configuration: create3.factory")
-	}
-
-	return nil
-}
-
 // Example returns an example configuration file content.
 func Example() string {
 	return `# Privacy CLI Configuration
@@ -157,11 +133,5 @@ token = "${PRIVACY_API_TOKEN}"
 [org]
 # Organization ID
 id = "your-org-id"
-
-[create3]
-# CREATE3 factory contract address
-factory = "0x0000000000ffe8b47b3e2130213b802212439497"
-# Default salt prefix for address generation
-salt_prefix = "my-project"
 `
 }

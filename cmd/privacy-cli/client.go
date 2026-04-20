@@ -211,42 +211,6 @@ func (c *ProxyClient) VerifyDeployment(deploymentID string) (*VerifyDeploymentRe
 	return &result, nil
 }
 
-// DiscoverFactory attempts to discover the CREATE3 factory address from the proxy.
-func (c *ProxyClient) DiscoverFactory() (string, error) {
-	url := fmt.Sprintf("%s/dev/create3-factory", c.baseURL)
-
-	httpReq, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.setHeaders(httpReq)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("factory discovery not available (status %d)", resp.StatusCode)
-	}
-
-	var result struct {
-		Address string `json:"address"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return result.Address, nil
-}
-
 // setHeaders sets common HTTP headers for API requests.
 func (c *ProxyClient) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")

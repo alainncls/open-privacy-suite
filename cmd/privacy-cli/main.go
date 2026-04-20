@@ -15,7 +15,6 @@ func main() {
 	prepareCmd := flag.NewFlagSet("prepare", flag.ExitOnError)
 	verifyCmd := flag.NewFlagSet("verify", flag.ExitOnError)
 	listCmd := flag.NewFlagSet("list", flag.ExitOnError)
-	computeCmd := flag.NewFlagSet("compute-address", flag.ExitOnError)
 
 	// Check for subcommand
 	if len(os.Args) < 2 {
@@ -30,8 +29,6 @@ func main() {
 		runVerify(verifyCmd, os.Args[2:])
 	case "list":
 		runList(listCmd, os.Args[2:])
-	case "compute-address":
-		runComputeAddress(computeCmd, os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("privacy-cli version %s\n", Version)
 	case "help", "-h", "--help":
@@ -53,7 +50,6 @@ Commands:
   prepare           Analyze Foundry broadcast and register addresses with Privacy Proxy
   verify            Verify deployment matches registration
   list              List pending deployments for an organization
-  compute-address   Compute a CREATE3 address
 
 Options:
   -h, --help        Show this help message
@@ -69,9 +65,6 @@ Examples:
   # List pending deployments
   privacy-cli list --org-id org_abc123
 
-  # Compute a single CREATE3 address
-  privacy-cli compute-address --factory 0x... --salt 0x... --deployer 0x...
-
 Configuration:
   Create a privacy.toml file in your project root:
 
@@ -81,9 +74,6 @@ Configuration:
 
   [org]
   id = "org_abc123"
-
-  [factory]
-  address = "0x..."  # Optional, auto-discovered
 
   [auth]
   token = "${PRIVACY_PROXY_TOKEN}"

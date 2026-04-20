@@ -18,7 +18,6 @@ import (
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
-	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/governance"
 	"privacy-proxy/internal/metrics"
@@ -228,19 +227,6 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 
 	proxySvc := proxy.New(cfg.NodeURL)
-
-
-	// Load additional trusted factory hashes from config
-	if len(cfg.TrustedFactoryHashes) > 0 {
-		for _, hash := range cfg.TrustedFactoryHashes {
-			create3.AddTrustedFactory(create3.TrustedFactory{
-				Name:         "Custom factory (from TRUSTED_FACTORY_HASHES env)",
-				BytecodeHash: hash,
-				Source:       "environment variable",
-			})
-		}
-		slog.Info("loaded additional trusted factory hashes from config", "count", len(cfg.TrustedFactoryHashes))
-	}
 
 	// Initialize state stores: Redis-backed when REDIS_URL is set, in-memory otherwise.
 	var sessionStore SessionManager
@@ -650,11 +636,7 @@ func (s *Server) setupRouter() *gin.Engine {
 			// Compliance endpoints (travel rule)
 			s.registerComplianceRoutes(admin)
 
-			// Dev-only endpoints (CREATE3 factory deployment)
-			admin.GET("/dev/create3-factory", s.getCreate3Factory)
-			admin.POST("/dev/create3-factory", s.deployCreate3Factory)
-			admin.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-			admin.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
+			// Dev-only endpoints
 			admin.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
 		}
 	}
@@ -679,12 +661,6 @@ func (s *Server) setupRouter() *gin.Engine {
 
 			// Compliance endpoints (travel rule)
 			s.registerComplianceRoutes(adminLegacy)
-
-			// Dev-only endpoints (CREATE3 factory deployment)
-			adminLegacy.GET("/dev/create3-factory", s.getCreate3Factory)
-			adminLegacy.POST("/dev/create3-factory", s.deployCreate3Factory)
-			adminLegacy.GET("/dev/create3-factory/bytecode", s.getCreate3FactoryBytecodeHash)
-			adminLegacy.POST("/dev/orgs/:org_id/create3/auto-register", s.autoRegisterCreate3)
 		}
 	}
 

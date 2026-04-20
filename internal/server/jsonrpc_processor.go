@@ -495,11 +495,6 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		}
 	}
 
-	// Auto-register contract if this was a successful factory deploy
-	if result.FactoryDeployInfo != nil && statusCode == http.StatusOK {
-		p.autoRegisterFactoryDeploy(ctx, result.FactoryDeployInfo, responseBody)
-	}
-
 	// Handle plain CREATE pre-registration tracking/cleanup.
 	if plainCreatePreRegAddr != "" {
 		var rpcResp struct {
@@ -751,58 +746,6 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 	return b
 }
 
-// autoRegisterFactoryDeploy registers a contract after a successful CREATE3 factory deploy.
-// This runs asynchronously to avoid blocking the response.
-func (p *JSONRPCProcessor) autoRegisterFactoryDeploy(ctx context.Context, info *rbac.FactoryDeployInfo, responseBody []byte) {
-	// Parse the response to check if it was successful (has tx hash)
-	var rpcResp struct {
-		Result string `json:"result"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(responseBody, &rpcResp); err != nil {
-		return // Can't parse response, skip
-	}
-
-	// If there's an error or no result, the tx failed
-	if rpcResp.Error != nil || rpcResp.Result == "" {
-		return
-	}
-
-	// The tx was submitted successfully - register the contract
-	// Note: We register immediately since CREATE3 addresses are deterministic
-	// The contract will exist at this address once the tx is mined
-	store := p.rbacAccessCtrl.Store()
-
-	// Check if already registered as a contract
-	existing, err := store.GetContractByAddress(ctx, info.OrgID, info.TargetAddress)
-	if err == nil && existing != nil {
-		return // Already registered
-	}
-
-	// Create the contract entry
-	now := time.Now()
-	contract := &rbac.Contract{
-		ID:         uuid.New().String(),
-		OrgID:      info.OrgID,
-		Address:    strings.ToLower(info.TargetAddress),
-		Name:       fmt.Sprintf("CREATE3 Deploy %s", info.TargetAddress[:10]),
-		DeployedAt: &now,
-		Metadata: map[string]interface{}{
-			"factory":     info.FactoryAddr,
-			"salt":        info.Salt,
-			"auto_registered": true,
-		},
-	}
-
-	if err := store.CreateContract(ctx, contract); err != nil {
-		// Log error but don't fail the request - the preregistered address still works
-		// The contract can be manually registered later if needed
-		return
-	}
-}
-
 // validateWithTracing performs runtime trace validation for eth_sendTransaction.
 // Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
 // and a ProcessError if validation fails.
@@ -844,34 +787,6 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	for _, m := range memberships {
 		if m.Group != nil {
 			userOrgIDs[m.Group.OrgID] = true
-		}
-	}
-
-	// SECURITY: We only skip tracing for the CREATE3 factory, not for general org-owned contracts.
-	//
-	// Why NOT skip for org-owned contracts:
-	// An org-owned contract could accept arbitrary calldata and make external calls to
-	// other orgs' contracts, violating cross-org isolation. Example:
-	//   User → OrgA_Contract.attack(OrgB_Address) → OrgB_Contract  ❌ VIOLATION
-	//
-	// Why skip for factory:
-	// The CREATE3 factory is a known, audited contract with deterministic behavior.
-	// It only does CREATE2/CREATE internally (no arbitrary external calls), and
-	// factory calls are already validated by factory_call_validator in RBAC CheckAccess.
-	if p.runtimeTracer.IsTieredEnabled() {
-		normalizedTarget := strings.ToLower(strings.TrimSpace(targetAddr))
-
-		for orgID := range userOrgIDs {
-			// Only skip tracing for the org's CREATE3 factory
-			org, err := p.rbacAccessCtrl.Store().GetOrganization(ctx, orgID)
-			if err == nil && org != nil {
-				factoryAddr := rbac.GetOrgFactoryAddress(org)
-				if factoryAddr != "" && strings.ToLower(factoryAddr) == normalizedTarget {
-					// Target is org's factory - skip tracing
-					// Factory behavior is deterministic and already validated
-					return nil, nil
-				}
-			}
 		}
 	}
 
