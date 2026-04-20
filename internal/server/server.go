@@ -437,6 +437,7 @@ explorerStore:    explorerStore,
 			FallbackLogPath: cfg.SIEMFallbackLogPath,
 		})
 		siemForwarder.SetMetrics(m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal)
+		siemForwarder.Start()
 		s.siemForwarder = siemForwarder
 		slog.Info("SIEM forwarding enabled", "webhook", cfg.SIEMWebhookURL, "batch_size", cfg.SIEMBatchSize, "flush_interval", cfg.SIEMFlushInterval)
 	}

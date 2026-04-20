@@ -31,7 +31,7 @@ Dangerous JSON-RPC methods are blocked regardless of user permissions:
 | `eth_subscribe` | WebSocket subscriptions (bypasses filtering) |
 | `eth_unsubscribe` | WebSocket subscriptions |
 
-**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, users with the read claim can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
+**`eth_getStorageAt`** is not globally blocked but uses **tiered access based on claims**: admin users get unrestricted access to all storage slots, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked. See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for the full list of allowed slots.
 
 ### eth\_sendRawTransaction Support
 
@@ -120,7 +120,7 @@ The proxy applies per-method response filters **after** receiving the node's res
 
 | Method | Filtering behavior |
 |--------|-------------------|
-| `eth_getStorageAt` | Tiered access: admin (all slots), read (EIP-1967 proxy slots only), no claim (blocked) |
+| `eth_getStorageAt` | Tiered access: admin (all slots), non-admin (EIP-1967 proxy slots only), no claim (blocked) |
 | `eth_getTransactionByHash` | Returns `null` if user is not a participant (`from`/`to` match) |
 | `eth_getTransactionReceipt` | Strips `logs` and `logsBloom` for non-participants; preserves execution metadata |
 | `eth_getLogs` | Per-log-entry filtering based on indexed topic address matching |
@@ -162,7 +162,7 @@ The admin bypass applies per-contract: having admin on contract A does not grant
 **Org admins** (members of a group with `is_org_admin = true`) automatically receive the `admin` claim on all contracts in their organization via the permission resolver. This means org admins see all logs from all org contracts without restriction.
 
 <Callout variant="info" title="Claim hierarchy">
-  The `admin` claim implies `read`, `write`, `deploy`, and `upgrade`. Users with `deploy`, `write`, or `read` claims alone do NOT get the admin log bypass -- they are subject to normal event filtering.
+  The `admin` claim implies `read`, `write`, `deploy`, and `upgrade`. Users without the admin claim do NOT get the admin log bypass -- they are subject to normal event filtering.
 </Callout>
 
 ### Cross-Organization Isolation
@@ -216,7 +216,7 @@ When a user accesses a contract:
 - Contract addresses are globally unique across all orgs — one org cannot claim an address already registered to another
 - A contract registered to another org is **always denied**, regardless of the requester's claims
 - Deploy/admin users can access registered contracts in their own org via default claims (no explicit grant needed)
-- Regular `read`/`write` users must have an explicit `ContractGrant`
+- Regular users (without deploy or admin claims) must have an explicit `ContractGrant`
 
 ### Per-Address Access Checks
 
@@ -233,7 +233,7 @@ All methods that accept a target address enforce cross-org isolation at the addr
 | `eth_createAccessList` | Storage slots and addresses accessed | Contract internals |
 | `eth_sendTransaction` | Submits transaction | Write access |
 
-`eth_getStorageAt` uses **tiered access based on claims** (admin: all slots, read: EIP-1967 proxy slots only, no claim: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
+`eth_getStorageAt` uses **tiered access based on claims** (admin: all slots, non-admin: EIP-1967 proxy slots only, method not in allowlist: blocked). See [Response Filtering](/docs/security/response-filtering#eth_getstorageat----tiered-access) for details.
 
 ### Plain CREATE Pre-registration
 
