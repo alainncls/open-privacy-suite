@@ -34,7 +34,7 @@ func runVerify(cmd *flag.FlagSet, args []string) {
 	}
 
 	// Merge flags with config
-	cfg.MergeWithFlags(*apiURL, "", "", "", *token)
+	cfg.MergeWithFlags(*apiURL, "", "", *token)
 
 	// Validate API URL
 	if cfg.Proxy.APIURL == "" {

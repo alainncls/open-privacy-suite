@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/evm/bytecode"
-	"privacy-proxy/internal/evm/create3"
 	"privacy-proxy/internal/evm/precompile"
 )
 
@@ -33,10 +32,6 @@ type ValidationResult struct {
 	IsProxy   bool                // Whether this is a proxy contract
 	ProxyType string              // Type of proxy if applicable (e.g., "ERC1967", "Transparent", "UUPS")
 	ProxyInfo *bytecode.ProxyInfo // Full proxy detection info
-
-	// Factory detection fields
-	IsTrustedFactory bool   // Whether this is a whitelisted factory contract
-	FactoryName      string // Name of the factory if whitelisted
 
 	// Constructor validation fields
 	ConstructorAddresses []string // Addresses found in constructor arguments
@@ -107,26 +102,11 @@ func (v *DeploymentValidator) ValidateDeployment(
 		ProxyInfo:       proxyInfo,
 	}
 
-	// Check 1: Detect trusted factory contracts with CREATE/CREATE2
-	// Note: Trusted factory deployment still requires admin claim (checked in access.go)
-	_ = hasAdminClaim // Silence unused warning
-	if analysis.HasCreate || analysis.HasCreate2 {
-		// Check if this is a trusted factory contract
-		// Use the ORIGINAL bytecode (with CBOR) for hash checking since the
-		// trusted factory hash was computed from the original bytecode.
-		trustedFactory := create3.IsTrustedFactoryBytecode(bcOriginal.Raw)
-		if trustedFactory != nil {
-			// This is a whitelisted factory - allow it (admin check happens in access.go)
-			result.IsTrustedFactory = true
-			result.FactoryName = trustedFactory.Name
-			result.Allowed = true
-			return result, nil
-		}
-		// Non-trusted CREATE/CREATE2 are allowed — runtime tracing validates
-		// the actual execution and auto-registers created addresses.
-	}
+	// CREATE/CREATE2 in deployment bytecode are allowed — runtime tracing validates
+	// the actual execution and auto-registers created addresses.
+	_ = hasAdminClaim // Retained for interface compatibility
 
-	// Check 2: Verify all constant call targets are allowed
+	// Verify all constant call targets are allowed
 	for _, target := range analysis.CallTargets {
 		if target.TargetType != bytecode.CallTargetConstant {
 			continue
@@ -230,20 +210,10 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 		ProxyInfo:       proxyInfo,
 	}
 
-	// Check 1: Detect trusted factory contracts with CREATE/CREATE2
-	_ = hasAdminClaim // Silence unused warning
-	if analysis.HasCreate || analysis.HasCreate2 {
-		trustedFactory := create3.IsTrustedFactoryBytecode(bcOriginal.Raw)
-		if trustedFactory != nil {
-			result.IsTrustedFactory = true
-			result.FactoryName = trustedFactory.Name
-			result.Allowed = true
-			return result, nil
-		}
-		// Non-trusted CREATE/CREATE2 are allowed — runtime tracing validates at execution time.
-	}
+	// CREATE/CREATE2 in deployment bytecode are allowed — runtime tracing validates at execution time.
+	_ = hasAdminClaim // Retained for interface compatibility
 
-	// Check 2: Verify all constant call targets are allowed
+	// Verify all constant call targets are allowed
 	for _, target := range analysis.CallTargets {
 		if target.TargetType != bytecode.CallTargetConstant {
 			continue

@@ -250,61 +250,6 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 	return fmt.Errorf(ErrContractAccessDenied)
 }
 
-// ValidateFactoryCallOrgs checks factory calls against all orgs the user belongs to.
-// Returns the validation result if this is a factory call, or nil if not.
-// If multiple orgs have the same factory configured, checks preregistration against
-// all of them and returns success if ANY org has the address preregistered.
-func (oc *OrgContext) ValidateFactoryCallOrgs(
-	ctx context.Context,
-	targetAddr string,
-	calldata []byte,
-	validator *FactoryCallValidator,
-) (*FactoryCallValidationResult, error) {
-	var lastFailedResult *FactoryCallValidationResult
-
-	// Check each org the user is a member of
-	for orgID := range oc.userOrgIDs {
-		org, err := oc.store.GetOrganization(ctx, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get organization: %w", err)
-		}
-		if org == nil {
-			continue
-		}
-
-		factoryAddress := GetOrgFactoryAddress(org)
-		if factoryAddress == "" {
-			continue
-		}
-
-		// Check if target matches this org's factory
-		result, err := validator.ValidateFactoryCall(ctx, org.ID, factoryAddress, targetAddr, calldata)
-		if err != nil {
-			return nil, fmt.Errorf("failed to validate factory call for org %s: %w", org.Slug, err)
-		}
-
-		// If this is a factory call to this org's factory
-		if result.IsFactoryCall && result.IsDeployCall {
-			// If allowed, return success immediately
-			if result.Allowed {
-				result.OrgID = org.ID
-				return result, nil
-			}
-			// If denied, save the result but continue checking other orgs
-			// (in case the address is preregistered for another org with the same factory)
-			lastFailedResult = result
-		}
-	}
-
-	// If we found a factory call but it was denied for all orgs, return the last failed result
-	if lastFailedResult != nil {
-		return lastFailedResult, nil
-	}
-
-	// Not a factory call for any of user's orgs
-	return nil, nil
-}
-
 // GetUserOrgIDs returns the set of organization IDs the user belongs to.
 func GetUserOrgIDs(ctx context.Context, store Store, userID string) (map[string]bool, error) {
 	memberships, err := store.ListUserMembershipsWithDetails(ctx, userID)

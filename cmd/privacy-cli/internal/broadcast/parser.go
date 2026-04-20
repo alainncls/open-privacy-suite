@@ -28,31 +28,10 @@ func Parse(data []byte) (*BroadcastFile, error) {
 	return &broadcast, nil
 }
 
-// KnownCREATE3Factories is a list of known CREATE3 factory contract addresses.
-// These are used to identify CREATE3 deployments when a CALL is made to one of these addresses.
-var KnownCREATE3Factories = map[string]bool{
-	// Solmate/Solady CREATE3 factory
-	"0x0000000000ffe8b47b3e2130213b802212439497": true,
-	// Additional common factory addresses can be added here
-}
-
 // ExtractDeploymentAddresses extracts all contract addresses that will be deployed
-// from a broadcast file. It supports CREATE, CREATE2, and CREATE3 (via factory) deployments.
-//
-// For CREATE3 detection, it checks:
-// 1. Explicit CREATE3 transaction type
-// 2. CALL to a known CREATE3 factory with additional contracts
-// 3. CALL with additional contracts where transaction has CREATE3-like patterns
-func ExtractDeploymentAddresses(broadcast *BroadcastFile, customFactories []string) []DeploymentAddress {
-	// Build factory lookup set
-	factories := make(map[string]bool)
-	for addr := range KnownCREATE3Factories {
-		factories[strings.ToLower(addr)] = true
-	}
-	for _, addr := range customFactories {
-		factories[strings.ToLower(addr)] = true
-	}
-
+// from a broadcast file. It supports CREATE and CREATE2 deployments, as well as
+// contracts deployed as side effects of CALL transactions.
+func ExtractDeploymentAddresses(broadcast *BroadcastFile) []DeploymentAddress {
 	var addresses []DeploymentAddress
 
 	for _, tx := range broadcast.Transactions {
@@ -80,10 +59,6 @@ func ExtractDeploymentAddresses(broadcast *BroadcastFile, customFactories []stri
 			}
 
 		case "CALL":
-			// Check if this is a CREATE3 factory call
-			targetAddr := strings.ToLower(tx.ContractAddress)
-			isFactoryCall := factories[targetAddr]
-
 			// Extract additional contracts deployed by this call
 			for _, additional := range tx.AdditionalContracts {
 				addr := DeploymentAddress{
@@ -93,24 +68,10 @@ func ExtractDeploymentAddresses(broadcast *BroadcastFile, customFactories []stri
 
 				additionalType := strings.ToUpper(additional.TransactionType)
 				switch additionalType {
-				case "CREATE":
-					// If this CREATE was from a factory call, it's likely CREATE3
-					if isFactoryCall {
-						addr.DeploymentType = DeploymentCREATE3
-						addr.FactoryAddress = targetAddr
-					} else {
-						addr.DeploymentType = DeploymentCREATE
-					}
 				case "CREATE2":
 					addr.DeploymentType = DeploymentCREATE2
 				default:
-					// Default to CREATE3 if from factory, otherwise CREATE
-					if isFactoryCall {
-						addr.DeploymentType = DeploymentCREATE3
-						addr.FactoryAddress = targetAddr
-					} else {
-						addr.DeploymentType = DeploymentCREATE
-					}
+					addr.DeploymentType = DeploymentCREATE
 				}
 
 				addresses = append(addresses, addr)
@@ -122,8 +83,8 @@ func ExtractDeploymentAddresses(broadcast *BroadcastFile, customFactories []stri
 }
 
 // ExtractAddresses is a convenience function that returns just the addresses as strings.
-func ExtractAddresses(broadcast *BroadcastFile, customFactories []string) []string {
-	deployments := ExtractDeploymentAddresses(broadcast, customFactories)
+func ExtractAddresses(broadcast *BroadcastFile) []string {
+	deployments := ExtractDeploymentAddresses(broadcast)
 	addresses := make([]string, len(deployments))
 	for i, d := range deployments {
 		addresses[i] = d.Address

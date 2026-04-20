@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +14,45 @@ import (
 
 	"privacy-proxy/internal/rbac"
 )
+
+// Anvil default account 0
+// NOTE: These are well-known Anvil/Hardhat default test accounts -- NOT real secrets.
+// See https://book.getfoundry.sh/reference/anvil/
+// This code is gated behind IsProduction() == false and never runs in production.
+const anvilAccount0Address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+// sendRPCRequest sends a JSON-RPC request to the configured node.
+func (s *Server) sendRPCRequest(ctx context.Context, reqBody map[string]interface{}) (map[string]interface{}, error) {
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.config.NodeURL, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
 
 // DemoERC20InitCode is the deployment bytecode for a simple ERC20 token contract.
 // The token has name "DemoToken", symbol "DEMO", 18 decimals, and mints 1_000_000e18 to the deployer.

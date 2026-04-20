@@ -25,8 +25,6 @@ func registerContractTools(s *mcp.Server, client *httpClient, confirms *Confirma
 	registerBatchMoveContracts(s, client, confirms)
 	registerLookupContract(s, client)
 	registerGrantSummary(s, client)
-	registerGetCreate3Config(s, client)
-	registerSetCreate3Config(s, client)
 }
 
 type listContractsArgs struct {
@@ -532,52 +530,6 @@ func registerBatchMoveContracts(s *mcp.Server, client *httpClient, confirms *Con
 			return errorResult("moving contracts: %v", err)
 		}
 		return textResult(section("Contracts Moved"), prettyJSON(json.RawMessage(raw)))
-	})
-}
-
-type getCreate3ConfigArgs struct {
-	OrgID string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
-}
-
-func registerGetCreate3Config(s *mcp.Server, client *httpClient) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_create3_config",
-		Description: "Get CREATE3 factory configuration for an organization.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args getCreate3ConfigArgs) (*mcp.CallToolResult, any, error) {
-		if args.OrgID == "" {
-			return errorResult("org_id is required")
-		}
-		raw, err := client.get(fmt.Sprintf("/api/v1/admin/orgs/%s/config/create3", url.QueryEscape(args.OrgID)))
-		if err != nil {
-			return errorResult("getting CREATE3 config: %v", err)
-		}
-		return textResult(section("CREATE3 Config"), prettyJSON(json.RawMessage(raw)))
-	})
-}
-
-type setCreate3ConfigArgs struct {
-	OrgID          string `json:"org_id" jsonschema:"organization ID (UUID, required)"`
-	FactoryAddress string `json:"factory_address" jsonschema:"CREATE3 factory contract address (required)"`
-	Enabled        *bool  `json:"enabled,omitempty" jsonschema:"enable/disable CREATE3 detection"`
-}
-
-func registerSetCreate3Config(s *mcp.Server, client *httpClient) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "set_create3_config",
-		Description: "Set CREATE3 factory configuration for an organization.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, args setCreate3ConfigArgs) (*mcp.CallToolResult, any, error) {
-		if args.OrgID == "" || args.FactoryAddress == "" {
-			return errorResult("org_id and factory_address are required")
-		}
-		body := map[string]any{"factory_address": args.FactoryAddress}
-		if args.Enabled != nil {
-			body["enabled"] = *args.Enabled
-		}
-		raw, err := client.put(fmt.Sprintf("/api/v1/admin/orgs/%s/config/create3", url.QueryEscape(args.OrgID)), body)
-		if err != nil {
-			return errorResult("setting CREATE3 config: %v", err)
-		}
-		return textResult(section("CREATE3 Config Updated"), prettyJSON(json.RawMessage(raw)))
 	})
 }
 

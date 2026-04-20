@@ -430,8 +430,7 @@ type AccessCheckResult struct {
 	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`    // Deprecated: rate limiting moved to RPC proxy
 	RPCAPIKey         string             `json:"-"`                             // API key for upstream RPC proxy (excluded from JSON — sensitive)
 	Claims            []Claim            `json:"claims,omitempty"`
-	DeploymentInfo    *DeploymentInfo    `json:"deployment_info,omitempty"`     // Set for allowed deployments
-	FactoryDeployInfo *FactoryDeployInfo `json:"factory_deploy_info,omitempty"` // Set for CREATE3 factory deploys
+	DeploymentInfo *DeploymentInfo `json:"deployment_info,omitempty"` // Set for allowed deployments
 }
 
 // DeploymentInfo contains information about an allowed deployment.
@@ -440,15 +439,6 @@ type DeploymentInfo struct {
 	OrgID     string `json:"org_id"`
 	IsProxy   bool   `json:"is_proxy"`
 	ProxyType string `json:"proxy_type,omitempty"`
-}
-
-// FactoryDeployInfo contains information about a CREATE3 factory deployment.
-// This is used to auto-register contracts after successful factory deploys.
-type FactoryDeployInfo struct {
-	OrgID         string `json:"org_id"`          // Organization that owns the deployment
-	TargetAddress string `json:"target_address"`  // Computed CREATE3 address
-	FactoryAddr   string `json:"factory_address"` // Factory contract address
-	Salt          string `json:"salt"`            // Salt used for deployment
 }
 
 // GroupWithAccess combines a Group with its access settings.

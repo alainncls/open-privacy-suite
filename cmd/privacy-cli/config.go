@@ -11,10 +11,9 @@ import (
 
 // Config represents the privacy.toml configuration file.
 type Config struct {
-	Proxy   ProxyConfig   `toml:"proxy"`
-	Org     OrgConfig     `toml:"org"`
-	Factory FactoryConfig `toml:"factory"`
-	Auth    AuthConfig    `toml:"auth"`
+	Proxy ProxyConfig `toml:"proxy"`
+	Org   OrgConfig   `toml:"org"`
+	Auth  AuthConfig  `toml:"auth"`
 }
 
 // ProxyConfig contains proxy connection settings.
@@ -26,11 +25,6 @@ type ProxyConfig struct {
 // OrgConfig contains organization settings.
 type OrgConfig struct {
 	ID string `toml:"id"`
-}
-
-// FactoryConfig contains CREATE3 factory settings.
-type FactoryConfig struct {
-	Address string `toml:"address"`
 }
 
 // AuthConfig contains authentication settings.
@@ -91,7 +85,6 @@ func expandEnvVars(cfg *Config) {
 	cfg.Proxy.APIURL = expandEnvVar(cfg.Proxy.APIURL)
 	cfg.Proxy.RPCURL = expandEnvVar(cfg.Proxy.RPCURL)
 	cfg.Org.ID = expandEnvVar(cfg.Org.ID)
-	cfg.Factory.Address = expandEnvVar(cfg.Factory.Address)
 	cfg.Auth.Token = expandEnvVar(cfg.Auth.Token)
 }
 
@@ -132,7 +125,7 @@ func expandEnvVar(s string) string {
 
 // MergeWithFlags merges command-line flags with config values.
 // Flags take precedence over config values.
-func (c *Config) MergeWithFlags(apiURL, rpcURL, orgID, factoryAddr, token string) {
+func (c *Config) MergeWithFlags(apiURL, rpcURL, orgID, token string) {
 	if apiURL != "" {
 		c.Proxy.APIURL = apiURL
 	}
@@ -141,9 +134,6 @@ func (c *Config) MergeWithFlags(apiURL, rpcURL, orgID, factoryAddr, token string
 	}
 	if orgID != "" {
 		c.Org.ID = orgID
-	}
-	if factoryAddr != "" {
-		c.Factory.Address = factoryAddr
 	}
 	if token != "" {
 		c.Auth.Token = token
@@ -158,9 +148,6 @@ func (c *Config) MergeWithFlags(apiURL, rpcURL, orgID, factoryAddr, token string
 	}
 	if c.Org.ID == "" {
 		c.Org.ID = os.Getenv("PRIVACY_PROXY_ORG_ID")
-	}
-	if c.Factory.Address == "" {
-		c.Factory.Address = os.Getenv("PRIVACY_PROXY_FACTORY")
 	}
 	if c.Auth.Token == "" {
 		c.Auth.Token = os.Getenv("PRIVACY_PROXY_TOKEN")

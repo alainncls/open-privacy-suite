@@ -50,10 +50,6 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.POST("/orgs/:org_id/contracts/sync-delete", s.deleteStaleContracts)
 	api.GET("/orgs/:org_id/contracts/grant-summary", s.getContractGrantSummary)
 
-	// CREATE3 Config (factory address per org)
-	api.GET("/orgs/:org_id/config/create3", s.getOrgCreate3Config)
-	api.PUT("/orgs/:org_id/config/create3", s.setOrgCreate3Config)
-
 	// Batch operations
 	api.POST("/orgs/:org_id/contracts/batch-move", s.batchMoveContracts)
 	api.POST("/orgs/:org_id/groups/batch-delete", s.batchDeleteGroups)

@@ -10,7 +10,7 @@ export const metadata = {
 
 The Open Privacy Suite enforces privacy at two distinct layers. **Request filtering** (covered in the [Security](/docs/security) page) determines which methods and contracts a user can access. **Response filtering**, described here, controls what data a user sees within allowed responses.
 
-Request filtering alone is insufficient for financial privacy. Consider a contract with ten participants who all have `read` access: without response filtering, every participant can read every other participant's transaction calldata, nonces, and event log parameters. Response filtering closes this gap by restricting response data to information that involves the requesting user's own addresses.
+Request filtering alone is insufficient for financial privacy. Consider a contract with ten participants who all have access: without response filtering, every participant can read every other participant's transaction calldata, nonces, and event log parameters. Response filtering closes this gap by restricting response data to information that involves the requesting user's own addresses.
 
 ---
 
@@ -42,12 +42,12 @@ Response filtering uses these linked addresses to determine what the user is all
 | Claim level | Access |
 |-------------|--------|
 | **Admin** | Unrestricted access to all storage slots |
-| **Read** (or any claim implying read) | Allowed only for well-known proxy infrastructure slots (see below) |
+| **Non-admin** (any user without admin claim) | Allowed only for well-known proxy infrastructure slots (see below) |
 | **No claim** | Blocked |
 
 ### Well-known proxy infrastructure slots
 
-Users with the `read` claim can query only the following four slots. These are standard EIP-1967 and EIP-2535 proxy infrastructure slots that expose implementation/admin addresses, not user data:
+Non-admin users can query only the following four slots. These are standard EIP-1967 and EIP-2535 proxy infrastructure slots that expose implementation/admin addresses, not user data:
 
 | Slot | Standard | Purpose |
 |------|----------|---------|
@@ -188,7 +188,7 @@ These response-filtering features implement core privacy requirements for regula
 |-------------|----------------|
 | **Intra-org transaction confidentiality** | `eth_getTransactionByHash` returns `null` for non-participants, preventing co-members from reading each other's calldata and transfer details |
 | **Event log visibility restrictions** | `eth_getLogs` filters entries by indexed address topics, ensuring users see only events involving their own addresses |
-| **Raw state access prevention** | `eth_getStorageAt` uses tiered access based on claims: admin users get unrestricted slot access, read-claim users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked entirely |
+| **Raw state access prevention** | `eth_getStorageAt` uses tiered access based on claims: admin users get unrestricted slot access, non-admin users can query only EIP-1967 proxy infrastructure slots, and users with no claim are blocked entirely |
 | **Receipt log redaction** | `eth_getTransactionReceipt` strictly filters inner logs and zeros bloom filters, ensuring even participants cannot see unrelated logs |
 
 These controls ensure that even within a shared private network where all participants have read access to the same contracts, individual transaction privacy is maintained at the response level.
@@ -255,7 +255,7 @@ The proxy strips the `visibleTo` field before forwarding the transaction to the 
 
 | Method | Participant behavior | Non-participant behavior |
 |--------|---------------------|--------------------------|
-| `eth_getStorageAt` | Admin: all slots; Read: EIP-1967 proxy slots only | Blocked (no claim) |
+| `eth_getStorageAt` | Admin: all slots; Non-admin: EIP-1967 proxy slots only | Blocked (no claim) |
 | `eth_getTransactionByHash` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockHashAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |
 | `eth_getTransactionByBlockNumberAndIndex` | Full transaction | `null` (or full tx if viewer is in `visibleTo`) |

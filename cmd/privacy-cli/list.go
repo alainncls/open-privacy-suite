@@ -29,7 +29,7 @@ func runList(cmd *flag.FlagSet, args []string) {
 	}
 
 	// Merge flags with config
-	cfg.MergeWithFlags(*apiURL, "", *orgID, "", *token)
+	cfg.MergeWithFlags(*apiURL, "", *orgID, *token)
 
 	// Validate required fields
 	if cfg.Proxy.APIURL == "" {

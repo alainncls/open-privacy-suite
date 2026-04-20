@@ -24,7 +24,7 @@ type Transaction struct {
 }
 
 // AdditionalContract represents a contract deployed as a side effect of a transaction.
-// This commonly occurs with CREATE3 factory deployments where the factory deploys
+// This commonly occurs with factory deployments where the factory deploys
 // contracts on behalf of the caller.
 type AdditionalContract struct {
 	TransactionType string `json:"transactionType"`
@@ -38,7 +38,6 @@ type DeploymentType string
 const (
 	DeploymentCREATE  DeploymentType = "CREATE"
 	DeploymentCREATE2 DeploymentType = "CREATE2"
-	DeploymentCREATE3 DeploymentType = "CREATE3"
 )
 
 // DeploymentAddress represents a contract address to be deployed with its type.
@@ -46,6 +45,4 @@ type DeploymentAddress struct {
 	Address        string         `json:"address"`
 	ContractName   string         `json:"contract_name,omitempty"`
 	DeploymentType DeploymentType `json:"deployment_type"`
-	// FactoryAddress is set for CREATE3 deployments
-	FactoryAddress string `json:"factory_address,omitempty"`
 }

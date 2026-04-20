@@ -663,13 +663,13 @@ func TestDeploymentValidator_ProxyResultFieldsPopulated(t *testing.T) {
 	}
 }
 
-// TestDeploymentValidator_TrustedFactoryWhitelist tests that whitelisted factory contracts
-// with CREATE/CREATE2 opcodes are allowed to be deployed.
-func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
+// TestDeploymentValidator_CreateAllowedByRuntimeTracing tests that contracts
+// with CREATE/CREATE2 opcodes are allowed to be deployed (runtime tracing validates).
+func TestDeploymentValidator_CreateAllowedByRuntimeTracing(t *testing.T) {
 	store := newDeployValidatorTestStore()
 	validator := NewDeploymentValidator(store)
 
-	// Non-trusted CREATE is allowed (runtime tracing validates), but IsTrustedFactory should be false
+	// CREATE is allowed because runtime tracing validates at execution time
 	result, err := validator.ValidateDeployment(context.Background(), "org1", bytecodeWithCreate, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -679,11 +679,6 @@ func TestDeploymentValidator_TrustedFactoryWhitelist(t *testing.T) {
 	}
 	if !result.HasCreate {
 		t.Error("expected HasCreate to be true")
-	}
-
-	// Verify the result indicates it's not a trusted factory
-	if result.IsTrustedFactory {
-		t.Error("expected IsTrustedFactory to be false for non-whitelisted contract")
 	}
 }
 
