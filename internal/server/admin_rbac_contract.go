@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -575,6 +576,110 @@ func expectedByteLength(abiType string) int {
 	}
 }
 
+// addressOrgResolver is the minimal interface needed by validateCrossOrgParamRules
+// to check whether a hex address belongs to a given organization.
+// rbac.Store (and *db.DB) satisfy this interface.
+type addressOrgResolver interface {
+	GetContractOwnerOrgID(ctx context.Context, address string) (string, error)
+	GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error)
+}
+
+// validateCrossOrgParamRules checks that custom hex addresses in event param rules
+// do not cross organization boundaries. For each param rule with a custom hex value
+// on an address-type parameter, this validates that the address belongs to the same
+// organization as the grant being created/updated.
+//
+// Fail-closed: addresses not registered to any org (contracts, preregistered, or
+// linked EOAs) are rejected. Only addresses verifiably belonging to the grant's org
+// are allowed.
+//
+// Requires ABI to determine parameter types — if no ABI is available, custom hex
+// param rules are already rejected by rejectCustomParamRulesWithoutABI.
+func validateCrossOrgParamRules(ctx context.Context, store addressOrgResolver, orgID string, rules []rbac.EventRule, abiJSON string) string {
+	if abiJSON == "" {
+		return "" // No ABI = custom hex already rejected upstream
+	}
+
+	events, err := rbac.ExtractEventSignatures(abiJSON)
+	if err != nil {
+		return "" // Unparseable ABI — skip (matches validateEventRulesWithABI behavior)
+	}
+
+	eventByTopic := make(map[string]*rbac.EventSignature, len(events))
+	for i := range events {
+		eventByTopic[strings.ToLower(events[i].Topic0)] = &events[i]
+	}
+
+	for _, rule := range rules {
+		for _, pr := range rule.ParamRules {
+			if !strings.HasPrefix(pr.MustBe, "0x") {
+				continue // "self" constraints don't reference external addresses
+			}
+
+			// Only validate address-type parameters for cross-org boundaries.
+			// Non-address types (uint256, bytes32, etc.) don't represent org entities.
+			ev, ok := eventByTopic[strings.ToLower(rule.Topic0)]
+			if !ok {
+				continue // Event not in ABI — can't determine param types
+			}
+			if pr.Index < 0 || pr.Index >= len(ev.Inputs) {
+				continue // Out of bounds — caught by validateEventRulesWithABI
+			}
+			if ev.Inputs[pr.Index].Type != "address" {
+				continue // Not an address param — no cross-org concern
+			}
+
+			hexAddr := pr.MustBe
+
+			// Check 1: Is this address a contract or preregistered address?
+			contractOrgID, err := store.GetContractOwnerOrgID(ctx, hexAddr)
+			if err != nil {
+				return fmt.Sprintf("event %s: failed to validate cross-org boundary for param %d", rule.Name, pr.Index)
+			}
+			if contractOrgID != "" {
+				if contractOrgID == orgID {
+					continue // Same org — allowed
+				}
+				return fmt.Sprintf(
+					"event %s: param_rule[%d] references an address belonging to a different organization",
+					rule.Name, pr.Index,
+				)
+			}
+
+			// Check 2: Is this address an EOA linked to a user?
+			eoaOrgIDs, err := store.GetOrgIDsForEthAddress(ctx, hexAddr)
+			if err != nil {
+				return fmt.Sprintf("event %s: failed to validate cross-org boundary for param %d", rule.Name, pr.Index)
+			}
+			if len(eoaOrgIDs) > 0 {
+				found := false
+				for _, eid := range eoaOrgIDs {
+					if eid == orgID {
+						found = true
+						break
+					}
+				}
+				if found {
+					continue // Address owner is in this org — allowed
+				}
+				return fmt.Sprintf(
+					"event %s: param_rule[%d] references an address belonging to a different organization",
+					rule.Name, pr.Index,
+				)
+			}
+
+			// Check 3: Address not registered anywhere — fail closed.
+			// Unregistered addresses cannot be verified as belonging to this org.
+			return fmt.Sprintf(
+				"event %s: param_rule[%d] references an unregistered address; only addresses belonging to this organization are allowed",
+				rule.Name, pr.Index,
+			)
+		}
+	}
+
+	return ""
+}
+
 // autoAddSelfConstraints adds "self" param rules for all address-type parameters
 // in event rules that don't already have an explicit constraint. This ensures
 // that by default, users only see events where they are a party (fail-closed).
@@ -688,6 +793,13 @@ func (s *Server) createContractGrant(c *gin.Context) {
 			// Reject custom hex param rules if no ABI is available
 			if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
+
+			// Enforce cross-org boundaries: custom hex addresses in address-type
+			// params must belong to the same org as the grant.
+			if errMsg := validateCrossOrgParamRules(c.Request.Context(), s.db, orgID, rules, abiJSON); errMsg != "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": errMsg})
 				return
 			}
 		}
@@ -808,6 +920,13 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 				// Reject custom hex param rules if no ABI is available
 				if errMsg := rejectCustomParamRulesWithoutABI(rules, abiJSON); errMsg != "" {
 					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
+
+				// Enforce cross-org boundaries: custom hex addresses in address-type
+				// params must belong to the same org as the grant.
+				if errMsg := validateCrossOrgParamRules(c.Request.Context(), s.db, orgID, rules, abiJSON); errMsg != "" {
+					c.JSON(http.StatusForbidden, gin.H{"error": errMsg})
 					return
 				}
 

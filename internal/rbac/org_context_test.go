@@ -138,6 +138,9 @@ func (m *MockOrgContextStore) IsAddressPreregistered(ctx context.Context, orgID,
 func (m *MockOrgContextStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
 func (m *MockOrgContextStore) GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error) { return nil, nil }
 func (m *MockOrgContextStore) SystemLinkEthAddress(_ context.Context, _, _ string) error { return nil }
+func (m *MockOrgContextStore) GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error) {
+	return nil, nil
+}
 func (m *MockOrgContextStore) GrantContractToDeployerGroup(ctx context.Context, orgID, contractID, deployerUserID string) error { return nil }
 
 // Shared infrastructure stubs

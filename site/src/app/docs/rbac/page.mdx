@@ -235,17 +235,29 @@ Inheritance uses INTERSECTION (child restrictions narrow parent).
 
 ### Parameter Constraints
 
-Function rules can include `param_rules` to enforce constraints on individual call parameters:
+Function rules and event rules can include `param_rules` to enforce constraints on individual parameters:
 
-- **Prerequisite:** the user's DID must be linked to an ETH address via EIP-191, and the contract must have its ABI uploaded
+- **Prerequisite:** the contract must have its ABI uploaded (or a `token_type` set for built-in ABI fallback)
 - **Constraint `"self"`:** the parameter (must be an `address` type) must match one of the caller's linked ETH addresses
-- **Applies to:** `eth_sendTransaction`, `eth_call`, `eth_estimateGas`, `eth_sendRawTransaction`
+- **Custom hex addresses:** for event rules, a literal `0x...` address can be specified to filter events by a specific party. Custom hex addresses are subject to **cross-org boundary enforcement** (see below)
+- **Function param_rules apply to:** `eth_sendTransaction`, `eth_call`, `eth_estimateGas`, `eth_sendRawTransaction`
+- **Event param_rules apply to:** `eth_getLogs`, `eth_getTransactionReceipt` (log filtering)
+
+#### Cross-Org Boundary Enforcement
+
+Custom hex addresses in event param rules are validated at grant creation and update time:
+
+- **Same-org addresses:** allowed (contracts, preregistered addresses, or EOAs linked to users in the grant's organization)
+- **Cross-org addresses:** rejected — addresses belonging to a different organization cannot be referenced
+- **Unregistered addresses:** rejected (fail-closed) — addresses not verifiably belonging to the grant's organization are denied
+- **Multi-org users:** if an EOA is linked to a user who belongs to multiple organizations, the address is allowed if any of those organizations matches the grant's organization
+
+This prevents an admin from configuring event rules that target users or contracts in other organizations, which would bypass the disclosure request flow.
 
 <Callout variant="warning" title="Known limitations">
 
 - `eth_getStorageAt` uses tiered access (admin: all slots, non-admin: EIP-1967 proxy infrastructure slots only) which limits but does not fully prevent storage-level reads -- the four allowed proxy slots expose implementation/admin addresses only
 - Internal calls within contracts cannot be intercepted
-- `eth_getLogs` topic filtering is not yet addressed
 - Users without a linked ETH address cannot access functions with param constraints
 
 </Callout>

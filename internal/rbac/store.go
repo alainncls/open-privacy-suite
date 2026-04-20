@@ -82,6 +82,11 @@ type Store interface {
 	// ETH Address operations (for parameter constraint enforcement)
 	GetLinkedEthAddresses(ctx context.Context, did string) ([]string, error)
 	SystemLinkEthAddress(ctx context.Context, did, ethAddress string) error
+	// GetOrgIDsForEthAddress returns all organization IDs that the owner of a given
+	// ETH address belongs to. This resolves via eth_address_links → users → memberships → groups.
+	// Returns nil if the address is not linked to any user. Used for cross-org boundary
+	// enforcement on custom hex addresses in param rules.
+	GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error)
 
 	// User operations
 	CreateUser(ctx context.Context, user *User) error

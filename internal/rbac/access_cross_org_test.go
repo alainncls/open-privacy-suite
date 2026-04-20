@@ -317,6 +317,10 @@ func (m *MockCrossOrgStore) GrantContractToDeployerGroup(ctx context.Context, or
 	return nil
 }
 
+func (m *MockCrossOrgStore) GetOrgIDsForEthAddress(ctx context.Context, address string) ([]string, error) {
+	return nil, nil
+}
+
 // Helper to normalize address
 func normalizeAddress(addr string) string {
 	if len(addr) >= 2 && addr[:2] == "0x" {
