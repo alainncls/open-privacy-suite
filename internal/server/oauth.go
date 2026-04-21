@@ -585,6 +585,7 @@ func (s *Server) handleOAuthAuthorize(c *gin.Context) {
 				callbackURL,
 				"Authenticate and verify humanity for OAuth authorization",
 				s.config.BillionsIssuerDID,
+				s.humanityRequestConfig(),
 			)
 		} else {
 			authReq, err = s.privadoVerifier.CreateAuthorizationRequest(

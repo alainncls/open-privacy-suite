@@ -39,7 +39,19 @@ func (m *mockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL
 	}, nil
 }
 
-func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
+func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error) {
+	circuitID := hc.CircuitID
+	if circuitID == "" {
+		circuitID = "credentialAtomicQueryMTPV2"
+	}
+	credentialSubject, _ := hc.Query["credentialSubject"]
+	if credentialSubject == nil {
+		credentialSubject = map[string]any{"isHuman": map[string]any{"$eq": 1}}
+	}
+	credType := hc.CredentialType
+	if credType == "" {
+		credType = "ProofOfHumanity"
+	}
 	return &protocol.AuthorizationRequestMessage{
 		ID:   "mock-request-id",
 		Type: "https://iden3-communication.io/authorization/1.0/request",
@@ -49,11 +61,12 @@ func (m *mockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL,
 			Scope: []protocol.ZeroKnowledgeProofRequest{
 				{
 					ID:        1,
-					CircuitID: "credentialAtomicQueryMTPV2",
+					CircuitID: circuitID,
 					Query: map[string]any{
 						"allowedIssuers":    []string{issuerDID},
-						"credentialSubject": map[string]any{"isHuman": map[string]any{"$eq": 1}},
-						"type":              "ProofOfHumanity",
+						"credentialSubject": credentialSubject,
+						"context":           hc.SchemaURL,
+						"type":              credType,
 					},
 				},
 			},

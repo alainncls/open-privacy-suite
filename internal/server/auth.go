@@ -18,6 +18,18 @@ import (
 	"github.com/iden3/iden3comm/v2/protocol"
 )
 
+// humanityRequestConfig builds the per-issuer config for a ProofOfHumanity
+// authorization request from the server's loaded config. Safe to call only
+// when RequireProofOfHumanity=true — callers check that flag before invoking.
+func (s *Server) humanityRequestConfig() auth.HumanityRequestConfig {
+	return auth.HumanityRequestConfig{
+		CircuitID:      s.config.PrivadoCircuitID,
+		SchemaURL:      s.config.BillionsCredentialSchemaURL,
+		CredentialType: s.config.BillionsCredentialType,
+		Query:          s.config.BillionsCredentialQuery,
+	}
+}
+
 // getCallbackBaseURL determines the base URL for auth callbacks.
 // Priority: tunnel URL (for localhost callers) > callback_origin > dynamic detection > config
 //
@@ -275,6 +287,7 @@ func (s *Server) handleAuthRequest(c *gin.Context) {
 			callbackURL,
 			"Authenticate and verify humanity to access Ethereum node",
 			s.config.BillionsIssuerDID,
+			s.humanityRequestConfig(),
 		)
 	} else {
 		// Fall back to basic auth (just DID proof)
