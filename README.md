@@ -176,7 +176,7 @@ curl -X PUT http://localhost:8080/api/orgs/{org_id}/groups/{group_id}/permission
 curl http://localhost:8080/api/users/{user_id}/effective-permissions
 ```
 
-See [RBAC Documentation](docs/RBAC.md) for detailed use cases and API reference.
+See the [RBAC documentation](site/src/app/docs/rbac/page.mdx) for detailed use cases and the [API reference](site/src/app/docs/api/page.mdx) for endpoint details.
 
 ## Selective Disclosure
 
@@ -214,7 +214,7 @@ curl http://localhost:8080/api/v1/explorer/grant/{grant_id}/{address_id}/transac
 # Returns: {"from": "Address-KDCM", "to": "External-7E56", ...}
 ```
 
-See [Disclosure Documentation](docs/DISCLOSURE.md) for the complete guide.
+See the [Selective Disclosure documentation](site/src/app/docs/disclosure/page.mdx) for the complete guide.
 
 ## Admin Authentication
 
