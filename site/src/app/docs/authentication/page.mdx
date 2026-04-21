@@ -45,7 +45,10 @@ sequenceDiagram
 authorization challenge. The server generates a session ID, creates an authorization request
 with a ProofOfHumanity ZK query (if enabled), and returns both to the client.
 
-When `RequireProofOfHumanity` is enabled the request includes a ZK query:
+When `REQUIRE_PROOF_OF_HUMANITY=true` the request includes a ZK credential query. The circuit,
+schema URL, credential type, and the predicate applied to `credentialSubject` are all configured
+(see [Configuration](#configuration)). An example assembled from defaults plus a credential query
+file containing `{"credentialSubject":{"isHuman":{"$eq":1}}}`:
 
 ```json
 {
@@ -59,6 +62,10 @@ When `RequireProofOfHumanity` is enabled the request includes a ZK query:
   }
 }
 ```
+
+`allowedIssuers` is set to `[BILLIONS_ISSUER_DID]`. `context` and `type` come from
+`BILLIONS_CREDENTIAL_SCHEMA_URL` and `BILLIONS_CREDENTIAL_TYPE`. `credentialSubject` is taken
+verbatim from the JSON file pointed to by `BILLIONS_CREDENTIAL_QUERY_FILE`.
 
 </Step>
 
@@ -180,8 +187,13 @@ If a collision is judged to be a key-compromise event rather than intentional sh
 ## Configuration
 
 <EnvTable vars={[
-  { name: "BILLIONS_ISSUER_DID", default: "(none)", description: "Billions issuer DID for PoH verification" },
-  { name: "REQUIRE_PROOF_OF_HUMANITY", default: "true (prod) / false (dev)", description: "Enable or disable the PoH requirement" },
+  { name: "REQUIRE_PROOF_OF_HUMANITY", default: "false", description: "Opt-in flag. When true, login requires a valid credential (Path B). When false, login only proves DID ownership (Path A). Enabling this without populating the other Path B vars causes the server to refuse to start." },
+  { name: "BILLIONS_ISSUER_DID", default: "(none)", description: "Issuer DID whose credentials are accepted (required when PoH enabled)" },
+  { name: "PRIVADO_STATE_CONTRACT", default: "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896", description: "On-chain identity state contract address (Privado mainnet default)" },
+  { name: "PRIVADO_CIRCUIT_ID", default: "credentialAtomicQueryMTPV2", description: "iden3 circuit used by the credential query (must match what the issuer signs with)" },
+  { name: "BILLIONS_CREDENTIAL_SCHEMA_URL", default: "(PolygonID tutorial schema)", description: "JSON-LD schema URL defining the credential's shape" },
+  { name: "BILLIONS_CREDENTIAL_TYPE", default: "ProofOfHumanity", description: "Credential type name declared by the schema" },
+  { name: "BILLIONS_CREDENTIAL_QUERY_FILE", default: "(none)", description: "Path to a JSON file containing the credentialSubject predicate (e.g. {\"credentialSubject\":{\"isHuman\":{\"$eq\":1}}}). Required when PoH enabled." },
   { name: "PRIVADO_RPC_URL", default: "https://rpc-mainnet.privado.id", description: "Privado network RPC endpoint" },
   { name: "IPFS_GATEWAY", default: "https://ipfs-proxy-cache.privado.id", description: "IPFS gateway for credential schemas" },
   { name: "JWT_SECRET", default: "(auto-generated in dev)", description: "Access token signing secret" },
@@ -191,12 +203,46 @@ If a collision is judged to be a key-compromise event rather than intentional sh
   { name: "ENVIRONMENT", default: "development", description: "Set to production to disable /auth/verify endpoint" },
 ]} />
 
+### Credential query file
+
+When Path B is enabled, `BILLIONS_CREDENTIAL_QUERY_FILE` must point to a JSON file containing a
+`credentialSubject` object with the predicate to enforce. The iden3 query language supports
+operators like `$eq`, `$ne`, `$lt`, `$gt`, `$in`, `$nin`, and multi-field predicates.
+
+```json
+{
+  "credentialSubject": {
+    "isHuman": { "$eq": 1 }
+  }
+}
+```
+
+A multi-field example (if a credential exposes both fields):
+
+```json
+{
+  "credentialSubject": {
+    "isHuman":     { "$eq": 1 },
+    "jurisdiction":{ "$in": ["CH", "DE"] }
+  }
+}
+```
+
+The proxy assembles the full query at boot by injecting `allowedIssuers`, `context`, and `type`
+from the other env vars. The file must only describe the `credentialSubject` predicate.
+
 <Callout variant="warning" title="Production checklist">
 
 Before deploying to production, ensure you have:
 
-1. Set `BILLIONS_ISSUER_DID` to the production Billions issuer DID
-2. Set `REQUIRE_PROOF_OF_HUMANITY=true`
+1. Decided whether to enable Path B (credential check). If yes, set `REQUIRE_PROOF_OF_HUMANITY=true` **and** populate all of:
+    - `BILLIONS_ISSUER_DID`
+    - `PRIVADO_STATE_CONTRACT` (or keep default)
+    - `PRIVADO_CIRCUIT_ID` (must match what the issuer signs with — confirm with the issuer)
+    - `BILLIONS_CREDENTIAL_SCHEMA_URL` + `BILLIONS_CREDENTIAL_TYPE`
+    - `BILLIONS_CREDENTIAL_QUERY_FILE` pointing to a valid JSON file
+   The process refuses to start if `REQUIRE_PROOF_OF_HUMANITY=true` and any of these are missing or invalid.
+2. If Path B is **not** enabled, login will only prove DID ownership (no credential check). Users do not need a PoH credential to authenticate.
 3. Configured strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`
 4. Configured `VERIFIER_ID` with your service's DID
 5. Set `BASE_URL` to your public URL
@@ -235,11 +281,13 @@ testnet. Clone the repo, configure for Amoy, and create ProofOfHumanity credenti
 | Chain ID | `80002` |
 | Faucet | [Alchemy Polygon Amoy faucet](https://www.alchemy.com/faucets/polygon-amoy) |
 
-Then configure the proxy:
+Then configure the proxy (Amoy uses a different state contract than Privado mainnet):
 
 ```bash
-BILLIONS_ISSUER_DID=did:polygonid:polygon:amoy:...
 REQUIRE_PROOF_OF_HUMANITY=true
+BILLIONS_ISSUER_DID=did:polygonid:polygon:amoy:...
+PRIVADO_STATE_CONTRACT=0x1a4cC30f2aA0377b0c3bc9848766D90cb4404124
+BILLIONS_CREDENTIAL_QUERY_FILE=/path/to/query.json
 ```
 
 ### Option C: Billions Testnet

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/audit"
+	"privacy-proxy/internal/auth"
 )
 
 // ExtraRPCNamespaces defines additional JSON-RPC method namespaces
@@ -103,7 +104,16 @@ type Config struct {
 	Port                       string        // Server port (e.g., "8080")
 	Environment                string        // "production" or "development"
 	BillionsIssuerDID          string        // Billions issuer DID for ProofOfHumanity verification
-	RequireProofOfHumanity     bool          // Whether to require ProofOfHumanity credential (default: true in prod)
+	RequireProofOfHumanity     bool          // Opt-in enforcement of Path B (credential check). Default: false in every environment.
+
+	// Path B (ProofOfHumanity / Billions) configuration. Only consulted when RequireProofOfHumanity=true.
+	PrivadoStateContract        string         // env PRIVADO_STATE_CONTRACT — on-chain identity state contract
+	PrivadoCircuitID            string         // env PRIVADO_CIRCUIT_ID — iden3 circuit (e.g. credentialAtomicQueryMTPV2)
+	BillionsCredentialSchemaURL string         // env BILLIONS_CREDENTIAL_SCHEMA_URL — JSON-LD schema URL for the credential
+	BillionsCredentialType      string         // env BILLIONS_CREDENTIAL_TYPE — credential type name declared by the schema
+	BillionsCredentialQueryFile string         // env BILLIONS_CREDENTIAL_QUERY_FILE — path to JSON file with the credential query
+	BillionsCredentialQuery     map[string]any // Parsed from BillionsCredentialQueryFile at startup
+
 	AdminAPIToken              string        // Shared token required for admin API access (required in production)
 	ENSResolverURL             string        // Ethereum mainnet RPC URL for ENS resolution
 	CORSAllowedOrigins         string        // Comma-separated list of allowed origins, or "*" for all (default: "*" in dev)
@@ -179,14 +189,12 @@ type Config struct {
 
 func Load() *Config {
 	env := getEnv("ENVIRONMENT", "development")
-	// Default RequireProofOfHumanity to true in production, false in development
-	requirePoH := getEnv("REQUIRE_PROOF_OF_HUMANITY", "")
-	requirePoHBool := env == "production" // Default based on environment
-	if requirePoH == "true" {
-		requirePoHBool = true
-	} else if requirePoH == "false" {
-		requirePoHBool = false
-	}
+	// RequireProofOfHumanity is opt-in in every environment. Admin must explicitly
+	// set REQUIRE_PROOF_OF_HUMANITY=true AND fill the Path B config (issuer DID,
+	// schema URL, credential type, circuit ID, query file). Until then, login is
+	// plain DID-ownership proof (Path A). This keeps prod from booting with
+	// placeholder credential values that would break login for every user.
+	requirePoHBool := getEnv("REQUIRE_PROOF_OF_HUMANITY", "") == "true"
 
 	// Default CORS origins: "*" in dev, must be configured in production
 	corsOrigins := getEnv("CORS_ALLOWED_ORIGINS", "")
@@ -317,6 +325,27 @@ func Load() *Config {
 		}
 	}
 
+	// Path B (ProofOfHumanity) configuration with current hardcoded values as defaults.
+	privadoStateContract := getEnv("PRIVADO_STATE_CONTRACT", auth.PrivadoMainnetStateContract)
+	privadoCircuitID := getEnv("PRIVADO_CIRCUIT_ID", "credentialAtomicQueryMTPV2")
+	billionsSchemaURL := getEnv("BILLIONS_CREDENTIAL_SCHEMA_URL", "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld")
+	billionsCredType := getEnv("BILLIONS_CREDENTIAL_TYPE", "ProofOfHumanity")
+
+	// Credential query loaded from a JSON file — supports multi-field predicates.
+	// Failure to read/parse when the env var is set is a hard error: misconfigured
+	// prod should not boot silently.
+	billionsQueryFile := getEnv("BILLIONS_CREDENTIAL_QUERY_FILE", "")
+	var billionsQuery map[string]any
+	if billionsQueryFile != "" {
+		raw, err := os.ReadFile(billionsQueryFile)
+		if err != nil {
+			panic(fmt.Sprintf("BILLIONS_CREDENTIAL_QUERY_FILE: failed to read %s: %v", billionsQueryFile, err))
+		}
+		if err := json.Unmarshal(raw, &billionsQuery); err != nil {
+			panic(fmt.Sprintf("BILLIONS_CREDENTIAL_QUERY_FILE: invalid JSON in %s: %v", billionsQueryFile, err))
+		}
+	}
+
 	// RPC API key encryption key (hex-encoded 32 bytes for AES-256)
 	var rpcAPIKeyEncKey []byte
 	if hexKey := getEnv("RPC_API_KEY_ENCRYPTION_KEY", ""); hexKey != "" {
@@ -337,8 +366,14 @@ func Load() *Config {
 		BaseURL:                  getEnv("BASE_URL", "http://localhost:8080"),                   // Base URL for callback
 		Port:                     getEnv("PORT", "8080"),                                        // Server port
 		Environment:              env,
-		BillionsIssuerDID:        getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
-		RequireProofOfHumanity:   requirePoHBool,
+		BillionsIssuerDID:           getEnv("BILLIONS_ISSUER_DID", ""), // Billions issuer DID for PoH
+		RequireProofOfHumanity:      requirePoHBool,
+		PrivadoStateContract:        privadoStateContract,
+		PrivadoCircuitID:            privadoCircuitID,
+		BillionsCredentialSchemaURL: billionsSchemaURL,
+		BillionsCredentialType:      billionsCredType,
+		BillionsCredentialQueryFile: billionsQueryFile,
+		BillionsCredentialQuery:     billionsQuery,
 		AdminAPIToken:            getEnv("ADMIN_API_TOKEN", ""),
 		ENSResolverURL:           getEnv("ENS_RESOLVER_URL", "https://eth.llamarpc.com"), // Public mainnet RPC
 		CORSAllowedOrigins:       corsOrigins,
@@ -411,7 +446,15 @@ func (c *Config) AzureADEnabled() bool {
 
 // Validate checks that required configuration is present.
 // In production, certain values must be explicitly configured.
+// When RequireProofOfHumanity is enabled, Path B configuration is validated
+// regardless of environment — misconfiguring Path B breaks login for everyone.
 func (c *Config) Validate() error {
+	if c.RequireProofOfHumanity {
+		if err := c.validateProofOfHumanity(); err != nil {
+			return err
+		}
+	}
+
 	if !c.IsProduction() {
 		return nil // Development mode allows auto-generated values
 	}
@@ -457,6 +500,35 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validateProofOfHumanity checks Path B configuration required when
+// RequireProofOfHumanity=true. All values must be non-empty and the parsed
+// credential query must contain a non-empty 'credentialSubject' object.
+func (c *Config) validateProofOfHumanity() error {
+	if c.BillionsIssuerDID == "" {
+		return errors.New("BILLIONS_ISSUER_DID is required when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	if c.PrivadoStateContract == "" {
+		return errors.New("PRIVADO_STATE_CONTRACT must not be empty when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	if c.PrivadoCircuitID == "" {
+		return errors.New("PRIVADO_CIRCUIT_ID must not be empty when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	if c.BillionsCredentialSchemaURL == "" {
+		return errors.New("BILLIONS_CREDENTIAL_SCHEMA_URL must not be empty when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	if c.BillionsCredentialType == "" {
+		return errors.New("BILLIONS_CREDENTIAL_TYPE must not be empty when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	if c.BillionsCredentialQueryFile == "" {
+		return errors.New("BILLIONS_CREDENTIAL_QUERY_FILE is required when REQUIRE_PROOF_OF_HUMANITY=true")
+	}
+	cs, ok := c.BillionsCredentialQuery["credentialSubject"].(map[string]any)
+	if !ok || len(cs) == 0 {
+		return fmt.Errorf("BILLIONS_CREDENTIAL_QUERY_FILE %q must contain a non-empty 'credentialSubject' object", c.BillionsCredentialQueryFile)
+	}
 	return nil
 }
 

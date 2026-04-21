@@ -50,27 +50,28 @@ func (m *MockPrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL
 	}, nil
 }
 
-// CreateHumanityAuthRequest creates a mock authorization request with ProofOfHumanity query
-func (m *MockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
+// CreateHumanityAuthRequest creates a mock authorization request with a ZK
+// credential query assembled from hc.
+func (m *MockPrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string, hc HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error) {
 	if m.ShouldFail {
 		return nil, fmt.Errorf("%s", m.FailureError)
 	}
 
 	reqID := uuid.New().String()
 
-	// Create ProofOfHumanity ZK query similar to the real implementation
+	credentialSubject, ok := hc.Query["credentialSubject"]
+	if !ok {
+		return nil, fmt.Errorf("credential query must contain 'credentialSubject'")
+	}
+
 	mtpProofRequest := protocol.ZeroKnowledgeProofRequest{
 		ID:        1,
-		CircuitID: "credentialAtomicQueryMTPV2",
+		CircuitID: hc.CircuitID,
 		Query: map[string]any{
-			"allowedIssuers": []string{issuerDID},
-			"credentialSubject": map[string]any{
-				"isHuman": map[string]any{
-					"$eq": 1,
-				},
-			},
-			"context": "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld",
-			"type":    "ProofOfHumanity",
+			"allowedIssuers":    []string{issuerDID},
+			"credentialSubject": credentialSubject,
+			"context":           hc.SchemaURL,
+			"type":              hc.CredentialType,
 		},
 	}
 

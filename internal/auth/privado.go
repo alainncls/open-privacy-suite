@@ -17,14 +17,31 @@ type PrivadoVerifier struct {
 	verifier *auth.Verifier
 }
 
-// NewPrivadoVerifier creates a new Privado ID verifier
-// For Privado mainnet, uses the common state contract
-func NewPrivadoVerifier(rpcURL, ipfsGateway string) (*PrivadoVerifier, error) {
-	// Privado mainnet state contract address (common address for Ethereum, Privado, Linea, zkEVM)
-	const PRIVADO_STATE_ADDRESS = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
+// HumanityRequestConfig bundles the per-issuer values needed to build a
+// ProofOfHumanity authorization request. Populated from Path B config
+// (PRIVADO_CIRCUIT_ID, BILLIONS_CREDENTIAL_SCHEMA_URL, BILLIONS_CREDENTIAL_TYPE,
+// BILLIONS_CREDENTIAL_QUERY_FILE) and validated at config load.
+type HumanityRequestConfig struct {
+	CircuitID      string         // e.g. "credentialAtomicQueryMTPV2"
+	SchemaURL      string         // JSON-LD schema URL
+	CredentialType string         // Credential type name declared by the schema
+	Query          map[string]any // Parsed JSON; must contain a "credentialSubject" object
+}
 
-	// Create state resolver for Privado network
-	resolver := state.NewETHResolver(rpcURL, PRIVADO_STATE_ADDRESS)
+// PrivadoMainnetStateContract is the canonical Privado mainnet identity state
+// contract address, used as a fallback when no address is supplied.
+const PrivadoMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
+
+// NewPrivadoVerifier creates a new Privado ID verifier.
+// stateContract is the on-chain identity state contract address. Pass the
+// value from Config.PrivadoStateContract; an empty string falls back to the
+// Privado mainnet default (PrivadoMainnetStateContract).
+func NewPrivadoVerifier(rpcURL, ipfsGateway, stateContract string) (*PrivadoVerifier, error) {
+	if stateContract == "" {
+		stateContract = PrivadoMainnetStateContract
+	}
+
+	resolver := state.NewETHResolver(rpcURL, stateContract)
 	resolvers := map[string]pubsignals.StateResolver{
 		"privado:main": resolver,
 	}
@@ -69,29 +86,31 @@ func (p *PrivadoVerifier) CreateAuthorizationRequest(verifierID, callbackURL, re
 	return &reqMsg, nil
 }
 
-// CreateHumanityAuthRequest creates a Privado ID authorization request with ProofOfHumanity ZK query
-// This requires the user to prove they have a valid ProofOfHumanity credential from the specified issuer
-func (p *PrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error) {
-	// Create basic authorization request
+// CreateHumanityAuthRequest creates a Privado ID authorization request with a
+// ZK credential query. Circuit ID, schema URL, credential type, and the
+// credential-subject predicate come from hc (populated from Path B env/file
+// config). allowedIssuers is set to [issuerDID], and `type` + `context` are
+// injected from hc so the query file only needs to describe the field predicate.
+func (p *PrivadoVerifier) CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string, hc HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error) {
 	reqMsg := auth.CreateAuthorizationRequest(reason, verifierID, callbackURL)
 
-	// Add ProofOfHumanity ZK query to scope
-	// This requires the user to prove they have a ProofOfHumanity credential with isHuman=1
-	mtpProofRequest := protocol.ZeroKnowledgeProofRequest{
-		ID:        1,
-		CircuitID: "credentialAtomicQueryMTPV2",
-		Query: map[string]interface{}{
-			"allowedIssuers": []string{issuerDID},
-			"credentialSubject": map[string]interface{}{
-				"isHuman": map[string]interface{}{
-					"$eq": 1,
-				},
-			},
-			"context": "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld",
-			"type":    "ProofOfHumanity",
-		},
+	credentialSubject, ok := hc.Query["credentialSubject"]
+	if !ok {
+		return nil, fmt.Errorf("credential query must contain 'credentialSubject'")
 	}
-	reqMsg.Body.Scope = append(reqMsg.Body.Scope, mtpProofRequest)
+
+	query := map[string]any{
+		"allowedIssuers":    []string{issuerDID},
+		"credentialSubject": credentialSubject,
+		"context":           hc.SchemaURL,
+		"type":              hc.CredentialType,
+	}
+
+	reqMsg.Body.Scope = append(reqMsg.Body.Scope, protocol.ZeroKnowledgeProofRequest{
+		ID:        1,
+		CircuitID: hc.CircuitID,
+		Query:     query,
+	})
 
 	return &reqMsg, nil
 }

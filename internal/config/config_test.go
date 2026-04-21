@@ -59,9 +59,9 @@ func TestLoad_Defaults(t *testing.T) {
 		})
 	}
 
-	// In development mode, RequireProofOfHumanity defaults to false
+	// RequireProofOfHumanity is opt-in in every environment — defaults to false.
 	if cfg.RequireProofOfHumanity {
-		t.Error("RequireProofOfHumanity should default to false in development")
+		t.Error("RequireProofOfHumanity should default to false")
 	}
 }
 
@@ -154,9 +154,10 @@ func TestLoad_ProductionMode(t *testing.T) {
 		t.Errorf("Environment = %q, want %q", cfg.Environment, "production")
 	}
 
-	// In production mode, RequireProofOfHumanity defaults to true
-	if !cfg.RequireProofOfHumanity {
-		t.Error("RequireProofOfHumanity should default to true in production")
+	// RequireProofOfHumanity is now opt-in in every environment — Path B must
+	// be explicitly enabled AND have the full config populated. See decisions.md §5.
+	if cfg.RequireProofOfHumanity {
+		t.Error("RequireProofOfHumanity should default to false in production (opt-in)")
 	}
 }
 
@@ -373,6 +374,230 @@ func TestConfig_Validate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// validPoHConfig returns a Config with all Path B fields populated so other
+// validation branches don't fire.
+func validPoHConfig(t *testing.T) *Config {
+	t.Helper()
+	return &Config{
+		Environment:                 "development",
+		RequireProofOfHumanity:      true,
+		BillionsIssuerDID:           "did:privado:issuer:billions",
+		PrivadoStateContract:        "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896",
+		PrivadoCircuitID:            "credentialAtomicQueryMTPV2",
+		BillionsCredentialSchemaURL: "https://example.com/schema.jsonld",
+		BillionsCredentialType:      "ProofOfHumanity",
+		BillionsCredentialQueryFile: "/tmp/query.json",
+		BillionsCredentialQuery: map[string]any{
+			"credentialSubject": map[string]any{
+				"isHuman": map[string]any{"$eq": 1},
+			},
+		},
+	}
+}
+
+func TestConfig_ValidateProofOfHumanity(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(c *Config)
+		wantErr string
+	}{
+		{
+			name:    "all Path B fields populated passes",
+			mutate:  func(c *Config) {},
+			wantErr: "",
+		},
+		{
+			name:    "missing issuer DID",
+			mutate:  func(c *Config) { c.BillionsIssuerDID = "" },
+			wantErr: "BILLIONS_ISSUER_DID is required",
+		},
+		{
+			name:    "missing state contract",
+			mutate:  func(c *Config) { c.PrivadoStateContract = "" },
+			wantErr: "PRIVADO_STATE_CONTRACT must not be empty",
+		},
+		{
+			name:    "missing circuit ID",
+			mutate:  func(c *Config) { c.PrivadoCircuitID = "" },
+			wantErr: "PRIVADO_CIRCUIT_ID must not be empty",
+		},
+		{
+			name:    "missing schema URL",
+			mutate:  func(c *Config) { c.BillionsCredentialSchemaURL = "" },
+			wantErr: "BILLIONS_CREDENTIAL_SCHEMA_URL must not be empty",
+		},
+		{
+			name:    "missing credential type",
+			mutate:  func(c *Config) { c.BillionsCredentialType = "" },
+			wantErr: "BILLIONS_CREDENTIAL_TYPE must not be empty",
+		},
+		{
+			name:    "missing query file path",
+			mutate:  func(c *Config) { c.BillionsCredentialQueryFile = "" },
+			wantErr: "BILLIONS_CREDENTIAL_QUERY_FILE is required",
+		},
+		{
+			name:    "query missing credentialSubject key",
+			mutate:  func(c *Config) { c.BillionsCredentialQuery = map[string]any{"foo": "bar"} },
+			wantErr: "credentialSubject",
+		},
+		{
+			name: "credentialSubject not an object",
+			mutate: func(c *Config) {
+				c.BillionsCredentialQuery = map[string]any{"credentialSubject": "not-a-map"}
+			},
+			wantErr: "credentialSubject",
+		},
+		{
+			name: "credentialSubject empty object",
+			mutate: func(c *Config) {
+				c.BillionsCredentialQuery = map[string]any{"credentialSubject": map[string]any{}}
+			},
+			wantErr: "credentialSubject",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validPoHConfig(t)
+			tt.mutate(cfg)
+
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate() expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate() error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfig_Validate_SkipsPathBWhenDisabled(t *testing.T) {
+	// When RequireProofOfHumanity=false, Path B fields can all be empty.
+	cfg := &Config{
+		Environment:            "development",
+		RequireProofOfHumanity: false,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+}
+
+func TestLoad_BillionsCredentialQueryFile(t *testing.T) {
+	// Clear env that might interfere
+	for _, k := range []string{"BILLIONS_CREDENTIAL_QUERY_FILE", "REQUIRE_PROOF_OF_HUMANITY"} {
+		orig := os.Getenv(k)
+		os.Unsetenv(k)
+		defer func(k, v string) {
+			if v != "" {
+				os.Setenv(k, v)
+			} else {
+				os.Unsetenv(k)
+			}
+		}(k, orig)
+	}
+
+	t.Run("valid JSON loads into Query map", func(t *testing.T) {
+		dir := t.TempDir()
+		path := dir + "/query.json"
+		content := `{"credentialSubject":{"isHuman":{"$eq":1}}}`
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatalf("write temp query file: %v", err)
+		}
+		os.Setenv("BILLIONS_CREDENTIAL_QUERY_FILE", path)
+		defer os.Unsetenv("BILLIONS_CREDENTIAL_QUERY_FILE")
+
+		cfg := Load()
+		if cfg.BillionsCredentialQueryFile != path {
+			t.Errorf("BillionsCredentialQueryFile = %q, want %q", cfg.BillionsCredentialQueryFile, path)
+		}
+		cs, ok := cfg.BillionsCredentialQuery["credentialSubject"].(map[string]any)
+		if !ok {
+			t.Fatalf("credentialSubject not parsed as map: %#v", cfg.BillionsCredentialQuery["credentialSubject"])
+		}
+		if _, ok := cs["isHuman"]; !ok {
+			t.Errorf("credentialSubject missing 'isHuman': %#v", cs)
+		}
+	})
+
+	t.Run("invalid JSON panics", func(t *testing.T) {
+		dir := t.TempDir()
+		path := dir + "/bad.json"
+		if err := os.WriteFile(path, []byte("{not json"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		os.Setenv("BILLIONS_CREDENTIAL_QUERY_FILE", path)
+		defer os.Unsetenv("BILLIONS_CREDENTIAL_QUERY_FILE")
+
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic on invalid JSON")
+			}
+			if msg, ok := r.(string); ok && !strings.Contains(msg, "invalid JSON") {
+				t.Errorf("unexpected panic message: %s", msg)
+			}
+		}()
+		_ = Load()
+	})
+
+	t.Run("missing file panics", func(t *testing.T) {
+		os.Setenv("BILLIONS_CREDENTIAL_QUERY_FILE", "/does/not/exist.json")
+		defer os.Unsetenv("BILLIONS_CREDENTIAL_QUERY_FILE")
+
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic on missing file")
+			}
+		}()
+		_ = Load()
+	})
+}
+
+func TestLoad_PathBDefaults(t *testing.T) {
+	// With no Path B env vars set, string fields have current-as-defaults so
+	// existing deployments don't see behavior changes when PoH is off.
+	for _, k := range []string{
+		"PRIVADO_STATE_CONTRACT", "PRIVADO_CIRCUIT_ID",
+		"BILLIONS_CREDENTIAL_SCHEMA_URL", "BILLIONS_CREDENTIAL_TYPE",
+		"BILLIONS_CREDENTIAL_QUERY_FILE",
+	} {
+		orig := os.Getenv(k)
+		os.Unsetenv(k)
+		defer func(k, v string) {
+			if v != "" {
+				os.Setenv(k, v)
+			}
+		}(k, orig)
+	}
+
+	cfg := Load()
+
+	if cfg.PrivadoStateContract == "" {
+		t.Error("PrivadoStateContract should have a default value")
+	}
+	if cfg.PrivadoCircuitID != "credentialAtomicQueryMTPV2" {
+		t.Errorf("PrivadoCircuitID = %q, want credentialAtomicQueryMTPV2", cfg.PrivadoCircuitID)
+	}
+	if cfg.BillionsCredentialType != "ProofOfHumanity" {
+		t.Errorf("BillionsCredentialType = %q, want ProofOfHumanity", cfg.BillionsCredentialType)
+	}
+	if cfg.BillionsCredentialSchemaURL == "" {
+		t.Error("BillionsCredentialSchemaURL should have a default value")
+	}
+	if cfg.BillionsCredentialQueryFile != "" {
+		t.Errorf("BillionsCredentialQueryFile should default to empty, got %q", cfg.BillionsCredentialQueryFile)
 	}
 }
 

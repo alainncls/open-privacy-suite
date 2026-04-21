@@ -175,7 +175,7 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB) {
 // PrivadoVerifier interface for Privado ID operations
 type PrivadoVerifier interface {
 	CreateAuthorizationRequest(verifierID, callbackURL, reason string) (*protocol.AuthorizationRequestMessage, error)
-	CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string) (*protocol.AuthorizationRequestMessage, error)
+	CreateHumanityAuthRequest(verifierID, callbackURL, reason, issuerDID string, hc auth.HumanityRequestConfig) (*protocol.AuthorizationRequestMessage, error)
 	VerifyJWZ(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (string, error)
 	VerifyJWZWithProofData(ctx context.Context, jwzToken string, authRequest *protocol.AuthorizationRequestMessage, verifierID string) (*auth.VerificationResult, error)
 }
@@ -207,7 +207,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	if verifier != nil {
 		privadoVerifier = verifier
 	} else {
-		privadoVerifier, err = auth.NewPrivadoVerifier(cfg.PrivadoRPCURL, cfg.IPFSGateway)
+		privadoVerifier, err = auth.NewPrivadoVerifier(cfg.PrivadoRPCURL, cfg.IPFSGateway, cfg.PrivadoStateContract)
 		if err != nil {
 			database.Close()
 			return nil, fmt.Errorf("failed to create Privado verifier: %w", err)

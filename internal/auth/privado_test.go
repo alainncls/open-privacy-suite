@@ -11,7 +11,7 @@ import (
 
 func TestPrivadoVerifier_NewPrivadoVerifier(t *testing.T) {
 	// Test with Privado mainnet RPC
-	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id")
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
 	require.NoError(t, err)
 	assert.NotNil(t, verifier)
 	assert.NotNil(t, verifier.verifier)
@@ -19,7 +19,7 @@ func TestPrivadoVerifier_NewPrivadoVerifier(t *testing.T) {
 
 func TestPrivadoVerifier_NewPrivadoVerifier_InvalidRPC(t *testing.T) {
 	// Test with invalid RPC URL (should still create verifier, but verification will fail)
-	verifier, err := NewPrivadoVerifier("http://invalid-rpc-url:8545", "https://ipfs-proxy-cache.privado.id")
+	verifier, err := NewPrivadoVerifier("http://invalid-rpc-url:8545", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
 	// This might succeed or fail depending on validation
 	// The actual verification will fail when we try to verify a token
 	if err == nil {
@@ -28,7 +28,7 @@ func TestPrivadoVerifier_NewPrivadoVerifier_InvalidRPC(t *testing.T) {
 }
 
 func TestPrivadoVerifier_VerifyJWZ_InvalidToken(t *testing.T) {
-	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id")
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
 	require.NoError(t, err)
 
 	// Create a minimal authorization request for testing
@@ -49,7 +49,7 @@ func TestPrivadoVerifier_VerifyJWZ_InvalidToken(t *testing.T) {
 }
 
 func TestPrivadoVerifier_VerifyJWZWithProofData_InvalidToken(t *testing.T) {
-	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id")
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
 	require.NoError(t, err)
 
 	// Create a minimal authorization request for testing
@@ -71,7 +71,7 @@ func TestPrivadoVerifier_VerifyJWZWithProofData_InvalidToken(t *testing.T) {
 }
 
 func TestPrivadoVerifier_VerifyJWZWithProofData_NilAuthRequest(t *testing.T) {
-	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id")
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
 	require.NoError(t, err)
 
 	// Try to verify without auth request
@@ -101,6 +101,76 @@ func TestVerificationResult_Structure(t *testing.T) {
 	assert.Len(t, result.ProofData, 1)
 	assert.Equal(t, uint32(1), result.ProofData[0]["id"])
 	assert.Equal(t, "credentialAtomicQueryMTPV2", result.ProofData[0]["circuitID"])
+}
+
+func TestPrivadoVerifier_NewPrivadoVerifier_EmptyStateContractFallsBackToMainnet(t *testing.T) {
+	// An empty state contract must fall back to the Privado mainnet default
+	// so that callers who construct *config.Config literally in tests (and
+	// don't go through config.Load) still get a working verifier.
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "", "")
+	require.NoError(t, err)
+	assert.NotNil(t, verifier)
+}
+
+func TestCreateHumanityAuthRequest_UsesInjectedConfig(t *testing.T) {
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
+	require.NoError(t, err)
+
+	hc := HumanityRequestConfig{
+		CircuitID:      "credentialAtomicQuerySigV2",
+		SchemaURL:      "https://example.com/kyc.jsonld",
+		CredentialType: "KYCCredential",
+		Query: map[string]any{
+			"credentialSubject": map[string]any{
+				"kycStatus": map[string]any{"$eq": "verified"},
+			},
+		},
+	}
+
+	req, err := verifier.CreateHumanityAuthRequest(
+		"did:privado:verifier",
+		"http://localhost/cb",
+		"reason",
+		"did:privado:issuer",
+		hc,
+	)
+	require.NoError(t, err)
+	require.Len(t, req.Body.Scope, 1)
+
+	zk := req.Body.Scope[0]
+	assert.Equal(t, "credentialAtomicQuerySigV2", zk.CircuitID)
+	assert.Equal(t, "https://example.com/kyc.jsonld", zk.Query["context"])
+	assert.Equal(t, "KYCCredential", zk.Query["type"])
+
+	cs, ok := zk.Query["credentialSubject"].(map[string]any)
+	require.True(t, ok, "credentialSubject must be injected from hc.Query")
+	assert.Contains(t, cs, "kycStatus")
+
+	allowed, ok := zk.Query["allowedIssuers"].([]string)
+	require.True(t, ok)
+	assert.Equal(t, []string{"did:privado:issuer"}, allowed)
+}
+
+func TestCreateHumanityAuthRequest_MissingCredentialSubjectErrors(t *testing.T) {
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "https://ipfs-proxy-cache.privado.id", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
+	require.NoError(t, err)
+
+	hc := HumanityRequestConfig{
+		CircuitID:      "credentialAtomicQueryMTPV2",
+		SchemaURL:      "https://example.com/schema.jsonld",
+		CredentialType: "ProofOfHumanity",
+		Query:          map[string]any{}, // missing credentialSubject
+	}
+
+	_, err = verifier.CreateHumanityAuthRequest(
+		"did:privado:verifier",
+		"http://localhost/cb",
+		"reason",
+		"did:privado:issuer",
+		hc,
+	)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "credentialSubject")
 }
 
 // Note: Testing with real JWZ tokens would require actual Privado ID proofs
