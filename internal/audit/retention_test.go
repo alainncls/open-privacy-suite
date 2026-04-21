@@ -14,6 +14,8 @@ type mockRetentionStore struct {
 	rbacCalls       atomic.Int64
 	travelCalls     atomic.Int64
 	expiredCalls    atomic.Int64
+	preregCalls     atomic.Int64
+	lastPreregTTL   atomic.Int64 // nanoseconds
 }
 
 func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (int64, error) {
@@ -38,6 +40,12 @@ func (m *mockRetentionStore) CleanupUsedTravelRecords(_ context.Context, _ time.
 
 func (m *mockRetentionStore) CleanupExpiredRecords(_ context.Context) (int64, error) {
 	m.expiredCalls.Add(1)
+	return 0, nil
+}
+
+func (m *mockRetentionStore) DeleteOrphanedPreregisteredAddresses(_ context.Context, olderThan time.Duration) (int64, error) {
+	m.preregCalls.Add(1)
+	m.lastPreregTTL.Store(int64(olderThan))
 	return 0, nil
 }
 
@@ -105,6 +113,44 @@ func TestRetention_ZeroDurationSkipsTable(t *testing.T) {
 	// Expired records always run.
 	if store.expiredCalls.Load() == 0 {
 		t.Fatal("expected expired records cleanup to always run")
+	}
+}
+
+func TestRetention_PreregistrationSweepRunsOnInterval(t *testing.T) {
+	store := &mockRetentionStore{}
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:                     24 * time.Hour,
+		CleanupInterval:                1 * time.Hour, // long, unrelated
+		PreregistrationTTL:             30 * time.Minute,
+		PreregistrationCleanupInterval: 50 * time.Millisecond,
+	}, store)
+
+	mgr.Start()
+	time.Sleep(150 * time.Millisecond)
+	mgr.Stop()
+
+	calls := store.preregCalls.Load()
+	if calls < 2 {
+		t.Fatalf("expected at least 2 pre-reg sweep calls (initial + tick), got %d", calls)
+	}
+	if got := time.Duration(store.lastPreregTTL.Load()); got != 30*time.Minute {
+		t.Fatalf("expected pre-reg TTL 30m, got %s", got)
+	}
+}
+
+func TestRetention_PreregistrationDefaults(t *testing.T) {
+	store := &mockRetentionStore{}
+	mgr := NewRetentionManager(RetentionConfig{
+		AccessLogs:      24 * time.Hour,
+		CleanupInterval: 1 * time.Hour,
+		// Leave preregistration fields at zero; defaults should kick in.
+	}, store)
+
+	if mgr.cfg.PreregistrationTTL != defaultPreregistrationTTL {
+		t.Fatalf("expected default pre-reg TTL %s, got %s", defaultPreregistrationTTL, mgr.cfg.PreregistrationTTL)
+	}
+	if mgr.cfg.PreregistrationCleanupInterval != defaultPreregistrationCleanup {
+		t.Fatalf("expected default pre-reg interval %s, got %s", defaultPreregistrationCleanup, mgr.cfg.PreregistrationCleanupInterval)
 	}
 }
 
