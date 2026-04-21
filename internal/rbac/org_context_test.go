@@ -531,13 +531,17 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "")
 
 		// hasExplicitAccess = true should skip all checks
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xAnyContract", true, nil)
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xAnyContract", true)
 		if err != nil {
 			t.Errorf("unexpected error with explicit access: %v", err)
 		}
 	})
 
-	t.Run("allows for registered contracts in user's own org via default claims", func(t *testing.T) {
+	// RD-849: registered contracts always require an explicit grant, regardless
+	// of the viewer's claims. admin/deploy claim no longer falls through to
+	// "implicit access to all own-org contracts" — that contradicted the 3-tier
+	// admin model (RD-817) and the explorer visibility layer.
+	t.Run("denies registered own-org contract without explicit grant (RD-849)", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -557,16 +561,10 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		// Deploy users can access registered contracts in their own org without explicit grants
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
-		if err != nil {
-			t.Errorf("unexpected error for own-org contract with deploy claim: %v", err)
-		}
-
-		// But read-only users still need explicit grants
-		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false, []Claim{ClaimRead})
+		// No hasExplicitAccess — denied regardless of any claim the caller may hold.
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xContract1", false)
 		if err == nil {
-			t.Fatal("expected error for read-only user without explicit grant")
+			t.Fatal("expected denial for own-org registered contract without explicit grant")
 		}
 		if !strings.Contains(err.Error(), ErrContractAccessDenied) {
 			t.Errorf("unexpected error message: %v", err)
@@ -595,7 +593,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOtherOrgs", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOtherOrgs", false)
 		if err == nil {
 			t.Fatal("expected error for cross-org contract")
 		}
@@ -625,7 +623,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xPublic", false, []Claim{ClaimRead})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xPublic", false)
 		if err == nil {
 			t.Error("expected error for unregistered contract (private by default)")
 		}
@@ -649,13 +647,15 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
 		// ecrecover precompile (0x01)
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0x0000000000000000000000000000000000000001", false, []Claim{ClaimRead})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0x0000000000000000000000000000000000000001", false)
 		if err != nil {
 			t.Errorf("unexpected error for precompile: %v", err)
 		}
 	})
 
-	t.Run("allows for contract in user's other org via default claims", func(t *testing.T) {
+	// RD-849: multi-org membership does not affect the rule. A registered
+	// contract in ANY of the user's orgs still requires an explicit grant.
+	t.Run("denies registered contract in user's other org without explicit grant", func(t *testing.T) {
 		orgA := &Organization{ID: "org-a", Slug: "org-a"}
 		store := &MockOrgContextStore{
 			memberships: []*MembershipWithDetails{
@@ -667,7 +667,7 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 			},
 			contractOwners: map[string]string{
 				"0xcontract1":    "org-a",
-				"0xorgbcontract": "org-b", // In org-b which user is also member of
+				"0xorgbcontract": "org-b",
 			},
 			addressOwnedByOrg: map[string]map[string]bool{
 				"0xcontract1":    {"org-a": true},
@@ -678,16 +678,9 @@ func TestOrgContext_CheckDefaultClaimsAllowed(t *testing.T) {
 
 		orgCtx, _ := NewOrgContext(ctx, store, user, "0xContract1")
 
-		// Deploy user in org-b can access org-b contracts via default claims
-		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{ClaimDeploy, ClaimRead, ClaimWrite})
-		if err != nil {
-			t.Errorf("unexpected error for deploy user's other org contract: %v", err)
-		}
-
-		// But read-only user in org-b still needs explicit grants
-		err = orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false, []Claim{ClaimRead})
+		err := orgCtx.CheckDefaultClaimsAllowed(ctx, "0xOrgBContract", false)
 		if err == nil {
-			t.Fatal("expected error for read-only user without explicit grant")
+			t.Fatal("expected denial for registered contract in user's other org without explicit grant")
 		}
 	})
 }

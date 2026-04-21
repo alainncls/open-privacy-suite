@@ -21,6 +21,7 @@ type MockCrossOrgStore struct {
 	cachedPermissions  map[string]*EffectivePermissions    // userID:orgID -> perms
 	contractGrants     map[string][]*ContractGrant         // groupID -> grants
 	contractDeployers  map[string]*string                  // lowercase address -> userID (deployer)
+	preregisteredAddrs map[string]map[string]bool          // orgID -> address -> bool
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
@@ -35,6 +36,7 @@ func NewMockCrossOrgStore() *MockCrossOrgStore {
 		cachedPermissions:  make(map[string]*EffectivePermissions),
 		contractGrants:     make(map[string][]*ContractGrant),
 		contractDeployers:  make(map[string]*string),
+		preregisteredAddrs: make(map[string]map[string]bool),
 	}
 }
 
@@ -295,6 +297,9 @@ func (m *MockCrossOrgStore) DeletePreregisteredAddressByAddress(ctx context.Cont
 	return nil
 }
 func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	if addrs, ok := m.preregisteredAddrs[orgID]; ok {
+		return addrs[strings.ToLower(address)], nil
+	}
 	return false, nil
 }
 func (m *MockCrossOrgStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
@@ -477,9 +482,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 	})
 
 	t.Run("SECURITY-003: User A CAN access their own Contract A", func(t *testing.T) {
-		// For this test, we need to configure the user to have access to contractA
-		// Since contractA is registered to org-a, user-a should be able to access it
-		// via either explicit contract access OR default_claims (since it's in their org)
+		// contractA is registered to org-a. user-a has an explicit grant on it
+		// via the setup fixture — registered contracts require explicit grants
+		// regardless of org membership (RD-849).
 
 		// Mark contractA as owned by org-a in addressOwnedByOrg (already done in setup)
 
@@ -764,15 +769,18 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-011b: Deploy user ALLOWED for registered contract in own org without explicit grant", func(t *testing.T) {
-		// Deploy users can access registered contracts in their own org via default claims.
+	t.Run("SECURITY-011b: Deploy/admin claim DENIED for registered contract in own org without explicit grant (RD-849)", func(t *testing.T) {
+		// Per the 3-tier admin model (RD-817), tier 3 admin/deploy claim holders
+		// do NOT automatically gain access to every contract in their org — they
+		// must have an explicit contract_grant. Tier 2 org admins (is_org_admin)
+		// keep org-wide access via materialized grants in computeOrgAdminPermissions.
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
 			UserID:         "user-a",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
-			ContractAccess: map[string]ContractAccess{},                 // NO explicit grant for contractA
-			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
+			ContractAccess: map[string]ContractAccess{},       // NO explicit grant for contractA
+			Claims:         []Claim{ClaimDeploy, ClaimAdmin},  // tier 3 admin/deploy claims
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -790,9 +798,11 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Deploy users can access registered contracts in their own org
-		if !result.Allowed {
-			t.Errorf("expected deploy user to access own-org registered contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Errorf("expected denial: tier 3 admin/deploy claim must not grant access without explicit contract_grant")
+		}
+		if !containsString(result.Reason, ErrContractAccessDenied) {
+			t.Errorf("expected access-denied reason, got: %s", result.Reason)
 		}
 	})
 
@@ -1969,4 +1979,71 @@ func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
 			t.Error("expected eth_getLogs without address filter to be denied on private network")
 		}
 	})
+}
+
+// TestPreregisteredAddressAccessGate locks in the access rule for preregistered
+// addresses (RD-849 follow-up). Pre-reg access is reserved for users with the
+// deploy or admin claim in the owning org — same gate that existed before the
+// RD-849 rewrite. Regular read-only org members must not reach pre-reg
+// addresses; cross-org users must not reach them; deploy/admin claim holders
+// in the owning org must.
+func TestPreregisteredAddressAccessGate(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+
+	preregAddr := "0xdddd000000000000000000000000000000000001"
+	// GetContractOwnerOrgID reads from contractOwners in the mock. In production
+	// this column is unioned with preregistered_addresses, so pre-reg rows also
+	// resolve here — mirror that by seeding both maps.
+	store.contractOwners[strings.ToLower(preregAddr)] = "org-a"
+	store.preregisteredAddrs["org-a"] = map[string]bool{
+		strings.ToLower(preregAddr): true,
+	}
+
+	cases := []struct {
+		name        string
+		userID      string
+		userDID     string
+		orgID       string
+		claims      []Claim
+		wantAllowed bool
+	}{
+		{"deploy claim in owning org → allowed", "user-a", "did:test:user-a", "org-a", []Claim{ClaimDeploy}, true},
+		{"admin claim in owning org → allowed", "user-a", "did:test:user-a", "org-a", []Claim{ClaimAdmin}, true},
+		{"no operational claim in owning org → denied", "user-a", "did:test:user-a", "org-a", []Claim{}, false},
+		{"deploy claim but cross-org → denied", "user-b", "did:test:user-b", "org-b", []Claim{ClaimDeploy}, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store.cachedPermissions[c.userID+":"+c.orgID] = &EffectivePermissions{
+				ID:             "perms-" + c.userID,
+				UserID:         c.userID,
+				OrgID:          c.orgID,
+				AllowedMethods: []string{"eth_call"},
+				ContractAccess: map[string]ContractAccess{},
+				Claims:         c.claims,
+				ComputedAt:     time.Now(),
+				ExpiresAt:      time.Now().Add(1 * time.Hour),
+			}
+
+			// Fresh controller per subtest so the in-memory perms cache doesn't
+			// carry over claims set by an earlier case.
+			controller := NewAccessController(store, 5*time.Minute)
+
+			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: c.userDID,
+				Method:         "eth_call",
+				Params:         []any{map[string]any{"to": preregAddr, "data": "0x"}, "latest"},
+				TargetAddress:  preregAddr,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Allowed != c.wantAllowed {
+				t.Errorf("expected allowed=%v, got allowed=%v reason=%q", c.wantAllowed, result.Allowed, result.Reason)
+			}
+		})
+	}
 }
