@@ -52,7 +52,7 @@ type RetentionManager struct {
 	store     RetentionStore
 	stop      chan struct{}
 	done      chan struct{}
-	preregDon chan struct{}
+	preregDone chan struct{}
 }
 
 // RetentionCleaner is an alias for RetentionManager for API compatibility.
@@ -71,7 +71,7 @@ func NewRetentionManager(cfg RetentionConfig, store RetentionStore) *RetentionMa
 		store:     store,
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
-		preregDon: make(chan struct{}),
+		preregDone: make(chan struct{}),
 	}
 }
 
@@ -96,7 +96,7 @@ func (r *RetentionManager) Start() {
 func (r *RetentionManager) Stop() {
 	close(r.stop)
 	<-r.done
-	<-r.preregDon
+	<-r.preregDone
 }
 
 func (r *RetentionManager) run() {
@@ -175,7 +175,7 @@ func (r *RetentionManager) cleanup() {
 // post-mine / revert cleanup paths) are a security-relevant footprint that
 // should be swept aggressively.
 func (r *RetentionManager) runPreregistrationCleanup() {
-	defer close(r.preregDon)
+	defer close(r.preregDone)
 
 	interval := r.cfg.PreregistrationCleanupInterval
 	ttl := r.cfg.PreregistrationTTL
