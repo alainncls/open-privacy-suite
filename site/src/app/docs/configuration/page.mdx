@@ -37,6 +37,7 @@ These variables **must** be set when `ENVIRONMENT=production`. The server will r
   { name: "BASE_URL", default: "http://localhost:8080", description: "Public URL for auth callbacks" },
   { name: "TRUSTED_INTERNAL_CIDRS", default: "(none)", description: "Comma-separated CIDRs for internal API access. Appended to the default list (localhost, Docker, RFC1918, Tailscale). Set when the block explorer or monitoring runs outside default networks (e.g., Kubernetes pod CIDRs, cloud VPCs)." },
   { name: "REDIS_URL", default: "(none)", description: "Redis connection URL for distributed state stores (sessions, caches, rate limiting). When not set, in-memory stores are used (single-instance only). Example: redis://:password@redis:6379/0" },
+  { name: "ENS_RESOLVER_URL", default: "https://eth.llamarpc.com", description: "Public RPC endpoint used for ENS name resolution when displaying addresses in the UI. Does not need to match NODE_URL." },
 ]} />
 
 ---
@@ -242,6 +243,16 @@ make db-new-migration name=add_feature
 <Callout variant="info" title="Migration policy">
   Migrations are expand-only in production. Never use DROP in UP migrations. If a migration needs undoing, create a new forward migration.
 </Callout>
+
+---
+
+## Compliance and Retention
+
+<EnvTable vars={[
+  { name: "ENABLE_TRAVEL_RULE", default: "false", description: "Enable FATF travel-rule compliance checks on value transfers. Fails closed when token pricing is missing." },
+  { name: "RETENTION_ACCESS_LOGS", default: "2160h", description: "How long access log entries are retained before the periodic cleaner deletes them. Go duration format (e.g., 2160h = 90 days)." },
+  { name: "RETENTION_COMPLIANCE_LOGS", default: "61320h", description: "How long compliance log entries are retained. Typically longer than access logs for regulatory audit trails. Default is roughly 7 years." },
+]} />
 
 ---
 
