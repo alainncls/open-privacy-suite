@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -234,4 +236,103 @@ func TestForward(t *testing.T) {
 	if response.Result != "0x123" {
 		t.Errorf("got result %v, want 0x123", response.Result)
 	}
+}
+
+// TestForward_ResponseSizeLimit verifies that the proxy caps upstream JSON-RPC
+// responses at maxRPCResponseSize and returns a 502 error when an upstream
+// writes more than that. Small responses must still succeed unchanged.
+func TestForward_ResponseSizeLimit(t *testing.T) {
+	t.Run("small response passes through", func(t *testing.T) {
+		small := `{"jsonrpc":"2.0","result":"0xabc","id":1}`
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(small))
+		}))
+		defer server.Close()
+
+		p := New(server.URL)
+		body, status, err := p.Forward([]byte(`{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`))
+		if err != nil {
+			t.Fatalf("unexpected error for small response: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Errorf("got status %d, want 200", status)
+		}
+		if string(body) != small {
+			t.Errorf("got body %q, want %q", body, small)
+		}
+	})
+
+	t.Run("response over limit is rejected with 502", func(t *testing.T) {
+		// Write exactly maxRPCResponseSize + 100 bytes so io.LimitReader(+1)
+		// sees more than the cap. Stream the body to avoid a monster
+		// intermediate buffer allocation in the test.
+		const oversize = maxRPCResponseSize + 100
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			chunk := bytes.Repeat([]byte{'x'}, 1<<20) // 1 MiB
+			written := 0
+			for written < oversize {
+				n := oversize - written
+				if n > len(chunk) {
+					n = len(chunk)
+				}
+				if _, err := w.Write(chunk[:n]); err != nil {
+					return
+				}
+				written += n
+			}
+		}))
+		defer server.Close()
+
+		p := New(server.URL)
+		body, status, err := p.Forward([]byte(`{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`))
+		if err == nil {
+			t.Fatal("expected error for oversized response, got nil")
+		}
+		if status != http.StatusBadGateway {
+			t.Errorf("got status %d, want 502", status)
+		}
+		if body != nil {
+			t.Errorf("expected nil body on oversize error, got %d bytes", len(body))
+		}
+		if !strings.Contains(err.Error(), "exceeded") {
+			t.Errorf("expected error to mention the limit, got %q", err.Error())
+		}
+	})
+
+	t.Run("response at exact limit is accepted", func(t *testing.T) {
+		const exact = maxRPCResponseSize
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			chunk := bytes.Repeat([]byte{'y'}, 1<<20)
+			written := 0
+			for written < exact {
+				n := exact - written
+				if n > len(chunk) {
+					n = len(chunk)
+				}
+				if _, err := w.Write(chunk[:n]); err != nil {
+					return
+				}
+				written += n
+			}
+		}))
+		defer server.Close()
+
+		p := New(server.URL)
+		body, status, err := p.Forward([]byte(`{"jsonrpc":"2.0","method":"eth_call","params":[],"id":1}`))
+		if err != nil {
+			t.Fatalf("unexpected error for exact-limit response: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Errorf("got status %d, want 200", status)
+		}
+		if len(body) != exact {
+			t.Errorf("got body len %d, want %d", len(body), exact)
+		}
+	})
 }

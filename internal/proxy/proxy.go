@@ -17,6 +17,14 @@ type Proxy struct {
 // DefaultTimeout is the default timeout for HTTP requests to the target node.
 const DefaultTimeout = 30 * time.Second
 
+// maxRPCResponseSize caps the size of a single upstream JSON-RPC response body
+// that the proxy will buffer. Legitimate eth_getLogs / debug_traceTransaction
+// responses can be large but 128 MiB is well beyond any real-world payload;
+// a larger response is treated as a misbehaving / malicious upstream and the
+// request fails closed with a 502. The same pattern is used (at smaller caps)
+// by internal/tracer to protect the tracer RPC client.
+const maxRPCResponseSize = 128 << 20 // 128 MiB
+
 func New(targetURL string) *Proxy {
 	return &Proxy{
 		targetURL: targetURL,
@@ -74,9 +82,15 @@ func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string, clientIP string
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Read at most maxRPCResponseSize + 1 so we can distinguish a response that
+	// exactly fills the limit from one that exceeds it. Anything larger is
+	// rejected with 502 so a misbehaving upstream cannot OOM the proxy.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCResponseSize+1))
 	if err != nil {
 		return nil, http.StatusBadGateway, fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(body) > maxRPCResponseSize {
+		return nil, http.StatusBadGateway, fmt.Errorf("upstream RPC response exceeded %d byte limit", maxRPCResponseSize)
 	}
 
 	return body, resp.StatusCode, nil
