@@ -394,3 +394,66 @@ func TestTraceCall_RPCError(t *testing.T) {
 		t.Fatal("expected error for RPC error response")
 	}
 }
+
+// buildNestedFrameChain constructs a single-child chain of depth `chainDepth`
+// frames (root at depth 0, one nested CALL per level). The resulting root can
+// be handed to extractCallTargets(frame, result, 0) and the deepest frame will
+// be visited with depth == chainDepth-1.
+func buildNestedFrameChain(chainDepth int) *callFrame {
+	if chainDepth <= 0 {
+		return nil
+	}
+	leaf := &callFrame{Type: "CALL", From: "0xsender", To: "0xleaf"}
+	cur := leaf
+	for i := 1; i < chainDepth; i++ {
+		parent := &callFrame{
+			Type:  "CALL",
+			From:  "0xsender",
+			To:    "0xintermediate",
+			Calls: []callFrame{*cur},
+		}
+		cur = parent
+	}
+	return cur
+}
+
+// TestExtractCallTargets_MaxDepthExceeded verifies that a malicious / pathological
+// trace deeper than maxTraceDepth fails closed with errTraceDepthExceeded rather
+// than blowing the stack. The check is depth > maxTraceDepth, so a chain that
+// reaches depth == maxTraceDepth+1 must trip it.
+func TestExtractCallTargets_MaxDepthExceeded(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
+
+	// Build a chain such that the deepest extractCallTargets invocation sees
+	// depth = maxTraceDepth+1 (= 257), which must return errTraceDepthExceeded.
+	// That requires maxTraceDepth+2 frames (root at depth 0 ... leaf at 257).
+	root := buildNestedFrameChain(maxTraceDepth + 2)
+
+	result := &TraceResult{}
+	err := tracer.extractCallTargets(root, result, 0)
+	if err == nil {
+		t.Fatal("expected errTraceDepthExceeded, got nil")
+	}
+	if err != errTraceDepthExceeded {
+		t.Fatalf("expected errTraceDepthExceeded, got %v", err)
+	}
+}
+
+// TestExtractCallTargets_MaxDepthAllowed verifies the boundary: a chain whose
+// deepest frame is visited at depth == maxTraceDepth must succeed (the check
+// is strictly '>'). That requires maxTraceDepth+1 frames.
+func TestExtractCallTargets_MaxDepthAllowed(t *testing.T) {
+	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
+
+	root := buildNestedFrameChain(maxTraceDepth + 1)
+
+	result := &TraceResult{}
+	if err := tracer.extractCallTargets(root, result, 0); err != nil {
+		t.Fatalf("expected nil error at max allowed depth, got %v", err)
+	}
+	// Every frame in the chain is type CALL, so every depth contributes one
+	// CallTarget. Expect maxTraceDepth+1 entries.
+	if got := len(result.CallTargets); got != maxTraceDepth+1 {
+		t.Fatalf("expected %d call targets, got %d", maxTraceDepth+1, got)
+	}
+}
