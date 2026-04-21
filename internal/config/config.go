@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"privacy-proxy/internal/audit"
+	"privacy-proxy/internal/auth"
 )
 
 // ExtraRPCNamespaces defines additional JSON-RPC method namespaces
@@ -338,7 +339,7 @@ func Load() *Config {
 	}
 
 	// Path B (ProofOfHumanity) configuration with current hardcoded values as defaults.
-	privadoStateContract := getEnv("PRIVADO_STATE_CONTRACT", "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896")
+	privadoStateContract := getEnv("PRIVADO_STATE_CONTRACT", auth.PrivadoMainnetStateContract)
 	privadoCircuitID := getEnv("PRIVADO_CIRCUIT_ID", "credentialAtomicQueryMTPV2")
 	billionsSchemaURL := getEnv("BILLIONS_CREDENTIAL_SCHEMA_URL", "https://raw.githubusercontent.com/0xPolygonID/tutorial-examples/main/credential-schema/schemas-examples/proof-of-humanity/proof-of-humanity.jsonld")
 	billionsCredType := getEnv("BILLIONS_CREDENTIAL_TYPE", "ProofOfHumanity")
