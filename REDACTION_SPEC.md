@@ -4,6 +4,16 @@
 
 ---
 
+## Invariant: RPC access and explorer visibility must agree
+
+For every (viewer, address) pair, the RPC access layer (`rbac.AccessController.CheckAccess`) and the explorer visibility layer (`db.GetBatchVisibility`) must return consistent outcomes. If CheckAccess allows a viewer to interact with an address, `GetBatchVisibility` must return `VisibilityFull` for that address for the same viewer. If CheckAccess denies, visibility must be `Hidden` or `Redacted` — never `Full`.
+
+Any asymmetry is a bug. The historical failure mode (RD-849) was tier 3 admin-claim users getting RPC access to every contract in their org while the explorer correctly treated the same contracts as `[PRIVATE]`. The symmetry is enforced by `e2e/access_visibility_symmetry_test.go` — every change to either layer must keep that test green.
+
+The rule also drives how admin and deploy claims are scoped: they grant bypass on **explicitly granted contracts only**, not org-wide access. Org-wide access is the exclusive privilege of `is_org_admin` groups (tier 2), materialized as explicit `ContractAccess` for every org contract.
+
+---
+
 ## 1. Overview
 
 The redaction engine enforces the privacy promise at two independent layers:

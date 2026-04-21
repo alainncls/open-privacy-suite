@@ -199,8 +199,24 @@ func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses 
 }
 
 // CheckDefaultClaimsAllowed validates whether default_claims can be used for an address.
-// This enforces that default_claims only apply to truly unregistered/public contracts.
-// Registered contracts (even in user's own org) require explicit grants.
+// Only truly unregistered addresses (precompiles) fall through here. Every registered
+// contract — including contracts in the user's own org — requires an explicit
+// contract_grant. This keeps the RPC access layer symmetric with the explorer
+// visibility layer (RD-817 3-tier admin model, RD-849).
+//
+// Symmetry invariant: if CheckAccess allows a viewer to reach an address, the same
+// viewer must see that address as VisibilityFull in GetBatchVisibility, and vice
+// versa. The visibility layer grants Full only via is_org_admin (tier 2) or an
+// explicit contract_grant (tier 3 with a grant, or any claim holder with a grant).
+// This function enforces the same contract at the access layer.
+//
+// is_org_admin users (tier 2) are unaffected — they get all org contracts
+// materialized as explicit ContractAccess in computeOrgAdminPermissions, so they
+// hit hasExplicitAccess and return nil immediately.
+//
+// Deployers on their self-deployed contracts are unaffected — access.go adds an
+// auto-grant (ContractAccess) before calling this function, so hasExplicitAccess
+// is true.
 //
 // Parameters:
 //   - ctx: Context
@@ -208,11 +224,10 @@ func (oc *OrgContext) CheckMultiAddressesInScope(ctx context.Context, addresses 
 //   - hasExplicitAccess: Whether user has explicit ContractAccess for this address
 //
 // Returns:
-//   - nil if default_claims can be used (contract is not registered anywhere)
-//   - error if the contract is registered to any org (requires explicit grant)
-func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool, claims []Claim) error {
+//   - nil if the address is unregistered and is a precompile (public)
+//   - error otherwise (explicit grant required)
+func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address string, hasExplicitAccess bool) error {
 	if hasExplicitAccess {
-		// User has explicit access via grant - no need to check default_claims
 		return nil
 	}
 
@@ -221,32 +236,21 @@ func (oc *OrgContext) CheckDefaultClaimsAllowed(ctx context.Context, address str
 		return nil
 	}
 
-	// Check which org owns this contract
 	ownerOrgID, err := oc.store.GetContractOwnerOrgID(ctx, addr)
 	if err != nil {
 		return fmt.Errorf("failed to check contract ownership: %w", err)
 	}
 
 	if ownerOrgID == "" {
-		// Not registered anywhere — only precompiles are truly public.
-		// All other unregistered addresses are private by default.
+		// Unregistered — only precompiles are public. All other unregistered
+		// addresses are private by default.
 		if precompile.IsPrecompileAddress(addr) {
 			return nil
 		}
-		return fmt.Errorf(ErrContractAccessDenied)
 	}
 
-	// Contract belongs to a different org - deny
-	if !oc.userOrgIDs[ownerOrgID] {
-		return fmt.Errorf(ErrContractAccessDenied)
-	}
-
-	// Contract is in user's own org - deploy/admin users can access via default claims
-	if hasClaim(claims, ClaimDeploy) || hasClaim(claims, ClaimAdmin) {
-		return nil
-	}
-
-	// Read/write-only users need explicit grants for registered contracts
+	// Registered contracts (any org, including user's own) require an explicit
+	// grant. Same rule as the explorer visibility layer.
 	return fmt.Errorf(ErrContractAccessDenied)
 }
 

@@ -664,9 +664,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			// ownerOrgID in user's orgs — keep default claims (own org).
 		}
 
-		// If no access from explicit registration or default_claims, check if it's a preregistered address.
-		// Preregistered addresses are planned deployments and should be accessible to the org that owns them.
-		// GetContractOwnerOrgID checks both contracts AND preregistered_addresses tables.
+		// Preregistered addresses: planned CREATE/CREATE2 deployments that are
+		// expected to land at a deterministic address. The deployer needs access
+		// to the future contract before it's mined. If the address is in
+		// preregistered_addresses for one of the user's orgs, grant access and
+		// treat as explicit (skips the cross-org / 3-tier grant check below).
+		//
+		// Registered contracts (contracts table) without an explicit grant do NOT
+		// fall through here anymore — RD-849 requires an explicit contract_grant
+		// for tier 3 admins to reach a contract, matching the explorer visibility
+		// layer. Tier 2 org admins (is_org_admin) already get all org contracts
+		// materialized as explicit ContractAccess in computeOrgAdminPermissions.
 		if access == nil {
 			if !ownerOrgIDFetched {
 				var err error
@@ -676,13 +684,16 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				}
 			}
 			if ownerOrgID != "" && orgCtx.UserOrgIDs()[ownerOrgID] {
-				// Address is owned (registered or preregistered) by one of user's orgs - grant access.
-				// Note: we do NOT set hasExplicitAccess here. CheckDefaultClaimsAllowed will
-				// still verify whether this is a registered contract (requires explicit grant)
-				// or a preregistered address (allowed via org ownership).
-				access = &ContractAccess{
-					Claims:    []Claim{ClaimDeploy},
-					Functions: nil, // All functions allowed
+				preregistered, err := c.store.IsAddressPreregistered(ctx, ownerOrgID, addr)
+				if err != nil {
+					return nil, fmt.Errorf("failed to check preregistered address: %w", err)
+				}
+				if preregistered {
+					access = &ContractAccess{
+						Claims:    []Claim{ClaimDeploy},
+						Functions: nil, // All functions allowed
+					}
+					hasExplicitAccess = true
 				}
 			}
 		}
@@ -737,7 +748,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		// CROSS-ORG ISOLATION CHECK (P0 Security Fix) - now encapsulated in OrgContext
 		// If user doesn't have explicit access but got access via default_claims,
 		// we must verify the contract isn't registered to a DIFFERENT organization.
-		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
 			slog.Debug("access denied: cross-org isolation", "contract", req.TargetAddress, "user", req.UserExternalID, "detail", err.Error())
 			return &AccessCheckResult{
 				Allowed: false,
@@ -1788,7 +1799,7 @@ func (c *AccessController) validateGetLogsWithOrgContext(ctx context.Context, pe
 		}
 
 		// For contracts in user's orgs or public contracts, check cross-org isolation
-		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess, perms.Claims); err != nil {
+		if err := orgCtx.CheckDefaultClaimsAllowed(ctx, addr, hasExplicitAccess); err != nil {
 			// Contract is in another org - should have been caught by CheckMultiAddressesInScope,
 			// but double-check here for defense in depth
 			return fmt.Errorf("eth_getLogs: %s", ErrContractAccessDenied)

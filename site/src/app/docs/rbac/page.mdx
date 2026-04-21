@@ -169,9 +169,13 @@ graph TD
 
 1. **Group has methods + claims** via GroupAccess: `{ methods: [...], claims: [deploy] }`. The method list controls read/write; claims gate deployment and upgrades.
 2. **Unregistered contracts**: denied (private by default). Only EVM precompiles (0x01-0x09) are accessible. All other contracts must be registered to an org.
-3. **Registered contracts (own org)**: deploy/admin users allowed via default claims. Other users need a ContractGrant. Functions can be restricted via FunctionRule. Parameters can be constrained via ParamRule.
+3. **Registered contracts**: require a `ContractGrant` on the user's group. The `admin` and `deploy` claims alone do **not** unlock registered contracts — tier 3 admins get RBAC bypass only on contracts explicitly granted to their group (per the 3-tier admin model). Functions can be restricted via `FunctionRule`. Parameters can be constrained via `ParamRule`.
 4. **Deployer contract grant**: when a user deploys a contract, a `contract_grant` is added to their existing deploy group. The admin must pre-create a group with the `deploy` claim and add deployers to it.
-5. **Org admin bypass**: groups with `is_org_admin=true` get ALL claims on ALL contracts in the organization.
+5. **Org admin bypass**: groups with `is_org_admin=true` (tier 2) get ALL claims on ALL contracts in the organization — this is how org admins see every org contract at both the RPC and explorer layers.
+
+<Callout variant="info" title="Access/visibility symmetry">
+RPC access and explorer visibility share the same grant model. If a user can call a contract via RPC, they see it as **Full** in the explorer; if they cannot call it, it shows as `[PRIVATE]` or is hidden. Any asymmetry is a bug — the invariant is enforced by the `TestAccessVisibilitySymmetry` integration test.
+</Callout>
 
 </Callout>
 

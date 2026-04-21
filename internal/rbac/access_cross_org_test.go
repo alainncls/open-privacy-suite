@@ -477,9 +477,9 @@ func TestCheckAccessCrossOrgIsolation(t *testing.T) {
 	})
 
 	t.Run("SECURITY-003: User A CAN access their own Contract A", func(t *testing.T) {
-		// For this test, we need to configure the user to have access to contractA
-		// Since contractA is registered to org-a, user-a should be able to access it
-		// via either explicit contract access OR default_claims (since it's in their org)
+		// contractA is registered to org-a. user-a has an explicit grant on it
+		// via the setup fixture — registered contracts require explicit grants
+		// regardless of org membership (RD-849).
 
 		// Mark contractA as owned by org-a in addressOwnedByOrg (already done in setup)
 
@@ -764,15 +764,18 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		}
 	})
 
-	t.Run("SECURITY-011b: Deploy user ALLOWED for registered contract in own org without explicit grant", func(t *testing.T) {
-		// Deploy users can access registered contracts in their own org via default claims.
+	t.Run("SECURITY-011b: Deploy/admin claim DENIED for registered contract in own org without explicit grant (RD-849)", func(t *testing.T) {
+		// Per the 3-tier admin model (RD-817), tier 3 admin/deploy claim holders
+		// do NOT automatically gain access to every contract in their org — they
+		// must have an explicit contract_grant. Tier 2 org admins (is_org_admin)
+		// keep org-wide access via materialized grants in computeOrgAdminPermissions.
 		store.cachedPermissions["user-a:org-a"] = &EffectivePermissions{
 			ID:             "perms-a",
 			UserID:         "user-a",
 			OrgID:          "org-a",
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_getLogs"},
-			ContractAccess: map[string]ContractAccess{},                 // NO explicit grant for contractA
-			Claims:         []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, // Deploy user
+			ContractAccess: map[string]ContractAccess{},       // NO explicit grant for contractA
+			Claims:         []Claim{ClaimDeploy, ClaimAdmin},  // tier 3 admin/deploy claims
 			ComputedAt:     time.Now(),
 			ExpiresAt:      time.Now().Add(1 * time.Hour),
 		}
@@ -790,9 +793,11 @@ func TestCheckAccessExplicitGrantRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// Deploy users can access registered contracts in their own org
-		if !result.Allowed {
-			t.Errorf("expected deploy user to access own-org registered contract, got denied: %s", result.Reason)
+		if result.Allowed {
+			t.Errorf("expected denial: tier 3 admin/deploy claim must not grant access without explicit contract_grant")
+		}
+		if !containsString(result.Reason, ErrContractAccessDenied) {
+			t.Errorf("expected access-denied reason, got: %s", result.Reason)
 		}
 	})
 
