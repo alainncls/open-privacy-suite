@@ -28,13 +28,17 @@ type HumanityRequestConfig struct {
 	Query          map[string]any // Parsed JSON; must contain a "credentialSubject" object
 }
 
+// PrivadoMainnetStateContract is the canonical Privado mainnet identity state
+// contract address, used as a fallback when no address is supplied.
+const PrivadoMainnetStateContract = "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"
+
 // NewPrivadoVerifier creates a new Privado ID verifier.
-// stateContract is the on-chain identity state contract address (e.g. Privado
-// mainnet "0x3C9acB2205Aa72A05F6D77d708b5Cf85FCa3a896"). Pass the value from
-// Config.PrivadoStateContract.
+// stateContract is the on-chain identity state contract address. Pass the
+// value from Config.PrivadoStateContract; an empty string falls back to the
+// Privado mainnet default (PrivadoMainnetStateContract).
 func NewPrivadoVerifier(rpcURL, ipfsGateway, stateContract string) (*PrivadoVerifier, error) {
 	if stateContract == "" {
-		return nil, fmt.Errorf("stateContract is required")
+		stateContract = PrivadoMainnetStateContract
 	}
 
 	resolver := state.NewETHResolver(rpcURL, stateContract)

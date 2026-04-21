@@ -103,10 +103,13 @@ func TestVerificationResult_Structure(t *testing.T) {
 	assert.Equal(t, "credentialAtomicQueryMTPV2", result.ProofData[0]["circuitID"])
 }
 
-func TestPrivadoVerifier_NewPrivadoVerifier_RequiresStateContract(t *testing.T) {
-	_, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "stateContract is required")
+func TestPrivadoVerifier_NewPrivadoVerifier_EmptyStateContractFallsBackToMainnet(t *testing.T) {
+	// An empty state contract must fall back to the Privado mainnet default
+	// so that callers who construct *config.Config literally in tests (and
+	// don't go through config.Load) still get a working verifier.
+	verifier, err := NewPrivadoVerifier("https://rpc-mainnet.privado.id", "", "")
+	require.NoError(t, err)
+	assert.NotNil(t, verifier)
 }
 
 func TestCreateHumanityAuthRequest_UsesInjectedConfig(t *testing.T) {
