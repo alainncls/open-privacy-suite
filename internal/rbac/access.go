@@ -688,7 +688,12 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				if err != nil {
 					return nil, fmt.Errorf("failed to check preregistered address: %w", err)
 				}
-				if preregistered {
+				// Preserve the prior gate: pre-reg access requires admin or deploy
+				// claim. Pre-registration is a deployment-related operation, so it's
+				// scoped to users with operational claims (plus is_org_admin tier 2
+				// via the hasExplicitAccess fast path, and the actual deployer via
+				// the auto-grant below).
+				if preregistered && (hasClaim(perms.Claims, ClaimDeploy) || hasClaim(perms.Claims, ClaimAdmin)) {
 					access = &ContractAccess{
 						Claims:    []Claim{ClaimDeploy},
 						Functions: nil, // All functions allowed

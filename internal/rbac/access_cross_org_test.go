@@ -21,6 +21,7 @@ type MockCrossOrgStore struct {
 	cachedPermissions  map[string]*EffectivePermissions    // userID:orgID -> perms
 	contractGrants     map[string][]*ContractGrant         // groupID -> grants
 	contractDeployers  map[string]*string                  // lowercase address -> userID (deployer)
+	preregisteredAddrs map[string]map[string]bool          // orgID -> address -> bool
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
@@ -35,6 +36,7 @@ func NewMockCrossOrgStore() *MockCrossOrgStore {
 		cachedPermissions:  make(map[string]*EffectivePermissions),
 		contractGrants:     make(map[string][]*ContractGrant),
 		contractDeployers:  make(map[string]*string),
+		preregisteredAddrs: make(map[string]map[string]bool),
 	}
 }
 
@@ -295,6 +297,9 @@ func (m *MockCrossOrgStore) DeletePreregisteredAddressByAddress(ctx context.Cont
 	return nil
 }
 func (m *MockCrossOrgStore) IsAddressPreregistered(ctx context.Context, orgID, address string) (bool, error) {
+	if addrs, ok := m.preregisteredAddrs[orgID]; ok {
+		return addrs[strings.ToLower(address)], nil
+	}
 	return false, nil
 }
 func (m *MockCrossOrgStore) MarkAddressUsed(ctx context.Context, address string) error { return nil }
@@ -1974,4 +1979,71 @@ func TestEthGetLogsOrgResolutionForMultiOrgUser(t *testing.T) {
 			t.Error("expected eth_getLogs without address filter to be denied on private network")
 		}
 	})
+}
+
+// TestPreregisteredAddressAccessGate locks in the access rule for preregistered
+// addresses (RD-849 follow-up). Pre-reg access is reserved for users with the
+// deploy or admin claim in the owning org — same gate that existed before the
+// RD-849 rewrite. Regular read-only org members must not reach pre-reg
+// addresses; cross-org users must not reach them; deploy/admin claim holders
+// in the owning org must.
+func TestPreregisteredAddressAccessGate(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockCrossOrgStore()
+	setupCrossOrgTestScenario(store)
+
+	preregAddr := "0xdddd000000000000000000000000000000000001"
+	// GetContractOwnerOrgID reads from contractOwners in the mock. In production
+	// this column is unioned with preregistered_addresses, so pre-reg rows also
+	// resolve here — mirror that by seeding both maps.
+	store.contractOwners[strings.ToLower(preregAddr)] = "org-a"
+	store.preregisteredAddrs["org-a"] = map[string]bool{
+		strings.ToLower(preregAddr): true,
+	}
+
+	cases := []struct {
+		name        string
+		userID      string
+		userDID     string
+		orgID       string
+		claims      []Claim
+		wantAllowed bool
+	}{
+		{"deploy claim in owning org → allowed", "user-a", "did:test:user-a", "org-a", []Claim{ClaimDeploy}, true},
+		{"admin claim in owning org → allowed", "user-a", "did:test:user-a", "org-a", []Claim{ClaimAdmin}, true},
+		{"no operational claim in owning org → denied", "user-a", "did:test:user-a", "org-a", []Claim{}, false},
+		{"deploy claim but cross-org → denied", "user-b", "did:test:user-b", "org-b", []Claim{ClaimDeploy}, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store.cachedPermissions[c.userID+":"+c.orgID] = &EffectivePermissions{
+				ID:             "perms-" + c.userID,
+				UserID:         c.userID,
+				OrgID:          c.orgID,
+				AllowedMethods: []string{"eth_call"},
+				ContractAccess: map[string]ContractAccess{},
+				Claims:         c.claims,
+				ComputedAt:     time.Now(),
+				ExpiresAt:      time.Now().Add(1 * time.Hour),
+			}
+
+			// Fresh controller per subtest so the in-memory perms cache doesn't
+			// carry over claims set by an earlier case.
+			controller := NewAccessController(store, 5*time.Minute)
+
+			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+				UserExternalID: c.userDID,
+				Method:         "eth_call",
+				Params:         []any{map[string]any{"to": preregAddr, "data": "0x"}, "latest"},
+				TargetAddress:  preregAddr,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Allowed != c.wantAllowed {
+				t.Errorf("expected allowed=%v, got allowed=%v reason=%q", c.wantAllowed, result.Allowed, result.Reason)
+			}
+		})
+	}
 }
