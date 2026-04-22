@@ -147,7 +147,7 @@ export default function GroupForm({
               <span className="text-sm font-medium text-warning-dark">Organization Admin</span>
             </div>
             <p className="text-xs text-neutral-500 mt-1">
-              Members of this group get all claims (read, write, admin, upgrade, deploy) on all contracts in the organization. Use with caution.
+              Members of this group get the admin claim (which implies deploy and upgrade) on all contracts in the organization. Use with caution.
             </p>
           </div>
         </label>

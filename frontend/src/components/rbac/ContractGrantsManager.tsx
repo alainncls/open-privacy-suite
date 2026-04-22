@@ -152,28 +152,35 @@ export default function ContractGrantsManager({
 
   const existingGrantGroupIds = grants.map(g => g.group_id);
 
-  // Parse ABI to extract function selectors
-  const abiFunctions = useMemo(() => {
-    if (!contract.abi) return {};
+  // Parse ABI to extract function selectors and per-selector input param names.
+  const { abiFunctions, abiFunctionParams } = useMemo(() => {
+    const names: Record<string, string> = {};
+    const params: Record<string, Record<number, string>> = {};
+    if (!contract.abi) return { abiFunctions: names, abiFunctionParams: params };
     try {
       const parsed = JSON.parse(contract.abi);
-      if (!Array.isArray(parsed)) return {};
+      if (!Array.isArray(parsed)) return { abiFunctions: names, abiFunctionParams: params };
 
-      const map: Record<string, string> = {};
       for (const item of parsed) {
         if (item.type !== 'function') continue;
-        const inputTypes = (item.inputs || []).map((input: { type: string }) => input.type).join(',');
+        const inputs: { name: string; type: string }[] = item.inputs || [];
+        const inputTypes = inputs.map(input => input.type).join(',');
         const signature = `${item.name}(${inputTypes})`;
         try {
           const selector = toFunctionSelector(signature).toLowerCase();
-          map[selector] = item.name;
+          names[selector] = item.name;
+          const paramMap: Record<number, string> = {};
+          inputs.forEach((input, idx) => {
+            paramMap[idx] = input.name;
+          });
+          params[selector] = paramMap;
         } catch {
           // Skip invalid signatures
         }
       }
-      return map;
+      return { abiFunctions: names, abiFunctionParams: params };
     } catch {
-      return {};
+      return { abiFunctions: names, abiFunctionParams: params };
     }
   }, [contract.abi]);
 
@@ -207,6 +214,13 @@ export default function ContractGrantsManager({
   // Get event param name: "from", "to", "value" instead of "param[0]", "param[1]", "param[2]"
   const getEventParamLabel = (eventName: string, paramIndex: number, mustBe: string) => {
     const paramName = abiEventParams[eventName]?.[paramIndex];
+    const label = paramName || `param[${paramIndex}]`;
+    return `${label}=${mustBe}`;
+  };
+
+  // Get function param name (e.g. "to", "amount") from the ABI by selector, falling back to param[N].
+  const getFunctionParamLabel = (selector: string, paramIndex: number, mustBe: string) => {
+    const paramName = abiFunctionParams[selector.toLowerCase()]?.[paramIndex];
     const label = paramName || `param[${paramIndex}]`;
     return `${label}=${mustBe}`;
   };
@@ -245,7 +259,7 @@ export default function ContractGrantsManager({
       <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 flex items-start gap-2">
         <Info className="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-sky-700">
-          Groups define claims (read, write, etc.) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims. You can also restrict access to specific functions.
+          Groups define claims (admin, deploy, upgrade) in the Groups tab. Adding a group here grants its members access to this contract with their group's claims. You can also restrict access to specific functions.
         </p>
       </div>
 
@@ -345,7 +359,7 @@ export default function ContractGrantsManager({
                       {grant.functions.map((rule: FunctionRule) => {
                         const name = getSelectorName(rule.selector);
                         const paramLabels = (rule.param_rules || []).map(
-                          pr => `param[${pr.index}]=${pr.must_be}`
+                          pr => getFunctionParamLabel(rule.selector, pr.index, pr.must_be)
                         );
                         return (
                           <span

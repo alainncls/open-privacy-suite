@@ -279,7 +279,7 @@ export default function RBACManager() {
                       </li>
                       <li className="flex items-start gap-2">
                         <FileCode2 className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
-                        <span><strong className="text-neutral-700">Contracts</strong> with grants define per-contract claims (read, write, admin, upgrade)</span>
+                        <span><strong className="text-neutral-700">Contracts</strong> with grants define per-contract claims (admin, deploy, upgrade)</span>
                       </li>
                     </ul>
                   </div>
