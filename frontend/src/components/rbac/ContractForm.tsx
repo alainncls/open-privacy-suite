@@ -211,7 +211,7 @@ export default function ContractForm({
       <div className="p-3 rounded-lg bg-primary-50 border border-primary-200">
         <p className="text-sm text-primary-600">
           <strong>Tip:</strong> After registering the contract, add grants to specify
-          which groups can access it and with what claims (read, write, admin, upgrade).
+          which groups can access it and with what claims (admin, deploy, upgrade).
         </p>
       </div>
 
