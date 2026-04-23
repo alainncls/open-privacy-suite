@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/ethereum/go-ethereum v1.16.8
-	github.com/gateway-fm/chain-indexer v0.1.0
+	github.com/gateway-fm/chain-indexer v0.1.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/golang-jwt/jwt/v5 v5.2.1
@@ -23,7 +23,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
 	golang.org/x/oauth2 v0.35.0
-	google.golang.org/grpc v1.79.1
+	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
 )
 
