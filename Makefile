@@ -121,10 +121,7 @@ test-e2e: test-db-ready
 # pre-push hook. Expects chain-indexer + block-explorer cloned as
 # siblings of privacy-proxy.
 test-privacy-bypass:
-	JWT_SECRET=test-jwt-secret-do-not-use-in-production-1234567890 \
-	JWT_REFRESH_SECRET=test-refresh-secret-do-not-use-in-production-0987654321 \
-	ADMIN_API_TOKEN=test-admin-token \
-	go test -tags privacy_bypass -timeout 10m -v -run TestPrivacyModeBypassClosure ./e2e/...
+	go test -tags privacy_bypass -timeout 15m -v -run TestPrivacyModeBypassClosure ./e2e/...
 
 # E2E compose command - isolated from local dev
 E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml

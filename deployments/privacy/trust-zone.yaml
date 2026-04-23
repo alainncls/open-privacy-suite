@@ -1,0 +1,50 @@
+# Source of truth for the privacy-mode trust-zone service inventory.
+#
+# Consumed by:
+#   - e2e/privacy_bypass_test.go     (runtime negative-network test)
+#   - e2e/privacy_manifest_test.go   (static compose-config validation)
+#
+# A service listed under `trust_zone` MUST NOT publish ports to the host
+# in docker-compose.privacy.yml, and MUST NOT be reachable from outside
+# the trust network. When adding a new service to the trust zone, add it
+# here; the tests verify both invariants automatically.
+#
+# A service listed under `public` IS published on the host (typically
+# bound to 127.0.0.1) and acts as the external-facing surface.
+#
+# `default_internal_port` is the port the container listens on inside
+# the compose network — used by the runtime test to probe that nothing
+# on the host responds on that port.
+
+version: 1
+
+trust_zone:
+  - name: chain-indexer
+    default_internal_port: 50051
+    description: chain-indexer gRPC server; privacy-proxy is the sole consumer
+  - name: indexer-postgres
+    default_internal_port: 5432
+    description: chain-indexer's private postgres
+  - name: privacy-postgres
+    default_internal_port: 5432
+    description: privacy-proxy's RBAC / disclosure / audit postgres
+  - name: anvil
+    default_internal_port: 8545
+    description: dev EVM node; swap for external RPC in production
+  - name: redis
+    default_internal_port: 6379
+    description: privacy-proxy session / rate-limit / OAuth state store
+
+public:
+  - name: proxy-backend
+    host_port_env: HOST_PORT_PROXY
+    default_host_port: 8080
+    description: privacy-proxy REST + admin surface
+  - name: proxy-frontend
+    host_port_env: HOST_PORT_UI
+    default_host_port: 5173
+    description: privacy-proxy admin UI
+  - name: block-explorer-frontend
+    host_port_env: HOST_PORT_EXPLORER
+    default_host_port: 3001
+    description: block-explorer SPA (frontend only; routes /api/* to proxy-backend)
