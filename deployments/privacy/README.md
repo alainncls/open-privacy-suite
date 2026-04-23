@@ -142,15 +142,52 @@ full list with rationale and suggested fixes lives at
 
 ## Testing the boundary
 
-The RD-855 plan requires a set of negative-network tests that verify the
-trust boundary cannot be bypassed. These are not wired into CI yet and
-belong to a follow-up (RD-855 Phase 4b). The recipe for a manual check:
+An automated negative-network test verifies the trust boundary is closed.
+It brings up the full compose, asserts trust-zone services are not
+reachable from the host, and asserts the frontend's routing behavior.
+
+Run locally:
 
 ```bash
-# From a machine outside the Docker network, confirm that neither the
-# indexer nor the block-explorer internals are reachable.
-nc -zv <host> 50051               # should be connection refused / timeout
-nc -zv <host> <block-explorer-api-port>  # should be nothing listening
+# Requires chain-indexer and block-explorer cloned as siblings of
+# privacy-proxy. Takes 1-2 minutes.
+make test-privacy-bypass
+```
+
+Run in CI:
+
+The test lives in `e2e/privacy_bypass_test.go` (build-tag gated to
+`privacy_bypass`, so it stays out of the default test run and pre-push
+hook). A dedicated GitHub Actions workflow runs it on a weekly schedule
+and on manual dispatch — see `.github/workflows/privacy-bypass.yml`.
+Dispatch it manually after any change to:
+
+- `docker-compose.privacy.yml`
+- `deployments/privacy/nginx.privacy.conf`
+- The block-explorer or chain-indexer Dockerfiles
+- The indexer gRPC service surface
+
+What the test asserts:
+
+1. Compose config does not publish any trust-zone service's ports
+   (structural: parses `docker compose config --format json`).
+2. After `up`, each trust-zone service's default port is NOT reachable
+   from `127.0.0.1` — a TCP connect times out or is refused.
+3. `proxy-backend`, `proxy-frontend`, and `block-explorer-frontend`
+   ARE reachable (positive check — these are intentional).
+4. Block-explorer frontend's `/ws` returns `404` (standalone config
+   would have proxied to a non-existent local api:8080; a 502 or a
+   successful upgrade indicates the wrong nginx config was mounted).
+5. Block-explorer frontend's `/api/*` is routed to `proxy-backend`
+   (any well-formed HTTP status other than `502` or `503`, which
+   would mean the wrong nginx upstream).
+
+Manual spot-check recipe (sanity, not a replacement for the test):
+
+```bash
+nc -zv <host> 50051               # chain-indexer gRPC — should fail
+nc -zv <host> 5432                # postgres(s)        — should fail
+nc -zv <host> 6379                # redis              — should fail
 ```
 
 ## Relationship with standalone mode
