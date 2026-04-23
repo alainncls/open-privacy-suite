@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	indexerv1 "github.com/gateway-fm/chain-indexer/gen/go/chain_indexer/v1"
+	indexerv1 "privacy-proxy/gen/go/chain_indexer/v1"
 	"privacy-proxy/internal/explorer"
 )
 

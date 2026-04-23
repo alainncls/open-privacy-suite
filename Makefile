@@ -312,3 +312,19 @@ demo-clean:
 # Setup git hooks (run once after cloning)
 setup-hooks:
 	@./scripts/setup-hooks.sh
+
+## proto-gen: Regenerate Go stubs from vendored chain-indexer .proto files.
+##            We do NOT depend on chain-indexer's Go module — we carry our
+##            own copy of the .proto contract and build stubs here. When
+##            chain-indexer's proto surface changes, copy updated files
+##            from chain-indexer/proto/chain_indexer/v1/*.proto and re-run.
+.PHONY: proto-gen
+proto-gen:
+	@which buf > /dev/null || (echo "buf not installed: https://buf.build/docs/installation"; exit 1)
+	buf generate
+
+## proto-lint: Lint vendored .proto files.
+.PHONY: proto-lint
+proto-lint:
+	@which buf > /dev/null || (echo "buf not installed"; exit 1)
+	buf lint
