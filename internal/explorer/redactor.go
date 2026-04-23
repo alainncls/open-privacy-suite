@@ -53,7 +53,7 @@ type Database interface {
 	GetBatchEventAccess(ctx context.Context, viewerDID string, contractAddresses []string) (map[string]bool, error)
 }
 
-func NewRedactionEngine(store *Store, db Database) *RedactionEngine {
+func NewRedactionEngine(store ContractStore, db Database) *RedactionEngine {
 	return &RedactionEngine{
 		store: store,
 		db:    db,

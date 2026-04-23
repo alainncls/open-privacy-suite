@@ -19,6 +19,7 @@ import (
 	"privacy-proxy/internal/disclosure"
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/explorer"
+	"privacy-proxy/internal/explorer/indexerclient"
 	"privacy-proxy/internal/governance"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/pricing"
@@ -89,7 +90,7 @@ type Server struct {
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    AzureStateManager
 	metrics            *metrics.Metrics
-explorerStore    *explorer.Store
+explorerStore    explorer.ExplorerBackend
 	explorerMu       sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
 	explorerRedactor *explorer.RedactionEngine
 	siemForwarder    *audit.SIEMForwarder
@@ -153,23 +154,43 @@ if s.escalationWorker != nil {
 
 // explorerReconnectLoop retries connecting to the explorer database every 30 seconds.
 // Once connected, it sets the explorer store and redaction engine so explorer endpoints become available.
-func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB) {
+func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL string) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		store, err := explorer.NewStore(dbURL)
+		sqlStore, err := explorer.NewStore(dbURL)
 		if err != nil {
 			slog.Debug("explorer DB reconnect attempt failed", "error", err)
 			continue
 		}
+		backend, err := buildExplorerBackend(sqlStore, indexerURL)
+		if err != nil {
+			slog.Warn("explorer gRPC backend dial failed, falling back to SQL store", "error", err)
+			backend = sqlStore
+		}
 		s.explorerMu.Lock()
-		s.explorerStore = store
-		s.explorerRedactor = explorer.NewRedactionEngine(store, rbacDB)
+		s.explorerStore = backend
+		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
 		s.explorerMu.Unlock()
-		slog.Info("explorer database connected — explorer endpoints now available")
+		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
 	}
+}
+
+// buildExplorerBackend returns the gRPC-backed explorer Backend when
+// indexerURL is set, otherwise returns the SQL store unchanged. The
+// gRPC backend embeds the SQL store so unmigrated methods keep working.
+func buildExplorerBackend(sqlStore *explorer.Store, indexerURL string) (explorer.ExplorerBackend, error) {
+	if indexerURL == "" {
+		return sqlStore, nil
+	}
+	b, err := indexerclient.New(indexerclient.Config{IndexerURL: indexerURL}, sqlStore)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("explorer backend: using chain-indexer gRPC for ported methods, SQL store fallback otherwise", "indexer_url", indexerURL)
+	return b, nil
 }
 
 // PrivadoVerifier interface for Privado ID operations
@@ -193,12 +214,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		return nil, fmt.Errorf("failed to create database: %w", err)
 	}
 
-	var explorerStore *explorer.Store
+	var explorerSQL *explorer.Store
 	if cfg.ExplorerDatabaseURL != "" {
-		explorerStore, err = explorer.NewStore(cfg.ExplorerDatabaseURL)
+		explorerSQL, err = explorer.NewStore(cfg.ExplorerDatabaseURL)
 		if err != nil {
 			slog.Warn("explorer database unavailable — explorer endpoints will return 503 until connected", "error", err)
 			// Don't crash — background retry will connect when the DB is ready.
+		}
+	}
+	var explorerBackend explorer.ExplorerBackend
+	if explorerSQL != nil {
+		explorerBackend, err = buildExplorerBackend(explorerSQL, cfg.IndexerURL)
+		if err != nil {
+			slog.Warn("explorer gRPC backend dial failed, falling back to SQL store", "error", err)
+			explorerBackend = explorerSQL
 		}
 	}
 
@@ -356,8 +385,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
-explorerStore:    explorerStore,
-		explorerRedactor: explorer.NewRedactionEngine(explorerStore, database),
+explorerStore:    explorerBackend,
+		explorerRedactor: explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
 	}
 
@@ -368,8 +397,8 @@ explorerStore:    explorerStore,
 	s.escalationWorker.Start()
 
 	// Start background explorer DB reconnection if initial connection failed
-	if cfg.ExplorerDatabaseURL != "" && explorerStore == nil {
-		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database)
+	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {
+		go s.explorerReconnectLoop(cfg.ExplorerDatabaseURL, database, cfg.IndexerURL)
 	}
 
 	// Initialize circuit breaker and concurrency limiter for upstream RPC proxy

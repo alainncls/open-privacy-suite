@@ -95,6 +95,12 @@ type Config struct {
 	NodeURL                    string
 	DatabaseURL                string
 	ExplorerDatabaseURL        string
+	// IndexerURL, when non-empty, enables the gRPC chain-indexer backend for
+	// explorer reads. Methods not yet ported to gRPC fall back to direct
+	// SQL on the explorer postgres. Leave empty to use SQL exclusively.
+	// Set this (and point it at the chain-indexer service) to start the
+	// RD-855 Phase 3 cutover.
+	IndexerURL                 string
 	PrivadoRPCURL              string
 	IPFSGateway                string
 	JWTSecret                  string
@@ -402,6 +408,7 @@ func Load() *Config {
 		SIEMFlushInterval:        siemFlushInterval,
 		SIEMFallbackLogPath:      getEnv("SIEM_FALLBACK_LOG_PATH", ""),
 		ExplorerDatabaseURL:      getEnv("EXPLORER_DATABASE_URL", ""),
+		IndexerURL:               getEnv("INDEXER_URL", ""),
 		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
 		HideDevAdminOrg:          getEnv("HIDE_DEV_ADMIN_ORG", "false") == "true",
 		TrustedProxies:           getSliceEnv("TRUSTED_PROXIES", ","),
