@@ -24,7 +24,7 @@ services:
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${PRIVACY_POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}
       - POSTGRES_DB=privacy_proxy
     volumes:
       - privacy-postgres-data:/var/lib/postgresql/data
@@ -39,11 +39,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD:-devpassword123}
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}
     networks:
       - trust-zone
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-devpassword123}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -72,7 +72,7 @@ services:
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${INDEXER_POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}
       - POSTGRES_DB=chain_indexer
     volumes:
       - indexer-postgres-data:/var/lib/postgresql/data
@@ -94,7 +94,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - RPC_URL=http://anvil:8545
-      - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:-postgres}@indexer-postgres:5432/chain_indexer?sslmode=disable
+      - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
       - GRPC_LISTEN_ADDR=:50051
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - POLL_INTERVAL=2s
@@ -114,17 +114,23 @@ services:
       context: .
       dockerfile: Dockerfile.backend
       target: dev
+    # Privacy-proxy is the only external-facing backend in privacy mode.
+    # In production this would typically sit behind an ingress instead
+    # of publishing directly; for local dev + the negative-network test
+    # it's published to 127.0.0.1 only.
+    ports:
+      - "127.0.0.1:${HOST_PORT_PROXY:-8080}:8080"
     environment:
       - NODE_URL=http://anvil:8545
-      - DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:-postgres}@privacy-postgres:5432/privacy_proxy?sslmode=disable
+      - DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy?sslmode=disable
       - PORT=8080
       - ENVIRONMENT=privacy
       - VERIFIER_ID=${VERIFIER_ID:-did:privado:verifier:dev-0000000000000000}
       - BASE_URL=${BASE_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in privacy mode}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required in privacy mode}
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword123}@redis:6379
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
       # Indexer integration — this is what flips privacy-proxy's explorer
       # backend from direct SQL to gRPC. The explorer postgres variable is
@@ -132,7 +138,7 @@ services:
       # progress) per RD-855 behavioral-shifts doc, but in a pure privacy
       # deployment it points at the same indexer postgres read-only.
       - INDEXER_URL=chain-indexer:50051
-      - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:-postgres}@indexer-postgres:5432/chain_indexer?sslmode=disable
+      - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
     depends_on:
       privacy-postgres:
         condition: service_healthy

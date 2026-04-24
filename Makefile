@@ -1,4 +1,4 @@
-.PHONY: build build-prod test test-unit test-e2e run dev-stack run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -112,6 +112,16 @@ test-db-ready:
 # Run Go E2E tests
 test-e2e: test-db-ready
 	go test ./e2e/... -v -p 1
+
+# Negative-network test for the privacy-mode deployment (RD-855 Phase 4b).
+# Brings up docker-compose.privacy.yml (nine services) and verifies the
+# trust boundary is closed: trust-zone services unreachable from the
+# host, frontend routes correctly, /ws returns 404. Takes 1-2 minutes;
+# build-tag gated so it doesn't run in default test runs or the
+# pre-push hook. Expects chain-indexer + block-explorer cloned as
+# siblings of privacy-proxy.
+test-privacy-bypass:
+	go test -tags privacy_bypass -timeout 15m -v -run TestPrivacyModeBypassClosure ./e2e/...
 
 # E2E compose command - isolated from local dev
 E2E_COMPOSE = docker-compose -p privacy-proxy-e2e -f docker-compose.e2e.yml

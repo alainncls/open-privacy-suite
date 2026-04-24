@@ -1,0 +1,76 @@
+name: Privacy-Mode Bypass Closure (RD-855 Phase 4b)
+
+# Runs the negative-network integration test that verifies the privacy-
+# mode compose manifest closes the RD-855 bypass path. Because it brings
+# up nine services (privacy-postgres, redis, anvil, chain-indexer,
+# indexer-postgres, proxy-backend + frontend, block-explorer frontend)
+# and takes 2-4 minutes, it's gated behind:
+#   - Manual dispatch (workflow_dispatch)
+#   - Weekly schedule (Mondays 07:00 UTC)
+# Instead of running on every PR.
+#
+# When architectural changes touch the compose file, the Dockerfile,
+# nginx config, or the indexer's gRPC surface, dispatch this workflow
+# manually before merging to confirm the bypass is still closed.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  negative-network:
+    name: Privacy-mode trust boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout privacy-proxy
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: privacy-proxy
+
+      - name: Checkout chain-indexer
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: gateway-fm/chain-indexer
+          ref: main
+          path: chain-indexer
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout block-explorer
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: gateway-fm/block-explorer
+          ref: main
+          path: block-explorer
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Show Docker version
+        run: docker version && docker compose version
+
+      - name: Run negative-network test
+        working-directory: privacy-proxy
+        run: make test-privacy-bypass
+
+      - name: Dump compose logs on failure
+        if: failure()
+        working-directory: privacy-proxy
+        run: docker compose -f docker-compose.privacy.yml -p privacy-bypass-test logs --tail=200 || true
+
+      - name: Compose down
+        if: always()
+        working-directory: privacy-proxy
+        run: docker compose -f docker-compose.privacy.yml -p privacy-bypass-test down -v || true
