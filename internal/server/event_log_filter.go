@@ -58,12 +58,17 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 // If perms is nil (user/org resolution failed), FilterEventLogs returns empty
 // (fail-closed).
 // visCtx provides optional per-tx visibleTo data (may be nil).
+//
+// isAdminByContract — see rbac.FilterEventLogs for semantics. Map keys
+// are lowercased contract addresses; presence with true means the viewer
+// has the admin claim in THAT contract's owning org only.
 func FilterLogsWithEventRules(
 	responseBody []byte,
 	userAddresses []string,
 	perms *rbac.EffectivePermissions,
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
 ) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -91,7 +96,7 @@ func FilterLogsWithEventRules(
 
 	// Single-pass: FilterEventLogs handles both event-rule and default
 	// address-based filtering depending on whether EventRules is configured.
-	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider, visCtx)
+	finalLogs := rbac.FilterEventLogs(rawLogs, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 
 	filteredJSON, err := json.Marshal(finalLogs)
 	if err != nil {
@@ -115,8 +120,19 @@ func FilterLogsWithEventRules(
 }
 
 // FilterReceiptLogsWithEventRules filters receipt logs using the unified
-// event filtering logic. Participants get their receipt with filtered logs;
-// non-participants get null.
+// event filtering logic. Participants, visibleTo recipients, and admins
+// on the tx's `to` contract get their receipt with event-rule-filtered
+// logs; anyone else gets null.
+//
+// `isAdminOnTo` is an org-scoped pre-computation — the caller must have
+// resolved it via JSONRPCProcessor.viewerIsAdminOnResponseTxContract
+// (or equivalent), which looks up the contract's owning org and checks
+// the viewer's admin claim in THAT org only. This is intentionally not
+// derived from `perms` inside the filter — `perms` is merged across
+// all orgs the viewer belongs to, and using it directly would rely on
+// the global-unique-address DB invariant for correctness. Passing the
+// pre-scoped bool keeps the invariant as belt + schema as braces.
+//
 // visCtx provides optional per-tx visibleTo data (may be nil).
 func FilterReceiptLogsWithEventRules(
 	responseBody []byte,
@@ -124,6 +140,7 @@ func FilterReceiptLogsWithEventRules(
 	perms *rbac.EffectivePermissions,
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
 ) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -180,12 +197,23 @@ func FilterReceiptLogsWithEventRules(
 		}
 	}
 
-	if isParticipant || isVisibleTo {
+	// Admin bypass at the envelope level: the viewer has the admin claim
+	// in the tx's `to` contract's OWNING org (not merged across orgs).
+	// isAdminByContract is pre-computed at the call site via
+	// JSONRPCProcessor.viewerAdminContracts; absence in the map (or false
+	// value) means no admin claim in the contract's own org. See
+	// docs/security/response-filtering:238 for the "admins always see all
+	// events" semantics.
+	isAdminOnTo := to != "" && isAdminByContract[to]
+
+	if isParticipant || isVisibleTo || isAdminOnTo {
 		id := rpcResponseID(responseBody)
 
 		// Single-pass: applyEventRulesToReceipt calls FilterEventLogs which
 		// handles both event-rule and default address-based filtering.
-		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx)
+		// Pass the full per-log admin map so the per-log admin bypass in
+		// FilterEventLogs uses the same org-scoped decisions.
+		result := applyEventRulesToReceipt(raw, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 
 		if id != "" {
 			wrapped, _ := json.Marshal(struct {
@@ -215,6 +243,7 @@ func applyEventRulesToReceipt(
 	userAddresses []string,
 	abiProvider rbac.ABIProvider,
 	visCtx *rbac.TxVisibilityContext,
+	isAdminByContract map[string]bool,
 ) json.RawMessage {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(rawReceipt, &m); err != nil {
@@ -231,7 +260,7 @@ func applyEventRulesToReceipt(
 		return receiptWithEmptyLogs(rawReceipt) // fail-closed
 	}
 
-	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider, visCtx)
+	filtered := rbac.FilterEventLogs(arr, perms, userAddresses, abiProvider, visCtx, isAdminByContract)
 
 	newLogs, err := json.Marshal(filtered)
 	if err != nil {

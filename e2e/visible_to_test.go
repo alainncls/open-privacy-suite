@@ -224,11 +224,11 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 	}
 
 	// Viewer without visibleTo: should not see the log (not "self")
-	resultWithout := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, nil)
+	resultWithout := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, nil, nil)
 	assert.Len(t, resultWithout, 0, "viewer should not see log without visibleTo")
 
 	// Viewer with visibleTo: should see the log
-	resultWith := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, visCtx)
+	resultWith := rbac.FilterEventLogs(logs, perms, []string{setup.viewerAddr}, nil, visCtx, nil)
 	assert.Len(t, resultWith, 1, "viewer should see log with visibleTo")
 
 	// Unlisted user with visibleTo context: should NOT see the log
@@ -236,7 +236,7 @@ func TestVisibleToE2E_FilterIntegration(t *testing.T) {
 		ViewerDID:    "did:privado:unlisted",
 		TxVisibility: visibility,
 	}
-	resultUnlisted := rbac.FilterEventLogs(logs, perms, []string{"0xcccccccccccccccccccccccccccccccccccccccc"}, nil, unlistedVisCtx)
+	resultUnlisted := rbac.FilterEventLogs(logs, perms, []string{"0xcccccccccccccccccccccccccccccccccccccccc"}, nil, unlistedVisCtx, nil)
 	assert.Len(t, resultUnlisted, 0, "unlisted user should not see log even with visCtx")
 }
 
@@ -301,6 +301,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 		perms,
 		nil,    // no ABI provider
 		visCtx, // has visibleTo
+		nil,    // no admin map (admin bypass tested elsewhere)
 	)
 
 	// Viewer is NOT a from/to participant but IS in visibleTo — receipt is
@@ -323,6 +324,7 @@ func TestVisibleToE2E_TxNotVisibleToListedDID(t *testing.T) {
 		perms,
 		nil,
 		visCtx,
+	nil,
 	)
 
 	var logsResp struct {
@@ -390,6 +392,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 		perms,
 		nil,
 		viewerVisCtx,
+	nil,
 	)
 	var listedResp struct {
 		Result []json.RawMessage `json:"result"`
@@ -411,6 +414,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 		perms,
 		nil,
 		unlistedVisCtx,
+	nil,
 	)
 	var unlistedResp struct {
 		Result []json.RawMessage `json:"result"`
@@ -426,6 +430,7 @@ func TestVisibleToE2E_GetLogsWithVisibleTo(t *testing.T) {
 		perms,
 		nil,
 		nil, // no visCtx
+		nil, // no admin map
 	)
 	var noneResp struct {
 		Result []json.RawMessage `json:"result"`

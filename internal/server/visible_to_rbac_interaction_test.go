@@ -236,7 +236,7 @@ func TestFilterLogsWithEventRules_VisibleTo_DoesNotLeakOtherTxs(t *testing.T) {
 		},
 	}
 
-	filtered := FilterLogsWithEventRules(body, []string{viewerAddr}, perms, nil, visCtx)
+	filtered := FilterLogsWithEventRules(body, []string{viewerAddr}, perms, nil, visCtx, nil)
 
 	var resp struct {
 		Result []map[string]any `json:"result"`
