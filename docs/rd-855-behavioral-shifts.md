@@ -15,51 +15,10 @@ or degrades it acceptably; **"Open"** items still need attention.
 - **Why** — root cause. Usually "the indexer has no concept of X by design" (trust model), "the indexer API doesn't expose Y yet", or "pagination semantics differ".
 - **Suggestion** — concrete next step. Could be: add an indexer RPC, fall back to SQL for this method, accept the shift with a docs note, etc.
 
----
-
-## Trust model: no auth between trust-zone services
-
-The privacy-mode deployment (`docker-compose.privacy.yml`) does **not** place
-authentication on the internal service-to-service hops:
-
-- `privacy-proxy → chain-indexer` gRPC is plaintext, no mTLS, no bearer token.
-- `privacy-proxy → privacy-postgres` uses password-only `sslmode=disable`.
-- `privacy-proxy → redis` uses a shared password on the compose network.
-- `chain-indexer → indexer-postgres` uses the same pattern.
-- `chain-indexer → anvil` (or prod RPC) is plaintext.
-
-This is **intentional**. The trust boundary in privacy mode is enforced at the
-**network level**, not at the application level:
-
-1. Trust-zone services live on a dedicated docker network (`trust-zone`) that
-   has no host-port publishes. `docker-compose.privacy.yml` deliberately omits
-   `ports:` on every trust-zone service; only `proxy-backend` sits on both
-   `trust-zone` and `public`.
-2. The `e2e/privacy_manifest_test.go` static check runs on every PR and fails
-   the build if any trust-zone service sprouts a `ports:` block, or if a
-   listed public service loses its publish.
-3. The `e2e/privacy_bypass_test.go` negative-network test (build tag
-   `privacy_bypass`, weekly schedule) brings the full stack up and verifies at
-   runtime that trust-zone ports are unreachable from the host.
-4. The single source of truth for which services are trust-zone vs public is
-   `deployments/privacy/trust-zone.yaml`; both tests load it.
-
-**Implication for operators**: if you deploy this stack to Kubernetes or
-anywhere else, you must preserve the network-level isolation — e.g., with a
-`NetworkPolicy` that denies ingress to every trust-zone service except from
-`privacy-proxy`. Do not expose chain-indexer, indexer-postgres, privacy-postgres,
-or redis to any ingress, load balancer, or service mesh gateway. If a future
-deployment target can't provide network isolation, we will need to add mTLS +
-bearer auth on each internal hop; that work is deliberately **not** in scope
-for the compose-based privacy mode.
-
-**Why no defense in depth?** Adding auth tokens on internal hops without
-network isolation would be cargo-cult security: an attacker who can reach
-those services can also read the token from any compromised container. Adding
-auth tokens *with* network isolation would be genuine defense-in-depth, but
-the token rotation / distribution cost isn't justified at this stage. Revisit
-if we gain multi-tenant trust-zone deployments where a compromise of one
-tenant's privacy-proxy should not give access to another tenant's indexer.
+> Architecture-of-record (trust boundary, BFF deployment, network
+> isolation, auth decisions) lives in `deployments/privacy/README.md`,
+> not here. This file is strictly a ledger of SQL → gRPC behavior
+> deltas.
 
 ---
 

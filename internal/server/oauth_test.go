@@ -1328,12 +1328,18 @@ func TestOAuth_BrowserRedirect(t *testing.T) {
 		assert.Contains(t, resp, "auth_request")
 	})
 
-	t.Run("browser request without FrontendURL serves inline HTML", func(t *testing.T) {
+	t.Run("browser request without FrontendURL returns 500", func(t *testing.T) {
+		// The inline-HTML fallback was removed — a single audited login UI
+		// (the React page at FRONTEND_URL) is the only browser flow. With
+		// FrontendURL unset, the endpoint refuses the browser request so
+		// the misconfiguration is visible instead of silently serving a
+		// second-class page.
 		w := makeAuthorizeReq("text/html,application/xhtml+xml", "")
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
-		assert.Contains(t, w.Body.String(), "<!DOCTYPE html>")
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "server_error", resp["error"])
 	})
 
 	t.Run("browser request with FrontendURL redirects to login page", func(t *testing.T) {
