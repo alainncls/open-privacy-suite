@@ -25,7 +25,7 @@ func TestFilterTransactionByHash_SelfTransaction(t *testing.T) {
 	// User sends to themselves — must see full tx.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"` + addr + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr})
+	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
 	if string(got) != response {
 		t.Errorf("self-tx should pass through unchanged\ngot:  %s\nwant: %s", got, response)
 	}
@@ -36,7 +36,7 @@ func TestFilterTransactionByHash_MultipleLinkedAddresses(t *testing.T) {
 	addr1 := "0xaaa1111111111111111111111111111111111111"
 	addr2 := "0xbbb2222222222222222222222222222222222222"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xother","to":"` + addr2 + `","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr1, addr2})
+	got := FilterTransactionByHash([]byte(response), []string{addr1, addr2}, false)
 	if string(got) != response {
 		t.Errorf("tx involving second linked address should pass through\ngot: %s", got)
 	}
@@ -47,7 +47,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 	stored := "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
 	checksummed := "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"` + checksummed + `","to":"0xother","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{stored})
+	got := FilterTransactionByHash([]byte(response), []string{stored}, false)
 	if string(got) != response {
 		t.Errorf("checksummed address should match stored lowercase\ngot: %s", got)
 	}
@@ -56,7 +56,7 @@ func TestFilterTransactionByHash_ChecksummedAddress(t *testing.T) {
 func TestFilterTransactionByHash_ContractCreation_NonParticipant(t *testing.T) {
 	// Contract creation tx (to=null): non-participant must receive null.
 	response := `{"jsonrpc":"2.0","id":1,"result":{"from":"0xdeployer","to":null,"input":"0x60806040","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{"0xabc1234567890123456789012345678901234567"})
+	got := FilterTransactionByHash([]byte(response), []string{"0xabc1234567890123456789012345678901234567"}, false)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -73,7 +73,7 @@ func TestFilterTransactionByHash_EIP1559_FieldsPreserved(t *testing.T) {
 	// EIP-1559 fields (maxFeePerGas, maxPriorityFeePerGas, type) must all be preserved.
 	addr := "0xabc1234567890123456789012345678901234567"
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"` + addr + `","to":"0xother","input":"0x","nonce":"0x1","maxFeePerGas":"0x1234","maxPriorityFeePerGas":"0x100","type":"0x2"}}`
-	got := FilterTransactionByHash([]byte(response), []string{addr})
+	got := FilterTransactionByHash([]byte(response), []string{addr}, false)
 	if string(got) != response {
 		t.Errorf("EIP-1559 fields must be preserved for participant\ngot:  %s\nwant: %s", got, response)
 	}

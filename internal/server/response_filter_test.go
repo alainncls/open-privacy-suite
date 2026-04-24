@@ -53,7 +53,7 @@ func TestFilterTransactionByHash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FilterTransactionByHash([]byte(tt.response), userAddrs)
+			got := FilterTransactionByHash([]byte(tt.response), userAddrs, false)
 			var resp struct {
 				Result *json.RawMessage `json:"result"`
 				Error  *json.RawMessage `json:"error"`
@@ -80,7 +80,7 @@ func TestFilterTransactionByHash(t *testing.T) {
 
 func TestFilterTransactionByHash_EmptyAddresses(t *testing.T) {
 	response := `{"jsonrpc":"2.0","id":1,"result":{"hash":"0xabc","from":"0xsomeone","to":"0xother","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), nil)
+	got := FilterTransactionByHash([]byte(response), nil, false)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -101,14 +101,14 @@ func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
 
 	// Linea exclusion status response: has "from" but no "to"
 	participantResponse := `{"jsonrpc":"2.0","id":1,"result":{"txHash":"0x526e","from":"0x4d144d7b9c96b26361d6ac74dd1d8267edca4fc2","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"Transaction line count for module ADD=402 is above the limit 70","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
-	got := FilterTransactionByHash([]byte(participantResponse), userAddrs)
+	got := FilterTransactionByHash([]byte(participantResponse), userAddrs, false)
 	if string(got) != participantResponse {
 		t.Errorf("participant should see full response\n got: %s\nwant: %s", got, participantResponse)
 	}
 
 	// Non-participant should get null
 	nonParticipantResponse := `{"jsonrpc":"2.0","id":2,"result":{"txHash":"0x526e","from":"0xother","nonce":"0x64","txRejectionStage":"SEQUENCER","reasonMessage":"some reason","blockNumber":"0x3039","timestamp":"2024-08-22T09:18:51Z"}}`
-	got = FilterTransactionByHash([]byte(nonParticipantResponse), userAddrs)
+	got = FilterTransactionByHash([]byte(nonParticipantResponse), userAddrs, false)
 	var resp struct {
 		Result *json.RawMessage `json:"result"`
 	}
@@ -122,7 +122,7 @@ func TestFilterTransactionByHash_LineaExclusionStatus(t *testing.T) {
 
 	// Null result passes through (tx not in exclusion list)
 	nullResponse := `{"jsonrpc":"2.0","id":3,"result":null}`
-	got = FilterTransactionByHash([]byte(nullResponse), userAddrs)
+	got = FilterTransactionByHash([]byte(nullResponse), userAddrs, false)
 	if string(got) != nullResponse {
 		t.Errorf("null result should pass through\n got: %s\nwant: %s", got, nullResponse)
 	}
@@ -365,7 +365,7 @@ func TestRpcResponseID(t *testing.T) {
 func TestFilterTransactionByHash_PreservesID(t *testing.T) {
 	// Verify that the null response preserves the original request ID
 	response := `{"jsonrpc":"2.0","id":999,"result":{"from":"0xother","to":"0xother2","input":"0x","nonce":"0x1"}}`
-	got := FilterTransactionByHash([]byte(response), []string{"0xmyaddr0000000000000000000000000000000000"})
+	got := FilterTransactionByHash([]byte(response), []string{"0xmyaddr0000000000000000000000000000000000"}, false)
 	var resp struct {
 		ID json.RawMessage `json:"id"`
 	}
@@ -506,5 +506,100 @@ func TestFilterBlockReceipts(t *testing.T) {
 				t.Errorf("expected %d receipts, got %d\noutput: %s", tt.wantReceiptCount, len(resp.Result), got)
 			}
 		})
+	}
+}
+
+// TestFilterTransactionByHash_NonParticipantAdmin_ReturnsTx covers the
+// symmetric admin-bypass fix for eth_getTransactionByHash. Before the
+// fix, a non-participant viewer got `null` even if they held the admin
+// claim on the tx's `to` contract, contradicting the documented
+// semantics ("admin users always see all events"; org admins see every
+// org contract).
+//
+// `isAdminOnTo = true` is passed by the caller after an ORG-SCOPED
+// admin check — the filter function itself only consumes the resolved
+// bool. See JSONRPCProcessor.viewerIsAdminOnResponseTxContract for the
+// policy: the admin claim must belong to the org that actually owns
+// the contract, not any org the viewer happens to be a member of.
+func TestFilterTransactionByHash_NonParticipantAdmin_ReturnsTx(t *testing.T) {
+	adminAddr := "0xadmin000000000000000000000000000000000001"
+	contractAddr := "0xcontract0000000000000000000000000000001"
+
+	// Tx between two OTHER addresses; admin is neither from nor to.
+	tx := map[string]any{
+		"from":  "0xother0000000000000000000000000000000001",
+		"to":    contractAddr,
+		"hash":  "0xabc000000000000000000000000000000000000000000000000000000000001",
+		"value": "0x0",
+	}
+	txJSON, _ := json.Marshal(tx)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
+
+	got := FilterTransactionByHash([]byte(rpcResponse), []string{adminAddr}, true)
+
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if resp.Result == nil || string(*resp.Result) == "null" {
+		t.Fatalf("admin non-participant must receive the tx, got null response: %s", got)
+	}
+}
+
+// TestFilterTransactionByHash_NonParticipantNonAdmin_ReturnsNull guards
+// the bypass boundary: `isAdminOnTo = false` (the caller did the
+// org-scoped admin check and found the viewer has no admin claim in
+// the contract's owning org) → non-participant viewer gets null. This
+// covers both "viewer has no grants on the contract at all" and
+// "viewer has read/write grants but not admin in the contract's org".
+func TestFilterTransactionByHash_NonParticipantNonAdmin_ReturnsNull(t *testing.T) {
+	viewerAddr := "0xviewer000000000000000000000000000000001"
+	contractAddr := "0xcontract0000000000000000000000000000001"
+
+	tx := map[string]any{
+		"from":  "0xother0000000000000000000000000000000001",
+		"to":    contractAddr,
+		"hash":  "0xabc000000000000000000000000000000000000000000000000000000000001",
+		"value": "0x0",
+	}
+	txJSON, _ := json.Marshal(tx)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
+
+	got := FilterTransactionByHash([]byte(rpcResponse), []string{viewerAddr}, false)
+
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if resp.Result != nil && string(*resp.Result) != "null" {
+		t.Errorf("non-admin non-participant must get null, got: %s", got)
+	}
+}
+
+// TestFilterTransactionByHash_AdminIsParticipant_NoBypassNeeded
+// verifies participants get their tx via the participant check with or
+// without the admin bit — the admin bypass is strictly additive. This
+// is the sanity case: if the caller happens to be a participant AND
+// an admin, the participant path wins without needing the bypass.
+func TestFilterTransactionByHash_AdminIsParticipant_NoBypassNeeded(t *testing.T) {
+	selfAddr := "0xself00000000000000000000000000000000000001"
+
+	tx := map[string]any{
+		"from":  selfAddr,
+		"to":    "0xcontract0000000000000000000000000000001",
+		"hash":  "0xabc000000000000000000000000000000000000000000000000000000000001",
+		"value": "0x0",
+	}
+	txJSON, _ := json.Marshal(tx)
+	rpcResponse := `{"jsonrpc":"2.0","id":1,"result":` + string(txJSON) + `}`
+
+	// Even with isAdminOnTo=false, participant-as-from must still see the tx.
+	got := FilterTransactionByHash([]byte(rpcResponse), []string{selfAddr}, false)
+	if string(got) != rpcResponse {
+		t.Errorf("participant should pass through regardless of admin bit\n got: %s\nwant: %s", got, rpcResponse)
 	}
 }

@@ -61,10 +61,20 @@ func topicMatchesAddress(topic string, addrSet map[string]bool) bool {
 }
 
 // FilterTransactionByHash filters an eth_getTransactionByHash response.
-// Returns null result if the user (identified by their linked ETH addresses)
-// is not the sender (from) or recipient (to) of the transaction.
+// Returns null result if the user is not the sender (from) or recipient
+// (to) of the transaction AND is not an admin on the `to` contract.
+//
+// The isAdminOnTo bool is computed at the call site (see
+// JSONRPCProcessor.viewerIsAdminOnResponseTxContract) using an
+// org-scoped check: the tx's `to` is looked up to find its owning org,
+// then the viewer's admin claim is verified in that org ONLY. This is
+// a defense-in-depth check on top of the schema-level uniqueness
+// constraint (migration 035: one address → one org). Even if that
+// invariant were somehow violated, the org-scoped check would prevent
+// a cross-org admin leak.
+//
 // If the transaction result is already null, passes through unchanged.
-func FilterTransactionByHash(responseBody []byte, userAddresses []string) []byte {
+func FilterTransactionByHash(responseBody []byte, userAddresses []string, isAdminOnTo bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
 		ID      json.RawMessage  `json:"id"`
@@ -99,7 +109,14 @@ func FilterTransactionByHash(responseBody []byte, userAddresses []string) []byte
 		return responseBody // participant -- return full response
 	}
 
-	// Not a participant -- return null
+	// Admin bypass (pre-computed, org-scoped at call site). Mirrors the
+	// admin bypass in FilterEventLogs and the documented semantics:
+	// "admin users always see all events" applies to tx envelopes too.
+	if isAdminOnTo {
+		return responseBody
+	}
+
+	// Not a participant, not an admin -- return null
 	id := rpcResponseID(responseBody)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
 }

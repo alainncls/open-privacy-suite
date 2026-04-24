@@ -597,16 +597,24 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 	switch {
 	case strings.EqualFold(m, rbac.MethodGetTransactionByHash):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
-		if err != nil || len(addrs) == 0 {
-			// No linked addresses — check visibleTo before returning null
-			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-				return responseBody
-			}
-			id := rpcResponseID(responseBody)
-			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+		if err != nil {
+			addrs = nil // DB error — proceed with nil addrs; visibleTo + admin bypass still apply
 		}
-		filtered := FilterTransactionByHash(responseBody, addrs)
-		// If participant check returned null, check visibleTo as fallback
+		// Org-scoped admin bypass: compute whether the viewer has the
+		// admin claim in the tx's `to` contract's OWNING org specifically
+		// (not merged across all orgs the viewer belongs to). See
+		// viewerAdminContracts doc for why.
+		contractAddrs := extractContractAddressesFromResponse(responseBody)
+		adminMap := p.viewerAdminContracts(ctx, req.UserID, contractAddrs)
+		isAdminOnTo := false
+		for addr := range adminMap {
+			if adminMap[addr] {
+				isAdminOnTo = true
+				break // tx-by-hash response has at most one `to`
+			}
+		}
+		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
+		// If participant + admin check returned null, check visibleTo as fallback
 		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
 			return responseBody
 		}
@@ -619,9 +627,11 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		}
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
-		// FilterReceiptLogsWithEventRules handles both participant check and
-		// visibleTo bypass internally — no double-check needed here.
-		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
+		// Org-scoped admin map covers both the receipt-envelope bypass
+		// (for receipt.to) and the per-log admin bypass (for each log's
+		// emitting contract). Filter handles the lookup.
+		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
@@ -634,21 +644,27 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// still has visibleTo entries. The filter handles this via visCtx.
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
-		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx)
+		// Org-scoped admin-bypass map, indexed by each log's emitting
+		// contract.
+		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
 		strings.EqualFold(m, rbac.MethodGetTransactionByBlockNumberAndIndex):
 		addrs, err := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
-		if err != nil || len(addrs) == 0 {
-			// No linked addresses — check visibleTo before returning null
-			if p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
-				return responseBody
-			}
-			id := rpcResponseID(responseBody)
-			return []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":null}`)
+		if err != nil {
+			addrs = nil // DB error — proceed with nil addrs; visibleTo + admin bypass still apply
 		}
-		filtered := FilterTransactionByHash(responseBody, addrs)
-		// If participant check returned null, check visibleTo as fallback
+		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		isAdminOnTo := false
+		for _, v := range adminMap {
+			if v {
+				isAdminOnTo = true
+				break
+			}
+		}
+		filtered := FilterTransactionByHash(responseBody, addrs, isAdminOnTo)
+		// If participant + admin check returned null, check visibleTo as fallback
 		if isNullResult(filtered) && p.isResponseTxVisibleTo(ctx, req.UserID, responseBody) {
 			return responseBody
 		}

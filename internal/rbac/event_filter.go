@@ -57,12 +57,27 @@ type logEntry struct {
 // perms contains the resolved effective permissions with ContractAccess and EventRules.
 // abiProvider supplies contract ABIs for param rule decoding (may be nil).
 // visCtx provides optional per-tx visibleTo data (may be nil for backward compat).
+// FilterEventLogs filters a slice of log entries.
+//
+// `isAdminByContract` is an ORG-SCOPED map populated by the caller: the
+// key is the contract's lowercased address, and the entry is true iff
+// the viewer holds the admin claim in THAT CONTRACT'S OWNING ORG (not
+// merged across all orgs the viewer belongs to). This is the admin
+// bypass input — a viewer with ClaimAdmin on a contract in a different
+// org MUST NOT appear here for this contract. See
+// JSONRPCProcessor.viewerAdminContracts for the resolver.
+//
+// The scoping matters even though migration 035 enforces unique address
+// → one org at the schema level: belt + braces. If that invariant ever
+// weakens (manual DB edit, future multi-org feature, migration bug),
+// the runtime check still denies cross-org admin leaks.
 func FilterEventLogs(
 	logs []json.RawMessage,
 	perms *EffectivePermissions,
 	userAddresses []string,
 	abiProvider ABIProvider,
 	visCtx *TxVisibilityContext,
+	isAdminByContract map[string]bool,
 ) []json.RawMessage {
 	if len(logs) == 0 {
 		return logs
@@ -87,6 +102,18 @@ func FilterEventLogs(
 		}
 
 		contractAddr := strings.ToLower(entry.Address)
+
+		// Admin bypass (org-scoped, pre-computed): users with the admin
+		// claim in the log's emitting-contract's owning org see ALL logs
+		// on that contract regardless of event rules. Covers tier-2 org
+		// admins (is_org_admin=true) and tier-3 per-contract admins. The
+		// caller is responsible for scoping this to the contract's own
+		// org — see function docs for why.
+		if isAdminByContract[contractAddr] {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
 		access := perms.GetContractAccess(contractAddr)
 		if access == nil {
 			// No RBAC access to this contract — check visibleTo as fallback.
@@ -94,15 +121,6 @@ func FilterEventLogs(
 			if isViewerInVisibleTo(visCtx, rawLog) {
 				filtered = append(filtered, rawLog)
 			}
-			continue
-		}
-
-		// Admin bypass: users with the admin claim on this contract see ALL
-		// logs regardless of event rules or address-in-topic checks. Org admins
-		// already get ClaimAdmin on every contract via computeOrgAdminPermissions
-		// in the resolver, so this covers both per-contract admin and org admin.
-		if containsClaim(access.Claims, ClaimAdmin) {
-			filtered = append(filtered, rawLog)
 			continue
 		}
 
