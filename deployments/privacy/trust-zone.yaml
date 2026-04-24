@@ -34,6 +34,12 @@ trust_zone:
   - name: redis
     default_internal_port: 6379
     description: privacy-proxy session / rate-limit / OAuth state store
+  - name: block-explorer-postgres
+    default_internal_port: 5432
+    description: block-explorer BFF postgres (contract verifications only; no chain data)
+  - name: block-explorer-api
+    default_internal_port: 8080
+    description: block-explorer BFF (privacy-tagged build — no chain-indexer client linked); sits between block-explorer-frontend and privacy-proxy, owns sessions, forwards data reads to privacy-proxy for redaction
 
 public:
   - name: proxy-backend
@@ -47,4 +53,4 @@ public:
   - name: block-explorer-frontend
     host_port_env: HOST_PORT_EXPLORER
     default_host_port: 3001
-    description: block-explorer SPA (frontend only; routes /api/* to proxy-backend)
+    description: block-explorer SPA — routes /api/* to block-explorer-api (the BFF)

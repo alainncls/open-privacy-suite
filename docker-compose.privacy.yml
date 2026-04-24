@@ -127,6 +127,12 @@ services:
       - ENVIRONMENT=privacy
       - VERIFIER_ID=${VERIFIER_ID:-did:privado:verifier:dev-0000000000000000}
       - BASE_URL=${BASE_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
+      # Browser-facing URL of the privacy-proxy admin UI. When set, the
+      # OAuth /authorize endpoint redirects browser requests to the React
+      # login page at FRONTEND_URL/login?oauth_session=… instead of
+      # serving backend-rendered fallback HTML. Operators should override
+      # for production deployments (e.g. https://proxy.yourdomain.com).
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${HOST_PORT_UI:-5173}}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in privacy mode}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required in privacy mode}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
@@ -176,13 +182,77 @@ services:
       - public
     restart: unless-stopped
 
-  # Block-explorer is deployed as a FRONTEND ONLY. Its api + postgres +
-  # indexer are DELIBERATELY OMITTED — they would reach raw chain data and
-  # represent the RD-855 bypass.
+  # Block-explorer runs as frontend + a thin Backend-for-Frontend (BFF)
+  # api. The BFF owns browser sessions (OAuth code flow against
+  # privacy-proxy, HttpOnly cookies, contract verification) and proxies
+  # chain-data reads to privacy-proxy's REST explorer surface, which
+  # applies RBAC-based redaction.
   #
-  # The nginx config mounted here routes:
-  #   /api/*  -> http://proxy-backend:8080/api/v1/explorer/
-  #   /ws     -> 404 (subscriptions not supported in privacy mode)
+  # The BFF image is built with --target privacy, which compiles out the
+  # chain-indexer gRPC client (Go build tag "privacy"). Even with env
+  # vars flipped at runtime, the binary has no code path to reach
+  # chain-indexer — the only data source it can talk to is
+  # privacy-proxy. This is the compile-time layer of the three-layer
+  # defense (compile-time + runtime + network) documented in
+  # docs/rd-855-behavioral-shifts.md.
+
+  block-explorer-postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${BLOCK_EXPLORER_POSTGRES_PASSWORD:?BLOCK_EXPLORER_POSTGRES_PASSWORD is required in privacy mode}
+      - POSTGRES_DB=explorer
+    volumes:
+      - block-explorer-postgres-data:/var/lib/postgresql/data
+    networks:
+      - trust-zone
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d explorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  block-explorer-api:
+    # Build from the sibling block-explorer repo, privacy target.
+    # In production override with an image reference:
+    #   image: ghcr.io/gateway-fm/block-explorer-api:${EXPLORER_VERSION:-latest}-privacy
+    build:
+      # TEMP: pre-merge of block-explorer PR #60 — points at the
+      # worktree that holds the "privacy" Dockerfile target. Revert to
+      # `context: ../block-explorer/backend` after the PR merges.
+      context: ../block-explorer/backend
+      dockerfile: Dockerfile.api
+      target: privacy
+    environment:
+      - DATABASE_URL=postgres://postgres:${BLOCK_EXPLORER_POSTGRES_PASSWORD:?BLOCK_EXPLORER_POSTGRES_PASSWORD is required in privacy mode}@block-explorer-postgres:5432/explorer?sslmode=disable
+      - RPC_URL=http://proxy-backend:8080
+      - API_PORT=8080
+      # Privacy-build: INDEXER_URL is intentionally unset. The privacy
+      # binary rejects it at startup anyway, but leaving it off here is
+      # defense in depth against a compose-merge accident.
+      - PRIVACY_PROXY_URL=http://proxy-backend:8080
+      - PRIVACY_PROXY_PUBLIC_URL=${PRIVACY_PROXY_PUBLIC_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
+      - SSO_CLIENT_ID=${SSO_CLIENT_ID:-explorer}
+      - SSO_REDIRECT_URI=${SSO_REDIRECT_URI:-http://localhost:${HOST_PORT_EXPLORER:-3001}/api/auth/callback}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      block-explorer-postgres:
+        condition: service_healthy
+      proxy-backend:
+        condition: service_started
+    networks:
+      # Trust-zone only — not reachable from the host. The
+      # block-explorer-frontend nginx sits on the same network and
+      # is the only client.
+      - trust-zone
+    restart: unless-stopped
+
+  # Block-explorer frontend — SPA served by nginx. The mounted nginx
+  # config routes:
+  #   /api/auth/*   -> block-explorer-api (OAuth flow, cookie set)
+  #   /api/*        -> block-explorer-api (which forwards to privacy-proxy)
+  #   /ws           -> 404 (subscriptions not supported in privacy mode)
   block-explorer-frontend:
     build:
       context: ../block-explorer/frontend
@@ -192,10 +262,13 @@ services:
     volumes:
       - ./deployments/privacy/nginx.privacy.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      proxy-backend:
+      block-explorer-api:
         condition: service_started
     networks:
       - public
+      # Frontend also needs trust-zone access to reach block-explorer-api
+      # on the internal network.
+      - trust-zone
     restart: unless-stopped
 
   # Expose privacy-proxy on the host too, so clients hitting
@@ -223,3 +296,4 @@ networks:
 volumes:
   privacy-postgres-data:
   indexer-postgres-data:
+  block-explorer-postgres-data:
