@@ -487,6 +487,38 @@ Even if the network boundary is misconfigured (backend port exposed, reverse pro
 - **Explorer endpoints**: Accessible without auth from the allowed network, but all data is redacted per the viewer's identity (anonymous viewers see almost nothing with all-contracts-private).
 - **RPC endpoint**: Always requires JWT for sensitive methods. Anonymous access is limited to claim-free methods (block number, chain ID, gas price).
 
+## Audit Log Retention and Integrity
+
+Every JSON-RPC call routed through the proxy is recorded in `access_logs`. Each row carries an `entry_hash` that links to the previous row's hash, so any later tampering with a row invalidates every downstream hash. The dashboard surfaces these rows under **Access Logs**.
+
+### Filters and pagination
+
+The dashboard supports server-side filtering on `external_id`, RPC method, outcome (success / denied / error), correlation ID, and a date range. The same filters are exposed on `GET /api/v1/admin/logs` as query parameters (`external_id`, `method`, `status_code`, `correlation_id`, `from`, `to`, `limit`, `offset`). `limit` is clamped to a maximum of 1000 entries per request — pagination via `offset` is the supported way to walk longer result sets.
+
+### Retention controls
+
+Access logs are pruned by two mechanisms that run inside the same retention loop:
+
+| Setting | Purpose | Default |
+| --- | --- | --- |
+| `RETENTION_ACCESS_LOGS` | Time-based prune. Rows older than this duration are deleted on every retention tick. | `2160h` (90 days) |
+| `MAX_ACCESS_LOG_ROWS` | FIFO row cap. When the table exceeds this row count, the oldest rows are deleted in batches until the cap is met. | `0` (disabled) |
+| `RETENTION_CLEANUP_INTERVAL` | How often the retention loop runs. | `1h` |
+
+Set `MAX_ACCESS_LOG_ROWS` if the volume of RPC traffic risks growing the table faster than the time-based prune can keep up. The two paths are complementary — the time prune drops anything past the retention window, the FIFO cap keeps the table within the configured ceiling.
+
+### Hash chain across pruning
+
+Every prune (time-based or FIFO) writes the `(id, entry_hash)` of the most recently deleted row to a single-row-per-chain `audit_chain_anchor` table inside the same transaction as the DELETE. On startup the proxy seeds the hash chain from the most recent surviving `entry_hash`, falling back to the anchor when the table is empty. This means:
+
+- Tampering with surviving rows still invalidates the chain (unchanged behaviour).
+- Pruning never breaks chain verification — a verifier walks forward from the anchor and checks that the surviving rows hash-link as expected.
+- Each prune emits an `audit.access_logs.prune` row in `rbac_audit_log` recording the reason (`ttl` or `fifo`), deleted count, and (for TTL) the cutoff timestamp.
+
+A standalone verifier CLI is on the roadmap — see the team's `decisions.md` for current status.
+
+---
+
 ## Production Checklist
 
 - [ ] Set strong, unique `JWT_SECRET` and `JWT_REFRESH_SECRET`

@@ -152,6 +152,11 @@ type Config struct {
 	RetentionRBACAuditLogs   time.Duration // Retention for rbac_audit_log (default: 1 year)
 	RetentionTravelRecords   time.Duration // Retention for used travel_rule_records (default: 7 years)
 	RetentionCleanupInterval time.Duration // How often retention cleanup runs (default: 1 hour)
+	// MaxAccessLogRows caps the access_logs table at this row count using a
+	// FIFO sweep that runs alongside the time-based prune. 0 = unlimited
+	// (time-based retention only). The hash chain anchor table preserves the
+	// chain seed across both prune paths.
+	MaxAccessLogRows int64
 
 	// SIEM webhook configuration
 	SIEMWebhookURL      string        // SIEM webhook endpoint (empty = disabled)
@@ -312,6 +317,14 @@ func Load() *Config {
 	retentionTravelRecords := parseDurationEnv("RETENTION_TRAVEL_RECORDS", 7*365*24*time.Hour)   // ~7 years
 	retentionCleanupInterval := parseDurationEnv("RETENTION_CLEANUP_INTERVAL", 1*time.Hour)
 
+	// FIFO row cap on access_logs (0 = unlimited).
+	var maxAccessLogRows int64
+	if maxStr := getEnv("MAX_ACCESS_LOG_ROWS", ""); maxStr != "" {
+		if n, err := strconv.ParseInt(maxStr, 10, 64); err == nil && n >= 0 {
+			maxAccessLogRows = n
+		}
+	}
+
 	// SIEM webhook configuration
 	siemWebhookURL := getEnv("SIEM_WEBHOOK_URL", "")
 	siemAuthHeader := getEnv("SIEM_AUTH_HEADER", "")
@@ -402,6 +415,7 @@ func Load() *Config {
 		RetentionRBACAuditLogs:   retentionRBACAuditLogs,
 		RetentionTravelRecords:   retentionTravelRecords,
 		RetentionCleanupInterval: retentionCleanupInterval,
+		MaxAccessLogRows:         maxAccessLogRows,
 		SIEMWebhookURL:           siemWebhookURL,
 		SIEMAuthHeader:           siemAuthHeader,
 		SIEMBatchSize:            siemBatchSize,

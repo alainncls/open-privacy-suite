@@ -8,13 +8,60 @@ export interface AccessLog {
   external_id: string;
   method: string;
   status_code: number;
+  response_status?: number | null;
   ip_address: string;
+  correlation_id?: string | null;
   created_at: string;
 }
 
+// Outcome buckets the dashboard maps to status_code on the wire.
+// "all" = no constraint; the others map 1:1 to a status_code value the
+// backend filters on. The mapping mirrors how the SIEM forwarder labels
+// each access event (success / denied / error).
+export type AccessLogOutcome = 'all' | 'success' | 'denied' | 'error';
+
+export interface AccessLogFilters {
+  externalId?: string;
+  method?: string;
+  outcome?: AccessLogOutcome;
+  statusCode?: number;
+  correlationId?: string;
+  from?: string; // ISO/RFC3339
+  to?: string; // ISO/RFC3339
+  limit?: number;
+  offset?: number;
+}
+
+export interface AccessLogListResponse {
+  data: AccessLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const outcomeToStatus: Record<Exclude<AccessLogOutcome, 'all'>, number> = {
+  success: 200,
+  denied: 403,
+  error: 500,
+};
+
 export const logsApi = {
-  list: (limit?: number) =>
-    api.get<AccessLog[]>('/logs', { params: { limit } }),
+  list: (filters: AccessLogFilters = {}) => {
+    const params: Record<string, string | number> = {};
+    if (filters.externalId) params.external_id = filters.externalId;
+    if (filters.method) params.method = filters.method;
+    if (filters.correlationId) params.correlation_id = filters.correlationId;
+    if (typeof filters.statusCode === 'number' && filters.statusCode > 0) {
+      params.status_code = filters.statusCode;
+    } else if (filters.outcome && filters.outcome !== 'all') {
+      params.status_code = outcomeToStatus[filters.outcome];
+    }
+    if (filters.from) params.from = filters.from;
+    if (filters.to) params.to = filters.to;
+    if (typeof filters.limit === 'number' && filters.limit > 0) params.limit = filters.limit;
+    if (typeof filters.offset === 'number' && filters.offset >= 0) params.offset = filters.offset;
+    return api.get<AccessLogListResponse>('/logs', { params });
+  },
 };
 
 export interface StatusResponse {

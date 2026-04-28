@@ -107,6 +107,7 @@ func ResetTestDatabase(database *DB) error {
 		"refresh_tokens",
 		"revoked_tokens",
 		"access_logs",
+		"audit_chain_anchor",
 		"eth_address_links",
 	}
 

@@ -222,14 +222,94 @@ type AccessLog struct {
 	CreatedAt        string           `json:"created_at"`
 }
 
-func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error) {
+// AccessLogFilter narrows GetAccessLogs / CountAccessLogs results. Every field
+// is optional — zero values mean "no constraint on this field". Filters are
+// always applied as parameterised SQL (no string concatenation of inputs).
+type AccessLogFilter struct {
+	ExternalID    string
+	Method        string
+	StatusCode    int    // 0 = unset
+	CorrelationID string
+	From          time.Time // zero = unset
+	To            time.Time // zero = unset
+	Limit         int       // <=0 = default 100; clamped to 1000
+	Offset        int
+}
+
+// MaxAccessLogQueryLimit is the server-side cap on `limit` for the access-log
+// admin endpoint. Limits above this are clamped down silently.
+const MaxAccessLogQueryLimit = 1000
+
+// buildAccessLogWhere returns the WHERE clause (without the leading "WHERE")
+// and the positional args for the supplied filter. The first arg index is 1.
+// Returns ("", nil) when no constraints apply.
+func buildAccessLogWhere(f AccessLogFilter) (string, []any) {
+	clauses := make([]string, 0, 6)
+	args := make([]any, 0, 6)
+	idx := 1
+
+	if f.ExternalID != "" {
+		clauses = append(clauses, fmt.Sprintf("external_id = $%d", idx))
+		args = append(args, f.ExternalID)
+		idx++
+	}
+	if f.Method != "" {
+		clauses = append(clauses, fmt.Sprintf("method = $%d", idx))
+		args = append(args, f.Method)
+		idx++
+	}
+	if f.StatusCode != 0 {
+		clauses = append(clauses, fmt.Sprintf("status_code = $%d", idx))
+		args = append(args, f.StatusCode)
+		idx++
+	}
+	if f.CorrelationID != "" {
+		clauses = append(clauses, fmt.Sprintf("correlation_id = $%d", idx))
+		args = append(args, f.CorrelationID)
+		idx++
+	}
+	if !f.From.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("created_at >= $%d", idx))
+		args = append(args, f.From)
+		idx++
+	}
+	if !f.To.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("created_at <= $%d", idx))
+		args = append(args, f.To)
+		idx++
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+// GetAccessLogs returns access log rows ordered by created_at DESC, applying
+// the supplied filter. Limit is clamped to [1, MaxAccessLogQueryLimit].
+func (d *DB) GetAccessLogs(ctx context.Context, f AccessLogFilter) ([]*AccessLog, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > MaxAccessLogQueryLimit {
+		limit = MaxAccessLogQueryLimit
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args := buildAccessLogWhere(f)
 	query := `SELECT id, external_id, method, status_code, response_status, ip_address,
 	          correlation_id, request_params, entry_hash, hash_format_version, created_at
-	          FROM access_logs
-	          ORDER BY created_at DESC
-	          LIMIT $1`
+	          FROM access_logs`
+	if where != "" {
+		query += " WHERE " + where
+	}
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
 
-	rows, err := d.conn.QueryContext(ctx, query, limit)
+	rows, err := d.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get logs: %w", err)
 	}
@@ -283,6 +363,21 @@ func (d *DB) GetAccessLogs(ctx context.Context, limit int) ([]*AccessLog, error)
 	return logs, nil
 }
 
+// CountAccessLogs returns the number of access log rows matching the supplied
+// filter (ignoring Limit/Offset). Used by the admin API to render pagination.
+func (d *DB) CountAccessLogs(ctx context.Context, f AccessLogFilter) (int64, error) {
+	where, args := buildAccessLogWhere(f)
+	query := "SELECT COUNT(*) FROM access_logs"
+	if where != "" {
+		query += " WHERE " + where
+	}
+	var n int64
+	if err := d.conn.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("failed to count access logs: %w", err)
+	}
+	return n, nil
+}
+
 // LogAccessEnhanced inserts an access log entry with correlation ID, optional request params, and returns the ID and created_at for hash chain computation.
 // responseStatus is the HTTP status returned to the client (may differ from statusCode for opaque denials).
 func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error) {
@@ -310,29 +405,205 @@ func (d *DB) UpdateAccessLogHash(ctx context.Context, id int64, hash string) err
 	return err
 }
 
-// GetLatestAccessLogHash returns the entry_hash of the most recent access log entry that has one.
-// Used to seed the hash chain on startup.
+// GetLatestAccessLogHash returns the seed for the access_logs hash chain.
+// Resolution order:
+//  1. The entry_hash of the most recent surviving access_logs row.
+//  2. If no surviving rows have an entry_hash, the last_pruned_entry_hash from
+//     the audit_chain_anchor table for chain "access_logs". This keeps the
+//     chain verifiable when retention has trimmed every previous row.
+//  3. Otherwise the empty string (fresh chain).
 func (d *DB) GetLatestAccessLogHash(ctx context.Context) (string, error) {
 	var hash sql.NullString
 	err := d.conn.QueryRowContext(ctx,
 		`SELECT entry_hash FROM access_logs WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1`,
 	).Scan(&hash)
-	if err == sql.ErrNoRows || !hash.Valid {
-		return "", nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("failed to get latest access log hash: %w", err)
 	}
-	return hash.String, nil
+	if hash.Valid && hash.String != "" {
+		return hash.String, nil
+	}
+	// Fallback: anchor table preserves the seed across pruning cuts.
+	anchor, err := d.GetAuditChainAnchor(ctx, ChainNameAccessLogs)
+	if err != nil {
+		return "", err
+	}
+	if anchor != nil {
+		return anchor.LastPrunedEntryHash, nil
+	}
+	return "", nil
 }
 
-// CleanupAccessLogs deletes access log entries older than the given time.
+// CleanupAccessLogs deletes access log entries older than the given time AND
+// updates the access_logs chain anchor with the (id, entry_hash) of the last
+// row to be deleted in this batch. The anchor write + delete run inside a
+// single transaction so the chain stays verifiable even if the prune is
+// interrupted between rows.
+//
+// If no rows match the cutoff, the anchor is left unchanged. If the row about
+// to be deleted has a NULL entry_hash (e.g. the row never received an
+// UpdateAccessLogHash because the process crashed between insert and update),
+// the anchor still records the row's id but uses the previous anchor hash —
+// that is the latest known good seed for downstream verification.
 func (d *DB) CleanupAccessLogs(ctx context.Context, olderThan time.Time) (int64, error) {
-	result, err := d.conn.ExecContext(ctx, `DELETE FROM access_logs WHERE created_at < $1`, olderThan)
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin cleanup transaction: %w", err)
+	}
+	defer func() {
+		// Best-effort rollback if commit didn't happen.
+		_ = tx.Rollback()
+	}()
+
+	// Pick the row with the highest id among those about to be deleted.
+	var lastID sql.NullInt64
+	var lastHash sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, entry_hash FROM access_logs
+		WHERE created_at < $1
+		ORDER BY id DESC
+		LIMIT 1`, olderThan).Scan(&lastID, &lastHash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("failed to read prune cut for access_logs: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE created_at < $1`, olderThan)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup access logs: %w", err)
 	}
-	return result.RowsAffected()
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count deleted access logs: %w", err)
+	}
+
+	if deleted > 0 && lastID.Valid {
+		anchorHash := lastHash.String
+		if !lastHash.Valid || anchorHash == "" {
+			// The row had no entry_hash — fall back to the previous anchor so
+			// downstream verifiers still have a valid seed. If there is no
+			// previous anchor either, write the empty string (chain restarts
+			// from genesis).
+			prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
+			if perr != nil {
+				return 0, perr
+			}
+			anchorHash = prev
+		}
+		if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, lastID.Int64, anchorHash); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit access log cleanup: %w", err)
+	}
+	return deleted, nil
+}
+
+// getAnchorHashTx is a tx-scoped helper that returns the last_pruned_entry_hash
+// for chainName, or "" if no row exists.
+func getAnchorHashTx(ctx context.Context, tx *sql.Tx, chainName string) (string, error) {
+	var hash string
+	err := tx.QueryRowContext(ctx,
+		`SELECT last_pruned_entry_hash FROM audit_chain_anchor WHERE chain_name = $1`,
+		chainName).Scan(&hash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read existing anchor hash for %q: %w", chainName, err)
+	}
+	return hash, nil
+}
+
+// CountAccessLogsTotal returns the total number of access_logs rows.
+// Used by the FIFO sweeper to decide whether to trim.
+func (d *DB) CountAccessLogsTotal(ctx context.Context) (int64, error) {
+	var n int64
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_logs`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("failed to count access_logs: %w", err)
+	}
+	return n, nil
+}
+
+// TrimAccessLogsFIFOBatch deletes the oldest rows from access_logs, capping
+// the deletion at batchSize, until at most maxRows remain. It writes the
+// chain anchor in the same transaction (highest id + its entry_hash among the
+// rows being deleted in this batch). Returns the number of rows actually
+// deleted in this call. Callers loop until 0 is returned to drain the backlog
+// in batches.
+func (d *DB) TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (int64, error) {
+	if maxRows < 0 {
+		maxRows = 0
+	}
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin trim transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_logs`).Scan(&total); err != nil {
+		return 0, fmt.Errorf("failed to count access_logs in trim: %w", err)
+	}
+	excess := total - maxRows
+	if excess <= 0 {
+		return 0, tx.Commit()
+	}
+	toDelete := excess
+	if toDelete > int64(batchSize) {
+		toDelete = int64(batchSize)
+	}
+
+	// Identify the highest id among the oldest `toDelete` rows. We delete by
+	// id range (id <= cutId) inside the same transaction.
+	var cutID sql.NullInt64
+	var cutHash sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, entry_hash FROM access_logs
+		ORDER BY id ASC
+		LIMIT 1 OFFSET $1`, toDelete-1).Scan(&cutID, &cutHash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Race: rows disappeared between the COUNT and the OFFSET probe.
+			return 0, tx.Commit()
+		}
+		return 0, fmt.Errorf("failed to read FIFO cut: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM access_logs WHERE id <= $1`, cutID.Int64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to trim access_logs: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count trimmed rows: %w", err)
+	}
+
+	if deleted > 0 && cutID.Valid {
+		anchorHash := cutHash.String
+		if !cutHash.Valid || anchorHash == "" {
+			prev, perr := getAnchorHashTx(ctx, tx, ChainNameAccessLogs)
+			if perr != nil {
+				return 0, perr
+			}
+			anchorHash = prev
+		}
+		if err := upsertAuditChainAnchorTx(ctx, tx, ChainNameAccessLogs, cutID.Int64, anchorHash); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit access log trim: %w", err)
+	}
+	return deleted, nil
 }
 
 // CleanupComplianceLogs deletes compliance log entries older than the given time.
