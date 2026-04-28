@@ -1,4 +1,4 @@
--- 041_audit_chain_anchor.sql
+-- 042_audit_chain_anchor.sql
 -- Persist the last-pruned entry hash per audit chain so that the chain stays
 -- verifiable across pruning cuts. Every prune (FIFO row cap or time-based TTL)
 -- writes the anchor before deleting rows. On startup the hash chain seeder
