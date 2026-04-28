@@ -422,7 +422,7 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 
 func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
 	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'Authorization'))
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -439,8 +439,10 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 }
 
 // nullableHeader returns the header name for storage. An empty value is
-// translated to NULL so the column default ('Authorization') applies. A
-// non-empty value is stored verbatim.
+// translated to NULL; SQL call sites must wrap the parameter in
+// COALESCE($n, 'Authorization') so the default applies (Postgres ignores
+// column DEFAULTs when an explicit NULL is provided). A non-empty value is
+// stored verbatim.
 func nullableHeader(s string) any {
 	if s == "" {
 		return nil
