@@ -2,7 +2,79 @@ package server
 
 import (
 	"testing"
+
+	"privacy-proxy/internal/proxy"
 )
+
+// TestResolveAPIKeyHeader exercises the per-group → processor-default →
+// proxy.DefaultAPIKeyHeader fallback chain inside the JSON-RPC processor.
+// The wider DB→permissions→AccessCheckResult propagation path is covered
+// by TestResolverRPCAPIKeyHeaderPropagation; this test pins the helper's
+// own three branches so a future refactor cannot silently flip the order.
+func TestResolveAPIKeyHeader(t *testing.T) {
+	tests := []struct {
+		name             string
+		processorDefault string
+		groupHeader      string
+		want             string
+	}{
+		{
+			name:             "per-group header wins over processor default",
+			processorDefault: "Custom-H",
+			groupHeader:      "X-API-Key",
+			want:             "X-API-Key",
+		},
+		{
+			name:             "per-group header wins when processor default empty",
+			processorDefault: "",
+			groupHeader:      "X-API-Key",
+			want:             "X-API-Key",
+		},
+		{
+			name:             "processor default used when group header empty",
+			processorDefault: "Custom-H",
+			groupHeader:      "",
+			want:             "Custom-H",
+		},
+		{
+			name:             "falls back to proxy.DefaultAPIKeyHeader when both empty",
+			processorDefault: "",
+			groupHeader:      "",
+			want:             proxy.DefaultAPIKeyHeader,
+		},
+		{
+			name:             "whitespace-only group header is treated as set (helper does not trim)",
+			processorDefault: "Custom-H",
+			groupHeader:      "   ",
+			want:             "   ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &JSONRPCProcessor{defaultRPCAPIKeyHeader: tt.processorDefault}
+			got := p.resolveAPIKeyHeader(tt.groupHeader)
+			if got != tt.want {
+				t.Errorf("resolveAPIKeyHeader(processorDefault=%q, groupHeader=%q) = %q, want %q",
+					tt.processorDefault, tt.groupHeader, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSetDefaultRPCAPIKeyHeader verifies the setter wires through to the
+// resolver, since the setter is the only public way operators (via Load())
+// can populate the global fallback.
+func TestSetDefaultRPCAPIKeyHeader(t *testing.T) {
+	p := &JSONRPCProcessor{}
+	if got := p.resolveAPIKeyHeader(""); got != proxy.DefaultAPIKeyHeader {
+		t.Fatalf("pre-set resolveAPIKeyHeader(\"\") = %q, want %q", got, proxy.DefaultAPIKeyHeader)
+	}
+	p.SetDefaultRPCAPIKeyHeader("Custom-H")
+	if got := p.resolveAPIKeyHeader(""); got != "Custom-H" {
+		t.Errorf("post-set resolveAPIKeyHeader(\"\") = %q, want %q", got, "Custom-H")
+	}
+}
 
 // =============================================================================
 // CRITICAL SECURITY TEST: Cross-Org Isolation via Tracing

@@ -655,6 +655,62 @@ func TestGetEnv(t *testing.T) {
 	}
 }
 
+// TestLoad_RPCAPIKeyHeader covers the env-var loading branch for
+// RPC_API_KEY_HEADER: a valid value passes through, an unset value falls
+// back to proxy.DefaultAPIKeyHeader ("Authorization"), and any value that
+// fails the proxy.ValidAPIKeyHeader regex panics so a misconfigured deploy
+// fails fast at boot rather than silently injecting bad header content.
+func TestLoad_RPCAPIKeyHeader(t *testing.T) {
+	t.Run("valid header passes through", func(t *testing.T) {
+		t.Setenv("RPC_API_KEY_HEADER", "X-API-Key")
+		cfg := Load()
+		if cfg.RPCAPIKeyHeader != "X-API-Key" {
+			t.Errorf("RPCAPIKeyHeader = %q, want %q", cfg.RPCAPIKeyHeader, "X-API-Key")
+		}
+	})
+
+	t.Run("unset defaults to Authorization", func(t *testing.T) {
+		// t.Setenv with empty string sets to "", but getEnv treats empty
+		// as unset and returns the default. Explicitly clear via Setenv
+		// then Unsetenv to ensure no inherited value bleeds in.
+		t.Setenv("RPC_API_KEY_HEADER", "")
+		os.Unsetenv("RPC_API_KEY_HEADER")
+		cfg := Load()
+		if cfg.RPCAPIKeyHeader != "Authorization" {
+			t.Errorf("RPCAPIKeyHeader = %q, want %q (proxy.DefaultAPIKeyHeader)", cfg.RPCAPIKeyHeader, "Authorization")
+		}
+	})
+
+	invalidCases := []struct {
+		name  string
+		value string
+	}{
+		{"value with space", "has space"},
+		{"value with CRLF injection", "Auth\r\nInjection"},
+		{"value with colon", "Foo:Bar"},
+		{"value with tab", "Foo\tBar"},
+	}
+	for _, tc := range invalidCases {
+		t.Run("invalid panics: "+tc.name, func(t *testing.T) {
+			t.Setenv("RPC_API_KEY_HEADER", tc.value)
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected panic for invalid RPC_API_KEY_HEADER %q, got none", tc.value)
+				}
+				msg, ok := r.(string)
+				if !ok {
+					t.Fatalf("expected string panic, got %T: %v", r, r)
+				}
+				if !strings.Contains(msg, "RPC_API_KEY_HEADER") {
+					t.Errorf("panic message should mention RPC_API_KEY_HEADER, got: %s", msg)
+				}
+			}()
+			_ = Load()
+		})
+	}
+}
+
 func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 	t.Run("valid config with aliases", func(t *testing.T) {
 		input := `{
