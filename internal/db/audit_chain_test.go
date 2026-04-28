@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"testing"
@@ -130,16 +131,14 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 	walked := 0
 	for rows.Next() {
 		var l AccessLog
-		var corrID, entryHash *string
+		var corrID sql.NullString
+		var entryHash sql.NullString
 		var respStatus *int
 		var params []byte
 		var createdAtStr string
-		var corrIDNS, entryHashNS string
-		if err := rows.Scan(&l.ID, &l.ExternalID, &l.Method, &l.StatusCode, &respStatus, &l.IPAddress, &corrIDNS, &params, &entryHashNS, &l.HashFormatVersion, &createdAtStr); err != nil {
+		if err := rows.Scan(&l.ID, &l.ExternalID, &l.Method, &l.StatusCode, &respStatus, &l.IPAddress, &corrID, &params, &entryHash, &l.HashFormatVersion, &createdAtStr); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
-		_ = corrID
-		_ = entryHash
 		// We seeded with no correlation id and no params, status 200/200 — the
 		// content string the processor would have built is reproducible here.
 		createdAt, perr := time.Parse(time.RFC3339Nano, createdAtStr)
@@ -154,8 +153,8 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 			l.ID, "did:test:user", "eth_call", "127.0.0.1", 200, 200,
 			createdAt.Format(time.RFC3339Nano), "", "")
 		got := computeChainHash(prev, content)
-		if got != entryHashNS {
-			t.Fatalf("hash mismatch on id=%d: want %s, got %s", l.ID, entryHashNS, got)
+		if got != entryHash.String {
+			t.Fatalf("hash mismatch on id=%d: want %s, got %s", l.ID, entryHash.String, got)
 		}
 		prev = got
 		walked++
