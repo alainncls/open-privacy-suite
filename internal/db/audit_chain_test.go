@@ -5,10 +5,45 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 )
+
+// queryAccessLogsPruneAuditRows reads every rbac_audit_log row whose
+// action = "audit.access_logs.prune" and decodes its JSONB new_value payload.
+// Used by audit-of-the-audit tests to assert the prune emitted a row with the
+// expected metadata.
+func queryAccessLogsPruneAuditRows(t *testing.T, ctx context.Context, d *DB) []map[string]any {
+	t.Helper()
+	rows, err := d.Conn().QueryContext(ctx, `
+		SELECT new_value FROM rbac_audit_log
+		WHERE action = $1 ORDER BY id ASC`, "audit.access_logs.prune")
+	if err != nil {
+		t.Fatalf("query audit-of-the-audit rows: %v", err)
+	}
+	defer rows.Close()
+
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatalf("scan audit-of-the-audit row: %v", err)
+		}
+		details := map[string]any{}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &details); err != nil {
+				t.Fatalf("unmarshal audit-of-the-audit details: %v", err)
+			}
+		}
+		out = append(out, details)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate audit-of-the-audit rows: %v", err)
+	}
+	return out
+}
 
 // computeChainHash mirrors internal/audit.HashChain.ComputeNext but is duplicated
 // here to keep the test free of cross-package coupling. The value MUST stay in
@@ -165,6 +200,33 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 	if walked != maxRows {
 		t.Fatalf("walked %d rows, expected %d", walked, maxRows)
 	}
+
+	// Audit-of-the-audit: retention.go emits LogAuditAction after a successful
+	// FIFO drain. Mirror the production payload here so we can assert the row
+	// reaches rbac_audit_log and the JSONB metadata round-trips intact.
+	pruneDetails := map[string]any{
+		"reason":        "fifo",
+		"deleted_count": totalDeleted,
+		"max_rows":      int64(maxRows),
+	}
+	if err := database.LogAuditAction(ctx, "audit.access_logs.prune", pruneDetails); err != nil {
+		t.Fatalf("LogAuditAction: %v", err)
+	}
+	rowsRead := queryAccessLogsPruneAuditRows(t, ctx, database)
+	if len(rowsRead) != 1 {
+		t.Fatalf("expected exactly 1 audit.access_logs.prune row in rbac_audit_log, got %d", len(rowsRead))
+	}
+	gotDetails := rowsRead[0]
+	if gotDetails["reason"] != "fifo" {
+		t.Fatalf("audit row reason: got %v, want \"fifo\"", gotDetails["reason"])
+	}
+	// JSONB → json.Unmarshal decodes numbers as float64.
+	if got, want := gotDetails["deleted_count"], float64(totalDeleted); got != want {
+		t.Fatalf("audit row deleted_count: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["max_rows"], float64(maxRows); got != want {
+		t.Fatalf("audit row max_rows: got %v, want %v", got, want)
+	}
 }
 
 // TestTimeBasedPrune_WritesAnchor verifies that the existing CleanupAccessLogs
@@ -205,6 +267,34 @@ func TestTimeBasedPrune_WritesAnchor(t *testing.T) {
 	if anchor.LastPrunedEntryHash != hashes[2] {
 		t.Fatalf("anchor hash: want %s, got %s", hashes[2], anchor.LastPrunedEntryHash)
 	}
+
+	// Audit-of-the-audit: retention.go emits LogAuditAction after a successful
+	// TTL prune. Mirror the production payload to verify the row reaches
+	// rbac_audit_log and the JSONB metadata round-trips intact.
+	const ttl = 1 * time.Hour
+	pruneDetails := map[string]any{
+		"reason":        "ttl",
+		"deleted_count": deleted,
+		"retention":     ttl.String(),
+		"cutoff":        cutoff.UTC().Format(time.RFC3339Nano),
+	}
+	if err := database.LogAuditAction(ctx, "audit.access_logs.prune", pruneDetails); err != nil {
+		t.Fatalf("LogAuditAction: %v", err)
+	}
+	rowsRead := queryAccessLogsPruneAuditRows(t, ctx, database)
+	if len(rowsRead) != 1 {
+		t.Fatalf("expected exactly 1 audit.access_logs.prune row in rbac_audit_log, got %d", len(rowsRead))
+	}
+	gotDetails := rowsRead[0]
+	if gotDetails["reason"] != "ttl" {
+		t.Fatalf("audit row reason: got %v, want \"ttl\"", gotDetails["reason"])
+	}
+	if got, want := gotDetails["deleted_count"], float64(deleted); got != want {
+		t.Fatalf("audit row deleted_count: got %v, want %v", got, want)
+	}
+	if gotDetails["retention"] != ttl.String() {
+		t.Fatalf("audit row retention: got %v, want %v", gotDetails["retention"], ttl.String())
+	}
 }
 
 // TestGetLatestAccessLogHash_FallsBackToAnchor confirms that the chain seeder
@@ -243,5 +333,254 @@ func TestGetLatestAccessLogHash_FallsBackToAnchor(t *testing.T) {
 	}
 	if seed != hashes[len(hashes)-1] {
 		t.Fatalf("seed should equal last hash before prune: want %s, got %s", hashes[len(hashes)-1], seed)
+	}
+}
+
+// filterSeedRow mirrors the columns we vary across the GetAccessLogs filter
+// matrix tests. createdAtOffset is added to a base time to control the From/To
+// filter boundaries deterministically.
+type filterSeedRow struct {
+	externalID      string
+	method          string
+	statusCode      int
+	correlationID   string
+	createdAtOffset time.Duration
+}
+
+// seedFilterRows inserts each row via LogAccessEnhanced and then back-dates
+// created_at to the requested offset relative to baseTime. Returns the inserted
+// ids in order.
+func seedFilterRows(t *testing.T, ctx context.Context, d *DB, baseTime time.Time, rows []filterSeedRow) []int64 {
+	t.Helper()
+	ids := make([]int64, 0, len(rows))
+	for i, r := range rows {
+		id, _, err := d.LogAccessEnhanced(ctx, r.externalID, r.method, r.statusCode, "127.0.0.1", r.correlationID, nil, nil)
+		if err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+		// Back-date deterministically. Using the underlying sql.DB so we don't
+		// depend on whatever default the timestamp column was assigned.
+		ts := baseTime.Add(r.createdAtOffset)
+		if _, err := d.Conn().ExecContext(ctx,
+			`UPDATE access_logs SET created_at = $1 WHERE id = $2`, ts, id); err != nil {
+			t.Fatalf("backdate row %d: %v", i, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// TestGetAccessLogs_FiltersNarrowResults exercises every dimension of
+// AccessLogFilter against a real Postgres. Each sub-test asserts that GetAccessLogs
+// returns only rows matching the supplied filter, and that limit/offset are
+// respected.
+func TestGetAccessLogs_FiltersNarrowResults(t *testing.T) {
+	database := setupTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Hour)
+
+	// 10 rows spanning every filter dimension. Offsets are picked so From/To
+	// boundary tests are deterministic.
+	rows := []filterSeedRow{
+		{"did:test:alice", "eth_call", 200, "corr-A", 0 * time.Hour},
+		{"did:test:alice", "eth_blockNumber", 200, "corr-B", 1 * time.Hour},
+		{"did:test:alice", "eth_call", 401, "corr-A", 2 * time.Hour},
+		{"did:test:bob", "eth_call", 200, "corr-A", 3 * time.Hour},
+		{"did:test:bob", "eth_call", 200, "corr-C", 4 * time.Hour},
+		{"did:test:bob", "eth_blockNumber", 401, "corr-A", 5 * time.Hour},
+		{"did:test:carol", "eth_getLogs", 500, "corr-D", 6 * time.Hour},
+		{"did:test:carol", "eth_call", 200, "", 7 * time.Hour},
+		{"did:test:dave", "eth_getLogs", 200, "corr-E", 8 * time.Hour},
+		{"did:test:dave", "eth_call", 503, "corr-F", 9 * time.Hour},
+	}
+	seedFilterRows(t, ctx, database, base, rows)
+
+	t.Run("external_id filter", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{ExternalID: "did:test:alice", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 rows for alice, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.ExternalID != "did:test:alice" {
+				t.Fatalf("external_id leak: got %q", r.ExternalID)
+			}
+		}
+	})
+
+	t.Run("method filter", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{Method: "eth_getLogs", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 rows for eth_getLogs, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.Method != "eth_getLogs" {
+				t.Fatalf("method leak: got %q", r.Method)
+			}
+		}
+	})
+
+	t.Run("status_code filter", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusCode: 401, Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 rows for status_code=401, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.StatusCode != 401 {
+				t.Fatalf("status_code leak: got %d", r.StatusCode)
+			}
+		}
+	})
+
+	t.Run("correlation_id filter", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{CorrelationID: "corr-A", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 4 {
+			t.Fatalf("expected 4 rows for corr-A, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.CorrelationID == nil || *r.CorrelationID != "corr-A" {
+				t.Fatalf("correlation_id leak: got %v", r.CorrelationID)
+			}
+		}
+	})
+
+	t.Run("from filter", func(t *testing.T) {
+		// From = base + 5h: rows at offsets 5h..9h → 5 rows.
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{From: base.Add(5 * time.Hour), Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 5 {
+			t.Fatalf("expected 5 rows >= base+5h, got %d", len(got))
+		}
+	})
+
+	t.Run("to filter", func(t *testing.T) {
+		// To = base + 4h: rows at offsets 0..4h → 5 rows.
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{To: base.Add(4 * time.Hour), Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 5 {
+			t.Fatalf("expected 5 rows <= base+4h, got %d", len(got))
+		}
+	})
+
+	t.Run("external_id + method intersection", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{
+			ExternalID: "did:test:bob",
+			Method:     "eth_call",
+			Limit:      100,
+		})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		// Two bob+eth_call rows (statuses 200, 200).
+		if len(got) != 2 {
+			t.Fatalf("expected 2 rows for bob+eth_call, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.ExternalID != "did:test:bob" || r.Method != "eth_call" {
+				t.Fatalf("intersection leak: got %s/%s", r.ExternalID, r.Method)
+			}
+		}
+	})
+
+	t.Run("limit is honoured", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{Limit: 3})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 rows with limit=3, got %d", len(got))
+		}
+	})
+
+	t.Run("offset is honoured", func(t *testing.T) {
+		// All 10 rows ordered by created_at DESC. Offset 7 → 3 oldest remain.
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{Limit: 100, Offset: 7})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 rows with offset=7, got %d", len(got))
+		}
+	})
+}
+
+// TestCountAccessLogs_HonoursFilters mirrors the filter coverage for the
+// COUNT(*) path so pagination totals stay aligned with the rows returned by
+// GetAccessLogs (modulo limit/offset, which CountAccessLogs deliberately
+// ignores).
+func TestCountAccessLogs_HonoursFilters(t *testing.T) {
+	database := setupTestDB(t)
+	defer cleanupTestDB(t, database)
+
+	ctx := context.Background()
+	base := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Hour)
+
+	rows := []filterSeedRow{
+		{"did:test:alice", "eth_call", 200, "corr-A", 0 * time.Hour},
+		{"did:test:alice", "eth_blockNumber", 200, "corr-B", 1 * time.Hour},
+		{"did:test:alice", "eth_call", 401, "corr-A", 2 * time.Hour},
+		{"did:test:bob", "eth_call", 200, "corr-A", 3 * time.Hour},
+		{"did:test:bob", "eth_call", 200, "corr-C", 4 * time.Hour},
+		{"did:test:bob", "eth_blockNumber", 401, "corr-A", 5 * time.Hour},
+		{"did:test:carol", "eth_getLogs", 500, "corr-D", 6 * time.Hour},
+		{"did:test:carol", "eth_call", 200, "", 7 * time.Hour},
+		{"did:test:dave", "eth_getLogs", 200, "corr-E", 8 * time.Hour},
+		{"did:test:dave", "eth_call", 503, "corr-F", 9 * time.Hour},
+	}
+	seedFilterRows(t, ctx, database, base, rows)
+
+	cases := []struct {
+		name   string
+		filter AccessLogFilter
+		want   int64
+	}{
+		{"external_id", AccessLogFilter{ExternalID: "did:test:alice"}, 3},
+		{"method", AccessLogFilter{Method: "eth_getLogs"}, 2},
+		{"status_code", AccessLogFilter{StatusCode: 401}, 2},
+		{"correlation_id", AccessLogFilter{CorrelationID: "corr-A"}, 4},
+		{"from", AccessLogFilter{From: base.Add(5 * time.Hour)}, 5},
+		{"to", AccessLogFilter{To: base.Add(4 * time.Hour)}, 5},
+		{"external_id+method", AccessLogFilter{ExternalID: "did:test:bob", Method: "eth_call"}, 2},
+		{"no filters", AccessLogFilter{}, int64(len(rows))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := database.CountAccessLogs(ctx, tc.filter)
+			if err != nil {
+				t.Fatalf("CountAccessLogs: %v", err)
+			}
+			if n != tc.want {
+				t.Fatalf("CountAccessLogs(%+v) = %d, want %d", tc.filter, n, tc.want)
+			}
+
+			// Also confirm len(GetAccessLogs(...)) under a generous limit
+			// matches the count — the two paths must agree.
+			f := tc.filter
+			f.Limit = int(MaxAccessLogQueryLimit)
+			rows, err := database.GetAccessLogs(ctx, f)
+			if err != nil {
+				t.Fatalf("GetAccessLogs: %v", err)
+			}
+			if int64(len(rows)) != n {
+				t.Fatalf("GetAccessLogs returned %d rows, CountAccessLogs returned %d (filter=%+v)", len(rows), n, tc.filter)
+			}
+		})
 	}
 }
