@@ -20,7 +20,6 @@ import (
 	"privacy-proxy/internal/ens"
 	"privacy-proxy/internal/explorer"
 	"privacy-proxy/internal/explorer/indexerclient"
-	"privacy-proxy/internal/governance"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/pricing"
 	"privacy-proxy/internal/proxy"
@@ -94,10 +93,8 @@ explorerStore    explorer.ExplorerBackend
 	explorerMu       sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
 	explorerRedactor *explorer.RedactionEngine
 	siemForwarder    *audit.SIEMForwarder
-	retentionCleaner              *audit.RetentionCleaner
-	governanceEngine              *governance.Engine
-	escalationWorker              *governance.EscalationWorker
-	redisCloser        io.Closer
+	retentionCleaner *audit.RetentionCleaner
+	redisCloser      io.Closer
 }
 
 // DB returns the database instance (for testing)
@@ -140,9 +137,6 @@ func (s *Server) Stop() {
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
-	}
-if s.escalationWorker != nil {
-		s.escalationWorker.Stop()
 	}
 	if s.redisCloser != nil {
 		s.redisCloser.Close()
@@ -389,12 +383,6 @@ explorerStore:    explorerBackend,
 		explorerRedactor: explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
 	}
-
-	// Initialize governance engine and escalation worker
-	webhookNotifier := governance.NewWebhookNotifier(database)
-	s.governanceEngine = governance.NewEngine(database, s, webhookNotifier)
-	s.escalationWorker = governance.NewEscalationWorker(database, webhookNotifier, 5*time.Minute)
-	s.escalationWorker.Start()
 
 	// Start background explorer DB reconnection if initial connection failed
 	if cfg.ExplorerDatabaseURL != "" && explorerSQL == nil {

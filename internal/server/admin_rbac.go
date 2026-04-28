@@ -22,20 +22,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 
 	// Group Access (replaces old permissions and roles)
 	api.GET("/orgs/:org_id/groups/:group_id/access", s.getGroupAccess)
-	api.PUT("/orgs/:org_id/groups/:group_id/access", s.governanceMiddleware("updateGroupAccess"), s.setGroupAccess)
-
-	// Governance Settings & Requests
-	api.GET("/orgs/:org_id/governance/settings", s.getGovernanceSettings)
-	api.PUT("/orgs/:org_id/governance/settings", s.updateGovernanceSettings)
-	api.GET("/orgs/:org_id/governance/requests", s.listGovernanceRequests)
-	api.GET("/orgs/:org_id/governance/requests/:request_id", s.getGovernanceRequest)
-	api.POST("/orgs/:org_id/governance/requests/:request_id/approve", s.approveGovernanceRequest)
-	api.POST("/orgs/:org_id/governance/requests/:request_id/reject", s.rejectGovernanceRequest)
-
-	// Governance Approver Groups
-	api.GET("/orgs/:org_id/governance/approvers", s.listGovernanceApproverGroups)
-	api.POST("/orgs/:org_id/governance/approvers", s.governanceMiddleware("addGovernanceApproverGroup"), s.addGovernanceApproverGroup)
-	api.DELETE("/orgs/:org_id/governance/approvers/:group_id", s.governanceMiddleware("removeGovernanceApproverGroup"), s.removeGovernanceApproverGroup)
+	api.PUT("/orgs/:org_id/groups/:group_id/access", s.setGroupAccess)
 
 	// Contracts
 	api.GET("/orgs/:org_id/contracts", s.listContracts)
@@ -57,9 +44,9 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 
 	// Contract Grants
 	api.GET("/orgs/:org_id/contracts/:address/grants", s.listContractGrants)
-	api.POST("/orgs/:org_id/contracts/:address/grants", s.governanceMiddleware("createContractGrant"), s.createContractGrant)
-	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", s.governanceMiddleware("updateContractGrant"), s.updateContractGrant)
-	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", s.governanceMiddleware("deleteContractGrant"), s.deleteContractGrant)
+	api.POST("/orgs/:org_id/contracts/:address/grants", s.createContractGrant)
+	api.PUT("/orgs/:org_id/contracts/:address/grants/:group_id", s.updateContractGrant)
+	api.DELETE("/orgs/:org_id/contracts/:address/grants/:group_id", s.deleteContractGrant)
 
 	// Contract lookup (cross-org)
 	api.GET("/contracts/by-address/:address", s.lookupContractByAddress)
