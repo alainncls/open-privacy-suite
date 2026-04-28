@@ -336,3 +336,165 @@ func TestForward_ResponseSizeLimit(t *testing.T) {
 		}
 	})
 }
+
+// TestValidAPIKeyHeader covers the regex used to gate header names at every
+// trust boundary (config load + admin save).
+func TestValidAPIKeyHeader(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		ok   bool
+	}{
+		{"default", "Authorization", true},
+		{"x-api-key", "X-API-Key", true},
+		{"lowercase", "x-api-key", true},
+		{"digits", "API-Key-2", true},
+		{"empty", "", false},
+		{"with-space", "X API Key", false},
+		{"with-colon", "X-API-Key:", false},
+		{"with-newline", "X-API-Key\nInjected: yes", false},
+		{"with-cr", "X\rAPI", false},
+		{"underscore", "X_API_KEY", false}, // RFC 7230 token allows _, but our regex is conservative
+		{"empty-with-space", " ", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ValidAPIKeyHeader(tc.in); got != tc.ok {
+				t.Errorf("ValidAPIKeyHeader(%q) = %v, want %v", tc.in, got, tc.ok)
+			}
+		})
+	}
+}
+
+// TestSetAPIKeyHeader verifies the helper used by the proxy forwarder. The
+// rules are: empty key → no header set; "Authorization" (any case) → Bearer
+// prefix preserved; other names → raw key value.
+func TestSetAPIKeyHeader(t *testing.T) {
+	cases := []struct {
+		name       string
+		headerName string
+		apiKey     string
+		// expected: map of header → value to assert; empty value means "must not be set"
+		want map[string]string
+	}{
+		{
+			name:       "default_authorization_uses_bearer",
+			headerName: "Authorization",
+			apiKey:     "sk-test-key",
+			want:       map[string]string{"Authorization": "Bearer sk-test-key"},
+		},
+		{
+			name:       "default_authorization_lowercase_uses_bearer",
+			headerName: "authorization",
+			apiKey:     "sk-test-key",
+			want:       map[string]string{"Authorization": "Bearer sk-test-key"},
+		},
+		{
+			name:       "empty_header_falls_back_to_authorization",
+			headerName: "",
+			apiKey:     "sk-test-key",
+			want:       map[string]string{"Authorization": "Bearer sk-test-key"},
+		},
+		{
+			name:       "custom_header_sends_raw_key",
+			headerName: "X-API-Key",
+			apiKey:     "sk-test-key",
+			want: map[string]string{
+				"X-Api-Key":     "sk-test-key", // canonicalised
+				"Authorization": "",            // must NOT be set
+			},
+		},
+		{
+			name:       "no_key_no_header",
+			headerName: "Authorization",
+			apiKey:     "",
+			want:       map[string]string{"Authorization": ""},
+		},
+		{
+			name:       "invalid_header_falls_back_to_default",
+			headerName: "X API Key",
+			apiKey:     "sk-test-key",
+			want:       map[string]string{"Authorization": "Bearer sk-test-key"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, "http://example.invalid", nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			SetAPIKeyHeader(req, tc.headerName, tc.apiKey)
+			for h, want := range tc.want {
+				got := req.Header.Get(h)
+				if got != want {
+					t.Errorf("header %q = %q, want %q", h, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestForwardWithAPIKeyHeader_RoutesToHeader exercises the full forward path
+// to confirm headers are written on the outbound HTTP request to the upstream.
+func TestForwardWithAPIKeyHeader_RoutesToHeader(t *testing.T) {
+	cases := []struct {
+		name           string
+		headerName     string
+		apiKey         string
+		wantAuthValue  string
+		wantOtherKey   string // header name to also check
+		wantOtherValue string
+	}{
+		{
+			name:          "authorization_bearer",
+			headerName:    "Authorization",
+			apiKey:        "k1",
+			wantAuthValue: "Bearer k1",
+		},
+		{
+			name:           "x_api_key_raw",
+			headerName:     "X-API-Key",
+			apiKey:         "k2",
+			wantAuthValue:  "", // Authorization must remain unset
+			wantOtherKey:   "X-Api-Key",
+			wantOtherValue: "k2",
+		},
+		{
+			name:          "empty_key_no_header",
+			headerName:    "X-API-Key",
+			apiKey:        "",
+			wantAuthValue: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				captured = r.Header.Clone()
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+			}))
+			defer srv.Close()
+
+			p := New(srv.URL)
+			_, _, err := p.ForwardWithAPIKeyHeader(
+				[]byte(`{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}`),
+				tc.headerName, tc.apiKey, "",
+			)
+			if err != nil {
+				t.Fatalf("ForwardWithAPIKeyHeader: %v", err)
+			}
+			if got := captured.Get("Authorization"); got != tc.wantAuthValue {
+				t.Errorf("Authorization = %q, want %q", got, tc.wantAuthValue)
+			}
+			if tc.wantOtherKey != "" {
+				if got := captured.Get(tc.wantOtherKey); got != tc.wantOtherValue {
+					t.Errorf("%s = %q, want %q", tc.wantOtherKey, got, tc.wantOtherValue)
+				}
+			}
+		})
+	}
+}
+

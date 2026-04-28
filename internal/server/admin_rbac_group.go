@@ -11,6 +11,7 @@ import (
 
 	"privacy-proxy/internal/crypto"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
 )
 
@@ -224,15 +225,28 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	}
 
 	var input struct {
-		AllowedMethods []string     `json:"allowed_methods"`
-		Claims  []rbac.Claim `json:"claims"`
-		RateLimitRPS   *int         `json:"rate_limit_rps"`
-		RateLimitDaily *int         `json:"rate_limit_daily"`
-		RPCAPIKey      *string      `json:"rpc_api_key"`
+		AllowedMethods  []string     `json:"allowed_methods"`
+		Claims          []rbac.Claim `json:"claims"`
+		RateLimitRPS    *int         `json:"rate_limit_rps"`
+		RateLimitDaily  *int         `json:"rate_limit_daily"`
+		RPCAPIKey       *string      `json:"rpc_api_key"`
+		RPCAPIKeyHeader *string      `json:"rpc_api_key_header"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Validate header name (when explicitly provided & non-empty) before any
+	// DB write — letters, digits, hyphens only. Empty / nil falls back to the
+	// configured default at request time.
+	var headerName string
+	if input.RPCAPIKeyHeader != nil {
+		headerName = strings.TrimSpace(*input.RPCAPIKeyHeader)
+		if headerName != "" && !proxy.ValidAPIKeyHeader(headerName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "rpc_api_key_header must contain only letters, digits, and hyphens"})
+			return
+		}
 	}
 
 	// Expand wildcard "*" in allowed_methods to the full explicit method list.
@@ -269,12 +283,13 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	}
 
 	access := &rbac.GroupAccess{
-		GroupID:        groupID,
-		AllowedMethods: input.AllowedMethods,
-		Claims:  input.Claims,
-		RateLimitRPS:   input.RateLimitRPS,
-		RateLimitDaily: input.RateLimitDaily,
-		RPCAPIKey:      input.RPCAPIKey,
+		GroupID:         groupID,
+		AllowedMethods:  input.AllowedMethods,
+		Claims:          input.Claims,
+		RateLimitRPS:    input.RateLimitRPS,
+		RateLimitDaily:  input.RateLimitDaily,
+		RPCAPIKey:       input.RPCAPIKey,
+		RPCAPIKeyHeader: headerName,
 	}
 
 	if existing != nil {

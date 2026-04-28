@@ -6,8 +6,53 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 )
+
+// DefaultAPIKeyHeader is the header name used to attach the upstream RPC API
+// key when no explicit override is configured. When this header is selected
+// the API key is sent as a Bearer token; any other header sends the raw key.
+const DefaultAPIKeyHeader = "Authorization"
+
+// apiKeyHeaderPattern enforces a conservative character set for header names
+// to prevent CRLF or whitespace injection: letters, digits, and hyphens only.
+// The match is case-insensitive (header names are case-insensitive in HTTP).
+var apiKeyHeaderPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// ValidAPIKeyHeader reports whether name is a syntactically acceptable HTTP
+// header name for use as the upstream RPC API-key header. Empty input is
+// rejected — callers should normalise to DefaultAPIKeyHeader before calling.
+func ValidAPIKeyHeader(name string) bool {
+	if name == "" {
+		return false
+	}
+	return apiKeyHeaderPattern.MatchString(name)
+}
+
+// SetAPIKeyHeader writes the upstream RPC API key onto req using the given
+// header name. When headerName is empty or equals DefaultAPIKeyHeader
+// (case-insensitive), the key is sent as "Bearer <key>" under Authorization
+// — preserving the historical behaviour. For any other header name the key
+// is sent verbatim under that header (no Bearer prefix).
+//
+// If apiKey is empty no header is set. headerName is validated by the caller;
+// SetAPIKeyHeader assumes a previously-vetted name and will silently fall
+// back to the default if it's malformed.
+func SetAPIKeyHeader(req *http.Request, headerName, apiKey string) {
+	if apiKey == "" {
+		return
+	}
+	if headerName == "" || !ValidAPIKeyHeader(headerName) {
+		headerName = DefaultAPIKeyHeader
+	}
+	if strings.EqualFold(headerName, DefaultAPIKeyHeader) {
+		req.Header.Set(DefaultAPIKeyHeader, "Bearer "+apiKey)
+		return
+	}
+	req.Header.Set(headerName, apiKey)
+}
 
 type Proxy struct {
 	targetURL string
@@ -59,19 +104,28 @@ func (p *Proxy) Forward(reqBody []byte) ([]byte, int, error) {
 }
 
 // ForwardWithAPIKey forwards a JSON-RPC request with an optional API key
-// for upstream RPC proxy authentication. If apiKey is non-empty, it is
-// sent as a Bearer token in the Authorization header. If clientIP is
-// non-empty, it is forwarded as an X-Forwarded-For header.
+// for upstream RPC proxy authentication. If apiKey is non-empty it is sent
+// as a Bearer token in the Authorization header. If clientIP is non-empty,
+// it is forwarded as an X-Forwarded-For header.
+//
+// This is a convenience wrapper that pins the header name to "Authorization".
+// Callers that need a custom header name should use ForwardWithAPIKeyHeader.
 func (p *Proxy) ForwardWithAPIKey(reqBody []byte, apiKey string, clientIP string) ([]byte, int, error) {
+	return p.ForwardWithAPIKeyHeader(reqBody, DefaultAPIKeyHeader, apiKey, clientIP)
+}
+
+// ForwardWithAPIKeyHeader forwards a JSON-RPC request and attaches the
+// upstream RPC API key under the supplied header name. See SetAPIKeyHeader
+// for the exact rules — "Authorization" is sent as "Bearer <key>"; any
+// other header name sends the raw key value.
+func (p *Proxy) ForwardWithAPIKeyHeader(reqBody []byte, headerName, apiKey, clientIP string) ([]byte, int, error) {
 	req, err := http.NewRequest("POST", p.targetURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	SetAPIKeyHeader(req, headerName, apiKey)
 	if clientIP != "" {
 		req.Header.Set("X-Forwarded-For", clientIP)
 	}

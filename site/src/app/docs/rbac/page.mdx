@@ -301,6 +301,22 @@ Each group can have an `rpc_api_key` configured via the admin dashboard. This ke
 - Keys are encrypted at rest in production (`RPC_API_KEY_ENCRYPTION_KEY` required)
 - API keys are masked in API responses (only last 4 characters visible)
 
+### Custom API Key Header
+
+By default the API key is sent as `Authorization: Bearer <key>`. Some upstream RPC providers expect the key under a different header name (commonly `X-API-Key`). Both the global default and per-group override are configurable:
+
+- Global default: `RPC_API_KEY_HEADER` (env var, default `Authorization`).
+- Per-group override: `rpc_api_key_header` on each group's access settings.
+
+Resolution order at request time: per-group value (if non-empty) → `RPC_API_KEY_HEADER` env var → `Authorization`.
+
+Behaviour:
+
+- When the resolved header is `Authorization` (case-insensitive), the proxy sends `Authorization: Bearer <key>` — preserving the historical format.
+- For any other header name, the proxy sends the API key verbatim, e.g. `X-API-Key: <key>` (no `Bearer` prefix).
+
+Header names are validated against `^[A-Za-z0-9-]+$` at save time to prevent header injection. Invalid values are rejected with `400 Bad Request`.
+
 See [Configuration](/docs/configuration) for setup.
 
 ---

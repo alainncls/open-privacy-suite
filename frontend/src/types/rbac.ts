@@ -183,6 +183,10 @@ export interface GroupAccess {
   allowed_methods: string[];
   claims: Claim[]; // Operational claims: deploy, upgrade, admin
   rpc_api_key?: string | null;
+  // Header name used to send the upstream RPC API key (e.g. "Authorization" or "X-API-Key").
+  // Empty / unset uses the global default. "Authorization" sends "Bearer <key>"; any
+  // other header sends the key verbatim.
+  rpc_api_key_header?: string | null;
   created_at: string;
   updated_at: string;
   // Computed fields (populated by backend for child groups)
@@ -297,6 +301,7 @@ export interface SetGroupAccessInput {
   allowed_methods?: string[];
   claims?: Claim[];
   rpc_api_key?: string | null;
+  rpc_api_key_header?: string | null;
 }
 
 export interface UpdateUserInput {

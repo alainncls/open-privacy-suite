@@ -14,6 +14,7 @@ import (
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
+	"privacy-proxy/internal/proxy"
 )
 
 // ExtraRPCNamespaces defines additional JSON-RPC method namespaces
@@ -180,6 +181,7 @@ type Config struct {
 
 	// RPC API key for upstream RPC proxy authentication
 	RPCAPIKey              string // RPC_API_KEY — global fallback when no group-specific key is set
+	RPCAPIKeyHeader        string // RPC_API_KEY_HEADER — header name used to send the RPC API key (default "Authorization", which sends "Bearer <key>"); any other value sends the raw key under that header
 	RPCAPIKeyEncryptionKey []byte // RPC_API_KEY_ENCRYPTION_KEY — 32-byte hex key for AES-256 encryption of RPC API keys at rest
 	MaxConcurrentRequests  int    // MAX_CONCURRENT_REQUESTS — per-user concurrency cap (default: 50)
 
@@ -361,6 +363,15 @@ func Load() *Config {
 		}
 	}
 
+	// RPC API key header name. Default "Authorization" preserves Bearer token
+	// behaviour. Any other value (e.g. "X-API-Key") is sent verbatim. We
+	// validate the format here so a misconfigured value cannot inject CRLF
+	// or arbitrary header content downstream.
+	rpcAPIKeyHeader := getEnv("RPC_API_KEY_HEADER", proxy.DefaultAPIKeyHeader)
+	if !proxy.ValidAPIKeyHeader(rpcAPIKeyHeader) {
+		panic(fmt.Sprintf("RPC_API_KEY_HEADER %q is invalid: must match ^[A-Za-z0-9-]+$", rpcAPIKeyHeader))
+	}
+
 	return &Config{
 		NodeURL:                  getEnv("NODE_URL", "http://localhost:8545"),
 		DatabaseURL:              getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/privacy_proxy?sslmode=disable"),
@@ -415,6 +426,7 @@ func Load() *Config {
 		TrustedInternalCIDRs:    getSliceEnv("TRUSTED_INTERNAL_CIDRS", ","),
 		FrontendURL:              getEnv("FRONTEND_URL", ""),
 		RPCAPIKey:                getEnv("RPC_API_KEY", ""),
+		RPCAPIKeyHeader:          rpcAPIKeyHeader,
 		RPCAPIKeyEncryptionKey:   rpcAPIKeyEncKey,
 		MaxConcurrentRequests:    maxConcurrentRequests,
 		AzureADClientID:          getEnv("AZURE_AD_CLIENT_ID", ""),

@@ -38,6 +38,7 @@ export default function GroupAccessForm({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [isAdminPreset, setIsAdminPreset] = useState(false);
   const [rpcApiKey, setRpcApiKey] = useState<string>('');
+  const [rpcApiKeyHeader, setRpcApiKeyHeader] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Track whether the last method change came from a preset click (skip auto-detect)
@@ -70,6 +71,7 @@ export default function GroupAccessForm({
         const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
         setAllowedMethods(methods);
         setRpcApiKey(access.rpc_api_key || '');
+        setRpcApiKeyHeader(access.rpc_api_key_header || '');
         // Admin detection: if all admin claims present, treat as admin preset
         if (access.claims?.includes('admin')) {
           const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin');
@@ -136,11 +138,19 @@ export default function GroupAccessForm({
     setError(null);
 
     try {
+      const headerName = rpcApiKeyHeader.trim();
+      if (headerName !== '' && !/^[A-Za-z0-9-]+$/.test(headerName)) {
+        setError('RPC API key header must contain only letters, digits, and hyphens.');
+        setSaving(false);
+        return;
+      }
+
       const claims = deriveClaims(allowedMethods, isAdminPreset);
       const input: SetGroupAccessInput = {
         allowed_methods: allowedMethods,
         claims: claims,
         rpc_api_key: rpcApiKey || null,
+        rpc_api_key_header: headerName === '' ? null : headerName,
       };
 
       await rbacApi.groups.setAccess(orgId, groupId, input);
@@ -366,7 +376,27 @@ export default function GroupAccessForm({
           placeholder="Optional — overrides global RPC_API_KEY for this group"
         />
         <p className="text-xs text-neutral-400">
-          Bearer token sent to the upstream RPC proxy. Leave empty to use the global default.
+          Sent to the upstream RPC proxy. Leave empty to use the global default.
+        </p>
+      </div>
+
+      {/* RPC API Key Header */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-neutral-700">
+          RPC API Key Header
+        </label>
+        <Input
+          type="text"
+          value={rpcApiKeyHeader}
+          onChange={e => setRpcApiKeyHeader(e.target.value)}
+          placeholder="Authorization"
+          pattern="[A-Za-z0-9-]+"
+          title="Letters, digits, and hyphens only"
+        />
+        <p className="text-xs text-neutral-400">
+          Header name used to send the API key. Default <code>Authorization</code> sends it
+          as <code>Bearer &lt;key&gt;</code>; any other value (e.g. <code>X-API-Key</code>)
+          sends the key verbatim under that header. Leave empty to use the global default.
         </p>
       </div>
 
