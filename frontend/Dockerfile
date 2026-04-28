@@ -22,7 +22,6 @@ WORKDIR /app
 # SECURITY: Never pass secrets here — everything becomes part of the JS bundle.
 ARG VITE_ALLOW_MOCK_LOGIN=false
 ARG VITE_BACKEND_URL=
-ARG VITE_FEATURE_GOVERNANCE_UI=false
 
 COPY package.json package-lock.json* ./
 RUN npm install --ignore-scripts && npm rebuild esbuild

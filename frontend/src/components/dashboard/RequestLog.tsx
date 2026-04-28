@@ -32,8 +32,8 @@ export function RequestLog() {
 
   const fetchLogs = useCallback(async () => {
     try {
-      const response = await logsApi.list(50);
-      setLogs(response.data);
+      const response = await logsApi.list({ limit: 50 });
+      setLogs(response.data?.data ?? []);
     } catch (error) {
       console.error('Failed to fetch logs:', error);
     } finally {

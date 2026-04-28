@@ -15,6 +15,16 @@ type RetentionConfig struct {
 	TravelRecords   time.Duration
 	CleanupInterval time.Duration
 
+	// MaxAccessLogRows, when > 0, caps the access_logs table at this row count.
+	// After the time-based prune runs, any excess rows (oldest first) are
+	// deleted in batches. The chain anchor is written before each batch so
+	// the hash chain stays verifiable across the cut. A value of 0 disables
+	// the row cap (time-based retention only).
+	MaxAccessLogRows int64
+	// AccessLogTrimBatchSize is the maximum number of rows deleted per FIFO
+	// trim transaction. A zero value uses defaultAccessLogTrimBatchSize.
+	AccessLogTrimBatchSize int
+
 	// PreregistrationTTL is the age above which orphaned preregistered_addresses
 	// rows (pre-reg rows with no matching contracts row) are deleted. A zero
 	// value means "use the default" (see defaultPreregistrationTTL).
@@ -31,6 +41,16 @@ const (
 	defaultPreregistrationTTL = 1 * time.Hour
 	// defaultPreregistrationCleanup is the default interval between orphan sweeps.
 	defaultPreregistrationCleanup = 5 * time.Minute
+
+	// defaultAccessLogTrimBatchSize bounds the number of rows the FIFO sweeper
+	// deletes per transaction. Small enough to keep the lock window short on
+	// heavy traffic; large enough that drains converge quickly.
+	defaultAccessLogTrimBatchSize = 1000
+	// maxAccessLogTrimIterations bounds how many batches the sweeper drains in
+	// a single cleanup() invocation, as defence in depth against a runaway
+	// loop (e.g. concurrent inserts outpacing deletions). One cleanup tick can
+	// at most delete maxAccessLogTrimIterations * batchSize rows.
+	maxAccessLogTrimIterations = 50
 )
 
 // RetentionStore defines the database operations needed for retention cleanup.
@@ -44,6 +64,22 @@ type RetentionStore interface {
 	// DeleteOrphanedPreregisteredAddresses deletes preregistered_addresses rows older
 	// than olderThan that have no matching contracts row (abandoned / crash-leftover).
 	DeleteOrphanedPreregisteredAddresses(ctx context.Context, olderThan time.Duration) (int64, error)
+
+	// CountAccessLogsTotal returns the current number of rows in access_logs.
+	// Used by the FIFO sweeper to decide whether trimming is needed.
+	CountAccessLogsTotal(ctx context.Context) (int64, error)
+	// TrimAccessLogsFIFOBatch deletes the oldest rows so that at most maxRows
+	// remain. Each call deletes up to batchSize rows. Returns the number of
+	// rows actually deleted in this call. Implementations MUST update the
+	// access_logs hash chain anchor in the same transaction so the chain stays
+	// verifiable across pruning cuts.
+	TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (int64, error)
+
+	// LogAuditAction records an audit-of-the-audit row in rbac_audit_log so
+	// retention prunes themselves are auditable. action is a stable string
+	// identifier (e.g. "audit.access_logs.prune"); details is JSON-encodable
+	// metadata. actorID may be nil when no system actor is configured.
+	LogAuditAction(ctx context.Context, action string, details map[string]any) error
 }
 
 // RetentionManager runs periodic retention cleanup on audit tables.
@@ -157,6 +193,14 @@ func (r *RetentionManager) cleanup() {
 		}
 		if deleted > 0 {
 			slog.Info("retention: deleted rows", "table", tc.name, "count", deleted)
+			if tc.name == "access_logs" {
+				_ = r.store.LogAuditAction(ctx, "audit.access_logs.prune", map[string]any{
+					"reason":        "ttl",
+					"deleted_count": deleted,
+					"retention":     tc.duration.String(),
+					"cutoff":        cutoff.UTC().Format(time.RFC3339Nano),
+				})
+			}
 		}
 	}
 
@@ -166,6 +210,63 @@ func (r *RetentionManager) cleanup() {
 		slog.Error("retention: error cleaning expired records", "error", err)
 	} else if expired > 0 {
 		slog.Info("retention: deleted expired records", "count", expired)
+	}
+
+	// FIFO row cap on access_logs. Runs after the time-based prune so the
+	// time prune handles the bulk and the FIFO step only kicks in when row
+	// counts grow beyond MaxAccessLogRows during a single retention window.
+	r.trimAccessLogsFIFO(ctx)
+}
+
+// trimAccessLogsFIFO drains rows from access_logs in batches until the row
+// count is at or below MaxAccessLogRows. The store implementation is
+// responsible for writing the chain anchor inside each batch's transaction.
+func (r *RetentionManager) trimAccessLogsFIFO(ctx context.Context) {
+	if r.cfg.MaxAccessLogRows <= 0 {
+		return
+	}
+	batchSize := r.cfg.AccessLogTrimBatchSize
+	if batchSize <= 0 {
+		batchSize = defaultAccessLogTrimBatchSize
+	}
+
+	total, err := r.store.CountAccessLogsTotal(ctx)
+	if err != nil {
+		slog.Error("retention: failed to count access_logs for FIFO trim", "error", err)
+		return
+	}
+	if total <= r.cfg.MaxAccessLogRows {
+		return
+	}
+
+	slog.Info("retention: FIFO trim starting",
+		"table", "access_logs",
+		"current_rows", total,
+		"max_rows", r.cfg.MaxAccessLogRows,
+		"batch_size", batchSize)
+
+	var totalDeleted int64
+	for i := 0; i < maxAccessLogTrimIterations; i++ {
+		deleted, err := r.store.TrimAccessLogsFIFOBatch(ctx, r.cfg.MaxAccessLogRows, batchSize)
+		if err != nil {
+			slog.Error("retention: error trimming access_logs FIFO batch", "error", err, "deleted_so_far", totalDeleted)
+			return
+		}
+		if deleted == 0 {
+			break
+		}
+		totalDeleted += deleted
+	}
+	if totalDeleted > 0 {
+		slog.Info("retention: FIFO trim deleted rows",
+			"table", "access_logs",
+			"deleted", totalDeleted,
+			"max_rows", r.cfg.MaxAccessLogRows)
+		_ = r.store.LogAuditAction(ctx, "audit.access_logs.prune", map[string]any{
+			"reason":        "fifo",
+			"deleted_count": totalDeleted,
+			"max_rows":      r.cfg.MaxAccessLogRows,
+		})
 	}
 }
 
