@@ -174,6 +174,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 	var finalRateLimitRPS *int
 	var finalRateLimitDaily *int
 	var finalRPCAPIKey string
+	var finalRPCAPIKeyHeader string
 	firstMembership := true
 
 	for _, m := range memberships {
@@ -191,6 +192,7 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			finalRateLimitRPS = membershipPerms.RateLimitRPS
 			finalRateLimitDaily = membershipPerms.RateLimitDaily
 			finalRPCAPIKey = membershipPerms.RPCAPIKey
+			finalRPCAPIKeyHeader = membershipPerms.RPCAPIKeyHeader
 			firstMembership = false
 		} else {
 			// Subsequent memberships - UNION the permissions (user benefits from all groups)
@@ -202,25 +204,28 @@ func (r *Resolver) computePermissions(ctx context.Context, userID, orgID string)
 			finalRateLimitRPS = maxIntPtr(finalRateLimitRPS, membershipPerms.RateLimitRPS)
 			finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
 
-			// RPC API key: use first non-empty key found across memberships
+			// RPC API key: use first non-empty key found across memberships.
+			// Header travels with the key so the pair stays consistent.
 			if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
 				finalRPCAPIKey = membershipPerms.RPCAPIKey
+				finalRPCAPIKeyHeader = membershipPerms.RPCAPIKeyHeader
 			}
 		}
 	}
 
 	return &EffectivePermissions{
-		ID:             uuid.New().String(),
-		UserID:         userID,
-		OrgID:          orgID,
-		AllowedMethods: finalMethods,
-		ContractAccess: finalContractAccess,
-		Claims:         ExpandClaims(finalClaims), // expand so admin→deploy etc. are included
-		RateLimitRPS:   finalRateLimitRPS,
-		RateLimitDaily: finalRateLimitDaily,
-		RPCAPIKey:      finalRPCAPIKey,
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(r.cacheTTL),
+		ID:              uuid.New().String(),
+		UserID:          userID,
+		OrgID:           orgID,
+		AllowedMethods:  finalMethods,
+		ContractAccess:  finalContractAccess,
+		Claims:          ExpandClaims(finalClaims), // expand so admin→deploy etc. are included
+		RateLimitRPS:    finalRateLimitRPS,
+		RateLimitDaily:  finalRateLimitDaily,
+		RPCAPIKey:       finalRPCAPIKey,
+		RPCAPIKeyHeader: finalRPCAPIKeyHeader,
+		ComputedAt:      time.Now(),
+		ExpiresAt:       time.Now().Add(r.cacheTTL),
 	}, nil
 }
 
@@ -248,6 +253,7 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 	var finalRateLimitDaily *int
 	var finalMethods []string
 	var finalRPCAPIKey string
+	var finalRPCAPIKeyHeader string
 
 	for _, m := range memberships {
 		// Get the group's own permissions directly (flat — no hierarchy walk)
@@ -261,21 +267,23 @@ func (r *Resolver) computeOrgAdminPermissions(ctx context.Context, userID, orgID
 		finalRateLimitDaily = maxIntPtr(finalRateLimitDaily, membershipPerms.RateLimitDaily)
 		if finalRPCAPIKey == "" && membershipPerms.RPCAPIKey != "" {
 			finalRPCAPIKey = membershipPerms.RPCAPIKey
+			finalRPCAPIKeyHeader = membershipPerms.RPCAPIKeyHeader
 		}
 	}
 
 	return &EffectivePermissions{
-		ID:             uuid.New().String(),
-		UserID:         userID,
-		OrgID:          orgID,
-		AllowedMethods: finalMethods,
-		ContractAccess: contractAccess,
-		Claims:  allClaims, // Org admins get all default claims too
-		RateLimitRPS:   finalRateLimitRPS,
-		RateLimitDaily: finalRateLimitDaily,
-		RPCAPIKey:      finalRPCAPIKey,
-		ComputedAt:     time.Now(),
-		ExpiresAt:      time.Now().Add(r.cacheTTL),
+		ID:              uuid.New().String(),
+		UserID:          userID,
+		OrgID:           orgID,
+		AllowedMethods:  finalMethods,
+		ContractAccess:  contractAccess,
+		Claims:          allClaims, // Org admins get all default claims too
+		RateLimitRPS:    finalRateLimitRPS,
+		RateLimitDaily:  finalRateLimitDaily,
+		RPCAPIKey:       finalRPCAPIKey,
+		RPCAPIKeyHeader: finalRPCAPIKeyHeader,
+		ComputedAt:      time.Now(),
+		ExpiresAt:       time.Now().Add(r.cacheTTL),
 	}, nil
 }
 
@@ -313,6 +321,10 @@ func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) 
 				result.RPCAPIKey = decrypted
 			}
 		}
+
+		// Header travels with the key; only meaningful when key is set.
+		// Empty value means "use the global default".
+		result.RPCAPIKeyHeader = access.RPCAPIKeyHeader
 	}
 
 	// Get contract grants for this group
@@ -352,12 +364,13 @@ func (r *Resolver) computeGroupPermissions(ctx context.Context, groupID string) 
 
 // hierarchyPerms holds permissions computed through a group hierarchy.
 type hierarchyPerms struct {
-	AllowedMethods []string
-	ContractAccess map[string]ContractAccess // address -> access
-	Claims  []Claim
-	RateLimitRPS   *int
-	RateLimitDaily *int
-	RPCAPIKey      string // First non-empty key found in hierarchy (deepest group wins)
+	AllowedMethods  []string
+	ContractAccess  map[string]ContractAccess // address -> access
+	Claims          []Claim
+	RateLimitRPS    *int
+	RateLimitDaily  *int
+	RPCAPIKey       string // First non-empty key found in hierarchy (deepest group wins)
+	RPCAPIKeyHeader string // Header name accompanying RPCAPIKey (empty = use config default)
 }
 
 // computeHierarchyPermissions computes permissions by traversing the group hierarchy
@@ -427,6 +440,8 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 
 			// RPC API key: deepest group in hierarchy wins (last non-empty value).
 			// Decrypt stored value (no-op if encryption is disabled or value is plaintext).
+			// Header name travels with the key — both update together so a child
+			// can swap "Authorization" for "X-API-Key" without leaking either side.
 			if access.RPCAPIKey != nil && *access.RPCAPIKey != "" {
 				decrypted, err := crypto.Decrypt(*access.RPCAPIKey, r.encryptionKey)
 				if err != nil {
@@ -435,6 +450,7 @@ func (r *Resolver) computeHierarchyPermissions(ctx context.Context, hierarchy []
 				} else {
 					result.RPCAPIKey = decrypted
 				}
+				result.RPCAPIKeyHeader = access.RPCAPIKeyHeader
 			}
 		}
 

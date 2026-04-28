@@ -272,11 +272,12 @@ type GroupAccess struct {
 	GroupID        string    `json:"group_id"`
 	AllowedMethods []string  `json:"allowed_methods"`
 	Claims         []Claim   `json:"claims"` // Operational claims: deploy, upgrade, admin
-	RateLimitRPS   *int      `json:"rate_limit_rps,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
-	RateLimitDaily *int      `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey      *string   `json:"rpc_api_key,omitempty"`      // API key for upstream RPC proxy authentication
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	RateLimitRPS     *int      `json:"rate_limit_rps,omitempty"`     // Deprecated: rate limiting moved to RPC proxy
+	RateLimitDaily   *int      `json:"rate_limit_daily,omitempty"`   // Deprecated: rate limiting moved to RPC proxy
+	RPCAPIKey        *string   `json:"rpc_api_key,omitempty"`        // API key for upstream RPC proxy authentication
+	RPCAPIKeyHeader  string    `json:"rpc_api_key_header,omitempty"` // Header name for the upstream RPC API key (default "Authorization")
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 
 	// Computed fields (not stored in DB, populated by handlers for child groups)
 	EffectiveClaims  []Claim `json:"effective_claims,omitempty"`
@@ -326,11 +327,12 @@ type EffectivePermissions struct {
 	AllowedMethods []string                  `json:"allowed_methods"`
 	ContractAccess map[string]ContractAccess `json:"contract_access"` // address -> access
 	Claims         []Claim                   `json:"claims"`          // User's capabilities from groups
-	RateLimitRPS   *int                      `json:"rate_limit_rps,omitempty"`
-	RateLimitDaily *int                      `json:"rate_limit_daily,omitempty"`
-	RPCAPIKey      string                    `json:"-"` // Per-group upstream RPC API key (excluded from JSON — sensitive)
-	ComputedAt     time.Time                 `json:"computed_at"`
-	ExpiresAt      time.Time                 `json:"expires_at"`
+	RateLimitRPS    *int                      `json:"rate_limit_rps,omitempty"`
+	RateLimitDaily  *int                      `json:"rate_limit_daily,omitempty"`
+	RPCAPIKey       string                    `json:"-"` // Per-group upstream RPC API key (excluded from JSON — sensitive)
+	RPCAPIKeyHeader string                    `json:"-"` // Per-group header name for RPC API key (empty = use config default)
+	ComputedAt      time.Time                 `json:"computed_at"`
+	ExpiresAt       time.Time                 `json:"expires_at"`
 }
 
 // AuditLogEntry represents an entry in the RBAC audit log.
@@ -382,6 +384,7 @@ type AccessCheckResult struct {
 	RateLimitRPS      *int               `json:"rate_limit_rps,omitempty"`      // Deprecated: rate limiting moved to RPC proxy
 	RateLimitDaily    *int               `json:"rate_limit_daily,omitempty"`    // Deprecated: rate limiting moved to RPC proxy
 	RPCAPIKey         string             `json:"-"`                             // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	RPCAPIKeyHeader   string             `json:"-"`                             // Header name for upstream RPC API key (empty = use config default)
 	Claims            []Claim            `json:"claims,omitempty"`
 	DeploymentInfo *DeploymentInfo `json:"deployment_info,omitempty"` // Set for allowed deployments
 }

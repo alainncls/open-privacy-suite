@@ -46,9 +46,10 @@ type JSONRPCProcessor struct {
 	txVisibilityStore rbac.TxVisibilityProvider
 
 	// Circuit breaker + concurrency limiter (replaces rate limiter for authenticated users)
-	circuitBreaker     *CircuitBreaker
-	concurrencyLimiter *ConcurrencyLimiter
-	defaultRPCAPIKey   string
+	circuitBreaker        *CircuitBreaker
+	concurrencyLimiter    *ConcurrencyLimiter
+	defaultRPCAPIKey      string
+	defaultRPCAPIKeyHeader string // global fallback header name; empty => proxy.DefaultAPIKeyHeader
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
@@ -136,6 +137,32 @@ func (p *JSONRPCProcessor) SetEnhancedAudit(logger EnhancedAccessLogger, hashCha
 // SetMetrics configures Prometheus metrics for the processor.
 func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
 	p.metrics = m
+}
+
+// SetDefaultRPCAPIKeyHeader sets the global fallback header name used when a
+// group does not specify its own. Empty input means "use Authorization /
+// Bearer", matching the historical behaviour.
+func (p *JSONRPCProcessor) SetDefaultRPCAPIKeyHeader(name string) {
+	p.defaultRPCAPIKeyHeader = name
+}
+
+// resolveAPIKeyHeader picks the header name used to forward the upstream RPC
+// API key for a given group. Order: per-group value (when non-empty AND
+// passes ValidAPIKeyHeader) → global default from config → "Authorization".
+// The per-group value is trimmed and revalidated so a stored value containing
+// stray whitespace or characters that would produce a malformed header line
+// (e.g. CRLF) falls through to the safer default rather than being emitted
+// verbatim. The save path also rejects bad values, but defence-in-depth here
+// keeps a misconfigured row from poisoning every forwarded request.
+func (p *JSONRPCProcessor) resolveAPIKeyHeader(groupHeader string) string {
+	groupHeader = strings.TrimSpace(groupHeader)
+	if groupHeader != "" && proxy.ValidAPIKeyHeader(groupHeader) {
+		return groupHeader
+	}
+	if p.defaultRPCAPIKeyHeader != "" {
+		return p.defaultRPCAPIKeyHeader
+	}
+	return proxy.DefaultAPIKeyHeader
 }
 
 // SetTxVisibilityStore configures the per-tx visibility provider for
@@ -402,6 +429,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	if apiKey == "" {
 		apiKey = p.defaultRPCAPIKey
 	}
+	apiKeyHeader := p.resolveAPIKeyHeader(result.RPCAPIKeyHeader)
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
@@ -468,7 +496,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Forward to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(forwardBody, apiKey, req.ClientIP)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(forwardBody, apiKeyHeader, apiKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -1090,6 +1118,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if apiKey == "" {
 		apiKey = p.defaultRPCAPIKey
 	}
+	apiKeyHeader := p.resolveAPIKeyHeader(result.RPCAPIKeyHeader)
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
@@ -1128,7 +1157,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 
 	// Forward the original raw transaction to node
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, apiKey, req.ClientIP)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(req.Body, apiKeyHeader, apiKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}
@@ -1339,6 +1368,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// 5. Validated & Safe! Forward the exact request to the upstream node to fetch the raw requested trace format
 	// (Since we used internal tracers like callTracer, but they might want struct logs or memory dumps)
 	traceAPIKey := p.defaultRPCAPIKey
+	traceAPIKeyHeader := p.resolveAPIKeyHeader("")
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(traceAPIKey) {
 		if p.metrics != nil {
 			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(traceAPIKey)).Inc()
@@ -1347,7 +1377,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 		return &ProcessResult{Error: &ProcessError{StatusCode: http.StatusTooManyRequests, Message: "upstream rate limited, retry in 1s"}}
 	}
 	forwardStart := time.Now()
-	responseBody, statusCode, err := p.proxy.ForwardWithAPIKey(req.Body, traceAPIKey, req.ClientIP)
+	responseBody, statusCode, err := p.proxy.ForwardWithAPIKeyHeader(req.Body, traceAPIKeyHeader, traceAPIKey, req.ClientIP)
 	if p.metrics != nil {
 		p.metrics.RPCNodeForwardDuration.WithLabelValues(metrics.NormalizeRPCMethod(req.Method)).Observe(time.Since(forwardStart).Seconds())
 	}

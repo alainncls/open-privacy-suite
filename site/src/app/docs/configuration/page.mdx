@@ -157,11 +157,12 @@ Each RBAC group can have an API key for the upstream RPC node. This enables per-
 
 <EnvTable vars={[
   { name: "RPC_API_KEY", default: "(none)", description: "Global fallback API key for the upstream RPC node. Used when no group-specific key is configured." },
+  { name: "RPC_API_KEY_HEADER", default: "Authorization", description: "Header name used to send the upstream RPC API key. Default 'Authorization' sends 'Bearer <key>'; any other value (e.g. 'X-API-Key') sends the key verbatim under that header. Validated against ^[A-Za-z0-9-]+$ at startup." },
   { name: "RPC_API_KEY_ENCRYPTION_KEY", default: "(none)", description: "Hex-encoded 32-byte key for encrypting API keys at rest. Required in production. Generate with: openssl rand -hex 32" },
   { name: "MAX_CONCURRENT_REQUESTS", default: "50", description: "Maximum concurrent in-flight requests per authenticated user." },
 ]} />
 
-Per-group keys are configured in the admin dashboard under group access settings. Keys are encrypted at rest in production and masked in API responses (only last 4 characters visible).
+Per-group keys are configured in the admin dashboard under group access settings. Keys are encrypted at rest in production and masked in API responses (only last 4 characters visible). Each group can also override `rpc_api_key_header` to switch between `Authorization` and any single-header alternative such as `X-API-Key`.
 
 The client's IP is forwarded to the upstream node via `X-Forwarded-For` for upstream rate limiting.
 

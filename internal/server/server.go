@@ -402,6 +402,7 @@ explorerStore:    explorerBackend,
 	}
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)
+	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {

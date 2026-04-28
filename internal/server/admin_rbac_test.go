@@ -595,6 +595,76 @@ func TestGroupAccessValidation(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+
+	t.Run("AcceptsValidRPCAPIKeyHeader", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods":      []string{"eth_call"},
+			"claims":               []string{},
+			"rpc_api_key":          "sk-test",
+			"rpc_api_key_header":   "X-API-Key",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("RejectsRPCAPIKeyHeaderWithCRLF", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods":    []string{"eth_call"},
+			"claims":             []string{},
+			"rpc_api_key_header": "X-API-Key\r\nInjected: yes",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var response map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		assert.Contains(t, response["error"], "rpc_api_key_header")
+	})
+
+	t.Run("RejectsRPCAPIKeyHeaderWithSpace", func(t *testing.T) {
+		body := map[string]any{
+			"allowed_methods":    []string{"eth_call"},
+			"claims":             []string{},
+			"rpc_api_key_header": "X API Key",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("AcceptsEmptyRPCAPIKeyHeaderForFallback", func(t *testing.T) {
+		// Empty string means "use the global default" — must be accepted.
+		body := map[string]any{
+			"allowed_methods":    []string{"eth_call"},
+			"claims":             []string{},
+			"rpc_api_key_header": "",
+		}
+		jsonBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/orgs/%s/groups/%s/access", org.ID, group.ID), bytes.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		server.router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 func TestWildcardMethodExpansion(t *testing.T) {
