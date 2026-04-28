@@ -43,10 +43,34 @@ func TestResolveAPIKeyHeader(t *testing.T) {
 			want:             proxy.DefaultAPIKeyHeader,
 		},
 		{
-			name:             "whitespace-only group header is treated as set (helper does not trim)",
+			name:             "whitespace-only group header falls through to processor default",
 			processorDefault: "Custom-H",
 			groupHeader:      "   ",
-			want:             "   ",
+			want:             "Custom-H",
+		},
+		{
+			name:             "whitespace-only group header with empty processor default falls through to DefaultAPIKeyHeader",
+			processorDefault: "",
+			groupHeader:      "\t  \n",
+			want:             proxy.DefaultAPIKeyHeader,
+		},
+		{
+			name:             "group header with leading/trailing whitespace is trimmed and used",
+			processorDefault: "Custom-H",
+			groupHeader:      "  X-API-Key  ",
+			want:             "X-API-Key",
+		},
+		{
+			name:             "group header containing CRLF is rejected and falls through",
+			processorDefault: "Custom-H",
+			groupHeader:      "X-API-Key\r\nX-Injected: bad",
+			want:             "Custom-H",
+		},
+		{
+			name:             "group header containing space is rejected and falls through",
+			processorDefault: "Custom-H",
+			groupHeader:      "X API Key",
+			want:             "Custom-H",
 		},
 	}
 

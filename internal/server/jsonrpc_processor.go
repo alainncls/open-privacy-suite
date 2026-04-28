@@ -147,11 +147,16 @@ func (p *JSONRPCProcessor) SetDefaultRPCAPIKeyHeader(name string) {
 }
 
 // resolveAPIKeyHeader picks the header name used to forward the upstream RPC
-// API key for a given group. Order: per-group value (when non-empty) →
-// global default from config → "Authorization". Returns the resolved name
-// unchanged for callers that want to log or observe it.
+// API key for a given group. Order: per-group value (when non-empty AND
+// passes ValidAPIKeyHeader) → global default from config → "Authorization".
+// The per-group value is trimmed and revalidated so a stored value containing
+// stray whitespace or characters that would produce a malformed header line
+// (e.g. CRLF) falls through to the safer default rather than being emitted
+// verbatim. The save path also rejects bad values, but defence-in-depth here
+// keeps a misconfigured row from poisoning every forwarded request.
 func (p *JSONRPCProcessor) resolveAPIKeyHeader(groupHeader string) string {
-	if groupHeader != "" {
+	groupHeader = strings.TrimSpace(groupHeader)
+	if groupHeader != "" && proxy.ValidAPIKeyHeader(groupHeader) {
 		return groupHeader
 	}
 	if p.defaultRPCAPIKeyHeader != "" {
