@@ -48,7 +48,7 @@ func TestLogAccess(t *testing.T) {
 		t.Fatalf("failed to log access: %v", err)
 	}
 
-	logs, err := database.GetAccessLogs(context.Background(), 10)
+	logs, err := database.GetAccessLogs(context.Background(), AccessLogFilter{Limit: 10})
 	if err != nil {
 		t.Fatalf("failed to get logs: %v", err)
 	}

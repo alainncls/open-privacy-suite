@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,19 @@ type mockRetentionStore struct {
 	expiredCalls    atomic.Int64
 	preregCalls     atomic.Int64
 	lastPreregTTL   atomic.Int64 // nanoseconds
+
+	// FIFO trim state. countTotal is what the mock returns from
+	// CountAccessLogsTotal; trimBatch is the most recently requested
+	// (maxRows, batchSize). trimReturns drives the per-call deletion count;
+	// each entry is consumed in order and the last value is replayed once
+	// exhausted (so a single-element slice means "always return that").
+	countTotal       atomic.Int64
+	trimMaxRows      atomic.Int64
+	trimBatchSize    atomic.Int64
+	trimCallCount    atomic.Int64
+	trimReturnsMu    sync.Mutex
+	trimReturns      []int64
+	trimReturnsIdx   int
 }
 
 func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (int64, error) {
@@ -47,6 +61,41 @@ func (m *mockRetentionStore) DeleteOrphanedPreregisteredAddresses(_ context.Cont
 	m.preregCalls.Add(1)
 	m.lastPreregTTL.Store(int64(olderThan))
 	return 0, nil
+}
+
+func (m *mockRetentionStore) CountAccessLogsTotal(_ context.Context) (int64, error) {
+	return m.countTotal.Load(), nil
+}
+
+func (m *mockRetentionStore) LogAuditAction(_ context.Context, _ string, _ map[string]any) error {
+	return nil
+}
+
+func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows int64, batchSize int) (int64, error) {
+	m.trimMaxRows.Store(maxRows)
+	m.trimBatchSize.Store(int64(batchSize))
+	m.trimCallCount.Add(1)
+
+	m.trimReturnsMu.Lock()
+	defer m.trimReturnsMu.Unlock()
+	if len(m.trimReturns) == 0 {
+		return 0, nil
+	}
+	idx := m.trimReturnsIdx
+	if idx >= len(m.trimReturns) {
+		idx = len(m.trimReturns) - 1
+	} else {
+		m.trimReturnsIdx++
+	}
+	deleted := m.trimReturns[idx]
+	// Adjust the simulated row count so the loop terminates.
+	cur := m.countTotal.Load()
+	cur -= deleted
+	if cur < 0 {
+		cur = 0
+	}
+	m.countTotal.Store(cur)
+	return deleted, nil
 }
 
 func TestRetention_DisabledWithZeroInterval(t *testing.T) {
@@ -151,6 +200,56 @@ func TestRetention_PreregistrationDefaults(t *testing.T) {
 	}
 	if mgr.cfg.PreregistrationCleanupInterval != defaultPreregistrationCleanup {
 		t.Fatalf("expected default pre-reg interval %s, got %s", defaultPreregistrationCleanup, mgr.cfg.PreregistrationCleanupInterval)
+	}
+}
+
+func TestRetention_FIFOTrimSkippedWhenUnderCap(t *testing.T) {
+	store := &mockRetentionStore{}
+	store.countTotal.Store(50)
+	mgr := NewRetentionManager(RetentionConfig{
+		MaxAccessLogRows: 100,
+		CleanupInterval:  0,
+	}, store)
+	mgr.trimAccessLogsFIFO(context.Background())
+	if store.trimCallCount.Load() != 0 {
+		t.Fatalf("expected no FIFO trim when under cap, got %d calls", store.trimCallCount.Load())
+	}
+}
+
+func TestRetention_FIFOTrimDrainsInBatches(t *testing.T) {
+	store := &mockRetentionStore{}
+	store.countTotal.Store(10_500) // 500 over cap
+	store.trimReturns = []int64{1000, 1000, 1000, 1000, 1000, 0}
+	mgr := NewRetentionManager(RetentionConfig{
+		MaxAccessLogRows:       10_000,
+		AccessLogTrimBatchSize: 1000,
+		CleanupInterval:        0,
+	}, store)
+	mgr.trimAccessLogsFIFO(context.Background())
+	// The store reduces countTotal as TrimAccessLogsFIFOBatch is called; loop
+	// should stop as soon as the cap is met (or the store returns 0).
+	calls := store.trimCallCount.Load()
+	if calls < 1 {
+		t.Fatalf("expected at least one trim call, got %d", calls)
+	}
+	if store.trimMaxRows.Load() != 10_000 {
+		t.Fatalf("expected maxRows=10000 propagated, got %d", store.trimMaxRows.Load())
+	}
+	if store.trimBatchSize.Load() != 1000 {
+		t.Fatalf("expected batchSize=1000 propagated, got %d", store.trimBatchSize.Load())
+	}
+}
+
+func TestRetention_FIFOTrimDisabledWithZeroMax(t *testing.T) {
+	store := &mockRetentionStore{}
+	store.countTotal.Store(1_000_000)
+	mgr := NewRetentionManager(RetentionConfig{
+		MaxAccessLogRows: 0,
+		CleanupInterval:  0,
+	}, store)
+	mgr.trimAccessLogsFIFO(context.Background())
+	if store.trimCallCount.Load() != 0 {
+		t.Fatalf("expected no FIFO trim when MaxAccessLogRows=0, got %d", store.trimCallCount.Load())
 	}
 }
 

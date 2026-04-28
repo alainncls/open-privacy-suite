@@ -26,6 +26,7 @@ import (
 	"privacy-proxy/internal/rbac"
 	privacyredis "privacy-proxy/internal/redis"
 	"privacy-proxy/internal/tracer"
+	"strconv"
 	"strings"
 	"time"
 
@@ -450,14 +451,21 @@ explorerStore:    explorerBackend,
 
 	// Initialize retention cleaner
 	retentionCleaner := audit.NewRetentionCleaner(audit.RetentionConfig{
-		AccessLogs:      cfg.RetentionAccessLogs,
-		ComplianceLogs:  cfg.RetentionComplianceLogs,
-		RBACAuditLogs:   cfg.RetentionRBACAuditLogs,
-		TravelRecords:   cfg.RetentionTravelRecords,
-		CleanupInterval: cfg.RetentionCleanupInterval,
+		AccessLogs:       cfg.RetentionAccessLogs,
+		ComplianceLogs:   cfg.RetentionComplianceLogs,
+		RBACAuditLogs:    cfg.RetentionRBACAuditLogs,
+		TravelRecords:    cfg.RetentionTravelRecords,
+		CleanupInterval:  cfg.RetentionCleanupInterval,
+		MaxAccessLogRows: cfg.MaxAccessLogRows,
 	}, database, cfg.EnableTravelRule)
 	s.retentionCleaner = retentionCleaner
-	slog.Info("retention cleaner started", "access", cfg.RetentionAccessLogs, "compliance", cfg.RetentionComplianceLogs, "rbac", cfg.RetentionRBACAuditLogs, "travel", cfg.RetentionTravelRecords, "interval", cfg.RetentionCleanupInterval)
+	slog.Info("retention cleaner started",
+		"access", cfg.RetentionAccessLogs,
+		"compliance", cfg.RetentionComplianceLogs,
+		"rbac", cfg.RetentionRBACAuditLogs,
+		"travel", cfg.RetentionTravelRecords,
+		"interval", cfg.RetentionCleanupInterval,
+		"max_access_log_rows", cfg.MaxAccessLogRows)
 
 	// Security: warn loudly if admin API has no token configured.
 	// Without a token, admin endpoints are open to the entire private network.
@@ -731,20 +739,74 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 }
 
 func (s *Server) getLogs(c *gin.Context) {
-	limit := 100 // default
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
-			limit = 100
+	filter := db.AccessLogFilter{
+		ExternalID:    strings.TrimSpace(c.Query("external_id")),
+		Method:        strings.TrimSpace(c.Query("method")),
+		CorrelationID: strings.TrimSpace(c.Query("correlation_id")),
+	}
+
+	if statusStr := strings.TrimSpace(c.Query("status_code")); statusStr != "" {
+		if n, err := strconv.Atoi(statusStr); err == nil && n > 0 {
+			filter.StatusCode = n
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status_code"})
+			return
 		}
 	}
 
-	logs, err := s.db.GetAccessLogs(c.Request.Context(), limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if fromStr := strings.TrimSpace(c.Query("from")); fromStr != "" {
+		t, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from timestamp; expected RFC3339"})
+			return
+		}
+		filter.From = t
+	}
+	if toStr := strings.TrimSpace(c.Query("to")); toStr != "" {
+		t, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to timestamp; expected RFC3339"})
+			return
+		}
+		filter.To = t
 	}
 
-	c.JSON(http.StatusOK, logs)
+	limit := 100
+	if limitStr := strings.TrimSpace(c.Query("limit")); limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > db.MaxAccessLogQueryLimit {
+		limit = db.MaxAccessLogQueryLimit
+	}
+	filter.Limit = limit
+
+	if offsetStr := strings.TrimSpace(c.Query("offset")); offsetStr != "" {
+		if n, err := strconv.Atoi(offsetStr); err == nil && n >= 0 {
+			filter.Offset = n
+		}
+	}
+
+	ctx := c.Request.Context()
+	logs, err := s.db.GetAccessLogs(ctx, filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read access logs"})
+		return
+	}
+	total, err := s.db.CountAccessLogs(ctx, filter)
+	if err != nil {
+		// Don't fail the whole request if the count fails; return -1 as a
+		// sentinel so the UI can fall back to "load more".
+		total = -1
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":   logs,
+		"total":  total,
+		"limit":  filter.Limit,
+		"offset": filter.Offset,
+	})
 }
 
 // corsMiddleware returns a CORS middleware configured from server settings.
