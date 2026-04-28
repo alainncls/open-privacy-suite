@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"privacy-proxy/internal/db"
 )
 
 // RetentionConfig holds per-table retention durations and the cleanup interval.
@@ -55,7 +57,10 @@ const (
 
 // RetentionStore defines the database operations needed for retention cleanup.
 type RetentionStore interface {
-	CleanupAccessLogs(ctx context.Context, olderThan time.Time) (int64, error)
+	// CleanupAccessLogs returns a PruneResult so the retention manager can
+	// surface deleted-range metadata + the new chain anchor hash in the
+	// audit-of-the-audit row.
+	CleanupAccessLogs(ctx context.Context, olderThan time.Time) (db.PruneResult, error)
 	CleanupComplianceLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupRBACAuditLogs(ctx context.Context, olderThan time.Time) (int64, error)
 	CleanupUsedTravelRecords(ctx context.Context, olderThan time.Time) (int64, error)
@@ -69,11 +74,11 @@ type RetentionStore interface {
 	// Used by the FIFO sweeper to decide whether trimming is needed.
 	CountAccessLogsTotal(ctx context.Context) (int64, error)
 	// TrimAccessLogsFIFOBatch deletes the oldest rows so that at most maxRows
-	// remain. Each call deletes up to batchSize rows. Returns the number of
-	// rows actually deleted in this call. Implementations MUST update the
-	// access_logs hash chain anchor in the same transaction so the chain stays
-	// verifiable across pruning cuts.
-	TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (int64, error)
+	// remain. Each call deletes up to batchSize rows. Returns a PruneResult
+	// describing the deleted range and the new chain anchor for this batch.
+	// Implementations MUST update the access_logs hash chain anchor in the
+	// same transaction so the chain stays verifiable across pruning cuts.
+	TrimAccessLogsFIFOBatch(ctx context.Context, maxRows int64, batchSize int) (db.PruneResult, error)
 
 	// LogAuditAction records an audit-of-the-audit row in rbac_audit_log so
 	// retention prunes themselves are auditable. action is a stable string
@@ -163,6 +168,29 @@ func (r *RetentionManager) cleanup() {
 	ctx := context.Background()
 	now := time.Now()
 
+	// access_logs gets its own branch because it is the only retention path
+	// that owns a hash chain anchor and emits an audit-of-the-audit row. The
+	// other tables share a uniform int64-returning signature.
+	if r.cfg.AccessLogs > 0 {
+		cutoff := now.Add(-r.cfg.AccessLogs)
+		slog.Info("retention: deleting old records", "table", "access_logs", "retention", r.cfg.AccessLogs, "cutoff", cutoff.Format(time.RFC3339))
+		res, err := r.store.CleanupAccessLogs(ctx, cutoff)
+		if err != nil {
+			slog.Error("retention: error cleaning table", "table", "access_logs", "error", err)
+		} else if res.Deleted > 0 {
+			slog.Info("retention: deleted rows", "table", "access_logs", "count", res.Deleted)
+			_ = r.store.LogAuditAction(ctx, "audit.access_logs.prune", map[string]any{
+				"reason":          "ttl",
+				"deleted_count":   res.Deleted,
+				"lowest_id":       res.LowestID,
+				"highest_id":      res.HighestID,
+				"new_anchor_hash": res.AnchorHash,
+				"retention":       r.cfg.AccessLogs.String(),
+				"cutoff":          cutoff.UTC().Format(time.RFC3339Nano),
+			})
+		}
+	}
+
 	type tableCleanup struct {
 		name     string
 		duration time.Duration
@@ -170,7 +198,6 @@ func (r *RetentionManager) cleanup() {
 	}
 
 	tables := []tableCleanup{
-		{"access_logs", r.cfg.AccessLogs, r.store.CleanupAccessLogs},
 		{"compliance_logs", r.cfg.ComplianceLogs, r.store.CleanupComplianceLogs},
 		{"rbac_audit_logs", r.cfg.RBACAuditLogs, r.store.CleanupRBACAuditLogs},
 		{"travel_records", r.cfg.TravelRecords, r.store.CleanupUsedTravelRecords},
@@ -193,14 +220,6 @@ func (r *RetentionManager) cleanup() {
 		}
 		if deleted > 0 {
 			slog.Info("retention: deleted rows", "table", tc.name, "count", deleted)
-			if tc.name == "access_logs" {
-				_ = r.store.LogAuditAction(ctx, "audit.access_logs.prune", map[string]any{
-					"reason":        "ttl",
-					"deleted_count": deleted,
-					"retention":     tc.duration.String(),
-					"cutoff":        cutoff.UTC().Format(time.RFC3339Nano),
-				})
-			}
 		}
 	}
 
@@ -246,16 +265,31 @@ func (r *RetentionManager) trimAccessLogsFIFO(ctx context.Context) {
 		"batch_size", batchSize)
 
 	var totalDeleted int64
+	var minLowestID int64    // 0 == not yet seen; first non-zero LowestID stays
+	var maxHighestID int64   // 0 == not yet seen; last batch's HighestID wins
+	var lastAnchorHash string // last batch's anchor; equals the anchor row after the loop
 	for i := 0; i < maxAccessLogTrimIterations; i++ {
-		deleted, err := r.store.TrimAccessLogsFIFOBatch(ctx, r.cfg.MaxAccessLogRows, batchSize)
+		res, err := r.store.TrimAccessLogsFIFOBatch(ctx, r.cfg.MaxAccessLogRows, batchSize)
 		if err != nil {
 			slog.Error("retention: error trimming access_logs FIFO batch", "error", err, "deleted_so_far", totalDeleted)
 			return
 		}
-		if deleted == 0 {
+		if res.Deleted == 0 {
 			break
 		}
-		totalDeleted += deleted
+		totalDeleted += res.Deleted
+		// Lowest across batches: FIFO deletes oldest first, so the first
+		// non-zero LowestID seen is the overall minimum. Guard against a
+		// store that fills LowestID even when Deleted == 0.
+		if minLowestID == 0 && res.LowestID > 0 {
+			minLowestID = res.LowestID
+		}
+		if res.HighestID > maxHighestID {
+			maxHighestID = res.HighestID
+		}
+		if res.AnchorHash != "" {
+			lastAnchorHash = res.AnchorHash
+		}
 	}
 	if totalDeleted > 0 {
 		slog.Info("retention: FIFO trim deleted rows",
@@ -263,9 +297,12 @@ func (r *RetentionManager) trimAccessLogsFIFO(ctx context.Context) {
 			"deleted", totalDeleted,
 			"max_rows", r.cfg.MaxAccessLogRows)
 		_ = r.store.LogAuditAction(ctx, "audit.access_logs.prune", map[string]any{
-			"reason":        "fifo",
-			"deleted_count": totalDeleted,
-			"max_rows":      r.cfg.MaxAccessLogRows,
+			"reason":          "fifo",
+			"deleted_count":   totalDeleted,
+			"lowest_id":       minLowestID,
+			"highest_id":      maxHighestID,
+			"new_anchor_hash": lastAnchorHash,
+			"max_rows":        r.cfg.MaxAccessLogRows,
 		})
 	}
 }

@@ -13,6 +13,27 @@ import (
 // the access_logs hash chain. Other chains can be added later (e.g. rbac_audit).
 const ChainNameAccessLogs = "access_logs"
 
+// PruneResult carries the metadata an audit-of-the-audit row needs after a
+// prune operation. CleanupAccessLogs and TrimAccessLogsFIFOBatch return this
+// so the retention manager can attach the deleted id range and the new chain
+// anchor hash to the rbac_audit_log entry alongside the row count. All four
+// fields are zero-valued when Deleted == 0.
+type PruneResult struct {
+	// Deleted is the number of rows deleted in this call.
+	Deleted int64
+	// LowestID is the lowest id deleted; useful so an auditor can reconstruct
+	// the deleted range from "rows [LowestID..HighestID] are gone".
+	LowestID int64
+	// HighestID is the highest id deleted. Equals the new anchor's
+	// last_pruned_id (set inside the same transaction as the DELETE).
+	HighestID int64
+	// AnchorHash is the entry_hash now persisted in audit_chain_anchor for
+	// chain "access_logs". Equals the deleted row's stored entry_hash, or
+	// the previous anchor when that row's entry_hash was NULL (process crash
+	// between insert and UpdateAccessLogHash).
+	AnchorHash string
+}
+
 // AuditChainAnchor records the last-pruned entry hash for an audit hash chain
 // so that the chain can be verified across pruning cuts. There is one row per
 // chain (PRIMARY KEY chain_name).

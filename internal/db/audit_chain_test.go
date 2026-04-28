@@ -97,20 +97,44 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 
 	ids, hashes := seedAccessLogs(t, ctx, database, totalRows, "")
 
-	// Trim down to maxRows; loop until 0 deleted.
+	// Trim down to maxRows; loop until 0 deleted. Capture aggregated
+	// PruneResult metadata across batches so we can verify the new fields.
 	var totalDeleted int64
+	var minLowestID int64
+	var maxHighestID int64
+	var lastAnchorHash string
 	for i := 0; i < 100; i++ {
-		deleted, err := database.TrimAccessLogsFIFOBatch(ctx, maxRows, 1000)
+		res, err := database.TrimAccessLogsFIFOBatch(ctx, maxRows, 1000)
 		if err != nil {
 			t.Fatalf("trim batch: %v", err)
 		}
-		if deleted == 0 {
+		if res.Deleted == 0 {
 			break
 		}
-		totalDeleted += deleted
+		totalDeleted += res.Deleted
+		if minLowestID == 0 && res.LowestID > 0 {
+			minLowestID = res.LowestID
+		}
+		if res.HighestID > maxHighestID {
+			maxHighestID = res.HighestID
+		}
+		if res.AnchorHash != "" {
+			lastAnchorHash = res.AnchorHash
+		}
 	}
 	if totalDeleted != int64(totalRows-maxRows) {
 		t.Fatalf("expected %d rows deleted, got %d", totalRows-maxRows, totalDeleted)
+	}
+	// PruneResult fields: lowest = first seeded id; highest = last deleted id
+	// = anchor's last_pruned_id; anchor hash = last surviving deleted-row hash.
+	if want := ids[0]; minLowestID != want {
+		t.Fatalf("PruneResult.LowestID: want %d, got %d", want, minLowestID)
+	}
+	if want := ids[totalRows-maxRows-1]; maxHighestID != want {
+		t.Fatalf("PruneResult.HighestID: want %d, got %d", want, maxHighestID)
+	}
+	if want := hashes[totalRows-maxRows-1]; lastAnchorHash != want {
+		t.Fatalf("PruneResult.AnchorHash: want %s, got %s", want, lastAnchorHash)
 	}
 
 	// Surviving row count.
@@ -203,11 +227,15 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 
 	// Audit-of-the-audit: retention.go emits LogAuditAction after a successful
 	// FIFO drain. Mirror the production payload here so we can assert the row
-	// reaches rbac_audit_log and the JSONB metadata round-trips intact.
+	// reaches rbac_audit_log and the JSONB metadata round-trips intact, plus
+	// the deleted-range metadata sourced from PruneResult.
 	pruneDetails := map[string]any{
-		"reason":        "fifo",
-		"deleted_count": totalDeleted,
-		"max_rows":      int64(maxRows),
+		"reason":          "fifo",
+		"deleted_count":   totalDeleted,
+		"lowest_id":       minLowestID,
+		"highest_id":      maxHighestID,
+		"new_anchor_hash": lastAnchorHash,
+		"max_rows":        int64(maxRows),
 	}
 	if err := database.LogAuditAction(ctx, "audit.access_logs.prune", pruneDetails); err != nil {
 		t.Fatalf("LogAuditAction: %v", err)
@@ -226,6 +254,15 @@ func TestFIFOTrim_AnchorFlow(t *testing.T) {
 	}
 	if got, want := gotDetails["max_rows"], float64(maxRows); got != want {
 		t.Fatalf("audit row max_rows: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["lowest_id"], float64(minLowestID); got != want {
+		t.Fatalf("audit row lowest_id: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["highest_id"], float64(maxHighestID); got != want {
+		t.Fatalf("audit row highest_id: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["new_anchor_hash"], lastAnchorHash; got != want {
+		t.Fatalf("audit row new_anchor_hash: got %v, want %v", got, want)
 	}
 }
 
@@ -246,12 +283,21 @@ func TestTimeBasedPrune_WritesAnchor(t *testing.T) {
 		t.Fatalf("backdate: %v", err)
 	}
 
-	deleted, err := database.CleanupAccessLogs(ctx, cutoff)
+	res, err := database.CleanupAccessLogs(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	if deleted != 3 {
-		t.Fatalf("expected 3 rows deleted, got %d", deleted)
+	if res.Deleted != 3 {
+		t.Fatalf("expected 3 rows deleted, got %d", res.Deleted)
+	}
+	if res.LowestID != ids[0] {
+		t.Fatalf("PruneResult.LowestID: want %d, got %d", ids[0], res.LowestID)
+	}
+	if res.HighestID != ids[2] {
+		t.Fatalf("PruneResult.HighestID: want %d, got %d", ids[2], res.HighestID)
+	}
+	if res.AnchorHash != hashes[2] {
+		t.Fatalf("PruneResult.AnchorHash: want %s, got %s", hashes[2], res.AnchorHash)
 	}
 
 	anchor, err := database.GetAuditChainAnchor(ctx, ChainNameAccessLogs)
@@ -269,14 +315,17 @@ func TestTimeBasedPrune_WritesAnchor(t *testing.T) {
 	}
 
 	// Audit-of-the-audit: retention.go emits LogAuditAction after a successful
-	// TTL prune. Mirror the production payload to verify the row reaches
-	// rbac_audit_log and the JSONB metadata round-trips intact.
+	// TTL prune. Mirror the production payload (now including the deleted-range
+	// metadata sourced from PruneResult) to verify the JSONB round-trips intact.
 	const ttl = 1 * time.Hour
 	pruneDetails := map[string]any{
-		"reason":        "ttl",
-		"deleted_count": deleted,
-		"retention":     ttl.String(),
-		"cutoff":        cutoff.UTC().Format(time.RFC3339Nano),
+		"reason":          "ttl",
+		"deleted_count":   res.Deleted,
+		"lowest_id":       res.LowestID,
+		"highest_id":      res.HighestID,
+		"new_anchor_hash": res.AnchorHash,
+		"retention":       ttl.String(),
+		"cutoff":          cutoff.UTC().Format(time.RFC3339Nano),
 	}
 	if err := database.LogAuditAction(ctx, "audit.access_logs.prune", pruneDetails); err != nil {
 		t.Fatalf("LogAuditAction: %v", err)
@@ -289,11 +338,20 @@ func TestTimeBasedPrune_WritesAnchor(t *testing.T) {
 	if gotDetails["reason"] != "ttl" {
 		t.Fatalf("audit row reason: got %v, want \"ttl\"", gotDetails["reason"])
 	}
-	if got, want := gotDetails["deleted_count"], float64(deleted); got != want {
+	if got, want := gotDetails["deleted_count"], float64(res.Deleted); got != want {
 		t.Fatalf("audit row deleted_count: got %v, want %v", got, want)
 	}
 	if gotDetails["retention"] != ttl.String() {
 		t.Fatalf("audit row retention: got %v, want %v", gotDetails["retention"], ttl.String())
+	}
+	if got, want := gotDetails["lowest_id"], float64(res.LowestID); got != want {
+		t.Fatalf("audit row lowest_id: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["highest_id"], float64(res.HighestID); got != want {
+		t.Fatalf("audit row highest_id: got %v, want %v", got, want)
+	}
+	if got, want := gotDetails["new_anchor_hash"], res.AnchorHash; got != want {
+		t.Fatalf("audit row new_anchor_hash: got %v, want %v", got, want)
 	}
 }
 
@@ -308,11 +366,11 @@ func TestGetLatestAccessLogHash_FallsBackToAnchor(t *testing.T) {
 	// must still hold the last-known hash.
 	_, hashes := seedAccessLogs(t, ctx, database, 4, "")
 	for i := 0; i < 10; i++ {
-		deleted, err := database.TrimAccessLogsFIFOBatch(ctx, 0, 1000)
+		res, err := database.TrimAccessLogsFIFOBatch(ctx, 0, 1000)
 		if err != nil {
 			t.Fatalf("trim: %v", err)
 		}
-		if deleted == 0 {
+		if res.Deleted == 0 {
 			break
 		}
 	}
