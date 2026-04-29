@@ -33,7 +33,7 @@ services:
     volumes:
       - privacy-postgres-data:/var/lib/postgresql/data
     networks:
-      - trust-zone
+      - indexer-zone
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d privacy_proxy"]
       interval: 5s
@@ -45,7 +45,7 @@ services:
     image: redis:7-alpine
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}
     networks:
-      - trust-zone
+      - indexer-zone
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}", "ping"]
       interval: 5s
@@ -60,7 +60,7 @@ services:
     image: ghcr.io/foundry-rs/foundry:latest
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing", "--block-time", "2"]
     networks:
-      - trust-zone
+      - indexer-zone
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 || exit 1"]
       interval: 5s
@@ -81,7 +81,7 @@ services:
     volumes:
       - indexer-postgres-data:/var/lib/postgresql/data
     networks:
-      - trust-zone
+      - indexer-zone
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d chain_indexer"]
       interval: 5s
@@ -111,7 +111,7 @@ services:
       anvil:
         condition: service_healthy
     networks:
-      - trust-zone
+      - indexer-zone
     restart: unless-stopped
 
   proxy-backend:
@@ -178,7 +178,12 @@ services:
       chain-indexer:
         condition: service_started
     networks:
-      - trust-zone
+      # proxy-backend is the sole legitimate bridge — it attaches to
+      # both internal zones plus public. The static manifest test
+      # enforces by name that no other service may be on both
+      # indexer-zone and bff-zone.
+      - indexer-zone
+      - bff-zone
       - public
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
@@ -230,7 +235,7 @@ services:
     volumes:
       - block-explorer-postgres-data:/var/lib/postgresql/data
     networks:
-      - trust-zone
+      - bff-zone
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d explorer"]
       interval: 5s
@@ -265,10 +270,13 @@ services:
       proxy-backend:
         condition: service_started
     networks:
-      # Trust-zone only — not reachable from the host. The
-      # block-explorer-frontend nginx sits on the same network and
-      # is the only client.
-      - trust-zone
+      # bff-zone only — the BFF holds no chain data and has no route
+      # to indexer-zone. Even if a future change drops the
+      # `--target privacy` build tag or sets INDEXER_URL, the BFF
+      # cannot reach chain-indexer because they're on different docker
+      # networks. The block-explorer-frontend nginx and proxy-backend
+      # (the bridge) are the only legitimate callers.
+      - bff-zone
     restart: unless-stopped
 
   # Block-explorer frontend — SPA served by nginx. The mounted nginx
@@ -289,9 +297,10 @@ services:
         condition: service_started
     networks:
       - public
-      # Frontend also needs trust-zone access to reach block-explorer-api
-      # on the internal network.
-      - trust-zone
+      # Frontend's nginx also attaches to bff-zone so it can reach
+      # block-explorer-api. It does NOT attach to indexer-zone — there
+      # is no path for the SPA host to reach the indexer.
+      - bff-zone
     restart: unless-stopped
 
   # Expose privacy-proxy on the host too, so clients hitting
@@ -302,14 +311,25 @@ services:
   # proxy-backend and publish only the ingress.
 
 networks:
-  # Trust zone — privacy-proxy is the only service that spans out to the
-  # public network. The chain-indexer, its postgres, anvil (or any real
-  # EVM node), and redis are NOT reachable from clients.
-  trust-zone:
+  # Indexer zone — services that handle raw chain data, plus
+  # privacy-proxy's own state (postgres, redis). Privacy-proxy
+  # (proxy-backend) is the only legitimate caller. The block-explorer
+  # BFF is NOT attached here; even if a future change drops the BFF's
+  # `--target privacy` build tag or sets INDEXER_URL, the BFF still
+  # cannot reach the indexer because it has no route to this network.
+  indexer-zone:
     driver: bridge
-    internal: false   # proxy-backend needs NODE_URL egress; flip to true
-                     # in prod if anvil/RPC is on the same network and
-                     # there's no other external dependency.
+    internal: false   # proxy-backend needs NODE_URL egress when the EVM
+                     # node lives outside compose; flip to true in prod
+                     # if the node is also on this network.
+
+  # BFF zone — block-explorer-api (the BFF) and its verification
+  # postgres. The BFF talks to its own postgres locally and to
+  # privacy-proxy via this same network (proxy-backend is the bridge).
+  # Holds no chain data.
+  bff-zone:
+    driver: bridge
+    internal: false
 
   # Public zone — SPAs + the proxy-backend's exposed port. No direct
   # access to any data source.

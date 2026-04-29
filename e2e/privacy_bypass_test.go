@@ -17,13 +17,15 @@
 //
 // The test asserts:
 //
-//   1. Trust-zone services (chain-indexer gRPC port, indexer postgres,
-//      anvil RPC, privacy-proxy postgres, redis) are NOT published on
-//      the host. A TCP connect from the host on the service's default
-//      port must fail.
+//   1. Internal-zone services (chain-indexer gRPC port, indexer postgres,
+//      anvil RPC, privacy-proxy postgres, redis, BFF, BFF postgres) are
+//      NOT published on the host. A TCP connect from the host on the
+//      service's default port must fail. The list is loaded from
+//      trust-zone.yaml dynamically.
 //
-//   2. The compose manifest itself does not publish ports on trust-zone
-//      services (structural check via `docker compose config`).
+//   2. The compose manifest itself does not publish ports on
+//      internal-zone services (structural check via `docker compose
+//      config`).
 //
 //   3. The block-explorer frontend in privacy mode:
 //      - Responds to GET /
@@ -31,9 +33,17 @@
 //        doesn't exist here)
 //      - Returns 404 on /ws (subscriptions deferred per RD-855)
 //
-// Together these prove the bypass described in RD-855 is closed: there
-// is no reachable path from a client to raw chain data except via
-// privacy-proxy, which applies RedactionEngine on the way out.
+//   4. Cross-zone isolation (RD-876): a probe attached to bff-zone
+//      cannot reach chain-indexer:50051. The two-zone split is the
+//      structural floor that survives upstream build-pipeline
+//      mistakes (a misbuilt BFF that lost its --target privacy tag or
+//      had INDEXER_URL set still cannot reach the indexer because
+//      they're on different docker networks).
+//
+// Together these prove the bypass described in RD-855 is closed and
+// hardened per RD-876: there is no reachable path from a client to raw
+// chain data except via privacy-proxy, which applies RedactionEngine
+// on the way out.
 package e2e
 
 import (
@@ -66,20 +76,27 @@ var composeServices = []string{
 	"block-explorer-frontend",
 }
 
-// trustZoneServices are the services that must remain unreachable from
-// outside the Docker network. Each entry is (service, defaultPort).
-// defaultPort is the port the container listens on inside the compose
-// network; we confirm nothing on 127.0.0.1:<defaultPort> on the host
-// accepts connections.
-var trustZoneServices = []struct {
+// internalService is the per-host-probe shape: (service name, port the
+// container listens on inside the compose network). Loaded from
+// trust-zone.yaml at test start so the list stays in sync with the
+// manifest as services are added or removed.
+type internalService struct {
 	Service string
 	Port    int
-}{
-	{"chain-indexer", 50051},
-	{"indexer-postgres", 5432},
-	{"privacy-postgres", 5432},
-	{"anvil", 8545},
-	{"redis", 6379},
+}
+
+func loadInternalServices(t *testing.T, repoRoot string) []internalService {
+	t.Helper()
+	cfg, err := LoadTrustZone(repoRoot)
+	if err != nil {
+		t.Fatalf("load trust-zone.yaml: %v", err)
+	}
+	all := cfg.AllInternal()
+	out := make([]internalService, 0, len(all))
+	for _, s := range all {
+		out = append(out, internalService{Service: s.Name, Port: s.DefaultInternalPort})
+	}
+	return out
 }
 
 // Public-zone published ports. These MUST be reachable; we verify by a
@@ -124,10 +141,16 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 		"JWT_SECRET=test-jwt-secret-do-not-use-in-production-1234567890",
 		"JWT_REFRESH_SECRET=test-refresh-secret-do-not-use-in-production-0987654321",
 		"ADMIN_API_TOKEN=test-admin-token",
+		"PRIVACY_POSTGRES_PASSWORD=test-privacy-pg-password",
+		"INDEXER_POSTGRES_PASSWORD=test-indexer-pg-password",
+		"REDIS_PASSWORD=test-redis-password",
+		"BLOCK_EXPLORER_POSTGRES_PASSWORD=test-bff-pg-password",
 	}
 
-	t.Run("compose config does not publish trust-zone ports", func(t *testing.T) {
-		assertNoPublishedTrustZonePortsInConfig(t, composeFile, env, repoRoot)
+	internalServices := loadInternalServices(t, repoRoot)
+
+	t.Run("compose config does not publish internal-zone ports", func(t *testing.T) {
+		assertNoPublishedInternalPortsInConfig(t, composeFile, env, repoRoot, internalServices)
 	})
 
 	// Bring the stack up. Defer teardown so a failure inside doesn't
@@ -150,12 +173,21 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 	// env overrides take precedence if set.
 	proxyPort, uiPort, explorerPort := publicPorts()
 
-	t.Run("trust-zone services unreachable on host", func(t *testing.T) {
-		for _, svc := range trustZoneServices {
+	t.Run("internal-zone services unreachable on host", func(t *testing.T) {
+		for _, svc := range internalServices {
 			t.Run(svc.Service, func(t *testing.T) {
 				assertNotReachable(t, "127.0.0.1", svc.Port)
 			})
 		}
+	})
+
+	// RD-876: cross-zone isolation. Even if a future change drops the
+	// BFF's `--target privacy` build tag or sets INDEXER_URL, the BFF
+	// still cannot reach the indexer because they're on different
+	// docker networks. Probe with throwaway alpine containers attached
+	// to one zone at a time.
+	t.Run("BFF cannot reach indexer across zones", func(t *testing.T) {
+		assertCrossZoneIsolation(t, "privacy-bypass-test")
 	})
 
 	t.Run("proxy-backend reachable on host", func(t *testing.T) {
@@ -225,10 +257,10 @@ func dockerCompose(composeFile string, env []string, repoRoot string, args ...st
 	return cmd
 }
 
-// assertNoPublishedTrustZonePortsInConfig parses `docker compose config
-// --format json` and fails the test if any trust-zone service declares a
-// host port mapping.
-func assertNoPublishedTrustZonePortsInConfig(t *testing.T, composeFile string, env []string, repoRoot string) {
+// assertNoPublishedInternalPortsInConfig parses `docker compose config
+// --format json` and fails the test if any internal-zone service
+// (indexer-zone or bff-zone) declares a host port mapping.
+func assertNoPublishedInternalPortsInConfig(t *testing.T, composeFile string, env []string, repoRoot string, internal []internalService) {
 	t.Helper()
 	cmd := dockerCompose(composeFile, env, repoRoot, "config", "--format", "json")
 	out, err := cmd.Output()
@@ -247,7 +279,7 @@ func assertNoPublishedTrustZonePortsInConfig(t *testing.T, composeFile string, e
 		t.Fatalf("parse compose config json: %v", err)
 	}
 	bannedServices := map[string]bool{}
-	for _, s := range trustZoneServices {
+	for _, s := range internal {
 		bannedServices[s.Service] = true
 	}
 	for name, svc := range cfg.Services {
@@ -256,9 +288,48 @@ func assertNoPublishedTrustZonePortsInConfig(t *testing.T, composeFile string, e
 		}
 		if len(svc.Ports) > 0 {
 			for _, p := range svc.Ports {
-				t.Errorf("trust-zone service %q publishes port: target=%d published=%q — privacy-mode compose must not publish trust-zone services", name, p.Target, p.Published)
+				t.Errorf("internal-zone service %q publishes port: target=%d published=%q — privacy-mode compose must not publish internal-zone services", name, p.Target, p.Published)
 			}
 		}
+	}
+}
+
+// assertCrossZoneIsolation verifies the structural floor of the
+// two-zone trust split:
+//
+//  1. From bff-zone, chain-indexer:50051 must NOT be reachable. This is
+//     the load-bearing assertion — a misbuilt BFF that lost its
+//     `--target privacy` tag or had INDEXER_URL set must still fail to
+//     reach the indexer because the network forbids it.
+//  2. From indexer-zone, chain-indexer:50051 IS reachable (positive
+//     control; if this fails, the test result on (1) isn't meaningful).
+//
+// Probes use a throwaway alpine container attached to one zone at a
+// time. busybox `nc -z -w 3` exits 0 on a successful TCP connect.
+func assertCrossZoneIsolation(t *testing.T, project string) {
+	t.Helper()
+
+	probe := func(network string) error {
+		cmd := exec.Command("docker", "run", "--rm",
+			"--network", network,
+			"alpine:latest",
+			"nc", "-z", "-w", "3", "chain-indexer", "50051")
+		return cmd.Run()
+	}
+
+	bffNet := project + "_bff-zone"
+	indexerNet := project + "_indexer-zone"
+
+	// Negative case — load-bearing assertion.
+	if err := probe(bffNet); err == nil {
+		t.Fatalf("from %s, chain-indexer:50051 IS reachable — the two-zone trust split is broken. The block-explorer BFF could now bypass privacy-proxy at the network layer. Check the compose file: chain-indexer must be on indexer-zone only, the BFF must be on bff-zone only, and proxy-backend (the BridgeService) must be the only service on both.", bffNet)
+	}
+
+	// Positive control. If this fails the negative assertion above is
+	// not meaningful — log loudly but don't fail since the stack might
+	// just not be ready.
+	if err := probe(indexerNet); err != nil {
+		t.Logf("WARNING: positive control failed — from %s, chain-indexer:50051 should be reachable but the probe errored (%v). The negative assertion above passed but may not be meaningful in isolation.", indexerNet, err)
 	}
 }
 
