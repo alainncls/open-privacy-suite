@@ -97,10 +97,27 @@ endpoints that degrade in privacy mode as a consequence.
 
 ## Running it
 
+There are two compose files for privacy mode and they are **siblings,
+not base/overlay**. Pick one — do not stack them.
+
 ```bash
-# From the privacy-proxy repo root.
+# Production manifest. Mock auth disabled, ENVIRONMENT=production,
+# proxy-backend built from --target prod, anvil ports not published.
 docker compose -f docker-compose.privacy.yml up -d
 ```
+
+```bash
+# Dev manifest. Mock auth on, anvil host port published, proxy-backend
+# built from --target dev with ENVIRONMENT=development. Use this only
+# for local development.
+scripts/privacy-dev-up.sh
+```
+
+`scripts/privacy-dev-up.sh` is the one-command path: it generates
+fail-closed secrets in `.env.privacy.dev`, validates that the sibling
+repos exist, forces a `--no-cache` rebuild of the frontend so
+`VITE_ALLOW_MOCK_LOGIN=true` is baked into the JS bundle, and waits for
+the backend healthcheck. Delete `.env.privacy.dev` to rotate.
 
 Required env vars (all fail-closed — missing → compose aborts):
 
@@ -110,16 +127,31 @@ Required env vars (all fail-closed — missing → compose aborts):
 - `INDEXER_POSTGRES_PASSWORD` — chain-indexer's postgres.
 - `REDIS_PASSWORD` — privacy-proxy's redis.
 - `BLOCK_EXPLORER_POSTGRES_PASSWORD` — BFF's postgres (verifications).
-- `HOST_PORT_PROXY`, `HOST_PORT_UI`, `HOST_PORT_EXPLORER` — host ports for
-  the proxy API, admin UI, and explorer UI respectively.
+
+Optional env vars (have sane defaults):
+
+- `HOST_BIND` — interface the published host ports bind to. Defaults to
+  `127.0.0.1` (loopback only). Set to `0.0.0.0` if you need LAN access
+  from another device; never do this on a production host without an
+  upstream firewall.
+- `HOST_PORT_PROXY`, `HOST_PORT_UI`, `HOST_PORT_EXPLORER` — host ports
+  for the proxy API, admin UI, and explorer UI respectively. Defaults
+  `8080` / `5173` / `3001`.
+- `CORS_ALLOWED_ORIGINS` — comma-separated list of additional origins
+  the proxy should accept on browser requests and OAuth redirects. The
+  origin derived from `BASE_URL` is always allowed; this is for extra
+  origins (e.g. `https://explorer.example.com`).
+- `BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH` — filesystem paths to the
+  block-explorer and chain-indexer repos that the compose builds from.
+  Default to `../block-explorer` and `../chain-indexer` (sibling repos
+  alongside privacy-proxy). Override if your layout differs.
 - `ENABLE_OP_DEPOSITS` — toggle OP-Stack indexing in the chain-indexer.
 - `INDEXER_VERSION` (future) — registry tag for the chain-indexer image;
-  currently the compose builds from `../chain-indexer`.
+  currently the compose builds from `${CHAIN_INDEXER_PATH}`.
 
-The compose expects `chain-indexer` and `block-explorer` cloned as
-siblings of `privacy-proxy`. When the chain-indexer repo is published
-and its image lives in a registry, replace the `build:` block under
-`services.chain-indexer` with `image: ghcr.io/gateway-fm/chain-indexer:...`.
+When the chain-indexer repo is published and its image lives in a
+registry, replace the `build:` block under `services.chain-indexer`
+with `image: ghcr.io/gateway-fm/chain-indexer:...`.
 
 ## What not to do
 

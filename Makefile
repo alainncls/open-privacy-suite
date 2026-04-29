@@ -1,4 +1,4 @@
-.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
+.PHONY: build build-prod test test-unit test-e2e test-privacy-bypass run dev-stack full-stack-dev run-binary clean clean-build e2e e2e-debug e2e-down e2e-clean \
 	db-migrate db-status db-new-migration install-tern seed \
 	contracts-install contracts-build contracts-deploy authproxy \
 	stop restart logs status \
@@ -46,6 +46,13 @@ dev-stack: ensure-hooks
 		docker-compose up --build -d; \
 	fi
 	@./scripts/print-urls.sh
+
+# Bring up the full privacy-mode stack in dev mode:
+# privacy-proxy + chain-indexer + block-explorer (frontend + BFF).
+# Requires sibling clones at ../block-explorer and ../chain-indexer
+# (override with BLOCK_EXPLORER_PATH / CHAIN_INDEXER_PATH).
+full-stack-dev:
+	@./scripts/privacy-dev-up.sh
 
 # Stop all services
 stop:
