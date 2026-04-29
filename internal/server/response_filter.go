@@ -298,9 +298,24 @@ func FilterLogs(responseBody []byte, userAddresses []string) []byte {
 	return out
 }
 
+// zeroLogsBloomJSON is the canonical JSON value used to overwrite a block's
+// logsBloom field — `"0x"` followed by 512 zero hex characters (the spec's
+// 256-byte all-zero bloom). Computed once because every block-returning RPC
+// response gets its bloom replaced with this value (RD-873).
+var zeroLogsBloomJSON = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
+
 // FilterBlockTransactions filters an eth_getBlockByNumber or eth_getBlockByHash response.
 // Removes non-participant transactions. If the user originally requested hashes, maps the
 // filtered full tx objects back to the transaction hashes.
+//
+// As of RD-873 the block's logsBloom field is unconditionally zeroed for every
+// viewer regardless of which transaction-filtering branch fires. The bloom
+// filter contains hashed representations of addresses and event topics from
+// every log in the block; a viewer who knows a target address can probe its
+// activity in O(1). Our private-by-default model can't rely on "knowing the
+// target address" staying false (out-of-band leakage, contract authors using
+// addresses as identifiers), so the field is sanitised to all-zero on the way
+// out. This closes decisions.md §2 G6.
 func FilterBlockTransactions(responseBody []byte, userAddresses []string, originalFull bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -325,55 +340,57 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 		return responseBody
 	}
 
-	txsRaw, ok := block["transactions"]
-	if !ok {
-		return responseBody // no transactions field
+	// Always zero logsBloom before any further filtering — fail-closed for
+	// the bloom regardless of transaction-array shape (full objects, hash
+	// list, empty, or absent). Done unconditionally rather than per-branch
+	// so future branches added below can't accidentally leave the field
+	// untouched.
+	if _, ok := block["logsBloom"]; ok {
+		block["logsBloom"] = zeroLogsBloomJSON
 	}
 
-	// Check if transactions are objects or hashes (strings)
-	var rawTxs []json.RawMessage
-	if err := json.Unmarshal(txsRaw, &rawTxs); err != nil || len(rawTxs) == 0 {
-		return responseBody // empty or unparseable — pass through
-	}
-
-	// Peek at first element to determine if full objects or hashes
-	first := bytes.TrimSpace(rawTxs[0])
-	if len(first) == 0 || first[0] == '"' {
-		// We received hashes. If we already rewrote the request to full objects, this shouldn't happen.
-		// For safety, clear the array.
-		block["transactions"] = []byte("[]")
-	} else {
-		// Full transaction objects — filter to only user's transactions
-		addrSet := addrSetFromLinked(userAddresses)
-		filtered := make([]json.RawMessage, 0, len(rawTxs))
-		for _, rawTx := range rawTxs {
-			var tx struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-				Hash string `json:"hash"`
-			}
-			if err := json.Unmarshal(rawTx, &tx); err != nil {
-				continue
-			}
-			from := strings.ToLower(tx.From)
-			to := strings.ToLower(tx.To)
-			if addrSet[from] || (to != "" && addrSet[to]) {
-				if !originalFull {
-					hashStr, _ := json.Marshal(tx.Hash)
-					filtered = append(filtered, hashStr)
-				} else {
-					filtered = append(filtered, rawTx)
+	if txsRaw, ok := block["transactions"]; ok {
+		// Check if transactions are objects or hashes (strings).
+		var rawTxs []json.RawMessage
+		if err := json.Unmarshal(txsRaw, &rawTxs); err == nil && len(rawTxs) > 0 {
+			// Peek at first element to determine if full objects or hashes.
+			first := bytes.TrimSpace(rawTxs[0])
+			if len(first) == 0 || first[0] == '"' {
+				// We received hashes. If we already rewrote the request to full
+				// objects, this shouldn't happen. For safety, clear the array.
+				block["transactions"] = []byte("[]")
+			} else {
+				// Full transaction objects — filter to only user's transactions.
+				addrSet := addrSetFromLinked(userAddresses)
+				filtered := make([]json.RawMessage, 0, len(rawTxs))
+				for _, rawTx := range rawTxs {
+					var tx struct {
+						From string `json:"from"`
+						To   string `json:"to"`
+						Hash string `json:"hash"`
+					}
+					if err := json.Unmarshal(rawTx, &tx); err != nil {
+						continue
+					}
+					from := strings.ToLower(tx.From)
+					to := strings.ToLower(tx.To)
+					if addrSet[from] || (to != "" && addrSet[to]) {
+						if !originalFull {
+							hashStr, _ := json.Marshal(tx.Hash)
+							filtered = append(filtered, hashStr)
+						} else {
+							filtered = append(filtered, rawTx)
+						}
+					}
+				}
+				if filteredTxJSON, err := json.Marshal(filtered); err == nil {
+					block["transactions"] = filteredTxJSON
 				}
 			}
 		}
-		block["logsBloom"] = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
-		filteredTxJSON, err := json.Marshal(filtered)
-		if err == nil {
-			block["transactions"] = filteredTxJSON
-		}
+		// If transactions is unparseable or empty, leave it alone — but the
+		// bloom rewrite above still applies.
 	}
-
-
 
 	blockJSON, err := json.Marshal(block)
 	if err != nil {

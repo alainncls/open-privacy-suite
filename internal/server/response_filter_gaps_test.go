@@ -6,7 +6,9 @@ package server
 //
 // Key findings documented here:
 //  1. from/to exposed to non-participants in receipts (known design decision)
-//  2. Block-level logsBloom not zeroed (known gap — reveals event presence)
+//  2. Block-level logsBloom is unconditionally zeroed (RD-873; closes
+//     decisions.md §2 G6). Tests below pin the new behaviour across every
+//     transaction-array shape (full objects, hashes-only, empty, absent).
 //  3. FilterBlockTransactions shrinks array; FilterBlockReceipts preserves length (inconsistency)
 //  4. Zero address linking danger (edge case)
 //  5. DB error fail-open for block methods vs fail-closed for tx methods (wiring gap)
@@ -462,8 +464,31 @@ func TestFilterBlockTransactions_MultipleLinkedAddresses(t *testing.T) {
 	}
 }
 
-// Block-level logsBloom is zeroed when transactions are filtered, preventing
-// attackers from detecting event-signature presence via the bloom filter.
+// Block-level logsBloom is zeroed for every viewer regardless of which
+// transaction-filtering branch fires (RD-873 — closes decisions.md §2 G6).
+// The bloom contains hashed addresses + topic signatures from every log in the
+// block; a viewer who knows a target address can probe activity in O(1). We
+// can't rely on "knowing the address" staying false, so the field is sanitised
+// to all-zero on every block-returning RPC response.
+
+var expectedZeroBloom = "0x" + strings.Repeat("0", 512)
+
+func extractBlockLogsBloom(t *testing.T, body []byte) string {
+	t.Helper()
+	var resp struct {
+		Result *struct {
+			LogsBloom string `json:"logsBloom"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\nbody: %s", err, body)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected non-null result")
+	}
+	return resp.Result.LogsBloom
+}
+
 func TestFilterBlockTransactions_BlockLogsBloom_Zeroed(t *testing.T) {
 	userAddr := "0xabc1234567890123456789012345678901234567"
 	originalBloom := "0xdeadbeef1234567890abcdef"
@@ -472,20 +497,60 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed(t *testing.T) {
 		`]}}`
 
 	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
-	var resp struct {
-		Result *struct {
-			LogsBloom string `json:"logsBloom"`
-		} `json:"result"`
+	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
+		t.Errorf("block logsBloom must be zeroed when transactions are filtered\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
-	if err := json.Unmarshal(got, &resp); err != nil {
-		t.Fatalf("output not valid JSON: %v", err)
+}
+
+// RD-873: bloom must be zeroed even when the block contains zero transactions.
+// The previous implementation early-returned on empty arrays, leaking the
+// original bloom value to clients.
+func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_EmptyTxArray(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":[]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
+		t.Errorf("logsBloom must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
-	if resp.Result == nil {
-		t.Fatal("expected non-null result")
+}
+
+// RD-873: bloom must be zeroed even when the block has no transactions field
+// at all (some node implementations omit the field entirely on empty blocks).
+func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NoTxField(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xfeedface"}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
+		t.Errorf("logsBloom must be zeroed on blocks with no transactions field\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
-	expectedZeroed := "0x" + strings.Repeat("0", 512)
-	if resp.Result.LogsBloom != expectedZeroed {
-		t.Errorf("block logsBloom must be zeroed when transactions are filtered\ngot:  %s\nwant: %s", resp.Result.LogsBloom, expectedZeroed)
+}
+
+// RD-873: bloom must be zeroed when the block returns transaction hashes
+// rather than full objects. The previous implementation cleared transactions
+// to [] but left logsBloom intact in this branch.
+func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_HashesOnly(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":["0xhash1","0xhash2"]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
+		t.Errorf("logsBloom must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
+	}
+}
+
+// RD-873: bloom must be zeroed even for blocks with no participating tx for
+// the viewer (everyone gets the same sanitised view).
+func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NonParticipantViewer(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","logsBloom":"0xdeadbeef","transactions":[` +
+		`{"from":"0xother1","to":"0xother2","input":"0x"}` +
+		`]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	if bloom := extractBlockLogsBloom(t, got); bloom != expectedZeroBloom {
+		t.Errorf("logsBloom must be zeroed for non-participant viewers\ngot:  %s\nwant: %s", bloom, expectedZeroBloom)
 	}
 }
 
