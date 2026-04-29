@@ -2,10 +2,13 @@ package audit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"privacy-proxy/internal/db"
 )
 
 // mockRetentionStore tracks calls to each cleanup method.
@@ -30,11 +33,26 @@ type mockRetentionStore struct {
 	trimReturnsMu    sync.Mutex
 	trimReturns      []int64
 	trimReturnsIdx   int
+
+	// auditOfTheAudit captures every LogAuditAction invocation so tests can
+	// assert that retention prunes record themselves in rbac_audit_log. Each
+	// entry preserves call order; details is a shallow copy of the map passed
+	// in so subsequent caller mutations cannot affect the recorded values.
+	auditOfTheAuditMu sync.Mutex
+	auditOfTheAudit   []auditEntry
 }
 
-func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (int64, error) {
+// auditEntry is a single LogAuditAction call captured by mockRetentionStore.
+type auditEntry struct {
+	action  string
+	details map[string]any
+}
+
+func (m *mockRetentionStore) CleanupAccessLogs(_ context.Context, _ time.Time) (db.PruneResult, error) {
 	m.accessCalls.Add(1)
-	return 5, nil
+	// Synthetic id range + anchor so retention manager assertions on the
+	// audit-of-the-audit metadata have something deterministic to compare to.
+	return db.PruneResult{Deleted: 5, LowestID: 100, HighestID: 104, AnchorHash: "ttl-anchor-hash"}, nil
 }
 
 func (m *mockRetentionStore) CleanupComplianceLogs(_ context.Context, _ time.Time) (int64, error) {
@@ -67,19 +85,43 @@ func (m *mockRetentionStore) CountAccessLogsTotal(_ context.Context) (int64, err
 	return m.countTotal.Load(), nil
 }
 
-func (m *mockRetentionStore) LogAuditAction(_ context.Context, _ string, _ map[string]any) error {
+func (m *mockRetentionStore) LogAuditAction(_ context.Context, action string, details map[string]any) error {
+	// Shallow-copy details so subsequent caller mutations cannot retroactively
+	// rewrite what we recorded.
+	cp := make(map[string]any, len(details))
+	for k, v := range details {
+		cp[k] = v
+	}
+	m.auditOfTheAuditMu.Lock()
+	m.auditOfTheAudit = append(m.auditOfTheAudit, auditEntry{action: action, details: cp})
+	m.auditOfTheAuditMu.Unlock()
 	return nil
 }
 
-func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows int64, batchSize int) (int64, error) {
+// auditCallsFor returns a snapshot of every recorded LogAuditAction call whose
+// action matches the supplied identifier. Lock is released before returning so
+// callers can mutate the slice freely.
+func (m *mockRetentionStore) auditCallsFor(action string) []auditEntry {
+	m.auditOfTheAuditMu.Lock()
+	defer m.auditOfTheAuditMu.Unlock()
+	out := make([]auditEntry, 0, len(m.auditOfTheAudit))
+	for _, e := range m.auditOfTheAudit {
+		if e.action == action {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows int64, batchSize int) (db.PruneResult, error) {
 	m.trimMaxRows.Store(maxRows)
 	m.trimBatchSize.Store(int64(batchSize))
-	m.trimCallCount.Add(1)
+	callIdx := m.trimCallCount.Add(1)
 
 	m.trimReturnsMu.Lock()
 	defer m.trimReturnsMu.Unlock()
 	if len(m.trimReturns) == 0 {
-		return 0, nil
+		return db.PruneResult{}, nil
 	}
 	idx := m.trimReturnsIdx
 	if idx >= len(m.trimReturns) {
@@ -95,7 +137,21 @@ func (m *mockRetentionStore) TrimAccessLogsFIFOBatch(_ context.Context, maxRows 
 		cur = 0
 	}
 	m.countTotal.Store(cur)
-	return deleted, nil
+	if deleted == 0 {
+		return db.PruneResult{}, nil
+	}
+	// Synthesize a deterministic, monotonic id range per call so the
+	// retention manager's accumulator (min lowest, max highest, last anchor)
+	// has something realistic to record. Each call's range starts where the
+	// previous call's ended.
+	lowestID := (callIdx-1)*1000 + 1
+	highestID := lowestID + deleted - 1
+	return db.PruneResult{
+		Deleted:    deleted,
+		LowestID:   lowestID,
+		HighestID:  highestID,
+		AnchorHash: fmt.Sprintf("fifo-batch-%d-anchor", callIdx),
+	}, nil
 }
 
 func TestRetention_DisabledWithZeroInterval(t *testing.T) {
@@ -237,6 +293,45 @@ func TestRetention_FIFOTrimDrainsInBatches(t *testing.T) {
 	}
 	if store.trimBatchSize.Load() != 1000 {
 		t.Fatalf("expected batchSize=1000 propagated, got %d", store.trimBatchSize.Load())
+	}
+
+	// Audit-of-the-audit: trimAccessLogsFIFO must record exactly one
+	// "audit.access_logs.prune" event whose payload pins reason=fifo, the
+	// configured row cap, and a non-zero deleted count.
+	auditCalls := store.auditCallsFor("audit.access_logs.prune")
+	if len(auditCalls) != 1 {
+		t.Fatalf("expected exactly 1 audit.access_logs.prune entry, got %d", len(auditCalls))
+	}
+	got := auditCalls[0].details
+	if got["reason"] != "fifo" {
+		t.Fatalf("audit details: reason=%v, want \"fifo\"", got["reason"])
+	}
+	deleted, ok := got["deleted_count"].(int64)
+	if !ok || deleted <= 0 {
+		t.Fatalf("audit details: deleted_count=%v (type %T), want positive int64", got["deleted_count"], got["deleted_count"])
+	}
+	maxRows, ok := got["max_rows"].(int64)
+	if !ok || maxRows != 10_000 {
+		t.Fatalf("audit details: max_rows=%v (type %T), want 10000", got["max_rows"], got["max_rows"])
+	}
+	// Deleted-range metadata sourced from PruneResult: lowest must be the
+	// first batch's lowest (1, per the synthetic id range), highest must be
+	// the last drainin batch's highest, and the anchor hash must match the
+	// last batch's. The mock seeds those deterministically.
+	lowestID, ok := got["lowest_id"].(int64)
+	if !ok || lowestID != 1 {
+		t.Fatalf("audit details: lowest_id=%v (type %T), want 1", got["lowest_id"], got["lowest_id"])
+	}
+	highestID, ok := got["highest_id"].(int64)
+	if !ok || highestID <= 0 {
+		t.Fatalf("audit details: highest_id=%v (type %T), want positive", got["highest_id"], got["highest_id"])
+	}
+	if highestID < lowestID {
+		t.Fatalf("audit details: highest_id %d < lowest_id %d", highestID, lowestID)
+	}
+	anchor, ok := got["new_anchor_hash"].(string)
+	if !ok || anchor == "" {
+		t.Fatalf("audit details: new_anchor_hash=%v (type %T), want non-empty string", got["new_anchor_hash"], got["new_anchor_hash"])
 	}
 }
 
