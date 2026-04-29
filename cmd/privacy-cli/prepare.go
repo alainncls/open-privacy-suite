@@ -103,7 +103,11 @@ func runPrepare(cmd *flag.FlagSet, args []string) {
 
 	// Register with proxy
 	fmt.Println("\nRegistering with Privacy Proxy...")
-	client := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	client, err := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	req := &PrepareRequest{
 		Contracts: prepareContracts,

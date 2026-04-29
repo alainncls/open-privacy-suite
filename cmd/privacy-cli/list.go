@@ -44,7 +44,11 @@ func runList(cmd *flag.FlagSet, args []string) {
 	}
 
 	// Create client
-	client := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	client, err := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Fetch deployments
 	fmt.Printf("Fetching deployments for organization %s...\n\n", cfg.Org.ID)

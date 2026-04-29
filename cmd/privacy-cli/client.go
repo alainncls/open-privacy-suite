@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -17,15 +18,27 @@ type ProxyClient struct {
 	httpClient *http.Client
 }
 
-// NewProxyClient creates a new proxy client.
-func NewProxyClient(baseURL, token string) *ProxyClient {
+// NewProxyClient creates a new proxy client. The base URL must parse and use
+// http or https — this guards against typos in privacy.toml/--api-url/$PRIVACY_PROXY_API_URL
+// and prevents schemes like file:// or gopher:// from being used as request targets.
+func NewProxyClient(baseURL, token string) (*ProxyClient, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid api_url %q: %w", baseURL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("api_url must use http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("api_url %q is missing a host", baseURL)
+	}
 	return &ProxyClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-	}
+	}, nil
 }
 
 // PrepareDeployment registers a deployment plan with the proxy.

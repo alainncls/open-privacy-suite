@@ -43,7 +43,11 @@ func runVerify(cmd *flag.FlagSet, args []string) {
 	}
 
 	// Create client
-	client := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	client, err := NewProxyClient(cfg.Proxy.APIURL, cfg.Auth.Token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// First, get the deployment info
 	fmt.Printf("Fetching deployment %s...\n", *deploymentID)
