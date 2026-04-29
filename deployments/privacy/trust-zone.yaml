@@ -1,13 +1,29 @@
 # Source of truth for the privacy-mode trust-zone service inventory.
 #
+# Privacy mode enforces a two-zone split:
+#
+#   - indexer-zone holds services that handle raw chain data
+#     (chain-indexer, indexer-postgres, the EVM node) plus privacy-proxy's
+#     own state (privacy-postgres, redis). Privacy-proxy is the only
+#     legitimate caller of these services.
+#
+#   - bff-zone holds the block-explorer BFF and its verification
+#     postgres. The BFF talks to privacy-proxy and to its own postgres;
+#     it has no route to indexer-zone.
+#
+# Privacy-proxy is the only service that legitimately attaches to both
+# zones — it is the sole bridge. A misbuilt BFF (e.g. one that lost the
+# `--target privacy` Go build tag in a future change) physically cannot
+# reach the indexer because the network forbids it. This is the
+# structural floor that survives upstream build-pipeline mistakes.
+#
 # Consumed by:
 #   - e2e/privacy_bypass_test.go     (runtime negative-network test)
 #   - e2e/privacy_manifest_test.go   (static compose-config validation)
 #
-# A service listed under `trust_zone` MUST NOT publish ports to the host
-# in docker-compose.privacy.yml, and MUST NOT be reachable from outside
-# the trust network. When adding a new service to the trust zone, add it
-# here; the tests verify both invariants automatically.
+# A service listed under `indexer_zone` or `bff_zone` MUST NOT publish
+# ports to the host in docker-compose.privacy.yml, and MUST attach only
+# to its named docker network (the static test enforces both).
 #
 # A service listed under `public` IS published on the host (typically
 # bound to 127.0.0.1) and acts as the external-facing surface.
@@ -16,9 +32,9 @@
 # the compose network — used by the runtime test to probe that nothing
 # on the host responds on that port.
 
-version: 1
+version: 2
 
-trust_zone:
+indexer_zone:
   - name: chain-indexer
     default_internal_port: 50051
     description: chain-indexer gRPC server; privacy-proxy is the sole consumer
@@ -34,6 +50,8 @@ trust_zone:
   - name: redis
     default_internal_port: 6379
     description: privacy-proxy session / rate-limit / OAuth state store
+
+bff_zone:
   - name: block-explorer-postgres
     default_internal_port: 5432
     description: block-explorer BFF postgres (contract verifications only; no chain data)
@@ -41,11 +59,15 @@ trust_zone:
     default_internal_port: 8080
     description: block-explorer BFF (privacy-tagged build — no chain-indexer client linked); sits between block-explorer-frontend and privacy-proxy, owns sessions, forwards data reads to privacy-proxy for redaction
 
+# proxy-backend is the only service permitted to attach to both
+# indexer-zone and bff-zone. The static manifest test enforces this by
+# name — adding any other multi-zone service requires updating the test
+# AND justifying why it needs the cross-zone path.
 public:
   - name: proxy-backend
     host_port_env: HOST_PORT_PROXY
     default_host_port: 8080
-    description: privacy-proxy REST + admin surface
+    description: privacy-proxy REST + admin surface; sole bridge between indexer-zone and bff-zone
   - name: proxy-frontend
     host_port_env: HOST_PORT_UI
     default_host_port: 5173
@@ -53,4 +75,4 @@ public:
   - name: block-explorer-frontend
     host_port_env: HOST_PORT_EXPLORER
     default_host_port: 3001
-    description: block-explorer SPA — routes /api/* to block-explorer-api (the BFF)
+    description: block-explorer SPA — routes /api/* to block-explorer-api (the BFF); attaches to bff-zone to reach the BFF
