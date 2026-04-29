@@ -205,7 +205,7 @@ The bypass does NOT apply to users with `deploy`, `write`, `read`, or `upgrade` 
 | Field | Behavior | Implemented | Tested | Notes |
 |-------|----------|-------------|--------|-------|
 | `miner` | Not redacted | N/A | N/A | Accepted: block producer is consensus-layer infrastructure metadata, not user identity; no grant/visibility mechanism for blocks |
-| `logsBloom` | **Not zeroed** | **No** | No | **GAP G6** — bloom filter contains address/topic hashes; zeroing would require per-block address scanning which is expensive; low practical risk (lookups are probabilistic and require knowing the target address) |
+| `logsBloom` | All-zero (256 bytes) on every response, every viewer | Yes | Yes | **G6 closed (RD-873).** Bloom previously leaked address/topic membership in O(1) to anyone who already knew the target address. Now overwritten unconditionally on the way out — no per-block address scanning needed because the field carries no useful information for clients of a privacy proxy. |
 | `number`, `hash`, `timestamp`, `gasUsed`, `gasLimit`, `difficulty`, `size`, `parentHash`, `nonce`, `extraData`, `baseFeePerGas`, `withdrawalsRoot` | Public; not redacted | N/A | N/A | Block header fields are consensus-layer public data |
 | `transactions` (full objects, `fullTxObjects=true`) | Non-participant txs removed from array | Yes | Yes | Per-tx participant check; block-level fields preserved |
 | `transactions` (hashes only, `fullTxObjects=false`) | Passed through | Yes | Yes | Tx hashes alone are not sensitive |
@@ -253,7 +253,7 @@ At the RPC layer, visibility is binary: the caller either is or is not a partici
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block; all txs | Non-participant txs removed | Yes | Yes |
 | `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through | Yes | Yes |
 | `eth_getBlockReceipts` | All receipts in block | Non-participant receipts removed | Yes | Yes |
-| `logsBloom` in blocks | **Not zeroed** | — | **No** | No | **GAP G6** |
+| `logsBloom` in blocks | All-zero (256 bytes) for every viewer | — | Yes | Yes | G6 closed (RD-873) |
 
 ### 3.9 Token (Explorer API)
 
@@ -287,13 +287,14 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G16, G22 are resolved. G4–G7, G15 are outstanding.
+The following gaps are numbered. G1, G2, G3, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G5, G15 are outstanding.
 
 ### Resolved
 
 - **G1 (resolved):** Nonce not stripped when sender was hidden — now nil when `from` is Hidden/Redacted.
 - **G2 (resolved):** `value` and `inputData` not zeroed for mixed-party txs (one side hidden) — now zeroed when either side is Hidden or Redacted.
 - **G3 (resolved):** Log topics[1..3] not scanned for embedded address parameters — now scanned for all logs where emitter is Full; private addresses zeroed.
+- **G6 (resolved, RD-873):** Block-level `logsBloom` not zeroed — bloom filter contained hashed representations of addresses and event topics from every log in the block; a viewer who knew a target address could probe activity in O(1). Now overwritten with an all-zero 256-byte value on every block-returning RPC response (`eth_getBlockByHash`, `eth_getBlockByNumber`, `eth_getBlockReceipts`) regardless of viewer or block shape. The previous "expensive per-block scanning" cost vanished once we accepted that clients of a privacy proxy can't usefully consume the bloom anyway — sanitisation is a single field overwrite.
 - **G7 (resolved):** Transaction.contractAddress leaks deployed address — contract deployment transactions from hidden deployers are now dropped entirely via SQL-level visibility filtering.
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
 - **G9 (resolved):** Log entries not dropped when emitter is Hidden — now dropped entirely.
@@ -308,9 +309,6 @@ The following gaps are numbered. G1, G2, G3, G8, G9, G11, G14, G16, G22 are reso
 
 - **G5: Log.data not scanned when no ABI registered (partial)**
   When an event log's emitting contract has a registered ABI, non-indexed `address`-typed parameters in `data` are decoded and private addresses zeroed. When no ABI is registered, the raw ABI-encoded `data` blob is returned unmodified. A private address embedded as a non-indexed parameter in an unverified contract's log will not be redacted. This applies to both the Explorer API and `eth_getLogs` at the RPC layer. Accepted as a limitation — no fix planned until ABI scanning can be done heuristically.
-
-- **G6: Block.logsBloom not zeroed**
-  The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed (not raw) representations of addresses. A viewer who already knows a target address can probe whether that address has activity in a given block in O(1). Zeroing the bloom field for all blocks would require per-block address scanning against the private address registry, which is expensive. Risk is low — probabilistic membership test only, requires knowing the target address. Accepted for now; track as a future hardening item.
 
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.

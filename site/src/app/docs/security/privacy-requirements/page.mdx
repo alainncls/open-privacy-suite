@@ -92,7 +92,7 @@ Block-level data is always public. Blocks are consensus-layer infrastructure, no
 | `miner` | Always public |
 | `transactions` (hashes only) | Always public |
 | `transactions` (full objects) | Per-transaction participant check applied; non-participant transactions removed |
-| `logsBloom` | Always public — see known limitations below |
+| `logsBloom` | Always replaced with all-zero (256 bytes) on every block-returning response, regardless of viewer |
 
 ---
 
@@ -112,23 +112,17 @@ When an event log's emitting contract does not have a registered and verified AB
 
 **What to do:** Register ABIs for all contracts whose events include address parameters. See [What Operators Must Do](#what-operators-must-do) below.
 
-### 2. Block `logsBloom` is not zeroed
-
-The `logsBloom` field in block headers is a Bloom filter over the addresses and topics of all logs in the block. It contains hashed representations of addresses, not raw addresses. A viewer who already knows a specific target address can probe whether that address has any log activity in a given block in O(1) time.
-
-This is a probabilistic, one-bit query: it can confirm activity but not reveal the address to a viewer who does not already know it. The risk is low in practice — an attacker must already possess the address they are testing, and the filter produces false positives. Zeroing the bloom for every block would require scanning all block logs against the private address registry on every block request, which is prohibitively expensive at scale.
-
-### 3. Contract deployment: deployed address visible when deployer is private
+### 2. Contract deployment: deployed address visible when deployer is private
 
 When a private address deploys a contract, the transaction's `contractAddress` field (the address of the newly deployed contract) is currently not stripped. An unauthorized viewer can see the address of the contract that was deployed, even though the deployer's identity is shown as `[PRIVATE]`. The deployed contract may be discoverable in the block explorer and could be correlated with subsequent activity.
 
 **Mitigation:** Ensure deployed contracts are registered to the same organization as the deployer, so their activity is also subject to access control.
 
-### 4. Gas parameters are not hidden
+### 3. Gas parameters are not hidden
 
 Gas fields (`gasUsed`, `gasPrice`, `maxFeePerGas`, `maxPriorityFeePerGas`, `gasLimit`) are visible to all viewers, including those who cannot see the transaction parties. Gas parameters do not directly identify an address and are available to all participants in the network via the RPC layer regardless of this proxy.
 
-### 5. Value inference from public address balance history
+### 4. Value inference from public address balance history
 
 When a transaction involves one private address and one public address, the `value` field is hidden. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks:
 
