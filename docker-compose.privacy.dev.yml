@@ -1,28 +1,40 @@
-# Privacy-mode deployment manifest for the Open Privacy Suite.
+# Privacy-mode DEV stack for local development.
 #
-# This is the authoritative deployment for corporate / permissioned chains.
-# It deliberately omits every component that could bypass privacy-proxy.
-# If a service is missing here, that is on purpose — not oversight.
+# Same architecture as docker-compose.privacy.yml (the prod manifest):
+# trust-zone vs public networks, BFF in front of privacy-proxy, no
+# block-explorer indexer. Differences are scoped to developer
+# ergonomics:
 #
-# See deployments/privacy/README.md for the trust-boundary rationale
-# (RD-855).
+#   - proxy-backend built with target: dev (mockauth-tagged binary).
+#   - ALLOW_MOCK_LOGIN=true, MOCK_SIGNATURES=true on proxy-backend.
+#   - proxy-frontend built with VITE_ALLOW_MOCK_LOGIN=true so the
+#     "Mock Login (Skip Wallet)" button renders.
+#   - anvil's RPC published on the host so devs can point cast / forge
+#     / MetaMask directly at it. The trust-boundary tests run against
+#     the prod manifest only, so this convenience does NOT weaken the
+#     audited deployment.
+#   - chain-indexer runs with FORCE_REINDEX=true so a fresh anvil
+#     (no volume) doesn't trip the chain-reset detector against an
+#     indexer-postgres volume from a previous run.
+#   - ENVIRONMENT=development (rather than production), so the
+#     in-code production gate doesn't force-disable mock-auth.
 #
-# Quick start:
-#   docker compose -f docker-compose.privacy.yml up -d
+# Use:
+#   docker compose -f docker-compose.privacy.dev.yml up -d
+#
+# This is a complete compose file — do NOT layer it on top of
+# docker-compose.privacy.yml. The two files are siblings, not
+# base/overlay. Picking one chooses the deployment shape outright.
 #
 # By default, chain-indexer and block-explorer are expected as sibling
-# clones of privacy-proxy (same parent directory). For non-sibling
-# layouts set `BLOCK_EXPLORER_PATH=/abs/or/relative/path` and/or
-# `CHAIN_INDEXER_PATH=...` in the environment; both fall back to
-# `../block-explorer` and `../chain-indexer` respectively.
+# clones of privacy-proxy (same parent directory). Override paths via
+# `BLOCK_EXPLORER_PATH` / `CHAIN_INDEXER_PATH` env vars.
 #
-# In production, replace the `build:` blocks with `image:` references
-# to registry-hosted images.
+# scripts/privacy-dev-up.sh wraps the boilerplate (secret generation,
+# `--no-cache` frontend rebuild, health-wait, URL print).
 
 services:
   # ----- Trust zone --------------------------------------------------------
-  # Only privacy-proxy sits on both networks. Nothing else in the trust
-  # zone is reachable from the public network.
 
   privacy-postgres:
     image: postgres:15-alpine
@@ -54,11 +66,14 @@ services:
     restart: unless-stopped
 
   anvil:
-    # Development EVM node. In production, swap to an external RPC endpoint
-    # and remove this service entirely — privacy-proxy already reaches it
-    # via NODE_URL.
     image: ghcr.io/foundry-rs/foundry:latest
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--steps-tracing", "--block-time", "2"]
+    # DEV-ONLY: expose anvil's RPC on the host for cast / forge / MetaMask.
+    # The prod manifest deliberately omits this — anvil sits on trust-zone
+    # only there. Trust-boundary tests run against the prod manifest, so
+    # this convenience does NOT weaken the audited deployment.
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_RPC:-8545}:8545"
     networks:
       - trust-zone
     healthcheck:
@@ -69,9 +84,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Chain-indexer owns its own postgres. Neither is reachable from the
-  # public network — there is no path for a client to query the indexer
-  # directly. Privacy-proxy is the sole consumer.
   indexer-postgres:
     image: postgres:15-alpine
     environment:
@@ -90,10 +102,6 @@ services:
     restart: unless-stopped
 
   chain-indexer:
-    # Build from the chain-indexer repo. Override the path via
-    # CHAIN_INDEXER_PATH (defaults to a sibling clone). In production
-    # replace the build block with an image reference:
-    #   image: ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION:-latest}
     build:
       context: ${CHAIN_INDEXER_PATH:-../chain-indexer}
       dockerfile: Dockerfile
@@ -105,6 +113,11 @@ services:
       - POLL_INTERVAL=2s
       - ENABLE_TRACING=true
       - ENABLE_OP_DEPOSITS=${ENABLE_OP_DEPOSITS:-false}
+      # DEV-ONLY: wipe indexer progress on startup. Avoids "chain reset
+      # detected" crash loops when anvil restarts fresh (no volume) but
+      # indexer-postgres still remembers an older chain head. NEVER set
+      # in the prod manifest.
+      - FORCE_REINDEX=true
     depends_on:
       indexer-postgres:
         condition: service_healthy
@@ -118,58 +131,37 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-      # Production-intent manifest: the prod target builds without the
-      # `mockauth` build tag, so MOCK_SIGNATURES / ALLOW_MOCK_LOGIN are
-      # not even linked. The dev compose (docker-compose.privacy.dev.yml)
-      # uses target: dev for the mockauth-tagged binary.
-      target: prod
-    # Privacy-proxy is the only external-facing backend in privacy mode.
-    # In production this would typically sit behind an ingress instead
-    # of publishing directly; for local dev + the negative-network test
-    # it's published to 127.0.0.1 only by default. Operators on a LAN
-    # who want devices on the same network to reach the stack
-    # (e.g. mobile Privado wallet) can set HOST_BIND=0.0.0.0.
+      # DEV: target: dev → binary built with -tags mockauth. Wires the
+      # mock-login + mock-signatures code paths so they can be turned on
+      # via env vars below. The prod build target compiles them out.
+      target: dev
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_PROXY:-8080}:8080"
     environment:
       - NODE_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${PRIVACY_POSTGRES_PASSWORD:?PRIVACY_POSTGRES_PASSWORD is required in privacy mode}@privacy-postgres:5432/privacy_proxy?sslmode=disable
       - PORT=8080
-      # ENVIRONMENT acts as a binary kill switch in code: anything
-      # other than the literal string "production" unlocks dev
-      # shortcuts (localhost in OAuth redirect-URI allowlist,
-      # MOCK_SIGNATURES, ALLOW_MOCK_LOGIN, demo auto-auth — see
-      # internal/config/config.go:215-240). The privacy compose is the
-      # production-intent manifest; this MUST be "production". The dev
-      # compose explicitly sets "development".
-      - ENVIRONMENT=production
+      # ENVIRONMENT is binary in code: only "production" is production;
+      # anything else unlocks dev shortcuts (localhost in OAuth redirect
+      # allowlist, MOCK_SIGNATURES / ALLOW_MOCK_LOGIN honored). Dev
+      # compose sets "development" explicitly.
+      - ENVIRONMENT=development
       - VERIFIER_ID=${VERIFIER_ID:-did:privado:verifier:dev-0000000000000000}
       - BASE_URL=${BASE_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
-      # Browser-facing URL of the privacy-proxy admin UI. When set, the
-      # OAuth /authorize endpoint redirects browser requests to the React
-      # login page at FRONTEND_URL/login?oauth_session=… instead of
-      # serving backend-rendered fallback HTML. Operators should override
-      # for production deployments (e.g. https://proxy.yourdomain.com).
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${HOST_PORT_UI:-5173}}
-      # OAuth redirect-URI allowlist (comma-separated explicit origins).
-      # BASE_URL's origin is auto-allowed; add anything else — e.g. the
-      # block-explorer-frontend on a different port, or a LAN IP for
-      # mobile testing — here. "*" does NOT allow arbitrary redirects;
-      # only explicit origins do (see internal/server/oauth.go's
-      # isValidRedirectURI).
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in privacy mode}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required in privacy mode}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
-      # Indexer integration — this is what flips privacy-proxy's explorer
-      # backend from direct SQL to gRPC. The explorer postgres variable is
-      # still accepted for standalone fallback (ABI writes, indexer
-      # progress) per RD-855 behavioral-shifts doc, but in a pure privacy
-      # deployment it points at the same indexer postgres read-only.
       - INDEXER_URL=chain-indexer:50051
       - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
+      # DEV-ONLY: mock-login + mock-signatures. Both runtime-gated AND
+      # build-tag-gated; force-disabled when ENVIRONMENT=production
+      # (see internal/config/config.go:215-229).
+      - ALLOW_MOCK_LOGIN=true
+      - MOCK_SIGNATURES=true
     depends_on:
       privacy-postgres:
         condition: service_healthy
@@ -189,37 +181,32 @@ services:
     restart: unless-stopped
 
   # ----- Public zone -------------------------------------------------------
-  # Only user-facing SPAs live here. No backend, no database, no indexer.
 
   proxy-frontend:
+    # Vite dev server (target: dev) — required so import.meta.env.DEV is
+    # true. Several admin-dashboard panels (DeployDemoTokenPanel, dev
+    # tools) are gated on that flag and dead-code-eliminated by the
+    # production build, so target: prod would hide them even with mock
+    # auth on. The bind-mount + node_modules volume enable hot-reload
+    # against the live source.
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: prod
+      target: dev
     ports:
-      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_UI:-5173}:80"
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_UI:-5173}:5173"
     environment:
       - VITE_API_TARGET=http://proxy-backend:8080
+      - VITE_ALLOW_MOCK_LOGIN=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       proxy-backend:
         condition: service_started
     networks:
       - public
     restart: unless-stopped
-
-  # Block-explorer runs as frontend + a thin Backend-for-Frontend (BFF)
-  # api. The BFF owns browser sessions (OAuth code flow against
-  # privacy-proxy, HttpOnly cookies, contract verification) and proxies
-  # chain-data reads to privacy-proxy's REST explorer surface, which
-  # applies RBAC-based redaction.
-  #
-  # The BFF image is built with --target privacy, which compiles out the
-  # chain-indexer gRPC client (Go build tag "privacy"). Even with env
-  # vars flipped at runtime, the binary has no code path to reach
-  # chain-indexer — the only data source it can talk to is
-  # privacy-proxy. This is the compile-time layer of the three-layer
-  # defense (compile-time + runtime + network) documented in
-  # docs/rd-855-behavioral-shifts.md.
 
   block-explorer-postgres:
     image: postgres:15-alpine
@@ -239,21 +226,18 @@ services:
     restart: unless-stopped
 
   block-explorer-api:
-    # Build from the block-explorer repo's privacy target. Override
-    # the path via BLOCK_EXPLORER_PATH (defaults to a sibling clone).
-    # In production replace with an image reference:
-    #   image: ghcr.io/gateway-fm/block-explorer-api:${EXPLORER_VERSION:-latest}-privacy
     build:
       context: ${BLOCK_EXPLORER_PATH:-../block-explorer}/backend
       dockerfile: Dockerfile.api
+      # SAME AS PROD: the dev variant does not loosen the BFF's
+      # privacy-build invariants. The chain-indexer gRPC client is
+      # still compiled out — dev convenience is scoped to privacy-proxy
+      # auth, never to data-path correctness.
       target: privacy
     environment:
       - DATABASE_URL=postgres://postgres:${BLOCK_EXPLORER_POSTGRES_PASSWORD:?BLOCK_EXPLORER_POSTGRES_PASSWORD is required in privacy mode}@block-explorer-postgres:5432/explorer?sslmode=disable
       - RPC_URL=http://proxy-backend:8080
       - API_PORT=8080
-      # Privacy-build: INDEXER_URL is intentionally unset. The privacy
-      # binary rejects it at startup anyway, but leaving it off here is
-      # defense in depth against a compose-merge accident.
       - PRIVACY_PROXY_URL=http://proxy-backend:8080
       - PRIVACY_PROXY_PUBLIC_URL=${PRIVACY_PROXY_PUBLIC_URL:-http://localhost:${HOST_PORT_PROXY:-8080}}
       - SSO_CLIENT_ID=${SSO_CLIENT_ID:-explorer}
@@ -265,17 +249,9 @@ services:
       proxy-backend:
         condition: service_started
     networks:
-      # Trust-zone only — not reachable from the host. The
-      # block-explorer-frontend nginx sits on the same network and
-      # is the only client.
       - trust-zone
     restart: unless-stopped
 
-  # Block-explorer frontend — SPA served by nginx. The mounted nginx
-  # config routes:
-  #   /api/auth/*   -> block-explorer-api (OAuth flow, cookie set)
-  #   /api/*        -> block-explorer-api (which forwards to privacy-proxy)
-  #   /ws           -> 404 (subscriptions not supported in privacy mode)
   block-explorer-frontend:
     build:
       context: ${BLOCK_EXPLORER_PATH:-../block-explorer}/frontend
@@ -289,30 +265,13 @@ services:
         condition: service_started
     networks:
       - public
-      # Frontend also needs trust-zone access to reach block-explorer-api
-      # on the internal network.
       - trust-zone
     restart: unless-stopped
 
-  # Expose privacy-proxy on the host too, so clients hitting
-  # localhost:${HOST_PORT_PROXY} work for testing.
-  #
-  # In production deployments the reverse proxy / ingress is the only
-  # host-exposed surface, so you'd drop the port publish block on
-  # proxy-backend and publish only the ingress.
-
 networks:
-  # Trust zone — privacy-proxy is the only service that spans out to the
-  # public network. The chain-indexer, its postgres, anvil (or any real
-  # EVM node), and redis are NOT reachable from clients.
   trust-zone:
     driver: bridge
-    internal: false   # proxy-backend needs NODE_URL egress; flip to true
-                     # in prod if anvil/RPC is on the same network and
-                     # there's no other external dependency.
-
-  # Public zone — SPAs + the proxy-backend's exposed port. No direct
-  # access to any data source.
+    internal: false
   public:
     driver: bridge
 
