@@ -20,12 +20,45 @@ type ContractStore interface {
 }
 
 // EventRuleChecker resolves event-level access rules for a viewer on a
-// given contract address. Returns the list of allowed event rules (by topic0)
-// or nil if no event rules are configured (all events allowed).
+// given contract address. The interface mirrors the RPC-side event-rule
+// resolution (see rbac.FilterEventLogs) so the explorer redactor and the
+// JSON-RPC filter behave identically — required by the Layer 1 / Layer 2
+// symmetry invariant in REDACTION_SPEC.md.
+//
+// Returns a tri-state EventRulesResolution:
+//   - Wildcard == true                  ⇒ all events for this contract are
+//                                          visible to the viewer; allowlist
+//                                          is irrelevant. Mirrors the
+//                                          rbac.EventRulesField{"*"} state.
+//   - Wildcard == false, len(Rules) > 0 ⇒ allowlist mode; only listed
+//                                          topic0s pass.
+//   - Wildcard == false, len(Rules) == 0 ⇒ **deny-all** (RD-842 / RD-888).
+//                                          Same as `event_rules: null` in
+//                                          the database — operator intent
+//                                          is "no events visible until
+//                                          rules are configured." Anonymous
+//                                          logs (no topic0) are also
+//                                          blocked in this mode.
+//
+// Implementations MUST return the deny-all state when there is no
+// applicable grant for the viewer on the contract. **Never default to
+// allow-on-missing** — that was the pre-RD-888 behaviour and the cause of
+// the RPC/explorer symmetry break (RPC denied, explorer leaked).
 type EventRuleChecker interface {
-	// GetEventRulesForContract returns the viewer's event rules for a contract address.
-	// Returns nil if no event rules are configured (all events visible, backward compat).
-	GetEventRulesForContract(ctx context.Context, viewerDID string, contractAddress string) []EventRuleInfo
+	// GetEventRulesForContract returns the viewer's event-rule resolution
+	// for a contract address. See the interface docstring for tri-state
+	// semantics.
+	GetEventRulesForContract(ctx context.Context, viewerDID string, contractAddress string) EventRulesResolution
+}
+
+// EventRulesResolution describes a viewer's event-rule access for one
+// contract. See EventRuleChecker docstring for tri-state semantics.
+type EventRulesResolution struct {
+	// Wildcard true ⇒ all events visible, allowlist ignored.
+	Wildcard bool
+	// Rules is the allowlist of (topic0) entries. Honoured only when
+	// Wildcard is false. Empty Rules with Wildcard=false ⇒ deny-all.
+	Rules []EventRuleInfo
 }
 
 // EventRuleInfo is a lightweight event rule representation used by the redactor.
@@ -1072,12 +1105,11 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 	}
 
 	// Phase 3b: resolve event rules for each unique emitting contract (if checker is set).
-	eventRulesMap := make(map[string][]EventRuleInfo) // address -> rules (nil = all allowed)
-	eventRulesResolved := make(map[string]bool)       // tracks whether we've resolved for an address
+	eventRulesMap := make(map[string]EventRulesResolution) // address -> tri-state resolution
+	eventRulesResolved := make(map[string]bool)            // true once we've called the checker for an address
 	if r.eventRuleChecker != nil && viewerDID != "" {
 		for addr := range addrMap {
-			rules := r.eventRuleChecker.GetEventRulesForContract(ctx, viewerDID, addr)
-			eventRulesMap[addr] = rules
+			eventRulesMap[addr] = r.eventRuleChecker.GetEventRulesForContract(ctx, viewerDID, addr)
 			eventRulesResolved[addr] = true
 		}
 	}
@@ -1125,15 +1157,28 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			}
 		}
 
-		// Event rule check: if the contract has event rules configured and
-		// this event's topic0 is not in the allowlist, hide the log.
+		// Event rule check (RD-888): mirrors the RPC layer's tri-state
+		// semantics in rbac.FilterEventLogs.
+		//   * Wildcard ⇒ pass.
+		//   * Allowlist ⇒ topic0 must match a listed entry (anonymous
+		//     events with no topic0 are always blocked here).
+		//   * Empty Rules + !Wildcard ⇒ **deny-all** (operator intent
+		//     of `event_rules: null`). Pre-RD-888 this branch leaked logs
+		//     because the explorer treated it as "no rules ⇒ allow."
 		if eventRulesResolved[contractAddr] {
-			rules := eventRulesMap[contractAddr]
-			if rules != nil && l.Topic0 != nil {
-				// Allowlist mode: only listed topic0s pass.
+			res := eventRulesMap[contractAddr]
+			if !res.Wildcard {
+				if len(res.Rules) == 0 {
+					// Deny-all.
+					continue
+				}
+				// Allowlist mode: anonymous events have no topic0, drop.
+				if l.Topic0 == nil {
+					continue
+				}
 				topic0Lower := strings.ToLower(*l.Topic0)
 				allowed := false
-				for _, rule := range rules {
+				for _, rule := range res.Rules {
 					if rule.Topic0 == topic0Lower {
 						allowed = true
 						break
@@ -1142,10 +1187,6 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 				if !allowed {
 					continue
 				}
-			}
-			// If rules != nil but topic0 is nil (anonymous event), block it.
-			if rules != nil && l.Topic0 == nil {
-				continue
 			}
 		}
 
