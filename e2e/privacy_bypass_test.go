@@ -128,11 +128,11 @@ func TestPrivacyModeBypassClosure(t *testing.T) {
 		t.Fatalf("compose file not found at %s: %v", composeFile, err)
 	}
 
-	// The compose expects chain-indexer and block-explorer as sibling
-	// clones. CI must set them up; locally the dev's workspace has them.
-	if _, err := os.Stat(filepath.Join(repoRoot, "..", "chain-indexer")); err != nil {
-		t.Skipf("chain-indexer sibling clone missing; this test requires both chain-indexer and block-explorer cloned next to privacy-proxy: %v", err)
-	}
+	// The prod compose now pulls chain-indexer from GHCR
+	// (image: ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION:-latest}),
+	// so a sibling clone is no longer required for that service.
+	// block-explorer is still built from a sibling clone; CI must set
+	// it up, locally the dev's workspace has it.
 	if _, err := os.Stat(filepath.Join(repoRoot, "..", "block-explorer")); err != nil {
 		t.Skipf("block-explorer sibling clone missing: %v", err)
 	}
