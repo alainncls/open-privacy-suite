@@ -95,6 +95,13 @@ const (
 	DefaultOrgID = "00000000-0000-0000-0000-000000000001"
 	// DefaultGroupID is the ID of the default group that new users are added to.
 	DefaultGroupID = "00000000-0000-0000-0000-000000000001"
+	// AnonymousOrgID is the ID of the system org that holds the anonymous group
+	// (RD-870). Seeded by migration 044 with is_system=true; identity-immutable.
+	AnonymousOrgID = "00000000-0000-0000-0000-000000000002"
+	// AnonymousGroupID is the group whose group_access row supplies the
+	// allowed_methods + claims applied to no-JWT (anonymous) requests in
+	// internal/rbac/access.go. Edit via super-admin (X-Admin-Token) only.
+	AnonymousGroupID = "00000000-0000-0000-0000-000000000002"
 )
 
 // Organization represents a top-level tenant.
@@ -103,6 +110,7 @@ type Organization struct {
 	Slug      string         `json:"slug"`
 	Name      string         `json:"name"`
 	Settings  map[string]any `json:"settings"`
+	IsSystem  bool           `json:"is_system"` // Seeded, identity-immutable rows (e.g. anonymous, RD-870)
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 }
@@ -130,6 +138,7 @@ type Group struct {
 	Depth       int       `json:"depth"`
 	Path        string    `json:"path"`          // Materialized path (e.g., "root.engineering.devops")
 	IsOrgAdmin  bool      `json:"is_org_admin"`  // If true, members get all claims on all contracts in the org
+	IsSystem    bool      `json:"is_system"`     // Seeded, identity-immutable rows (e.g. anonymous, RD-870)
 	AutoCreated bool      `json:"auto_created"`  // Deprecated: always false for new groups. Column retained in DB for expand-only migration policy.
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

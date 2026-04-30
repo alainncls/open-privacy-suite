@@ -127,6 +127,14 @@ func (s *Server) updateGroup(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
+	if group.IsSystem {
+		// is_system rows are identity-immutable. Their group_access (methods,
+		// claims) is editable via the dedicated PUT endpoint, restricted to
+		// super admin. The group row itself (name/description/is_org_admin)
+		// is locked.
+		c.JSON(http.StatusForbidden, gin.H{"error": "system group cannot be modified"})
+		return
+	}
 
 	var input struct {
 		Name        *string `json:"name"`
@@ -168,6 +176,18 @@ func (s *Server) updateGroup(c *gin.Context) {
 
 func (s *Server) deleteGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
+
+	// Look up the group first so we can reject deletion of system rows
+	// before invalidating cache or attempting the delete.
+	group, err := s.db.GetGroup(c.Request.Context(), groupID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if group != nil && group.IsSystem {
+		c.JSON(http.StatusForbidden, gin.H{"error": "system group cannot be deleted"})
+		return
+	}
 
 	// Invalidate cache before deleting
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
@@ -221,6 +241,15 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	}
 	if group == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+
+	// is_system groups (e.g. the anonymous group from RD-870) have their
+	// group_access editable, but only by super admin (X-Admin-Token). Tier-2
+	// JWT admins are scoped to their own org; even if scoping is misconfigured
+	// they should not be able to widen the rules anonymous traffic plays by.
+	if group.IsSystem && c.GetString("auth_method") != "admin_token" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "system group access can only be modified by super admin (X-Admin-Token)"})
 		return
 	}
 

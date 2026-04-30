@@ -3386,14 +3386,7 @@ func TestAnonymousAccess(t *testing.T) {
 				}
 			}
 
-			if tt.expectAllowed {
-				if result.RateLimitRPS == nil || *result.RateLimitRPS != 10 {
-					t.Errorf("expected RateLimitRPS=10 for anonymous, got %v", result.RateLimitRPS)
-				}
-				if result.RateLimitDaily == nil || *result.RateLimitDaily != 1000 {
-					t.Errorf("expected RateLimitDaily=1000 for anonymous, got %v", result.RateLimitDaily)
-				}
-			} else {
+			if !tt.expectAllowed {
 				// Methods that are globally blocked get rejected before the anonymous
 				// access check, so their reason says "globally blocked" instead of
 				// "authentication required". Both are correct denials.
@@ -3402,7 +3395,87 @@ func TestAnonymousAccess(t *testing.T) {
 					t.Errorf("expected reason to contain 'authentication required' or 'globally blocked', got: %s", result.Reason)
 				}
 			}
+			// Note: RateLimit{RPS,Daily} are no longer set on the AccessCheckResult
+			// for anonymous requests — per-user rate limiting moved to the upstream
+			// RPC proxy (PR #120). RD-870 finished removing the dead values.
 		})
+	}
+}
+
+// TestAnonymousAccess_DBSourced verifies the RD-870 contract: anonymous
+// permissions come from the anonymous group's group_access row in the DB,
+// not from a hardcoded code branch. Editing the row changes what anonymous
+// can call.
+func TestAnonymousAccess_DBSourced(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	// Default seed allows eth_blockNumber but not eth_call.
+	res, err := controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_blockNumber"})
+	if err != nil || !res.Allowed {
+		t.Fatalf("eth_blockNumber should be allowed under default seed: err=%v allowed=%v", err, res.Allowed)
+	}
+	res, err = controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_call"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Allowed {
+		t.Fatalf("eth_call should be denied under default seed")
+	}
+
+	// Mutate the seeded row to add eth_call. The next access check must
+	// reflect the new config — proving the access path reads the DB row
+	// rather than a frozen code constant.
+	store.groupAccess[AnonymousGroupID].AllowedMethods = append(
+		store.groupAccess[AnonymousGroupID].AllowedMethods, "eth_call",
+	)
+	res, err = controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_call"})
+	if err != nil || !res.Allowed {
+		t.Fatalf("eth_call should be allowed after adding it to AllowedMethods: err=%v allowed=%v", err, res.Allowed)
+	}
+
+	// Remove the row entirely — fail closed. Anonymous gets nothing.
+	delete(store.groupAccess, AnonymousGroupID)
+	res, err = controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_blockNumber"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Allowed {
+		t.Fatalf("eth_blockNumber should be denied when anonymous group_access row is missing (fail-closed)")
+	}
+	if !res.AuthRequired {
+		t.Errorf("expected AuthRequired=true for fail-closed denial")
+	}
+}
+
+// TestAnonymousAccess_DeploymentBlocked verifies that even if a super admin
+// allowlists a write method like eth_sendTransaction on the anonymous group,
+// CREATE-shaped payloads still require an authenticated principal with the
+// deploy claim — defense in depth against admin foot-guns.
+func TestAnonymousAccess_DeploymentBlocked(t *testing.T) {
+	store := NewMockCrossOrgStore()
+	store.groupAccess[AnonymousGroupID].AllowedMethods = append(
+		store.groupAccess[AnonymousGroupID].AllowedMethods, "eth_sendTransaction",
+	)
+	controller := NewAccessController(store, 5*time.Minute)
+	ctx := context.Background()
+
+	// Deployment payload (no `to` field — IsContractDeployment treats this
+	// as a CREATE call).
+	deployParams := []any{map[string]any{"from": "0x0", "data": "0x60806040"}}
+	res, err := controller.CheckAccess(ctx, &AccessCheckRequest{
+		Method: "eth_sendTransaction",
+		Params: deployParams,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Allowed {
+		t.Fatalf("anonymous deployment must be denied even when eth_sendTransaction is allowlisted")
+	}
+	if !res.AuthRequired {
+		t.Errorf("expected AuthRequired=true on deployment denial")
 	}
 }
 

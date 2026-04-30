@@ -56,16 +56,21 @@ func (s *Server) listOrganizations(c *gin.Context) {
 		respondInternalError(c, err.Error())
 		return
 	}
-	if s.config.HideDevAdminOrg {
-		filtered := make([]*rbac.Organization, 0, len(orgs))
-		for _, org := range orgs {
-			if org.Slug != "dev-admin-org" {
-				filtered = append(filtered, org)
-			}
+	includeSystem := c.Query("include_system") == "true"
+	filtered := make([]*rbac.Organization, 0, len(orgs))
+	for _, org := range orgs {
+		if s.config.HideDevAdminOrg && org.Slug == "dev-admin-org" {
+			continue
 		}
-		total -= len(orgs) - len(filtered)
-		orgs = filtered
+		// is_system rows (e.g. the anonymous org from RD-870) are hidden by
+		// default and only surface when ?include_system=true is passed.
+		if org.IsSystem && !includeSystem {
+			continue
+		}
+		filtered = append(filtered, org)
 	}
+	total -= len(orgs) - len(filtered)
+	orgs = filtered
 	respondOK(c, gin.H{"data": orgs, "total": total, "limit": limit, "offset": offset})
 }
 
@@ -135,6 +140,13 @@ func (s *Server) updateOrganization(c *gin.Context) {
 		respondNotFound(c, "organization not found")
 		return
 	}
+	if org.IsSystem {
+		// is_system rows are identity-immutable. Their group_access can be
+		// edited via the dedicated PUT endpoint (super-admin only); the org
+		// row itself (slug/name) is locked.
+		respondForbidden(c, "system organization cannot be modified")
+		return
+	}
 
 	var input struct {
 		Slug     *string        `json:"slug"`
@@ -191,6 +203,10 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	}
 	if org == nil {
 		respondNotFound(c, "organization not found")
+		return
+	}
+	if org.IsSystem {
+		respondForbidden(c, "system organization cannot be deleted")
 		return
 	}
 
