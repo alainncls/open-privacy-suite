@@ -174,6 +174,15 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		// leak non-indexed addresses from event data on contracts without
 		// a custom ABI.
 		s.explorerRedactor.SetABIResolver(newDBABIResolver(rbacDB))
+		// RD-890: wire the admin-contracts resolver so tier-2 (org-admin)
+		// and tier-3 (per-contract admin claim) viewers bypass the ABI
+		// gate, matching the RPC layer's isAdminByContract behaviour
+		// (rbac.FilterEventLogs). Without it, admin viewers see logs
+		// via eth_getLogs but get the redacted view via the explorer
+		// endpoint — fail-closed asymmetry that confuses admins.
+		if s.rbacAccessCtrl != nil {
+			s.explorerRedactor.SetAdminContractsResolver(newDBAdminContractsResolver(s.rbacAccessCtrl))
+		}
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -399,6 +408,12 @@ explorerStore:    explorerBackend,
 	// a custom ABI.
 	if s.explorerRedactor != nil {
 		s.explorerRedactor.SetABIResolver(newDBABIResolver(database))
+		// RD-890: see explorerReconnectLoop for full rationale. Wiring
+		// the admin-contracts resolver here ensures tier-2 / tier-3
+		// admin viewers bypass the ABI gate per-contract.
+		if s.rbacAccessCtrl != nil {
+			s.explorerRedactor.SetAdminContractsResolver(newDBAdminContractsResolver(s.rbacAccessCtrl))
+		}
 	}
 
 	// Start background explorer DB reconnection if initial connection failed
