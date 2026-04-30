@@ -1135,6 +1135,106 @@ func TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ABIResolver + deny-when-no-ABI gate (RD-889)
+// ---------------------------------------------------------------------------
+
+// stubABIResolver returns a fixed ABI string per contract address. Empty
+// string means "no resolvable ABI" — the deny-gate trigger.
+type stubABIResolver struct {
+	byAddr map[string]string
+}
+
+func (s *stubABIResolver) Resolve(_ context.Context, address string) string {
+	return s.byAddr[strings.ToLower(address)]
+}
+
+// TestRedactLogs_ABIGate_DeniesWhenNoABI is the RD-889 fix. Without a
+// resolvable ABI, the explorer cannot decode non-indexed address
+// parameters in event data, so private addresses there would leak. The
+// gate drops the log to match rbac.FilterEventLogs (RD-875).
+func TestRedactLogs_ABIGate_DeniesWhenNoABI(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{
+		// addr deliberately absent ⇒ Resolve returns ""
+	}})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (no ABI ⇒ deny), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_ABIGate_AllowsWhenABIPresent confirms the gate is the
+// only new restriction — existing redaction behaviour is unchanged when
+// an ABI is resolvable.
+func TestRedactLogs_ABIGate_AllowsWhenABIPresent(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{
+		addr: `[{"type":"event","name":"Transfer","inputs":[]}]`,
+	}})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (ABI present), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_ABIGate_NoResolverWiredKeepsLegacyBehaviour preserves
+// pre-RD-889 behaviour for callers that haven't wired the resolver
+// (unit tests, older integrations). Without the resolver, Phase 3 falls
+// back to ContractStore and the deny gate is disabled. Production
+// server startup wires the resolver — see server.go.
+func TestRedactLogs_ABIGate_NoResolverWiredKeepsLegacyBehaviour(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	// No SetABIResolver call.
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("legacy path: expected 1 log (gate disabled when resolver not wired), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_ABIGate_PreservesHiddenDrop checks the gate is layered
+// correctly with the existing visibility check — Hidden logs are dropped
+// before the gate fires, and the gate doesn't accidentally resurface
+// them.
+func TestRedactLogs_ABIGate_PreservesHiddenDrop(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityHidden})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{
+		addr: `[{"type":"event","name":"Transfer","inputs":[]}]`, // ABI present
+	}})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (Hidden drops before ABI gate), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RedactLogs — ABI-based Data Field scanning
 // ---------------------------------------------------------------------------
 
