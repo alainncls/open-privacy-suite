@@ -118,6 +118,161 @@ func TestFilterEventLogs_WildcardPassesAll(t *testing.T) {
 	}
 }
 
+// RD-875 (closes decisions.md §2 G5): when the ABI provider returns "" for a
+// contract, the deny-without-ABI gate fires before any event_rules path —
+// wildcard, allowlist, and visibleTo fallback all collapse to deny because
+// non-indexed address parameters in event data cannot be redacted without
+// an ABI. Admin bypass remains the only exception.
+
+func TestFilterEventLogs_DeniesWhenNoABI_Wildcard(t *testing.T) {
+	// Wildcard event_rules normally pass everything, but with no ABI we
+	// can't redact non-indexed addresses in `data`, so deny-all wins.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: &EventRulesField{Wildcard: true},
+			},
+		},
+	}
+	abiProv := &testABIProvider{abis: map[string]string{}} // empty ⇒ "" for any contract
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xdef0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (deny-without-ABI overrides wildcard), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_DeniesWhenNoABI_Allowlist(t *testing.T) {
+	// Allowlist mode also collapses to deny when ABI is missing.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims: []Claim{ClaimRead},
+				EventRules: &EventRulesField{Rules: []EventRule{
+					{Topic0: "0xabc0000000000000000000000000000000000000000000000000000000000000", Name: "AllowedEvent"},
+				}},
+			},
+		},
+	}
+	abiProv := &testABIProvider{abis: map[string]string{}}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (deny-without-ABI overrides allowlist), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AllowsWhenABIPresent_Wildcard(t *testing.T) {
+	// Confirms the gate is the ONLY new restriction — when an ABI is
+	// resolvable, wildcard behaviour is unchanged.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: &EventRulesField{Wildcard: true},
+			},
+		},
+	}
+	abiProv := &testABIProvider{abis: map[string]string{
+		"0xcontract1": `[{"type":"event","name":"Transfer","inputs":[]}]`,
+	}}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xdef0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 2 {
+		t.Errorf("expected 2 logs (wildcard + ABI present), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_AdminBypassesABIRequirement(t *testing.T) {
+	// Admins (org-scoped admin claim) see every log regardless of ABI
+	// availability — the deny gate only affects non-admin viewers.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			// No ContractAccess entry — but admin bypass should still see logs.
+		},
+	}
+	abiProv := &testABIProvider{abis: map[string]string{}}
+	isAdmin := map[string]bool{"0xcontract1": true}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+		json.RawMessage(`{"address":"0xcontract1","topics":[],"data":"0x"}`), // even anonymous
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, isAdmin)
+	if len(result) != 2 {
+		t.Errorf("expected 2 logs (admin bypass beats ABI gate), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_DeniesWhenNoABI_VisibleToFallback(t *testing.T) {
+	// visibleTo extends RBAC access for non-participants, but it's
+	// reached only AFTER the ABI gate. With no ABI, the gate denies
+	// before visibleTo gets a chance — protects against the same data-
+	// field leak (other parties' addresses embedded in non-indexed params
+	// of an opted-in tx are still un-redactable).
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			// No grant on this contract — without the ABI gate, visibleTo
+			// would normally let the listed viewer through.
+		},
+	}
+	abiProv := &testABIProvider{abis: map[string]string{}}
+	visCtx := &TxVisibilityContext{
+		ViewerDID: "did:test:viewer",
+		TxVisibility: map[string][]string{
+			"0xtxhash1": {"did:test:viewer"},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x","transactionHash":"0xtxhash1"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, visCtx, nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (ABI gate fires before visibleTo fallback), got %d", len(result))
+	}
+}
+
+func TestFilterEventLogs_NilABIProviderDisablesGate(t *testing.T) {
+	// Backward compatibility: callers that pass abiProvider=nil (notably
+	// older test code) get the pre-RD-875 behaviour. Production paths
+	// always wire a real provider.
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			"0xcontract1": {
+				Claims:     []Claim{ClaimRead},
+				EventRules: &EventRulesField{Wildcard: true},
+			},
+		},
+	}
+
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"0xcontract1","topics":["0xabc0000000000000000000000000000000000000000000000000000000000000"],"data":"0x"}`),
+	}
+
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, nil, nil, nil)
+	if len(result) != 1 {
+		t.Errorf("expected 1 log (nil abiProvider disables gate), got %d", len(result))
+	}
+}
+
 func TestEventRulesField_MarshalUnmarshal(t *testing.T) {
 	tests := []struct {
 		name     string

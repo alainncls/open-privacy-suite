@@ -439,20 +439,20 @@ func (s *Server) getContractCode(address string) (string, error) {
 	return code, nil
 }
 
-// resolveContractABI returns the best available ABI for a contract: custom ABI
-// first, then built-in ABI based on the contract's metadata token_type field.
+// resolveContractABI is a thin wrapper around rbac.ResolveContractABI kept
+// for call-site readability in this file. The single source of truth for
+// "what ABI applies to this contract" lives in the rbac package.
 func resolveContractABI(contract *rbac.Contract) string {
-	if contract.ABI != "" {
-		return contract.ABI
-	}
-	// Fall back to built-in ABI if the contract has a known token type.
-	if contract.Metadata != nil {
-		if tokenType, ok := contract.Metadata["token_type"].(string); ok {
-			return rbac.GetBuiltInABI(tokenType)
-		}
-	}
-	return ""
+	return rbac.ResolveContractABI(contract)
 }
+
+// noABIForEventRulesErrorMessage is returned by the grant create/update
+// handlers (RD-875) when an admin tries to save event_rules other than
+// explicit deny on a contract with no resolvable ABI. The runtime log filter
+// would deny the contract anyway because non-indexed address parameters in
+// event data cannot be decoded — surfacing the error at save time avoids
+// silent no-op rules.
+const noABIForEventRulesErrorMessage = "cannot save event_rules: contract has no ABI registered. Upload an ABI for the contract or set its metadata token_type to a known value (\"ERC20\" or \"ERC721\") to use the built-in ABI registry. Without an ABI, log redaction cannot decode non-indexed address parameters and event visibility is denied at runtime regardless of the rules below."
 
 // validateEventRulesWithABI validates event param_rules against a contract ABI.
 // If abiJSON is empty, validation is skipped (returns ""). Otherwise, each rule's
@@ -774,6 +774,19 @@ func (s *Server) createContractGrant(c *gin.Context) {
 		return
 	}
 
+	// RD-875: any non-deny event_rules require a resolvable ABI (custom upload
+	// or metadata.token_type matching the built-in registry). Without one, the
+	// runtime log filter denies the contract regardless of these rules because
+	// non-indexed address parameters in event data cannot be redacted. Reject
+	// up-front rather than letting admins configure rules that look permissive
+	// but won't fire (closes decisions.md §2 G5).
+	if input.EventRules != nil && !input.EventRules.IsDeny() {
+		if resolveContractABI(contract) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": noABIForEventRulesErrorMessage})
+			return
+		}
+	}
+
 	// Validate event rules if provided and not wildcard
 	if input.EventRules != nil && !input.EventRules.IsWildcard() {
 		rules := input.EventRules.GetRules()
@@ -895,6 +908,15 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 			if err := json.Unmarshal(input.EventRules, &erf); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_rules format: must be \"*\", null, or an array"})
 				return
+			}
+
+			// RD-875: any non-deny event_rules require a resolvable ABI. See the
+			// create handler for the rationale; same gate, same error message.
+			if !erf.IsDeny() {
+				if resolveContractABI(contract) == "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": noABIForEventRulesErrorMessage})
+					return
+				}
 			}
 
 			if erf.IsWildcard() {
