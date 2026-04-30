@@ -25,7 +25,7 @@ type MockCrossOrgStore struct {
 }
 
 func NewMockCrossOrgStore() *MockCrossOrgStore {
-	return &MockCrossOrgStore{
+	m := &MockCrossOrgStore{
 		users:              make(map[string]*User),
 		organizations:      make(map[string]*Organization),
 		memberships:        make(map[string][]*MembershipWithDetails),
@@ -38,6 +38,23 @@ func NewMockCrossOrgStore() *MockCrossOrgStore {
 		contractDeployers:  make(map[string]*string),
 		preregisteredAddrs: make(map[string]map[string]bool),
 	}
+	// Seed the anonymous group's access (RD-870) — mirrors migration 044's
+	// seeded row so the access controller can resolve no-JWT requests in
+	// unit tests without standing up a real DB.
+	m.groupAccess[AnonymousGroupID] = &GroupAccess{
+		ID:      AnonymousGroupID,
+		GroupID: AnonymousGroupID,
+		AllowedMethods: []string{
+			"eth_blockNumber",
+			"eth_chainId",
+			"eth_gasPrice",
+			"net_version",
+			"net_listening",
+			"web3_clientVersion",
+		},
+		Claims: []Claim{},
+	}
+	return m
 }
 
 // User operations

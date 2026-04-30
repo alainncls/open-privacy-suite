@@ -27,14 +27,14 @@ func (d *DB) CreateOrganization(ctx context.Context, org *rbac.Organization) err
 }
 
 func (d *DB) GetOrganization(ctx context.Context, id string) (*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, is_system, created_at, updated_at
 	          FROM organizations WHERE id = $1`
 
 	org := &rbac.Organization{}
 	var settings []byte
 
 	err := d.conn.QueryRowContext(ctx, query, id).Scan(
-		&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt,
+		&org.ID, &org.Slug, &org.Name, &settings, &org.IsSystem, &org.CreatedAt, &org.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -51,14 +51,14 @@ func (d *DB) GetOrganization(ctx context.Context, id string) (*rbac.Organization
 }
 
 func (d *DB) GetOrganizationBySlug(ctx context.Context, slug string) (*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, is_system, created_at, updated_at
 	          FROM organizations WHERE slug = $1`
 
 	org := &rbac.Organization{}
 	var settings []byte
 
 	err := d.conn.QueryRowContext(ctx, query, slug).Scan(
-		&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt,
+		&org.ID, &org.Slug, &org.Name, &settings, &org.IsSystem, &org.CreatedAt, &org.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -88,7 +88,7 @@ func (d *DB) UpdateOrganization(ctx context.Context, org *rbac.Organization) err
 }
 
 func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error) {
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, is_system, created_at, updated_at
 	          FROM organizations ORDER BY created_at DESC, name ASC`
 
 	rows, err := d.conn.QueryContext(ctx, query)
@@ -102,7 +102,7 @@ func (d *DB) ListOrganizations(ctx context.Context) ([]*rbac.Organization, error
 		org := &rbac.Organization{}
 		var settings []byte
 
-		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.IsSystem, &org.CreatedAt, &org.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan organization: %w", err)
 		}
 
@@ -126,7 +126,7 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 		return nil, 0, fmt.Errorf("failed to count organizations: %w", err)
 	}
 
-	query := `SELECT id, slug, name, settings, created_at, updated_at
+	query := `SELECT id, slug, name, settings, is_system, created_at, updated_at
 	          FROM organizations ORDER BY created_at DESC, name ASC LIMIT $1 OFFSET $2`
 
 	rows, err := d.conn.QueryContext(ctx, query, limit, offset)
@@ -140,7 +140,7 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 		org := &rbac.Organization{}
 		var settings []byte
 
-		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.IsSystem, &org.CreatedAt, &org.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan organization: %w", err)
 		}
 

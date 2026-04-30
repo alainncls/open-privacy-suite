@@ -364,12 +364,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Handle anonymous access (no JWT provided)
+	// Handle anonymous access (no JWT provided).
+	//
+	// Anonymous permissions live in the `anonymous` group's group_access row
+	// (seeded by migration 044, RD-870). Edits restricted to super admin
+	// (X-Admin-Token) so the auditable rules are explicit and configurable
+	// rather than hardcoded here.
 	if req.UserExternalID == "" {
-		// Block historical state queries for anonymous users only.
-		// Authenticated users go through full RBAC (which gates which addresses
-		// they can query), so blocking by block number is redundant and breaks
-		// wallets like MetaMask that query at specific blocks for read consistency.
+		// Block historical state queries up-front. These reveal point-in-time
+		// state and aren't safe to expose anonymously even if the method name
+		// is on the allowlist. Authenticated users skip this check because
+		// per-address visibility filters take over.
 		if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -377,27 +382,48 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 
-		// Only pure network/chain metadata methods (eth_blockNumber, eth_chainId,
-		// eth_gasPrice, net_version, etc.) are allowed without authentication.
-		// These return no user data — just network state.
-		//
-		// Everything in ReadOpsMap, WriteOpsMap, or DeployMethods could reveal
-		// transaction data, balances, logs, or contract state and requires auth.
-		methodLower := strings.ToLower(strings.TrimSpace(req.Method))
-		if !ReadOpsMap[methodLower] && !WriteOpsMap[methodLower] && !DeployMethods[methodLower] && !ExtraMethods[req.Method] && !IsContractDeployment(req.Method, req.Params) {
-			rps, daily := 10, 1000
+		anonAccess, err := c.store.GetGroupAccess(ctx, AnonymousGroupID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load anonymous group access: %w", err)
+		}
+		if anonAccess == nil {
+			// Migration not run, row deleted, or DB inconsistency. Fail closed.
 			return &AccessCheckResult{
-				Allowed:        true,
-				RateLimitRPS:   &rps,
-				RateLimitDaily: &daily,
+				Allowed:      false,
+				AuthRequired: true,
+				Reason:       "anonymous access not configured",
 			}, nil
 		}
 
-		return &AccessCheckResult{
-			Allowed:      false,
-			AuthRequired: true,
-			Reason:       "authentication required for this operation",
-		}, nil
+		methodLower := strings.ToLower(strings.TrimSpace(req.Method))
+		methodAllowed := false
+		for _, allowed := range anonAccess.AllowedMethods {
+			if strings.ToLower(allowed) == methodLower {
+				methodAllowed = true
+				break
+			}
+		}
+		if !methodAllowed {
+			return &AccessCheckResult{
+				Allowed:      false,
+				AuthRequired: true,
+				Reason:       "authentication required for this operation",
+			}, nil
+		}
+
+		// Defense in depth: deployment payloads always require an authenticated
+		// principal with the deploy claim. The anonymous group has empty Claims
+		// by default; even if a super admin allowlists eth_sendTransaction, a
+		// CREATE-shaped payload still requires auth.
+		if IsContractDeployment(req.Method, req.Params) {
+			return &AccessCheckResult{
+				Allowed:      false,
+				AuthRequired: true,
+				Reason:       "deployment requires authentication",
+			}, nil
+		}
+
+		return &AccessCheckResult{Allowed: true}, nil
 	}
 
 	// Get user by external ID
