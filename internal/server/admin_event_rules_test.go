@@ -111,7 +111,31 @@ func createEventRulesGroup(t *testing.T, srv *testServerRBAC, orgID, slug, name 
 	return resp["id"].(string)
 }
 
+// createEventRulesContract creates a contract that resolves to the built-in
+// ERC-20 ABI via metadata.token_type. After RD-875, event_rules can only be
+// saved against a contract whose ABI is resolvable (custom upload or
+// metadata.token_type matching the built-in registry); the historical
+// fixture defaulted to no ABI which used to be a permissive code path.
+// Tests that need to exercise the no-ABI fail-closed gate explicitly use
+// createEventRulesContractNoABI.
 func createEventRulesContract(t *testing.T, srv *testServerRBAC, orgID, address, name string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"address":  address,
+		"name":     name,
+		"metadata": map[string]any{"token_type": "ERC20"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/orgs/"+orgID+"/contracts", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code, "create contract: %s", w.Body.String())
+}
+
+// createEventRulesContractNoABI creates a contract with no resolvable ABI
+// (no custom upload, no token_type metadata). After RD-875, attempting to
+// save non-deny event_rules on such a contract returns 400.
+func createEventRulesContractNoABI(t *testing.T, srv *testServerRBAC, orgID, address, name string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"address": address, "name": name})
 	req := httptest.NewRequest(http.MethodPost, "/api/orgs/"+orgID+"/contracts", bytes.NewReader(body))
@@ -463,9 +487,10 @@ func TestAdminEventRulesABIEndpoint(t *testing.T) {
 
 	// I10: GET events, no ABI stored -> empty array
 	t.Run("I10_NoABI_EmptyArray", func(t *testing.T) {
-		// Create a second contract without an ABI
+		// Create a second contract without an ABI (no token_type either, so
+		// the built-in registry can't resolve one).
 		noABIAddr := "0x6666666666666666666666666666666666666666"
-		createEventRulesContract(t, f.server, f.orgID, noABIAddr, "NoABI")
+		createEventRulesContractNoABI(t, f.server, f.orgID, noABIAddr, "NoABI")
 
 		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr + "/events"
 		req := httptest.NewRequest(http.MethodGet, url, nil)
@@ -613,25 +638,25 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "bytes")
 	})
 
-	// V05: no ABI -> skip validation, accept anything
-	t.Run("V05_NoABI_SkipsValidation", func(t *testing.T) {
-		// Create a contract without uploading any ABI
-		noABIAddr := "0x7777777777777777777777777777777777777777"
-		createEventRulesContract(t, f.server, f.orgID, noABIAddr, "NoABIToken")
+	// V05/V05b/V05c: post-RD-875 fail-closed behaviour. Saving any non-deny
+	// event_rules on a contract without a resolvable ABI (custom upload or
+	// metadata.token_type matching the built-in registry) is rejected at
+	// the grant-save handler with a clear 400. The previous "no ABI = skip
+	// validation / accept self constraints" path is gone — see
+	// REDACTION_SPEC.md §4 G5 and decisions.md §2 G5.
 
-		// Create a third group for this test
+	t.Run("V05_NoABI_RejectsTopic0Only", func(t *testing.T) {
+		// Even a bare topic0 rule (no param_rules) is rejected — without an
+		// ABI the runtime gate denies all logs from this contract anyway,
+		// so the rules would silently never fire. Reject up front.
+		noABIAddr := "0x7777777777777777777777777777777777777777"
+		createEventRulesContractNoABI(t, f.server, f.orgID, noABIAddr, "NoABIToken")
 		thirdGroupID := createEventRulesGroup(t, f.server, f.orgID, "group-gamma", "Group Gamma")
 
 		body, _ := json.Marshal(map[string]any{
 			"group_id": thirdGroupID,
 			"event_rules": []map[string]any{
-				{
-					"topic0": transferTopic0,
-					"name":   "Transfer",
-					"param_rules": []map[string]any{
-						{"index": 99, "must_be": "self"}, // would be out of bounds with ABI
-					},
-				},
+				{"topic0": transferTopic0, "name": "Transfer"},
 			},
 		})
 		url := "/api/orgs/" + f.orgID + "/contracts/" + noABIAddr + "/grants"
@@ -640,19 +665,15 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.server.router.ServeHTTP(w, req)
 
-		// Should succeed — no ABI means validation is skipped
-		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "contract has no ABI registered")
 	})
 
-	// V05b: no ABI -> custom hex param rule rejected (RD-808)
 	t.Run("V05b_NoABI_RejectsCustomHexParam", func(t *testing.T) {
-		// Create a contract without uploading any ABI (no token_type either)
 		noABIAddr2 := "0x7777777777777777777777777777777777777778"
-		createEventRulesContract(t, f.server, f.orgID, noABIAddr2, "NoABIToken2")
-
+		createEventRulesContractNoABI(t, f.server, f.orgID, noABIAddr2, "NoABIToken2")
 		groupForHex := createEventRulesGroup(t, f.server, f.orgID, "group-hex-noabi", "Group Hex NoABI")
 
-		// Custom hex param rule should be rejected — no ABI to validate against
 		body, _ := json.Marshal(map[string]any{
 			"group_id": groupForHex,
 			"event_rules": []map[string]any{
@@ -672,14 +693,17 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		f.server.router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-		assert.Contains(t, w.Body.String(), "custom param constraints require a contract ABI")
+		assert.Contains(t, w.Body.String(), "contract has no ABI registered")
 	})
 
-	// V05c: no ABI -> "self" constraint still allowed (RD-808)
-	t.Run("V05c_NoABI_SelfConstraintAllowed", func(t *testing.T) {
+	t.Run("V05c_NoABI_RejectsSelfConstraint", func(t *testing.T) {
+		// Previously "self" was allowed without an ABI on the rationale
+		// that addresses can be matched topic-by-topic without decoding.
+		// RD-875 closes the gap by denying the runtime path entirely
+		// when no ABI is resolvable, so saving the rule is also rejected
+		// now — no daylight between "saved" and "fired".
 		noABIAddr3 := "0x7777777777777777777777777777777777777779"
-		createEventRulesContract(t, f.server, f.orgID, noABIAddr3, "NoABIToken3")
-
+		createEventRulesContractNoABI(t, f.server, f.orgID, noABIAddr3, "NoABIToken3")
 		groupForSelf := createEventRulesGroup(t, f.server, f.orgID, "group-self-noabi", "Group Self NoABI")
 
 		body, _ := json.Marshal(map[string]any{
@@ -700,8 +724,8 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.server.router.ServeHTTP(w, req)
 
-		// Should succeed — "self" is allowed without ABI
-		assert.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "contract has no ABI registered")
 	})
 
 	// V06: update grant with invalid param rules -> 400

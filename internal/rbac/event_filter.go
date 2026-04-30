@@ -52,10 +52,21 @@ type logEntry struct {
 //   - Per-tx visibleTo: if topic0 matches an event rule but param rules fail,
 //     the viewer's DID is checked against the tx's visibleTo list as a fallback.
 //     This is purely additive — it never restricts existing access.
+//   - **No resolvable ABI ⇒ deny-all** for the emitting contract regardless
+//     of event_rules (RD-875, closes decisions.md §2 G5). Without an ABI we
+//     cannot decode non-indexed `address`-typed parameters from the log's
+//     `data` blob, so private addresses embedded there would leak verbatim.
+//     Operators must register an ABI (custom upload, or set `token_type` on
+//     the contract for the built-in registry per RD-793) before any event
+//     access can take effect. Admin-bypass viewers (`isAdminByContract`)
+//     are unaffected — they see everything regardless.
 //
 // userAddresses are the caller's linked ETH addresses (lowercase 0x-prefixed).
 // perms contains the resolved effective permissions with ContractAccess and EventRules.
-// abiProvider supplies contract ABIs for param rule decoding (may be nil).
+// abiProvider supplies contract ABIs for param rule decoding. When non-nil
+// and it returns "" for a contract, that contract's logs are denied (RD-875).
+// When nil, the ABI gate is disabled — used by tests that don't wire an ABI
+// provider; production paths always pass a non-nil provider.
 // visCtx provides optional per-tx visibleTo data (may be nil for backward compat).
 // FilterEventLogs filters a slice of log entries.
 //
@@ -111,6 +122,17 @@ func FilterEventLogs(
 		// org — see function docs for why.
 		if isAdminByContract[contractAddr] {
 			filtered = append(filtered, rawLog)
+			continue
+		}
+
+		// RD-875 deny-without-ABI gate: closes decisions.md §2 G5. Without
+		// a registered ABI we cannot decode non-indexed `address`-typed
+		// params in the log's `data` field — private addresses embedded
+		// there would leak verbatim. Drop the log for this viewer (admin
+		// bypass above is the only exception). nil abiProvider disables
+		// the gate (test ergonomics — production paths always inject a
+		// real provider via newStoreABIProvider).
+		if abiProvider != nil && abiProvider.GetContractABI(contractAddr) == "" {
 			continue
 		}
 
