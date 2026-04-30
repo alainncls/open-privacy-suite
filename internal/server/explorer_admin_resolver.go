@@ -63,7 +63,18 @@ func (r *dbAdminContractsResolver) Resolve(ctx context.Context, viewerDID string
 		return result
 	}
 
-	userOrgIDs, err := r.access.GetUserOrgIDs(ctx, viewerDID)
+	// Translate DID → internal user UUID. The explorer hands us a DID
+	// (eth_address_links keyspace); user_memberships and the rbac
+	// resolver are keyed by internal UUIDs. Without this translation
+	// every DB lookup below silently returned the empty set, which
+	// rendered the RD-890 admin bypass a no-op in production. Fixed
+	// here as part of the post-RD-890 wiring audit.
+	userID := resolveViewerInternalID(ctx, r.access.Store(), viewerDID)
+	if userID == "" {
+		return result
+	}
+
+	userOrgIDs, err := r.access.GetUserOrgIDs(ctx, userID)
 	if err != nil || len(userOrgIDs) == 0 {
 		return result
 	}
@@ -85,7 +96,7 @@ func (r *dbAdminContractsResolver) Resolve(ctx context.Context, viewerDID string
 		}
 		orgPerms, cached := permsByOrg[ownerOrgID]
 		if !cached {
-			op, err := r.access.GetEffectivePermissionsByIDs(ctx, viewerDID, ownerOrgID)
+			op, err := r.access.GetEffectivePermissionsByIDs(ctx, userID, ownerOrgID)
 			if err != nil {
 				permsByOrg[ownerOrgID] = nil
 				continue

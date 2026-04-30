@@ -36,17 +36,11 @@ func newDBABIResolver(store rbac.Store) *dbABIResolver {
 // or "" when no ABI is resolvable. See explorer.ABIResolver for the
 // contract.
 //
-// Resolution order (mirrors the JSON-RPC layer's storeABIProvider in
-// internal/server/event_log_filter.go and the helper RD-875 will merge
-// as rbac.ResolveContractABI):
-//  1. Custom ABI uploaded for the contract → return it.
-//  2. metadata.token_type matches the built-in registry (ERC-20 /
-//     ERC-721) → return the built-in ABI.
-//  3. Otherwise → return "" (callers treat as "no resolvable ABI").
-//
-// When RD-875 merges, this body collapses to a single call to
-// rbac.ResolveContractABI(contract). Inline for now so RD-889 doesn't
-// gate on the ordering of merges.
+// Delegates to rbac.ResolveContractABI — the single source of truth
+// for "what ABI applies to this contract" (custom upload first,
+// built-in registry fallback keyed by metadata.token_type). RD-875
+// landed that helper, and RD-889's original inlined body is no longer
+// necessary.
 func (r *dbABIResolver) Resolve(ctx context.Context, address string) string {
 	if r.store == nil {
 		return ""
@@ -55,15 +49,7 @@ func (r *dbABIResolver) Resolve(ctx context.Context, address string) string {
 	if err != nil || contract == nil {
 		return ""
 	}
-	if contract.ABI != "" {
-		return contract.ABI
-	}
-	if contract.Metadata != nil {
-		if tokenType, ok := contract.Metadata["token_type"].(string); ok {
-			return rbac.GetBuiltInABI(tokenType)
-		}
-	}
-	return ""
+	return rbac.ResolveContractABI(contract)
 }
 
 // Compile-time assertion that *dbABIResolver satisfies explorer.ABIResolver.

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // mockDB implements Database for testing
@@ -1111,13 +1113,15 @@ func TestRedactLogs_EventRules_AllowlistBlocksAnonymous(t *testing.T) {
 	}
 }
 
-// TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs preserves the
-// pre-RD-888 behaviour for callers that haven't yet wired the checker —
+// TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs is a fixture
+// affordance for the unit-test universe — when a test constructs a
+// RedactionEngine via newEngine(...) and skips SetEventRuleChecker,
 // the redactor falls back to "no event-rule enforcement" (visibility
-// + participant override are still applied). This documents the gap
-// rather than ignoring it: until RD-889 wires a real EventRuleChecker
-// at server startup, every event passes the rule check by default. The
-// gap is tracked under the umbrella RD-887.
+// + participant override still apply). That fallback is **only** for
+// tests; production startup (`server.wireExplorerRedactor`) wires a
+// real checker, and the integration test
+// `TestExplorerRedactorWiring_FullStack` will fail if anyone disables
+// that wiring path.
 func TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	engine := newEngine(VisibilityMap{addr: VisibilityFull})
@@ -1132,6 +1136,149 @@ func TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs(t *testing.T) {
 	if len(result) != 1 {
 		t.Errorf("checker not wired: expected log to pass (Phase 4 skipped), got %d logs", len(result))
 	}
+}
+
+// TestRedactLogs_EventRules_ParamRules_SelfPasses pins the post-audit
+// fix that ParamRules on EventRuleInfo are honoured. With a rule
+// {topic0:Transfer, params:[{0,self}]} only logs whose first param
+// encodes the viewer's linked address survive — same OR semantics as
+// rbac.FilterEventLogs.
+func TestRedactLogs_EventRules_ParamRules_SelfPasses(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	viewerAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{addr: VisibilityFull}, []string{viewerAddr})
+	transferTopic := eventTopic0("Transfer(address,address,uint256)")
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Rules: []EventRuleInfo{{
+				Topic0:     transferTopic,
+				ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
+			}}},
+		},
+	})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: testEventABI}})
+
+	viewerTopic := zeroPadAddrToTopicLocal(viewerAddr)
+	otherTopic := zeroPadAddrToTopicLocal("0xcccccccccccccccccccccccccccccccccccccccc")
+	logs := []Log{
+		{ID: 1, Address: addr, Topic0: &transferTopic, Topic1: &viewerTopic, Data: "0x"},
+		{ID: 2, Address: addr, Topic0: &transferTopic, Topic1: &otherTopic, Data: "0x"},
+	}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 || result[0].ID != 1 {
+		t.Errorf("self-on-param-0: expected only ID=1 to pass, got %v", logIDs(result))
+	}
+}
+
+// TestRedactLogs_EventRules_ParamRules_VisibleToFallback covers the
+// RPC-parity fallback: when the topic0 matches a rule but the param
+// constraints fail, the parent tx's visibleTo (visibleTxHashes opt)
+// extends access — same as rbac.FilterEventLogs:171-174.
+func TestRedactLogs_EventRules_ParamRules_VisibleToFallback(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	viewerAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngineWithLinkedAddrs(VisibilityMap{addr: VisibilityFull}, []string{viewerAddr})
+	transferTopic := eventTopic0("Transfer(address,address,uint256)")
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Rules: []EventRuleInfo{{
+				Topic0:     transferTopic,
+				ParamRules: []rbac.ParamRule{{Index: 0, MustBe: "self"}},
+			}}},
+		},
+	})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: testEventABI}})
+
+	otherTopic := zeroPadAddrToTopicLocal("0xcccccccccccccccccccccccccccccccccccccccc")
+	sharedTxHash := "0xabc123"
+	logs := []Log{
+		{ID: 1, Address: addr, TxHash: sharedTxHash, Topic0: &transferTopic, Topic1: &otherTopic, Data: "0x"},
+	}
+	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{sharedTxHash: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("visibleTo fallback: expected 1 log to pass (param failed but tx shared), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches
+// — visibleTo does NOT bypass topic0 mismatch. This mirrors
+// rbac.FilterEventLogs:171 which checks `eventTopic0Matches` first.
+func TestRedactLogs_EventRules_ParamRules_VisibleToOnlyHelpsIfTopic0Matches(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	transferTopic := eventTopic0("Transfer(address,address,uint256)")
+	approvalTopic := eventTopic0("Approval(address,address,uint256)")
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Rules: []EventRuleInfo{{Topic0: transferTopic}}},
+		},
+	})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: testEventABI}})
+
+	logs := []Log{{ID: 1, Address: addr, TxHash: "0xshared", Topic0: &approvalTopic, Data: "0x"}}
+	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", &RedactOpts{
+		VisibleTxHashes: map[string]bool{"0xshared": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("visibleTo must NOT bypass topic0 mismatch — got %d logs", len(result))
+	}
+}
+
+// TestRedactLogs_GetLinkedAddressesError_Propagates pins the audit
+// fix for finding #5 — pre-fix the redactor swallowed
+// GetLinkedAddresses errors via `if err == nil` and silently treated
+// the viewer as having no linked addresses, breaking participant
+// override and "self" param-rule constraints. Now the error
+// propagates to the caller as a 500.
+func TestRedactLogs_GetLinkedAddressesError_Propagates(t *testing.T) {
+	engine := newEngine(VisibilityMap{})
+	engine.db = &mockDBLinkedErr{mockDB: mockDB{visMap: VisibilityMap{}}}
+
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	_, err := engine.RedactLogs(context.Background(), []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}, "did:test")
+	if err == nil {
+		t.Error("expected GetLinkedAddresses error to propagate; got nil")
+	}
+}
+
+// mockDBLinkedErr returns an error from GetLinkedAddresses. All other
+// methods inherit from the embedded mockDB.
+type mockDBLinkedErr struct {
+	mockDB
+}
+
+func (m *mockDBLinkedErr) GetLinkedAddresses(_ context.Context, _ string) ([]string, error) {
+	return nil, errors.New("simulated DB failure")
+}
+
+// zeroPadAddrToTopicLocal pads a 20-byte address to a 32-byte topic
+// value (left-pad zeros). Local helper kept here so the unit-test
+// file doesn't pull in test fixtures from the server package.
+func zeroPadAddrToTopicLocal(addr string) string {
+	a := strings.ToLower(strings.TrimPrefix(addr, "0x"))
+	return "0x" + strings.Repeat("0", 64-len(a)) + a
+}
+
+// logIDs returns the IDs of the supplied logs in order — small
+// helper for assertion error messages.
+func logIDs(logs []Log) []int64 {
+	out := make([]int64, len(logs))
+	for i, l := range logs {
+		out[i] = l.ID
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

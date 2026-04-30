@@ -9,6 +9,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"privacy-proxy/internal/rbac"
 )
 
 // VisibilityMap maps an address (lowercase) to its resolved visibility level
@@ -61,9 +63,25 @@ type EventRulesResolution struct {
 	Rules []EventRuleInfo
 }
 
-// EventRuleInfo is a lightweight event rule representation used by the redactor.
+// EventRuleInfo is a lightweight event rule representation used by the
+// redactor. Topic0 is the event signature hash (0x-prefixed, lowercase).
+//
+// ParamRules are optional per-parameter constraints that mirror the RPC
+// layer's rbac.EventRule.ParamRules field. When present, a log whose
+// topic0 matches this rule must additionally satisfy at least one of
+// the param-rule constraints (OR semantics) — typed against the
+// contract's ABI. When empty, topic0 match alone is sufficient.
+//
+// Pre-this fix the explorer's EventRuleInfo carried only Topic0, so
+// param-rule constraints configured on a grant (e.g.
+// `{topic0: Transfer, params: [{index: 0, must_be: self}]}`) were
+// silently ignored — RPC enforced them, explorer leaked. The audit
+// classified this as HIGH because it lets viewers see Transfer logs
+// for *other* people's transfers on a contract where the operator
+// intended "only your own transfers."
 type EventRuleInfo struct {
-	Topic0 string // event signature hash (0x-prefixed, lowercase)
+	Topic0     string
+	ParamRules []rbac.ParamRule
 }
 
 // ABIResolver resolves the ABI for a contract address using the same
@@ -772,6 +790,32 @@ func (r *RedactionEngine) RedactInternalTransactions(ctx context.Context, itxs [
 }
 
 // extractTopicAddress checks if a 32-byte topic hex string encodes an address
+// collectLogTopics flattens an explorer.Log's separate Topic0..Topic3
+// pointers into the contiguous topics[0..N] slice that
+// rbac.MatchesEventParamRules expects. Trailing nils stop the slice —
+// once a Topic_i is nil, deeper Topic_(i+1)..Topic_3 are not appended,
+// matching how the RPC layer's logEntry.Topics is shaped (only as
+// long as the actual indexed-topic count for the event).
+func collectLogTopics(l Log) []string {
+	if l.Topic0 == nil {
+		return nil
+	}
+	out := []string{*l.Topic0}
+	if l.Topic1 == nil {
+		return out
+	}
+	out = append(out, *l.Topic1)
+	if l.Topic2 == nil {
+		return out
+	}
+	out = append(out, *l.Topic2)
+	if l.Topic3 == nil {
+		return out
+	}
+	out = append(out, *l.Topic3)
+	return out
+}
+
 // using the standard zero-padding convention (12 zero bytes = 24 zero hex chars prefix after "0x").
 // Returns the lowercase "0x"-prefixed address and true if the pattern matches, otherwise "", false.
 func extractTopicAddress(topic string) (string, bool) {
@@ -1000,14 +1044,20 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		return logs, nil
 	}
 
-	// Build set of viewer's own linked addresses.
+	// Build set of viewer's own linked addresses. Propagate DB errors —
+	// silently treating a lookup failure as "no linked addresses" was
+	// the pre-fix behaviour and would quietly disable the participant
+	// override and the "self" param-rule constraint, leaving the viewer
+	// with strictly less access than the policy says they should have.
+	// Better to fail the request than to over- or under-redact silently.
 	viewerAddrs := make(map[string]bool)
 	if viewerDID != "" {
 		linked, err := r.db.GetLinkedAddresses(ctx, viewerDID)
-		if err == nil {
-			for _, a := range linked {
-				viewerAddrs[strings.ToLower(a)] = true
-			}
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range linked {
+			viewerAddrs[strings.ToLower(a)] = true
 		}
 	}
 
@@ -1220,7 +1270,13 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// semantics in rbac.FilterEventLogs.
 		//   * Wildcard ⇒ pass.
 		//   * Allowlist ⇒ topic0 must match a listed entry (anonymous
-		//     events with no topic0 are always blocked here).
+		//     events with no topic0 are always blocked here). When the
+		//     matched rule carries ParamRules, the log must additionally
+		//     satisfy at least one of them (OR semantics) — same call
+		//     as the RPC layer via rbac.MatchesEventParamRules so both
+		//     layers reach identical decisions. visibleTo (the
+		//     visibleTxHashes opt) extends param-rule checks as a
+		//     fallback, mirroring rbac.FilterEventLogs.
 		//   * Empty Rules + !Wildcard ⇒ **deny-all** (operator intent
 		//     of `event_rules: null`). Pre-RD-888 this branch leaked logs
 		//     because the explorer treated it as "no rules ⇒ allow."
@@ -1237,11 +1293,45 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 				}
 				topic0Lower := strings.ToLower(*l.Topic0)
 				allowed := false
+				topic0Matched := false
 				for _, rule := range res.Rules {
-					if rule.Topic0 == topic0Lower {
+					if rule.Topic0 != topic0Lower {
+						continue
+					}
+					topic0Matched = true
+					if len(rule.ParamRules) == 0 {
 						allowed = true
 						break
 					}
+					// Param rules attached to this rule: log must
+					// satisfy at least one constraint. ABI is required
+					// to decode non-indexed params; with no ABI the
+					// helper falls back to topic-position matching for
+					// indexed params and refuses to guess otherwise.
+					var abiJSON string
+					if raw, ok := contractABIs[contractAddr]; ok {
+						abiJSON = string(raw)
+					}
+					if rbac.MatchesEventParamRules(
+						rbac.EventLogInputs{
+							ContractAddress: contractAddr,
+							Topics:          collectLogTopics(l),
+							Data:            l.Data,
+						},
+						rule.ParamRules,
+						viewerAddrs,
+						abiJSON,
+					) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed && topic0Matched && visibleTxHashes[strings.ToLower(l.TxHash)] {
+					// visibleTo fallback: topic0 was in the allowlist
+					// but param rules failed; the parent tx was
+					// explicitly shared with this viewer, so honour it.
+					// Mirrors rbac.FilterEventLogs:171.
+					allowed = true
 				}
 				if !allowed {
 					continue
