@@ -32,6 +32,8 @@ RUN npm run build
 # ── Production image (nginx serving compiled static files) ────────────────────
 FROM nginx:alpine AS prod
 
+RUN apk upgrade --no-cache
+
 COPY --from=builder-prod /app/dist /usr/share/nginx/html
 COPY nginx.prod.conf /etc/nginx/templates/default.conf.template
 
@@ -46,7 +48,7 @@ CMD ["nginx", "-g", "daemon off;"]
 # ── E2E image (prod build + API proxy to backend) ────────────────────────────
 FROM nginx:alpine AS e2e
 
-RUN apk add --no-cache wget
+RUN apk upgrade --no-cache && apk add --no-cache wget
 
 COPY --from=builder-prod /app/dist /usr/share/nginx/html
 COPY nginx.e2e.conf /etc/nginx/conf.d/default.conf
