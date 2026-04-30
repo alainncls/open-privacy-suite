@@ -168,7 +168,7 @@ Log redaction depends on the visibility of the **emitting contract address**, no
 | `data` (when emitter hidden) | — (entry dropped) | — | — | Yes | Partial | |
 | `data` (when emitter redacted) | — | zeroed | — | Yes | Partial | |
 | `data` (when emitter full + ABI registered) | — | — | Non-indexed address params decoded, private ones zeroed | Yes | Partial | |
-| `data` (when emitter full + NO ABI) | — | — | **Not scanned — returned unmodified** | **No** | No | **GAP G5** — private addresses in non-indexed params of unverified contracts leak through |
+| `data` (when emitter full + NO ABI) | Entire log denied at RPC layer regardless of event_rules (admin bypass excepted) | — | — | Yes | Yes | **G5 closed (RD-875).** Without an ABI we can't decode non-indexed `address` params in `data`, so `FilterEventLogs` denies the contract upstream of the rules check. Operators must register an ABI (custom upload, or set `metadata.token_type` for the built-in registry) before any event access takes effect. Grant save handler also rejects up-front. |
 
 ### 3.4.1 RPC-Layer Log Filtering (Event Access Control)
 
@@ -249,7 +249,7 @@ At the RPC layer, visibility is binary: the caller either is or is not a partici
 | `eth_getTransactionReceipt` | Full receipt with logs | `null` | Yes | Yes |
 | `eth_getLogs` | Entries where a topic address matches a linked address | Entry removed from array | Yes | Yes |
 | `eth_getLogs` topics[0..3] | All 4 slots scanned for private addresses | Non-matching entries removed | Yes | Yes |
-| `eth_getLogs` data field | **Not scanned** | — | **No** | No | **Same ABI gap as Explorer API (G5)** |
+| `eth_getLogs` data field (no ABI) | Whole log denied at RPC layer regardless of event_rules | — | Yes | Yes | G5 closed (RD-875) — see §3.4 row for `data (when emitter full + NO ABI)` |
 | `eth_getBlockByNumber` (`fullTxObjects=true`) | Full block; all txs | Non-participant txs removed | Yes | Yes |
 | `eth_getBlockByNumber` (`fullTxObjects=false`) | Passes through | Passes through | Yes | Yes |
 | `eth_getBlockReceipts` | All receipts in block | Non-participant receipts removed | Yes | Yes |
@@ -287,13 +287,14 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G5, G15 are outstanding.
+The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G15 are outstanding.
 
 ### Resolved
 
 - **G1 (resolved):** Nonce not stripped when sender was hidden — now nil when `from` is Hidden/Redacted.
 - **G2 (resolved):** `value` and `inputData` not zeroed for mixed-party txs (one side hidden) — now zeroed when either side is Hidden or Redacted.
 - **G3 (resolved):** Log topics[1..3] not scanned for embedded address parameters — now scanned for all logs where emitter is Full; private addresses zeroed.
+- **G5 (resolved, RD-875):** Log.data not scanned when no ABI registered — without an ABI the proxy could not decode non-indexed `address`-typed parameters in event data, leaking private addresses verbatim. The fix flips this from a permissive default to fail-closed: `FilterEventLogs` (RPC layer) now denies all logs from a contract that has no resolvable ABI (custom upload OR `metadata.token_type` matching the built-in registry — ERC-20 / ERC-721) regardless of `event_rules`. Admin viewers (org-scoped admin claim) still see everything as before. Grant save handlers (create + update) reject non-deny `event_rules` up-front when no ABI is resolvable, so admins get a clear 400 instead of silently saving rules that won't fire. Closes `decisions.md` §2 G5.
 - **G6 (resolved, RD-873):** Block-level `logsBloom` not zeroed — bloom filter contained hashed representations of addresses and event topics from every log in the block; a viewer who knew a target address could probe activity in O(1). Now overwritten with an all-zero 256-byte value on every block-returning RPC response (`eth_getBlockByHash`, `eth_getBlockByNumber`, `eth_getBlockReceipts`) regardless of viewer or block shape. The previous "expensive per-block scanning" cost vanished once we accepted that clients of a privacy proxy can't usefully consume the bloom anyway — sanitisation is a single field overwrite.
 - **G7 (resolved):** Transaction.contractAddress leaks deployed address — contract deployment transactions from hidden deployers are now dropped entirely via SQL-level visibility filtering.
 - **G8 (resolved):** TokenHolder entries not dropped when address is Hidden — now dropped.
@@ -306,9 +307,6 @@ The following gaps are numbered. G1, G2, G3, G6, G7, G8, G9, G11, G14, G16, G22 
 
 - **G4: InternalTransaction.error not stripped**
   Error strings returned from trace calls can contain raw revert messages or embedded addresses (e.g. `execution reverted: caller 0xABCD... not authorized`). When either side of the internal call is Hidden or Redacted, the `error` field must be set to nil before the response is returned. Currently returned unmodified.
-
-- **G5: Log.data not scanned when no ABI registered (partial)**
-  When an event log's emitting contract has a registered ABI, non-indexed `address`-typed parameters in `data` are decoded and private addresses zeroed. When no ABI is registered, the raw ABI-encoded `data` blob is returned unmodified. A private address embedded as a non-indexed parameter in an unverified contract's log will not be redacted. This applies to both the Explorer API and `eth_getLogs` at the RPC layer. Accepted as a limitation — no fix planned until ABI scanning can be done heuristically.
 
 - **G10: One-side-hidden transactions leak activity metadata**
   When only one party in a transaction/transfer is hidden and the other is public, the entry survives the SQL visibility filter. The hidden side is masked (`[PRIVATE]`), but the viewer still learns that *some* private party interacted with the visible address — including timing, block number, gas used, and transfer amounts. For example, a non-participant can see "someone private called [public contract]." On a private network this metadata may be sensitive. The stricter alternative — drop if ANY side is hidden unless viewer is a participant — would eliminate this leak but significantly reduce explorer utility for public addresses. **Decision pending**: track as a design tradeoff. If tightened, the participant override in `RedactTransactions`/`RedactTransfers`/`RedactInternalTransactions` ensures participants still see their own activity.
@@ -388,7 +386,7 @@ Every redaction method must have unit tests covering the following scenarios. Te
 
 ### Gap behavior must be explicitly asserted
 
-Do not allow a gap to become invisible through test omission. For each known gap (G4–G7), write a test that:
+Do not allow a gap to become invisible through test omission. For each known gap (G4, G6), write a test that:
 1. Sets up the exact scenario that triggers the gap.
 2. Asserts the **current (broken) behavior** with a comment: `// GAP G<N>: expected nil, returns actual value — fix before release`.
 

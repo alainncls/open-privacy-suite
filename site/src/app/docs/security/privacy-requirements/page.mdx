@@ -62,15 +62,19 @@ Event log visibility depends on the privacy level of the **emitting contract**, 
 |----------|----------------------------------|
 | Emitting contract is private (Hidden) | Entire log entry removed — viewer cannot see that the log exists |
 | Emitting contract is private (Redacted) | Log kept; emitter address shown as `[PRIVATE]`; all topic slots and `data` field zeroed |
-| Emitting contract is public | Log kept; indexed address parameters (topics[1]–topics[3]) scanned: private addresses zeroed |
-| Emitting contract is public + ABI registered | Non-indexed address parameters in the `data` field also scanned; private addresses zeroed |
+| Emitting contract has **no registered ABI** | Entire log denied at the RPC layer regardless of `event_rules` (admin viewers excepted). Operators must register an ABI before any event becomes visible. |
+| Emitting contract is public + ABI registered | Log kept; indexed address parameters (topics[1]–topics[3]) scanned for private addresses; non-indexed address parameters in `data` decoded and zeroed |
 
 For anonymous Solidity events (declared with the `anonymous` keyword), `topics[0]` may contain an indexed address and is scanned as well.
 
 <Callout type="note">
-  Indexed address parameters in event topics are always scanned when the emitting
-  contract is visible, regardless of whether an ABI is registered. ABI registration
-  only affects scanning of the non-indexed `data` field.
+  ABI registration is **mandatory** for any contract whose events should be
+  visible: without one the proxy cannot decode non-indexed `address` parameters
+  and falls closed (denies all logs from that contract). Either upload a custom
+  ABI via the admin API, or set the contract's `metadata.token_type` to a
+  built-in registry value (`"ERC20"` or `"ERC721"`). The grant create/update
+  endpoints reject non-deny `event_rules` up-front when no ABI is resolvable,
+  so this constraint is surfaced at configuration time rather than at runtime.
 </Callout>
 
 ### Token Holders
@@ -106,23 +110,17 @@ Each address in the system is assigned a disclosure level that controls how much
 
 The following limitations are known and accepted in the current release. They are documented here so operators can make informed decisions about their deployment.
 
-### 1. Event log `data` fields without a registered ABI
-
-When an event log's emitting contract does not have a registered and verified ABI, the non-indexed `data` field is returned without scanning. If a private address appears as a non-indexed parameter in an event emitted by an unverified contract, that address will not be redacted from the `data` field.
-
-**What to do:** Register ABIs for all contracts whose events include address parameters. See [What Operators Must Do](#what-operators-must-do) below.
-
-### 2. Contract deployment: deployed address visible when deployer is private
+### 1. Contract deployment: deployed address visible when deployer is private
 
 When a private address deploys a contract, the transaction's `contractAddress` field (the address of the newly deployed contract) is currently not stripped. An unauthorized viewer can see the address of the contract that was deployed, even though the deployer's identity is shown as `[PRIVATE]`. The deployed contract may be discoverable in the block explorer and could be correlated with subsequent activity.
 
 **Mitigation:** Ensure deployed contracts are registered to the same organization as the deployer, so their activity is also subject to access control.
 
-### 3. Gas parameters are not hidden
+### 2. Gas parameters are not hidden
 
 Gas fields (`gasUsed`, `gasPrice`, `maxFeePerGas`, `maxPriorityFeePerGas`, `gasLimit`) are visible to all viewers, including those who cannot see the transaction parties. Gas parameters do not directly identify an address and are available to all participants in the network via the RPC layer regardless of this proxy.
 
-### 4. Value inference from public address balance history
+### 3. Value inference from public address balance history
 
 When a transaction involves one private address and one public address, the `value` field is hidden. However, the transferred amount can still be inferred by comparing the public address's balance at adjacent blocks:
 
@@ -138,7 +136,9 @@ All inputs to this calculation are accessible through the block explorer for pub
 
 To achieve the maximum redaction coverage described in this document:
 
-1. **Register ABIs for all privacy-sensitive contracts.** Event log `data` field scanning (for non-indexed address parameters) only activates when the emitting contract has a registered and verified ABI. Without an ABI, addresses embedded in non-indexed log parameters are not redacted.
+1. **Register an ABI for every contract whose events should be visible.** Without an ABI the proxy cannot decode non-indexed `address` parameters in event `data`, so it falls closed: every log from that contract is denied at the RPC layer (admin viewers excepted). The grant create/update API also rejects non-deny `event_rules` up-front when no ABI is resolvable. Two ways to satisfy the requirement:
+   - Upload a custom ABI via the admin API (preferred for in-house contracts).
+   - Set the contract's `metadata.token_type` to a known value — currently `"ERC20"` or `"ERC721"` — to use the built-in ABI registry.
 
    To register an ABI, use the admin API:
    ```
