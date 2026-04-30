@@ -75,7 +75,9 @@ The review must check for:
 4. **Cross-org isolation** — can a user in org A access data from org B?
 5. **Fail-closed** — does a missing/invalid token, missing DB row, or query error result in denial (not accidental access)?
 6. **Input validation** — are user-supplied params (addresses, hex values, DIDs) validated before use in queries?
-7. **Access/visibility symmetry** — if the PR changes RPC access logic (`rbac.AccessController`, `CheckDefaultClaimsAllowed`, claim handling), also check the explorer visibility layer (`GetBatchVisibility`, `GetBatchEventAccess`) for the same scenario, and vice versa. The two layers must always agree for a given (viewer, address) pair. The `TestAccessVisibilitySymmetry` integration test in `e2e/` is the enforcement mechanism — extend it when adding new access paths.
+7. **Access/visibility symmetry** — if the PR changes RPC access logic (`rbac.AccessController`, `CheckDefaultClaimsAllowed`, claim handling), also check the explorer visibility layer (`GetBatchVisibility`, `GetBatchEventAccess`) for the same scenario, and vice versa. The two layers must always agree for a given (viewer, address) pair. Two enforcement tests:
+   - `TestAccessVisibilitySymmetry` in `e2e/access_visibility_symmetry_test.go` — `CheckAccess` vs `GetBatchVisibility` parity; extend when adding new access paths.
+   - `TestExplorerRedactorWiring_FullStack` in `internal/server/explorer_redactor_wiring_integration_test.go` — `rbac.FilterEventLogs` vs `RedactionEngine.RedactLogs` parity; also verifies every interface-typed `Set*Resolver` on `RedactionEngine` is wired by `wireExplorerRedactor`. Extend when adding new event-rule semantics or a new explorer resolver.
 
 ## Documentation Site
 

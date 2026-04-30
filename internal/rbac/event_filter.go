@@ -258,34 +258,20 @@ func checkEventParamRules(
 	contractAddr string,
 	abiProvider ABIProvider,
 ) bool {
-	// We need to resolve each param by index. For indexed params, they appear
-	// in topics[1..3]. For non-indexed params, they're ABI-encoded in data.
-	// To know which params are indexed we need the ABI.
-	var parsedEvent *abi.Event
+	var abiJSON string
 	if abiProvider != nil {
-		contractABI := abiProvider.GetContractABI(contractAddr)
-		if contractABI != "" {
-			parsedEvent = findEventByTopic0(contractABI, entry.Topics[0])
-		}
+		abiJSON = abiProvider.GetContractABI(contractAddr)
 	}
-
-	for _, pr := range paramRules {
-		switch {
-		case pr.MustBe == "self":
-			if matchesParamSelf(entry, pr.Index, addrSet, parsedEvent) {
-				return true // OR semantics — one match is enough
-			}
-		case isHexValue(pr.MustBe):
-			if matchesParamCustom(entry, pr.Index, pr.MustBe, parsedEvent) {
-				return true
-			}
-		default:
-			// Unknown constraint type — fail-closed, skip this rule.
-			continue
-		}
-	}
-
-	return false
+	return MatchesEventParamRules(
+		EventLogInputs{
+			ContractAddress: entry.Address,
+			Topics:          entry.Topics,
+			Data:            entry.Data,
+		},
+		paramRules,
+		addrSet,
+		abiJSON,
+	)
 }
 
 // isHexValue returns true if s is a 0x-prefixed hex string of non-zero length.
