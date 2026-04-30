@@ -10,14 +10,18 @@
 # Quick start:
 #   docker compose -f docker-compose.privacy.yml up -d
 #
-# By default, chain-indexer and block-explorer are expected as sibling
-# clones of privacy-proxy (same parent directory). For non-sibling
-# layouts set `BLOCK_EXPLORER_PATH=/abs/or/relative/path` and/or
-# `CHAIN_INDEXER_PATH=...` in the environment; both fall back to
-# `../block-explorer` and `../chain-indexer` respectively.
+# Chain-indexer is pulled from GHCR as a published image. Pin via
+# INDEXER_VERSION (e.g. INDEXER_VERSION=v1.2.3); defaults to `latest`.
+# Operators SHOULD pin to a tagged release in production — `latest`
+# is acceptable only for the default smoke-test path.
 #
-# In production, replace the `build:` blocks with `image:` references
-# to registry-hosted images.
+# Block-explorer is still built from a sibling clone in this manifest.
+# Override the path via `BLOCK_EXPLORER_PATH=/abs/or/relative/path`
+# (defaults to `../block-explorer`).
+#
+# CHAIN_INDEXER_PATH is dev-only — the dev compose
+# (docker-compose.privacy.dev.yml) builds chain-indexer from a sibling
+# clone so devs can iterate against local changes.
 
 services:
   # ----- Trust zone --------------------------------------------------------
@@ -90,13 +94,11 @@ services:
     restart: unless-stopped
 
   chain-indexer:
-    # Build from the chain-indexer repo. Override the path via
-    # CHAIN_INDEXER_PATH (defaults to a sibling clone). In production
-    # replace the build block with an image reference:
-    #   image: ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION:-latest}
-    build:
-      context: ${CHAIN_INDEXER_PATH:-../chain-indexer}
-      dockerfile: Dockerfile
+    # Production manifest: pull the image from GHCR. Pin a tagged
+    # release via INDEXER_VERSION (e.g. v1.2.3); defaults to `latest`.
+    # The dev compose (docker-compose.privacy.dev.yml) overrides this
+    # back to `build:` from a sibling clone (CHAIN_INDEXER_PATH).
+    image: ghcr.io/gateway-fm/chain-indexer:${INDEXER_VERSION:-latest}
     environment:
       - RPC_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
