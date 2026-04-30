@@ -83,12 +83,35 @@ type ABIResolver interface {
 	Resolve(ctx context.Context, address string) string
 }
 
+// AdminContractsResolver returns the subset of supplied contract
+// addresses where the viewer holds admin-equivalent privileges (tier-2
+// org-admin OR tier-3 per-contract admin claim). The result mirrors the
+// JSON-RPC layer's processor_event_rules.go::viewerAdminContracts
+// resolver so both layers honour the same admin-bypass set per
+// (viewer, contract) — required by the access/visibility symmetry
+// invariant in REDACTION_SPEC.md.
+//
+// When wired (via RedactionEngine.SetAdminContractsResolver) the
+// redactor uses the returned map to bypass the deny-when-no-ABI gate
+// (RD-889) for admin viewers — exactly as rbac.FilterEventLogs does
+// at the RPC layer with its isAdminByContract input.
+//
+// Implementations MUST be org-scoped: a contract C in Org B's
+// ownership must NOT appear admin-true for a viewer who is admin only
+// in Org A, even if both orgs ever held the same address (defense in
+// depth against migration 035 ever weakening). Unregistered or
+// lookup-failed addresses are silently omitted (admin = false).
+type AdminContractsResolver interface {
+	Resolve(ctx context.Context, viewerDID string, addresses []string) map[string]bool
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
-	store            ContractStore
-	db               Database // The main privacy proxy DB for RBAC checks
-	eventRuleChecker EventRuleChecker
-	abiResolver      ABIResolver
+	store                  ContractStore
+	db                     Database // The main privacy proxy DB for RBAC checks
+	eventRuleChecker       EventRuleChecker
+	abiResolver            ABIResolver
+	adminContractsResolver AdminContractsResolver
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -114,6 +137,23 @@ func NewRedactionEngine(store ContractStore, db Database) *RedactionEngine {
 // SetEventRuleChecker sets an optional event rule checker for log-level filtering.
 func (r *RedactionEngine) SetEventRuleChecker(checker EventRuleChecker) {
 	r.eventRuleChecker = checker
+}
+
+// SetAdminContractsResolver wires the unified admin-contracts resolver
+// (RD-890 — closes the tier-3 admin bypass asymmetry between RPC and
+// explorer). When set:
+//   - Phase 4 computes a per-call admin map for the contracts emitting
+//     logs in this batch.
+//   - Admin viewers bypass the deny-when-no-ABI gate (RD-889) for those
+//     specific contracts — mirroring rbac.FilterEventLogs's
+//     isAdminByContract bypass at the RPC layer.
+//
+// Without this resolver wired, admins fall through to the regular gates
+// — strictly fail-closed but creates UX surprise for tier-3 admins
+// (logs visible via eth_getLogs but not via the explorer endpoint).
+// Production server startup wires it.
+func (r *RedactionEngine) SetAdminContractsResolver(resolver AdminContractsResolver) {
+	r.adminContractsResolver = resolver
 }
 
 // SetABIResolver wires the unified ABI resolver (RD-889 / Stage 2 of the
@@ -1114,6 +1154,25 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		}
 	}
 
+	// Phase 3c (RD-890): resolve admin-equivalent privileges per emitting
+	// contract for the viewer. Mirrors rbac.FilterEventLogs's
+	// isAdminByContract input — admins bypass the deny-when-no-ABI gate
+	// below (admin already has full access in the contract's owning org;
+	// withholding logs because the operator hasn't uploaded an ABI is
+	// a UX-only restriction at that level, not a security one).
+	//
+	// Resolved once per call (one DB pass) rather than per-log to keep
+	// the hot path cheap. When the resolver is not wired, this stays an
+	// empty map and the bypass simply doesn't fire.
+	adminContracts := map[string]bool{}
+	if r.adminContractsResolver != nil && viewerDID != "" && len(addrMap) > 0 {
+		uniqueAddrs := make([]string, 0, len(addrMap))
+		for a := range addrMap {
+			uniqueAddrs = append(uniqueAddrs, a)
+		}
+		adminContracts = r.adminContractsResolver.Resolve(ctx, viewerDID, uniqueAddrs)
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
@@ -1145,13 +1204,13 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// it the gate is disabled (legacy callers / tests). Production
 		// server startup wires the resolver.
 		//
-		// NOTE: applies to all viewers including admins. The RPC layer
-		// (RD-875) bypasses admins on the same gate via isAdminByContract;
-		// matching that distinction on the explorer side requires a tier-2
-		// /tier-3 admin signal that lives in another DB query — tracked
-		// under RD-890. Until then the explorer is intentionally stricter
-		// than RPC for admin viewers (fail-closed asymmetry, safe direction).
-		if r.abiResolver != nil {
+		// RD-890 admin bypass: tier-2 (org-admin) and tier-3 (per-contract
+		// admin claim) viewers see logs regardless of ABI status. Mirrors
+		// rbac.FilterEventLogs's isAdminByContract bypass at the RPC
+		// layer. Without an admin-contracts resolver wired, the bypass
+		// stays disabled and admins fall through to the gate (the
+		// pre-RD-890 explorer-stricter-than-RPC asymmetry).
+		if r.abiResolver != nil && !adminContracts[contractAddr] {
 			if r.abiResolver.Resolve(ctx, contractAddr) == "" {
 				continue
 			}

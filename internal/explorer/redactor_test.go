@@ -1235,6 +1235,125 @@ func TestRedactLogs_ABIGate_PreservesHiddenDrop(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AdminContractsResolver bypass (RD-890)
+// ---------------------------------------------------------------------------
+
+// stubAdminContractsResolver returns a fixed admin map per (viewerDID,
+// addresses) call. Used to exercise the admin-bypass path that mirrors
+// rbac.FilterEventLogs's isAdminByContract behaviour.
+type stubAdminContractsResolver struct {
+	admin map[string]bool
+}
+
+func (s *stubAdminContractsResolver) Resolve(_ context.Context, _ string, _ []string) map[string]bool {
+	out := make(map[string]bool, len(s.admin))
+	for k, v := range s.admin {
+		out[k] = v
+	}
+	return out
+}
+
+// TestRedactLogs_AdminBypass_OverridesABIGate is the RD-890 fix.
+// A tier-2/tier-3 admin viewer sees logs from a contract with no
+// resolvable ABI — matches rbac.FilterEventLogs at the RPC layer. Pre-
+// RD-890, the explorer was strictly stricter than RPC for admins.
+func TestRedactLogs_AdminBypass_OverridesABIGate(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	// ABI not resolvable — without admin bypass, RD-889 gate would drop.
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{}})
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{
+		admin: map[string]bool{addr: true},
+	})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("admin bypass: expected 1 log (admin sees logs even without ABI), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_AdminBypass_PerContractScoping confirms the bypass is
+// scoped to specific contracts: admin on Contract A doesn't get logs
+// from Contract B if B has no ABI. Mirrors rbac.FilterEventLogs's
+// per-contract isAdminByContract map.
+func TestRedactLogs_AdminBypass_PerContractScoping(t *testing.T) {
+	addrA := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	addrB := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	engine := newEngine(VisibilityMap{
+		addrA: VisibilityFull,
+		addrB: VisibilityFull,
+	})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{}}) // both contracts no ABI
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{
+		admin: map[string]bool{addrA: true}, // admin on A only
+	})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{
+		{ID: 1, Address: addrA, Topic0: &topic, Data: "0x"}, // admin → passes
+		{ID: 2, Address: addrB, Topic0: &topic, Data: "0x"}, // not admin → dropped by ABI gate
+	}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log (admin on A only), got %d", len(result))
+	}
+	if strings.ToLower(result[0].Address) != addrA {
+		t.Errorf("expected log from %s, got %s", addrA, result[0].Address)
+	}
+}
+
+// TestRedactLogs_AdminBypass_NoResolverWiredKeepsGate preserves the
+// pre-RD-890 behaviour for callers that haven't wired the admin
+// resolver — the ABI gate fires for everyone including admins. Matches
+// the explorer-stricter-than-RPC asymmetry that RD-890 closes when the
+// resolver IS wired.
+func TestRedactLogs_AdminBypass_NoResolverWiredKeepsGate(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{}}) // no ABI
+	// No SetAdminContractsResolver call.
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("no resolver: expected 0 logs (gate fires without admin signal), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_AdminBypass_DoesNotResurfaceHidden — admin bypass on
+// the ABI gate must NOT undo a Hidden visibility drop. Layering check.
+func TestRedactLogs_AdminBypass_DoesNotResurfaceHidden(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityHidden})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{}})
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{
+		admin: map[string]bool{addr: true},
+	})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("Hidden + admin: expected 0 logs (Hidden drops before any bypass fires), got %d", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
 // RedactLogs — ABI-based Data Field scanning
 // ---------------------------------------------------------------------------
 
