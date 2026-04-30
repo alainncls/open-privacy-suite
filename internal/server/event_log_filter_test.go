@@ -14,8 +14,17 @@ type testABIProviderServer struct {
 }
 
 func (p *testABIProviderServer) GetContractABI(address string) string {
-	if p == nil || p.abis == nil {
+	if p == nil {
 		return ""
+	}
+	// Zero-value provider (no explicit abis map) acts as "every contract
+	// has an ABI registered" — the historical default these tests assume,
+	// and the path the new RD-875 deny-without-ABI gate is OFF for. Tests
+	// that need to assert no-ABI behavior populate `abis` explicitly with
+	// the contract addresses they care about (missing key → empty string
+	// → gate fires).
+	if p.abis == nil {
+		return "[]"
 	}
 	return p.abis[address]
 }

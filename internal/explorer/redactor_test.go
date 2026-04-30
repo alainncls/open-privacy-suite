@@ -990,6 +990,151 @@ func TestRedactLogs_DBError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// EventRuleChecker tri-state (RD-888)
+// ---------------------------------------------------------------------------
+
+// stubEventRuleChecker returns a fixed EventRulesResolution per contract
+// address, used to exercise the tri-state semantics in Phase 4 of
+// RedactLogsWithOpts. A contract address with no entry resolves to
+// `EventRulesResolution{}` — Wildcard=false, Rules=nil — which is the
+// deny-all state per the RD-888 contract.
+type stubEventRuleChecker struct {
+	byAddr map[string]EventRulesResolution
+}
+
+func (s *stubEventRuleChecker) GetEventRulesForContract(_ context.Context, _ string, addr string) EventRulesResolution {
+	return s.byAddr[strings.ToLower(addr)]
+}
+
+// TestRedactLogs_EventRules_NilDenies pins the RD-888 fix: when the
+// checker resolves to the deny-all state (zero-value resolution), the
+// log must be dropped even if the contract is otherwise visible. This is
+// the bug the explorer had pre-RD-888 — it treated nil rules as
+// allow-all, opposite to the RPC layer's deny-by-default semantics.
+func TestRedactLogs_EventRules_NilDenies(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {}, // zero value ⇒ deny-all
+		},
+	})
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (nil rules ⇒ deny-all per RD-888), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_EventRules_WildcardPasses confirms the wildcard branch
+// of the tri-state — all logs pass regardless of topic0.
+func TestRedactLogs_EventRules_WildcardPasses(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Wildcard: true},
+		},
+	})
+
+	t1 := eventTopic0("Transfer(address,address,uint256)")
+	t2 := eventTopic0("Approval(address,address,uint256)")
+	logs := []Log{
+		{ID: 1, Address: addr, Topic0: &t1, Data: "0x"},
+		{ID: 2, Address: addr, Topic0: &t2, Data: "0x"},
+		{ID: 3, Address: addr, Topic0: nil, Data: "0x"}, // anonymous; wildcard still passes
+	}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 3 {
+		t.Errorf("expected 3 logs (wildcard), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_EventRules_AllowlistMatches keeps only listed topic0s.
+func TestRedactLogs_EventRules_AllowlistMatches(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	transferTopic := eventTopic0("Transfer(address,address,uint256)")
+	approvalTopic := eventTopic0("Approval(address,address,uint256)")
+
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Rules: []EventRuleInfo{{Topic0: transferTopic}}},
+		},
+	})
+
+	logs := []Log{
+		{ID: 1, Address: addr, Topic0: &transferTopic, Data: "0x"}, // listed: passes
+		{ID: 2, Address: addr, Topic0: &approvalTopic, Data: "0x"}, // not listed: dropped
+	}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 log (allowlist), got %d", len(result))
+	}
+	if *result[0].Topic0 != transferTopic {
+		t.Errorf("expected Transfer to pass, got %s", *result[0].Topic0)
+	}
+}
+
+// TestRedactLogs_EventRules_AllowlistBlocksAnonymous: anonymous events
+// (no topic0) are blocked when in allowlist mode, matching RPC semantics
+// (rbac.FilterEventLogs:141).
+func TestRedactLogs_EventRules_AllowlistBlocksAnonymous(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	transferTopic := eventTopic0("Transfer(address,address,uint256)")
+
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{
+			addr: {Rules: []EventRuleInfo{{Topic0: transferTopic}}},
+		},
+	})
+
+	logs := []Log{{ID: 1, Address: addr, Topic0: nil, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 logs (anonymous blocked in allowlist mode), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs preserves the
+// pre-RD-888 behaviour for callers that haven't yet wired the checker —
+// the redactor falls back to "no event-rule enforcement" (visibility
+// + participant override are still applied). This documents the gap
+// rather than ignoring it: until RD-889 wires a real EventRuleChecker
+// at server startup, every event passes the rule check by default. The
+// gap is tracked under the umbrella RD-887.
+func TestRedactLogs_EventRules_NoCheckerWiredKeepsLogs(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	// No SetEventRuleChecker call — checker remains nil.
+
+	topic := eventTopic0("Transfer(address,address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("checker not wired: expected log to pass (Phase 4 skipped), got %d logs", len(result))
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ABIResolver + deny-when-no-ABI gate (RD-889)
 // ---------------------------------------------------------------------------
 

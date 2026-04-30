@@ -82,5 +82,23 @@ func TestGetBuiltInABI_ERC721(t *testing.T) {
 func TestGetBuiltInABI_Unknown(t *testing.T) {
 	assert.Empty(t, GetBuiltInABI("unknown"), "unknown type should return empty string")
 	assert.Empty(t, GetBuiltInABI(""), "empty type should return empty string")
-	assert.Empty(t, GetBuiltInABI("erc20"), "lowercase erc20 should return empty (case-sensitive)")
+}
+
+// Lookups are case-insensitive (and tolerate surrounding whitespace) so
+// admins setting metadata.token_type = "erc20" or " ERC20 " resolve the
+// same as the canonical "ERC20".
+func TestGetBuiltInABI_CaseInsensitive(t *testing.T) {
+	canonical := GetBuiltInABI("ERC20")
+	if canonical == "" {
+		t.Fatal("ERC20 should resolve to a non-empty ABI")
+	}
+	assert.Equal(t, canonical, GetBuiltInABI("erc20"))
+	assert.Equal(t, canonical, GetBuiltInABI("Erc20"))
+	assert.Equal(t, canonical, GetBuiltInABI(" ERC20 "))
+
+	canonical721 := GetBuiltInABI("ERC721")
+	if canonical721 == "" {
+		t.Fatal("ERC721 should resolve to a non-empty ABI")
+	}
+	assert.Equal(t, canonical721, GetBuiltInABI("erc721"))
 }
