@@ -33,11 +33,29 @@ type EventRuleInfo struct {
 	Topic0 string // event signature hash (0x-prefixed, lowercase)
 }
 
+// ABIResolver resolves the ABI for a contract address using the same
+// "custom upload first, then built-in registry fallback" semantics as
+// rbac.ResolveContractABI. Centralised here so the explorer redactor and
+// the JSON-RPC layer (storeABIProvider in internal/server) consult one
+// source of truth — required by the access/visibility symmetry invariant
+// in REDACTION_SPEC.md.
+//
+// Returns the empty string when no ABI is resolvable (no custom upload
+// AND no built-in match for the contract's metadata.token_type). Callers
+// must treat empty as "no resolvable ABI" — the deny-when-no-ABI gate
+// (RD-889 / mirrors RD-875 at the RPC layer) drops logs from such
+// contracts rather than risk leaking private addresses embedded in
+// non-indexed event data parameters that we cannot decode.
+type ABIResolver interface {
+	Resolve(ctx context.Context, address string) string
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
 	store            ContractStore
 	db               Database // The main privacy proxy DB for RBAC checks
 	eventRuleChecker EventRuleChecker
+	abiResolver      ABIResolver
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -63,6 +81,45 @@ func NewRedactionEngine(store ContractStore, db Database) *RedactionEngine {
 // SetEventRuleChecker sets an optional event rule checker for log-level filtering.
 func (r *RedactionEngine) SetEventRuleChecker(checker EventRuleChecker) {
 	r.eventRuleChecker = checker
+}
+
+// SetABIResolver wires the unified ABI resolver (RD-889 / Stage 2 of the
+// RPC↔explorer redaction unification, RD-887). When set:
+//   - Phase 3 (data-field address scanning) consults the resolver instead
+//     of the explorer's local ContractStore — gives the explorer access
+//     to the built-in ABI registry (ERC-20 / ERC-721 from
+//     metadata.token_type) that was previously RPC-layer-only.
+//   - Phase 4 applies the deny-when-no-ABI gate: logs from a contract
+//     with no resolvable ABI are dropped, mirroring rbac.FilterEventLogs
+//     at the RPC layer (RD-875 / decisions.md §2 G5).
+//
+// Without this resolver wired, the redactor falls back to the
+// pre-RD-889 ContractStore-based ABI lookup and skips the deny gate —
+// keeping legacy tests passing. Production server startup MUST wire it.
+func (r *RedactionEngine) SetABIResolver(resolver ABIResolver) {
+	r.abiResolver = resolver
+}
+
+// resolveContractABI returns the resolved ABI JSON for an address, or
+// json.RawMessage(nil) when no ABI is resolvable. Prefers the unified
+// ABIResolver (covers built-in registry fallback); falls back to the
+// explorer's ContractStore for legacy callers that haven't wired the
+// resolver. Pre-RD-889 the only path was ContractStore.
+func (r *RedactionEngine) resolveContractABI(ctx context.Context, address string) json.RawMessage {
+	if r.abiResolver != nil {
+		if abi := r.abiResolver.Resolve(ctx, address); abi != "" {
+			return json.RawMessage(abi)
+		}
+		return nil
+	}
+	if r.store != nil {
+		contract, err := r.store.GetContract(ctx, address)
+		if err != nil || contract == nil {
+			return nil
+		}
+		return contract.ABI
+	}
+	return nil
 }
 
 // extractUniqueAddresses gets all unique from/to addresses from a list of transactions
@@ -964,8 +1021,15 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 	// Phase 3: ABI-based data scanning for logs from visible/pseudonymous contracts.
 	// Fetch ABIs for each unique emitter, extract address-typed non-indexed params from
 	// the Data field, and resolve their visibility so they can be zeroed if private.
+	//
+	// ABI source (RD-889 / Stage 2): when SetABIResolver has been called, the
+	// resolver is consulted — that path includes the built-in registry
+	// fallback (ERC-20 / ERC-721 from metadata.token_type) so the explorer
+	// agrees with the RPC layer's storeABIProvider on "is this contract's
+	// ABI resolvable?". When the resolver is not wired, fall back to the
+	// pre-RD-889 ContractStore lookup so legacy tests keep working.
 	contractABIs := make(map[string]json.RawMessage) // address → ABI (nil if not found)
-	if r.store != nil {
+	if r.store != nil || r.abiResolver != nil {
 		abiDataAddrMap := make(map[string]bool)
 		for _, l := range logs {
 			level := visMap[strings.ToLower(l.Address)]
@@ -974,12 +1038,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			}
 			addrKey := strings.ToLower(l.Address)
 			if _, cached := contractABIs[addrKey]; !cached {
-				contract, err2 := r.store.GetContract(ctx, addrKey)
-				if err2 != nil || contract == nil {
-					contractABIs[addrKey] = nil
-				} else {
-					contractABIs[addrKey] = contract.ABI
-				}
+				contractABIs[addrKey] = r.resolveContractABI(ctx, addrKey)
 			}
 			if len(contractABIs[addrKey]) == 0 {
 				continue
@@ -1044,9 +1103,30 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			continue
 		}
 
+		contractAddr := strings.ToLower(l.Address)
+
+		// RD-889 deny-when-no-ABI gate: mirror rbac.FilterEventLogs (RD-875
+		// / decisions.md §2 G5). Without a resolvable ABI we cannot decode
+		// non-indexed address parameters in the log's `data` field, so
+		// private addresses embedded there would leak verbatim. Drop the
+		// log. Only fires when the unified ABIResolver is wired — without
+		// it the gate is disabled (legacy callers / tests). Production
+		// server startup wires the resolver.
+		//
+		// NOTE: applies to all viewers including admins. The RPC layer
+		// (RD-875) bypasses admins on the same gate via isAdminByContract;
+		// matching that distinction on the explorer side requires a tier-2
+		// /tier-3 admin signal that lives in another DB query — tracked
+		// under RD-890. Until then the explorer is intentionally stricter
+		// than RPC for admin viewers (fail-closed asymmetry, safe direction).
+		if r.abiResolver != nil {
+			if r.abiResolver.Resolve(ctx, contractAddr) == "" {
+				continue
+			}
+		}
+
 		// Event rule check: if the contract has event rules configured and
 		// this event's topic0 is not in the allowlist, hide the log.
-		contractAddr := strings.ToLower(l.Address)
 		if eventRulesResolved[contractAddr] {
 			rules := eventRulesMap[contractAddr]
 			if rules != nil && l.Topic0 != nil {

@@ -167,6 +167,13 @@ func (s *Server) explorerReconnectLoop(dbURL string, rbacDB *db.DB, indexerURL s
 		s.explorerMu.Lock()
 		s.explorerStore = backend
 		s.explorerRedactor = explorer.NewRedactionEngine(backend, rbacDB)
+		// RD-889: wire the unified ABI resolver so the explorer redactor
+		// (a) honours the built-in registry fallback for ABI lookups and
+		// (b) applies the deny-when-no-ABI gate that mirrors RPC behaviour
+		// from RD-875. Without this, the explorer endpoints would still
+		// leak non-indexed addresses from event data on contracts without
+		// a custom ABI.
+		s.explorerRedactor.SetABIResolver(newDBABIResolver(rbacDB))
 		s.explorerMu.Unlock()
 		slog.Info("explorer backend connected — explorer endpoints now available")
 		return
@@ -383,6 +390,15 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 explorerStore:    explorerBackend,
 		explorerRedactor: explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
+	}
+	// RD-889: wire the unified ABI resolver so the explorer redactor
+	// (a) honours the built-in registry fallback for ABI lookups and
+	// (b) applies the deny-when-no-ABI gate that mirrors RPC behaviour
+	// from RD-875. Without this, the explorer endpoints would still
+	// leak non-indexed addresses from event data on contracts without
+	// a custom ABI.
+	if s.explorerRedactor != nil {
+		s.explorerRedactor.SetABIResolver(newDBABIResolver(database))
 	}
 
 	// Start background explorer DB reconnection if initial connection failed
