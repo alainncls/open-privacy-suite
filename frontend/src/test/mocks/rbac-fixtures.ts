@@ -577,6 +577,7 @@ export function createMockContract(overrides: Partial<Contract> = {}): Contract 
     deployed_by_user_id: null,
     deployed_at: null,
     metadata: {},
+    allow_visibleto_unlock: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
