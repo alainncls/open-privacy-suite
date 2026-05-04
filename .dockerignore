@@ -49,6 +49,13 @@ demos/
 # Agents
 .agents/
 
+# Claude Code worktree dirs — repo-internal worktrees and agent
+# scratch space. Each worktree carries its own go-build / node_modules
+# / dist artifacts; including them as build context bloats it
+# multi-GB and triggers BuildKit context-transfer timeouts on
+# `make full-stack-dev`.
+.claude/
+
 # Test files
 e2e/
 *_test.go
