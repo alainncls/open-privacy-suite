@@ -5,6 +5,10 @@
 #
 
 set -e
+# Propagate failures across pipes — without this, `make X | tail -20`
+# would always report success because tail's exit code (0) wins. That
+# bug masked an `make e2e` failure as "tests passed" on multiple PRs.
+set -o pipefail
 
 echo "========================================"
 echo "  PRE-PUSH HOOK: Running tests"
