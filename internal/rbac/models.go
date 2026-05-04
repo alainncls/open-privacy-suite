@@ -442,6 +442,18 @@ type GroupSummary struct {
 	Name string `json:"name"`
 }
 
+// UserGroupMembership is a per-user membership summary surfaced by the
+// users list. It is intentionally narrower than MembershipWithDetails:
+// only the fields needed to render the Groups column and link through
+// to the group page.
+type UserGroupMembership struct {
+	GroupID    string `json:"group_id"`
+	Slug       string `json:"slug"`
+	Name       string `json:"name"`
+	OrgID      string `json:"org_id"`
+	IsOrgAdmin bool   `json:"is_org_admin"`
+}
+
 // ContractGrantSummary contains the count of grants and the groups assigned to a contract.
 type ContractGrantSummary struct {
 	Count  int            `json:"count"`

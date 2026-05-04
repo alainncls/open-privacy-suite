@@ -1,12 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { rbacApi } from '@/api/rbac';
-import type { User } from '@/types/rbac';
+import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
 import UserDetail from './UserDetail';
 import { useOrgContext } from './RBACManager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -35,6 +42,13 @@ import {
   Search,
 } from 'lucide-react';
 
+const ROLE_OPTIONS: { value: UserRoleFilter | 'any'; label: string }[] = [
+  { value: 'any', label: 'Any role' },
+  { value: 'org_admin', label: 'Org admin' },
+  { value: 'admin', label: 'Contract admin' },
+  { value: 'member', label: 'Member' },
+];
+
 const PAGE_SIZE = 25;
 
 export default function UserList() {
@@ -52,6 +66,13 @@ export default function UserList() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
 
+  // Filter state
+  const [roleFilter, setRoleFilter] = useState<UserRoleFilter | 'any'>('any');
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+
+  // Group filter options — populated when an org is selected.
+  const [groupOptions, setGroupOptions] = useState<GroupWithAccess[]>([]);
+
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -60,12 +81,41 @@ export default function UserList() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Reset group filter and reload group options when org changes — group IDs
+  // are org-scoped, so a previous selection is meaningless under a new org.
+  useEffect(() => {
+    setSelectedGroupIds([]);
+    if (!selectedOrg) {
+      setGroupOptions([]);
+      return;
+    }
+    let cancelled = false;
+    rbacApi.groups
+      .list(selectedOrg.id, { limit: 250 })
+      .then(res => {
+        if (!cancelled) setGroupOptions(res.data.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setGroupOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrg]);
+
   const loadUsers = useCallback(async (newOffset?: number) => {
     const currentOffset = newOffset ?? offset;
 
     try {
       setLoading(true);
-      const params: { limit: number; offset: number; org_id?: string; search?: string } = {
+      const params: {
+        limit: number;
+        offset: number;
+        org_id?: string;
+        search?: string;
+        group_id?: string[];
+        role?: UserRoleFilter;
+      } = {
         limit: PAGE_SIZE,
         offset: currentOffset,
       };
@@ -74,6 +124,12 @@ export default function UserList() {
       }
       if (debouncedSearch) {
         params.search = debouncedSearch;
+      }
+      if (selectedGroupIds.length > 0) {
+        params.group_id = selectedGroupIds;
+      }
+      if (roleFilter !== 'any') {
+        params.role = roleFilter;
       }
       const response = await rbacApi.users.list(params);
       const page = response.data;
@@ -88,13 +144,13 @@ export default function UserList() {
     } finally {
       setLoading(false);
     }
-  }, [selectedOrg, debouncedSearch, offset]);
+  }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter, offset]);
 
-  // Load users when org or search changes - reset to first page
+  // Load users when org / search / filters change - reset to first page
   useEffect(() => {
     setOffset(0);
     loadUsers(0);
-  }, [selectedOrg, debouncedSearch]);
+  }, [selectedOrg, debouncedSearch, selectedGroupIds, roleFilter]);
 
   // Open modal if userId is in URL
   useEffect(() => {
@@ -151,9 +207,9 @@ export default function UserList() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
+      {/* Search + filters */}
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="relative flex-1 min-w-[220px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
           <Input
             type="text"
@@ -164,17 +220,67 @@ export default function UserList() {
           />
         </div>
 
-        {searchQuery && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Role</span>
+          <Select
+            value={roleFilter}
+            onValueChange={v => setRoleFilter(v as UserRoleFilter | 'any')}
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ROLE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {(searchQuery || roleFilter !== 'any' || selectedGroupIds.length > 0) && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSearchQuery('')}
+            onClick={() => {
+              setSearchQuery('');
+              setRoleFilter('any');
+              setSelectedGroupIds([]);
+            }}
             className="text-neutral-500"
           >
-            Clear search
+            Clear filters
           </Button>
         )}
       </div>
+
+      {/* Group filter — multi-select chip toggles. Only shown when an org
+          is selected, since group IDs are org-scoped. */}
+      {selectedOrg && groupOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-neutral-500 mr-1">Groups:</span>
+          {groupOptions.map(g => {
+            const id = g.group.id;
+            const active = selectedGroupIds.includes(id);
+            return (
+              <Badge
+                key={id}
+                variant={active ? 'default' : 'outline'}
+                className="cursor-pointer select-none"
+                onClick={() =>
+                  setSelectedGroupIds(prev =>
+                    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+                  )
+                }
+                title={active ? 'Click to remove from filter' : 'Click to add to filter'}
+              >
+                {g.group.name}
+              </Badge>
+            );
+          })}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -195,6 +301,7 @@ export default function UserList() {
           <TableHeader>
             <TableRow>
               <TableHead>External ID</TableHead>
+              <TableHead>Groups</TableHead>
               <TableHead>KYC</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
@@ -220,6 +327,28 @@ export default function UserList() {
                       {truncateId(user.external_id)}
                     </span>
                   </div>
+                </TableCell>
+                <TableCell>
+                  {user.groups && user.groups.length > 0 ? (
+                    <div
+                      className="flex flex-wrap gap-1 max-w-[260px]"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      {user.groups.map(g => (
+                        <Badge
+                          key={g.group_id}
+                          variant={g.is_org_admin ? 'default' : 'secondary'}
+                          className="cursor-pointer"
+                          title={`${g.name}${g.is_org_admin ? ' (org admin)' : ''} — open Groups tab`}
+                          onClick={() => navigate('/admin/rbac/groups')}
+                        >
+                          {g.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-neutral-400 text-sm">—</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   {user.kyc ? (
