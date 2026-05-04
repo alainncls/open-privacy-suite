@@ -177,8 +177,9 @@ func isNullResult(body []byte) bool {
 
 // buildTxVisibilityContext builds a TxVisibilityContext for the given response.
 // It extracts tx hashes from the response body, batch-queries visibleTo rules,
-// and returns a context the filter can use. Returns nil if the visibleTo
-// feature is not configured or if no rules are found.
+// resolves the per-contract visibleTo unlock map (RD-874), and returns a
+// context the filter can use. Returns nil if the visibleTo feature is not
+// configured or if no rules are found.
 func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID string, responseBody []byte) *rbac.TxVisibilityContext {
 	if p.txVisibilityStore == nil || userDID == "" {
 		return nil
@@ -198,10 +199,55 @@ func (p *JSONRPCProcessor) buildTxVisibilityContext(ctx context.Context, userDID
 		return nil
 	}
 
+	// RD-874: pre-resolve the per-contract unlock map so the filter pass
+	// stays O(1) per log. Both `allow_visibleto_unlock` (DB) and viewer
+	// eligibility (rbac.IsViewerEligibleForVisibleToUnlock) must hold.
+	contractAddrs := extractContractAddressesFromResponse(responseBody)
+	unlockable := p.buildVisibleToUnlockableMap(ctx, userDID, contractAddrs)
+
 	return &rbac.TxVisibilityContext{
-		ViewerDID:    userDID,
-		TxVisibility: visibility,
+		ViewerDID:           userDID,
+		TxVisibility:        visibility,
+		UnlockableContracts: unlockable,
 	}
+}
+
+// buildVisibleToUnlockableMap returns the (lowercased address → true) map
+// of contracts where the per-contract `allow_visibleto_unlock` flag is
+// set AND the viewer holds an eligible group membership on the contract
+// (rbac.IsViewerEligibleForVisibleToUnlock). Both gates are required;
+// missing either omits the contract from the map. The caller is expected
+// to combine the result with a per-tx visibleTo membership check before
+// granting access — see TxVisibilityContext doc for the full sequence.
+//
+// Returns an empty (non-nil) map on no-op inputs so callers don't need
+// to nil-check before lookup.
+func (p *JSONRPCProcessor) buildVisibleToUnlockableMap(ctx context.Context, viewerDID string, contractAddrs []string) map[string]bool {
+	out := make(map[string]bool)
+	if p.rbacAccessCtrl == nil || viewerDID == "" || len(contractAddrs) == 0 {
+		return out
+	}
+	store := p.rbacAccessCtrl.Store()
+	if store == nil {
+		return out
+	}
+	seen := make(map[string]struct{}, len(contractAddrs))
+	for _, addr := range contractAddrs {
+		addrLower := strings.ToLower(addr)
+		if _, dup := seen[addrLower]; dup || addrLower == "" {
+			continue
+		}
+		seen[addrLower] = struct{}{}
+
+		contract, err := store.GetContractByAddressGlobal(ctx, addrLower)
+		if err != nil || contract == nil || !contract.AllowVisibleToUnlock {
+			continue
+		}
+		if rbac.IsViewerEligibleForVisibleToUnlock(ctx, p.rbacAccessCtrl, viewerDID, addrLower) {
+			out[addrLower] = true
+		}
+	}
+	return out
 }
 
 // extractTxHashesFromResponse extracts unique transaction hashes from a JSON-RPC

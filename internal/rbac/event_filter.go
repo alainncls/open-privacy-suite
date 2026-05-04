@@ -26,9 +26,22 @@ type TxVisibilityProvider interface {
 // When non-nil, it extends (never restricts) the existing event rule filtering:
 // if a log's topic0 matches an event rule but param rules fail, the viewer's DID
 // is checked against the tx's visibleTo list as a fallback.
+//
+// UnlockableContracts (RD-874) carries the per-contract pre-computation
+// of the visibleTo unlock semantic. The map key is a lowercase
+// 0x-prefixed contract address; the value is true iff
+// `contract.allow_visibleto_unlock` is set AND the viewer holds an
+// eligible group membership on the contract (see
+// rbac.IsViewerEligibleForVisibleToUnlock for the gate). When the map
+// reports true for a log's emitting contract AND the viewer is in the
+// tx's visibleTo set, the log passes the filter unconditionally —
+// bypassing the deny-when-no-ABI gate, event_rules, and param_rules
+// for that one tx. Empty / nil map = unlock disabled, additive
+// behaviour applies.
 type TxVisibilityContext struct {
-	ViewerDID    string              // The DID of the user viewing the logs
-	TxVisibility map[string][]string // tx_hash (lowercase) -> visible_to_dids
+	ViewerDID           string              // The DID of the user viewing the logs
+	TxVisibility        map[string][]string // tx_hash (lowercase) -> visible_to_dids
+	UnlockableContracts map[string]bool     // contract address (lowercase) -> unlock pre-resolved true
 }
 
 // logEntry is the minimal structure needed to inspect an Ethereum log for
@@ -121,6 +134,19 @@ func FilterEventLogs(
 		// caller is responsible for scoping this to the contract's own
 		// org — see function docs for why.
 		if isAdminByContract[contractAddr] {
+			filtered = append(filtered, rawLog)
+			continue
+		}
+
+		// RD-874 visibleTo unlock: when the contract has the per-contract
+		// `allow_visibleto_unlock` flag set AND the viewer was found
+		// eligible (caller pre-resolves both into UnlockableContracts) AND
+		// the viewer is listed in the tx's visibleTo set, the log passes
+		// unconditionally — bypassing the deny-when-no-ABI gate,
+		// event_rules, and param_rules. The unlock is per-tx-all-events
+		// per the CTO call notes; without the flag (default), additive
+		// semantics below apply unchanged.
+		if visCtx != nil && visCtx.UnlockableContracts[contractAddr] && isViewerInVisibleTo(visCtx, rawLog) {
 			filtered = append(filtered, rawLog)
 			continue
 		}

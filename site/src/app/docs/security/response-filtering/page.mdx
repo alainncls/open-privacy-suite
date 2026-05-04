@@ -230,12 +230,44 @@ The proxy strips the `visibleTo` field before forwarding the transaction to the 
 
 ### Interaction with static event rules
 
-`visibleTo` is **purely additive** -- it never restricts existing access:
+By default `visibleTo` is **additive** -- it never restricts existing access:
 
 - If a viewer already has access to an event through normal event rules or address-based filtering, `visibleTo` has no effect.
 - If a viewer is denied an event because `must_be=self` param rules fail, `visibleTo` serves as a fallback: the log is visible if the viewer's DID appears in the list.
 - `visibleTo` does **not** bypass the topic0 allowlist. If an event's signature is not in the allowed event rules, it remains hidden regardless of `visibleTo`.
 - Admin users always see all events -- `visibleTo` does not change admin behavior.
+
+Per-contract operators can opt **out of additive-only** behaviour and into the unlock semantic described below.
+
+### Per-contract opt-in: `visibleTo` as event-visibility unlock
+
+Some workflows need many participants with shifting event-by-event visibility (e.g. settlement banks, multi-party trade settlement). Pre-declaring an `event_rules` allowlist per group does not scale for those. The contract owner can opt the contract in to the **unlock semantic**: per-tx `visibleTo` lists become per-event opt-in unlocks for listed users.
+
+**Enable per-contract:**
+
+```
+PUT /api/orgs/:org_id/contracts/:address/visibleto-unlock
+{"allow_visibleto_unlock": true}
+```
+
+Admin-only on the contract's owning org. Default is `false` -- existing additive behaviour stays unless explicitly opted in.
+
+**When the flag is true and a transaction's `visibleTo` lists a viewer who is in an eligible group on this contract, the viewer sees ALL event logs of that one transaction** -- including events whose topic0 is not in their event-rules allowlist, including events that fail their `param_rules`, and including embedded private addresses in topics/data. The unlock is **per-tx, all-events**.
+
+**Eligibility requires both:**
+
+1. The viewer is registered (has a DID-backed user account -- anonymous viewers are denied).
+2. The viewer is a member of at least one **non-system** group whose org matches the contract's owning org, AND that group has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all -- the unlock works because of the grant link, not its rule set.
+
+Cross-org isolation: a viewer who has access only in another org cannot be unlocked, even if they are listed in `visibleTo`. Anonymous and system groups are excluded.
+
+**Per-tx blast-radius cap:** `visibleTo` lists at `eth_sendTransaction` time are capped at **32 entries**. Larger lists are rejected with HTTP 400. Use a dedicated group + grant for larger recipient sets.
+
+**Operator security checklist before flipping the flag:**
+
+- Contracts with the flag on let the tx sender authorise per-event visibility for any DID they list. Set this only on contracts where that's the intended workflow.
+- The set of users who can see a contract's events grows beyond what your `groups + grants` enumeration shows when the flag is on. Plan for that in access reviews.
+- Revoking a viewer's group membership cuts their unlock access immediately on the next request -- the eligibility check runs per-request.
 
 ### Scope
 
