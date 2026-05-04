@@ -34,6 +34,7 @@ import type {
   BatchDeletePreviewRequest,
   BatchDeletePreviewResponse,
   EventSignature,
+  UserRoleFilter,
 } from '../types/rbac';
 
 const api = adminApi;
@@ -75,8 +76,21 @@ export const rbacApi = {
 
   // Users
   users: {
-    list: (params?: { limit?: number; offset?: number; org_id?: string; search?: string }) =>
-      api.get<PaginatedResponse<User>>('/users', { params }),
+    list: (params?: {
+      limit?: number;
+      offset?: number;
+      org_id?: string;
+      search?: string;
+      // Repeatable group_id; axios serialises arrays as group_id=a&group_id=b
+      // which matches gin's c.QueryArray("group_id").
+      group_id?: string[];
+      role?: UserRoleFilter;
+    }) =>
+      api.get<PaginatedResponse<User>>('/users', {
+        params,
+        // arrayFormat repeat -> ?group_id=a&group_id=b (gin QueryArray)
+        paramsSerializer: { indexes: null },
+      }),
     get: (userId: string) => api.get<User>(`/users/${userId}`),
     update: (userId: string, input: UpdateUserInput) =>
       api.put<User>(`/users/${userId}`, input),

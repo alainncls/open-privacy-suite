@@ -5,9 +5,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"privacy-proxy/internal/rbac"
+)
+
+// User role values accepted by UserFilter.Role.
+const (
+	UserRoleOrgAdmin = "org_admin" // member of any group with is_org_admin=true
+	UserRoleAdmin    = "admin"     // member of any group with a contract_grant carrying 'admin' claim
+	UserRoleMember   = "member"    // has memberships but is neither org_admin nor admin
 )
 
 // User operations
@@ -159,59 +169,127 @@ func (d *DB) ListUsers(ctx context.Context, limit, offset int) ([]*rbac.User, er
 	return users, nil
 }
 
-// UserFilter contains filter options for listing users
+// UserFilter contains filter options for listing users.
+//
+// All fields except ScopedOrgIDs are user-supplied query params.
+// ScopedOrgIDs is set by the handler from the caller's auth context: nil
+// for super-admin (X-Admin-Token), or the admin's accessible org IDs for
+// JWT org-admins. When non-nil, results are restricted to users with at
+// least one membership in those orgs and Role/GroupIDs scope-checks
+// honour the same restriction.
 type UserFilter struct {
-	OrgID  string // Filter by organization (users with memberships in this org)
-	Search string // Search by DID (external_id) or linked ETH address
+	OrgID        string   // Filter by organization (users with memberships in this org)
+	Search       string   // Search by DID (external_id) or linked ETH address
+	GroupIDs     []string // Filter to users with membership in any of these groups
+	Role         string   // Filter by role: org_admin, admin, member (empty = no filter)
+	ScopedOrgIDs []string // Cross-org isolation: org IDs the caller may see (nil = unrestricted)
 }
 
-// ListUsersFiltered returns users matching the given filters
-func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, offset int) ([]*rbac.User, error) {
-	var args []any
-	argNum := 1
-
-	// Build the query dynamically based on filters
-	query := `SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.auth_tenant_id, u.created_at, u.updated_at
-	          FROM users u`
-
-	// Join with memberships/groups if filtering by org
-	if filter.OrgID != "" {
-		query += `
-		    JOIN user_memberships m ON u.id = m.user_id
-		    JOIN groups g ON m.group_id = g.id`
-	}
-
-	// Join with eth_address_links if searching (to search by linked address)
-	if filter.Search != "" {
-		query += `
-		    LEFT JOIN eth_address_links e ON u.external_id = e.did`
-	}
-
-	// Build WHERE clause
+// buildUserFilterClauses assembles the FROM/WHERE fragments and parameterised
+// args for a UserFilter. Returns (from, where, args, nextArgNum). All filter
+// values are bound parameters; no string concatenation of user input.
+func buildUserFilterClauses(filter UserFilter) (from string, where string, args []any, argNum int) {
+	from = `FROM users u`
+	argNum = 1
 	var conditions []string
 
 	if filter.OrgID != "" {
-		conditions = append(conditions, fmt.Sprintf("g.org_id = $%d", argNum))
+		from += `
+		    JOIN user_memberships m_org ON u.id = m_org.user_id
+		    JOIN groups g_org ON m_org.group_id = g_org.id`
+		conditions = append(conditions, fmt.Sprintf("g_org.org_id = $%d", argNum))
 		args = append(args, filter.OrgID)
 		argNum++
 	}
 
 	if filter.Search != "" {
-		// Search by external_id (DID) or linked ETH address using ILIKE for case-insensitive matching
+		from += `
+		    LEFT JOIN eth_address_links e ON u.external_id = e.did`
 		searchPattern := "%" + filter.Search + "%"
 		conditions = append(conditions, fmt.Sprintf("(u.external_id ILIKE $%d OR e.eth_address ILIKE $%d)", argNum, argNum+1))
 		args = append(args, searchPattern, searchPattern)
 		argNum += 2
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			query += " AND " + conditions[i]
-		}
+	if len(filter.GroupIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+		    SELECT 1 FROM user_memberships m_grp
+		    WHERE m_grp.user_id = u.id AND m_grp.group_id = ANY($%d))`, argNum))
+		args = append(args, pq.Array(filter.GroupIDs))
+		argNum++
 	}
 
-	query += fmt.Sprintf(" ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", argNum, argNum+1)
+	// ScopedOrgIDs (non-nil) restricts results to users with at least one
+	// membership in those orgs. Used for JWT org-admin cross-org isolation.
+	// Empty slice means "no orgs visible" -> no users match.
+	if filter.ScopedOrgIDs != nil {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+		    SELECT 1 FROM user_memberships m_scope
+		    JOIN groups g_scope ON m_scope.group_id = g_scope.id
+		    WHERE m_scope.user_id = u.id AND g_scope.org_id = ANY($%d))`, argNum))
+		args = append(args, pq.Array(filter.ScopedOrgIDs))
+		argNum++
+	}
+
+	switch filter.Role {
+	case UserRoleOrgAdmin:
+		conditions = append(conditions, roleOrgAdminClause(filter.ScopedOrgIDs, &args, &argNum))
+	case UserRoleAdmin:
+		conditions = append(conditions, roleAdminClause(filter.ScopedOrgIDs, &args, &argNum))
+	case UserRoleMember:
+		// member = has at least one membership but is neither org_admin nor admin
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+		    SELECT 1 FROM user_memberships m_mem WHERE m_mem.user_id = u.id)
+		AND NOT %s
+		AND NOT %s`,
+			roleOrgAdminClause(filter.ScopedOrgIDs, &args, &argNum),
+			roleAdminClause(filter.ScopedOrgIDs, &args, &argNum)))
+	}
+
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+	return from, where, args, argNum
+}
+
+// roleOrgAdminClause returns an EXISTS predicate matching users with
+// membership in any group with is_org_admin=true. When scopedOrgIDs is
+// non-nil, the predicate is restricted to those orgs.
+func roleOrgAdminClause(scopedOrgIDs []string, args *[]any, argNum *int) string {
+	scope := ""
+	if scopedOrgIDs != nil {
+		scope = fmt.Sprintf(" AND g_role.org_id = ANY($%d)", *argNum)
+		*args = append(*args, pq.Array(scopedOrgIDs))
+		*argNum++
+	}
+	return fmt.Sprintf(`EXISTS (
+	    SELECT 1 FROM user_memberships m_role
+	    JOIN groups g_role ON m_role.group_id = g_role.id
+	    WHERE m_role.user_id = u.id AND g_role.is_org_admin = true%s)`, scope)
+}
+
+// roleAdminClause returns an EXISTS predicate matching users in groups
+// holding any contract grant with the 'admin' claim (tier-3 contract
+// admin). Restricted to scopedOrgIDs when non-nil.
+func roleAdminClause(scopedOrgIDs []string, args *[]any, argNum *int) string {
+	scope := ""
+	if scopedOrgIDs != nil {
+		scope = fmt.Sprintf(" AND g_adm.org_id = ANY($%d)", *argNum)
+		*args = append(*args, pq.Array(scopedOrgIDs))
+		*argNum++
+	}
+	return fmt.Sprintf(`EXISTS (
+	    SELECT 1 FROM user_memberships m_adm
+	    JOIN groups g_adm ON m_adm.group_id = g_adm.id
+	    JOIN contract_grants cg_adm ON cg_adm.group_id = g_adm.id
+	    WHERE m_adm.user_id = u.id AND 'admin' = ANY(cg_adm.claims)%s)`, scope)
+}
+
+// ListUsersFiltered returns users matching the given filters
+func (d *DB) ListUsersFiltered(ctx context.Context, filter UserFilter, limit, offset int) ([]*rbac.User, error) {
+	from, where, args, argNum := buildUserFilterClauses(filter)
+	query := fmt.Sprintf(`SELECT DISTINCT u.id, u.external_id, u.kyc, u.banned, u.note, u.metadata, u.auth_tenant_id, u.created_at, u.updated_at
+	          %s%s ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d`, from, where, argNum, argNum+1)
 	args = append(args, limit, offset)
 
 	rows, err := d.conn.QueryContext(ctx, query, args...)
@@ -266,38 +344,7 @@ func (d *DB) ListUsersPaginated(ctx context.Context, limit, offset int) ([]*rbac
 }
 
 func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, limit, offset int) ([]*rbac.User, int, error) {
-	var args []any
-	argNum := 1
-
-	// Build shared FROM/JOIN/WHERE clauses
-	from := `FROM users u`
-	var conditions []string
-
-	if filter.OrgID != "" {
-		from += `
-		    JOIN user_memberships m ON u.id = m.user_id
-		    JOIN groups g ON m.group_id = g.id`
-		conditions = append(conditions, fmt.Sprintf("g.org_id = $%d", argNum))
-		args = append(args, filter.OrgID)
-		argNum++
-	}
-
-	if filter.Search != "" {
-		from += `
-		    LEFT JOIN eth_address_links e ON u.external_id = e.did`
-		searchPattern := "%" + filter.Search + "%"
-		conditions = append(conditions, fmt.Sprintf("(u.external_id ILIKE $%d OR e.eth_address ILIKE $%d)", argNum, argNum+1))
-		args = append(args, searchPattern, searchPattern)
-		argNum += 2
-	}
-
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE " + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			where += " AND " + conditions[i]
-		}
-	}
+	from, where, args, argNum := buildUserFilterClauses(filter)
 
 	// Count query
 	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT u.id) %s%s", from, where)
@@ -345,6 +392,53 @@ func (d *DB) ListUsersFilteredPaginated(ctx context.Context, filter UserFilter, 
 	}
 
 	return users, total, nil
+}
+
+// ListGroupMembershipsForUsers returns each given user's group memberships
+// as a flat list of UserGroupMembership summaries, keyed by user ID.
+//
+// When scopedOrgIDs is non-nil, results are restricted to memberships in
+// those orgs (cross-org isolation for JWT-based org admins). nil means
+// unrestricted (super-admin).
+//
+// Users with no memberships in scope are absent from the returned map.
+func (d *DB) ListGroupMembershipsForUsers(ctx context.Context, userIDs []string, scopedOrgIDs []string) (map[string][]rbac.UserGroupMembership, error) {
+	if len(userIDs) == 0 {
+		return map[string][]rbac.UserGroupMembership{}, nil
+	}
+
+	query := `SELECT m.user_id, g.id, g.slug, g.name, g.org_id, g.is_org_admin
+	          FROM user_memberships m
+	          JOIN groups g ON m.group_id = g.id
+	          WHERE m.user_id = ANY($1)`
+	args := []any{pq.Array(userIDs)}
+
+	if scopedOrgIDs != nil {
+		query += ` AND g.org_id = ANY($2)`
+		args = append(args, pq.Array(scopedOrgIDs))
+	}
+
+	query += ` ORDER BY g.name ASC`
+
+	rows, err := d.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list memberships for users: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string][]rbac.UserGroupMembership, len(userIDs))
+	for rows.Next() {
+		var userID string
+		var m rbac.UserGroupMembership
+		if err := rows.Scan(&userID, &m.GroupID, &m.Slug, &m.Name, &m.OrgID, &m.IsOrgAdmin); err != nil {
+			return nil, fmt.Errorf("failed to scan membership: %w", err)
+		}
+		out[userID] = append(out[userID], m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating memberships: %w", err)
+	}
+	return out, nil
 }
 
 // BanUsersByTenantID bans all users belonging to the given Azure AD tenant.

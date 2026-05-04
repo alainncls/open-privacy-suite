@@ -92,7 +92,7 @@ describe('UserList', () => {
       ).toBeInTheDocument();
     });
 
-    it('displays table with headers (External ID, KYC, Status, Created, Note, Actions)', async () => {
+    it('displays table with headers (External ID, Groups, KYC, Status, Created, Note, Actions)', async () => {
       server.use(
         http.get('/api/v1/admin/users', () => {
           return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
@@ -105,11 +105,97 @@ describe('UserList', () => {
         expect(screen.getByRole('columnheader', { name: 'External ID' })).toBeInTheDocument();
       });
 
+      expect(screen.getByRole('columnheader', { name: 'Groups' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'KYC' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Created' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Note' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument();
+    });
+  });
+
+  describe('Groups column + filters (RD-868)', () => {
+    it('renders group badges from user.groups', async () => {
+      const user = createMockUser({
+        id: 'user-with-groups',
+        external_id: 'did:test:groupy',
+        groups: [
+          {
+            group_id: 'g-1',
+            slug: 'admins',
+            name: 'Admins',
+            org_id: 'org-1',
+            is_org_admin: true,
+          },
+          {
+            group_id: 'g-2',
+            slug: 'members',
+            name: 'Members',
+            org_id: 'org-1',
+            is_org_admin: false,
+          },
+        ],
+      });
+
+      server.use(
+        http.get('/api/v1/admin/users', () => {
+          return HttpResponse.json({ data: [user], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Admins')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Members')).toBeInTheDocument();
+    });
+
+    it('shows em dash for users with no groups', async () => {
+      const user = createMockUser({
+        id: 'user-orphan',
+        external_id: 'did:test:orphan',
+        groups: [],
+      });
+
+      server.use(
+        http.get('/api/v1/admin/users', () => {
+          return HttpResponse.json({ data: [user], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+
+      await waitFor(() => {
+        // The em dash is rendered in the Groups cell as a placeholder.
+        expect(screen.getByText('—')).toBeInTheDocument();
+      });
+    });
+
+    it('forwards role param to the users-list API when filter set', async () => {
+      const seenRoles: (string | null)[] = [];
+      server.use(
+        http.get('/api/v1/admin/users', ({ request }) => {
+          const url = new URL(request.url);
+          seenRoles.push(url.searchParams.get('role'));
+          return HttpResponse.json({ data: [mockUser], total: 1, limit: 25, offset: 0 });
+        })
+      );
+
+      renderWithRBACContext(<UserList />);
+      await waitFor(() => {
+        expect(seenRoles.length).toBeGreaterThan(0);
+      });
+      // First load: no role filter selected -> param absent.
+      expect(seenRoles[0]).toBeNull();
+
+      // Open the role select and choose "Org admin".
+      await userEvent.click(screen.getByRole('combobox'));
+      await userEvent.click(await screen.findByRole('option', { name: 'Org admin' }));
+
+      await waitFor(() => {
+        expect(seenRoles).toContain('org_admin');
+      });
     });
   });
 

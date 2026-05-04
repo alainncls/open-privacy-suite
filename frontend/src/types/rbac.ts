@@ -161,7 +161,20 @@ export interface User {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  // Group memberships scoped to the caller's accessible orgs. Returned by
+  // the users-list endpoint; older detail endpoints may omit this.
+  groups?: UserGroupMembership[];
 }
+
+export interface UserGroupMembership {
+  group_id: string;
+  slug: string;
+  name: string;
+  org_id: string;
+  is_org_admin: boolean;
+}
+
+export type UserRoleFilter = 'org_admin' | 'admin' | 'member';
 
 // UserMembership - no more role_id (permissions come from group)
 export interface UserMembership {

@@ -13,33 +13,80 @@ import (
 
 // User handlers
 
+// userListItem extends rbac.User with the user's group memberships for the
+// list response. Memberships are scoped to the caller's accessible orgs
+// for non-super-admin callers (cross-org isolation).
+type userListItem struct {
+	*rbac.User
+	Groups []rbac.UserGroupMembership `json:"groups"`
+}
+
+// resolveListUsersScope returns the org IDs the caller may see, or nil when
+// the caller is a super-admin (X-Admin-Token) and may see everything.
+//
+// JWT org-admins are restricted to the orgs in their admin_org_ids context
+// value, populated by adminAuthMiddleware. An empty slice means the caller
+// has no accessible orgs and the list will be empty.
+func resolveListUsersScope(c *gin.Context) []string {
+	if c.GetString("auth_method") == "admin_token" {
+		return nil
+	}
+	if v, ok := c.Get("admin_org_ids"); ok {
+		if ids, ok := v.([]string); ok {
+			return ids
+		}
+	}
+	// Dev mode (no auth configured) reaches here when admin_org_ids was
+	// never set. Treat as super-admin: no scope.
+	return nil
+}
+
 func (s *Server) listRBACUsers(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
 
-	// Parse filter params
-	orgID := c.Query("org_id")
-	search := c.Query("search")
-
-	var users []*rbac.User
-	var total int
-	var err error
-
-	// Use filtered query if any filters are provided
-	if orgID != "" || search != "" {
-		filter := db.UserFilter{
-			OrgID:  orgID,
-			Search: search,
-		}
-		users, total, err = s.db.ListUsersFilteredPaginated(c.Request.Context(), filter, limit, offset)
-	} else {
-		users, total, err = s.db.ListUsersPaginated(c.Request.Context(), limit, offset)
+	filter := db.UserFilter{
+		OrgID:        c.Query("org_id"),
+		Search:       c.Query("search"),
+		GroupIDs:     c.QueryArray("group_id"),
+		Role:         c.Query("role"),
+		ScopedOrgIDs: resolveListUsersScope(c),
 	}
 
+	// Validate role early — unknown values would silently match nothing.
+	switch filter.Role {
+	case "", db.UserRoleOrgAdmin, db.UserRoleAdmin, db.UserRoleMember:
+		// ok
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role filter"})
+		return
+	}
+
+	users, total, err := s.db.ListUsersFilteredPaginated(c.Request.Context(), filter, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": users, "total": total, "limit": limit, "offset": offset})
+
+	userIDs := make([]string, 0, len(users))
+	for _, u := range users {
+		userIDs = append(userIDs, u.ID)
+	}
+
+	memberships, err := s.db.ListGroupMembershipsForUsers(c.Request.Context(), userIDs, filter.ScopedOrgIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]userListItem, len(users))
+	for i, u := range users {
+		items[i] = userListItem{User: u, Groups: memberships[u.ID]}
+		if items[i].Groups == nil {
+			items[i].Groups = []rbac.UserGroupMembership{}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *Server) getRBACUser(c *gin.Context) {
