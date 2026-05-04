@@ -155,8 +155,14 @@ type Contract struct {
 	DeployedByUserID *string        `json:"deployed_by_user_id,omitempty"`
 	DeployedAt       *time.Time     `json:"deployed_at,omitempty"`
 	Metadata         map[string]any `json:"metadata"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+	// AllowVisibleToUnlock: when true, per-tx visibleTo lists act as a
+	// per-event opt-in unlock for eligible viewers (RD-874). False
+	// preserves the pre-RD-874 additive-only behaviour. Admin-only via
+	// the dedicated PATCH endpoint; never settable by sendTransaction
+	// or by non-admin contract create/update calls.
+	AllowVisibleToUnlock bool      `json:"allow_visibleto_unlock"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // FunctionRule describes access to a single contract function selector,

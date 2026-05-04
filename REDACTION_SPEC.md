@@ -239,6 +239,45 @@ This is implemented as a **per-transaction override** in `RedactTransactions` (`
 
 **Security invariant:** The override ONLY applies within `RedactTransactions`/`RedactLogs`/`RedactTransfers`/`RedactInternalTransactions`, which process a specific transaction's data. It does NOT affect `GetBatchVisibility` or `GetBatchVisibilityDetailed`. A counterparty address visible via participant override in a transaction list will still show as Hidden when queried via other visibility resolution paths.
 
+### 3.7.1 Per-contract visibleTo unlock (RD-874)
+
+By default `visibleTo` is **additive** — it widens an already-permitted viewer's response (e.g. param-rule fallback) but never grants new event-level access. The settlement-bank pattern (many participants, shifting per-event visibility) is awkward to express that way, so contracts can opt in to the **unlock semantic**: per-tx visibleTo lists become per-event opt-in unlocks.
+
+**Opt-in switch:** `contracts.allow_visibleto_unlock` (boolean, default false). Flipped via the admin API:
+
+```
+PUT /api/orgs/:org_id/contracts/:address/visibleto-unlock
+{"allow_visibleto_unlock": true}
+```
+
+Admin-only on the contract's owning org. Migration **045**.
+
+**When the flag is true and a viewer is listed in a transaction's `visibleTo`, the viewer sees ALL event logs of that transaction** (per-tx, all-events) — bypassing the contract grant's `event_rules` allowlist, any `param_rules`, and the deny-when-no-ABI gate (RD-875/889). Field-level redaction of embedded private addresses in topics/data is also bypassed for that one tx — the contract owner has explicitly authorised tx senders to share full event payloads with their listed recipients.
+
+**Eligibility gate** (`rbac.IsViewerEligibleForVisibleToUnlock`) — both must hold for any unlock:
+
+1. The viewer resolves to a real `users` row (anonymous viewers — no DID account — are denied here).
+2. The viewer is a member of at least one **non-system** group whose `org_id` equals the contract's owning `org_id`, AND that group has a `contract_grant` on this contract. The grant's `event_rules` may be deny-all — the unlock works *because of* the grant link, not its rule set.
+
+Cross-org isolation: `GetEffectivePermissionsByIDs` resolves grants per-org, so a viewer who has access only in another org gets `HasContractAccess(addr) == false` here. Anonymous / system groups are excluded explicitly.
+
+**Per-tx blast-radius cap:** `visibleTo` lists at `eth_sendTransaction` time are capped at **32 entries** (`server.visibleToMaxSize`). Larger lists are rejected with HTTP 400. Operators with legitimate >32-recipient flows should use a dedicated group + grant instead.
+
+**Matrix:**
+
+| Viewer in eligible group on contract? | Listed in tx's `visibleTo`? | `allow_visibleto_unlock` flag | Outcome on that tx's events |
+|---------------------------------------|-----------------------------|-------------------------------|------------------------------|
+| Yes | Yes | true | **All events visible**, no field redaction (unlock fires) |
+| Yes | No | true | Existing event_rules apply (unchanged) |
+| Yes | Yes | false | Existing additive widening (unchanged — RD-842 / param-rule fallback) |
+| No (cross-org or no group) | Yes | true | Denied (eligibility gate fails) |
+| Anonymous viewer | Yes | true | Denied (no `users` row) |
+| Eligible but membership later revoked | Was previously listed | true | Denied at next request — eligibility is checked at request-time (`RedactionEngine.RedactLogs` runs per-request; cache invalidated on grant change via `InvalidateOrg`) |
+
+**RPC and explorer use the same eligibility gate** — `rbac.IsViewerEligibleForVisibleToUnlock` is the single source of truth. RPC layer pre-resolves it via `processor_event_rules.go::buildVisibleToUnlockableMap`; explorer pre-resolves via `dbVisibleToUnlockResolver` wired through `wireExplorerRedactor`. Both feed an `UnlockableContracts map[string]bool` into the per-log decision so it stays O(1) per log.
+
+**Auditability note:** with the flag on, the set of users who can see a contract's events grows beyond what `groups + grants` enumeration alone shows — the active set is `(groups + grants) ∪ (every DID listed in any tx's visibleTo)`. Operators who flip the flag should plan for that surface in access-review tooling. The flag itself is a single boolean per contract; flips go through the admin API and are subject to whatever audit log the API surface uses.
+
 ### 3.8 RPC Layer (`eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs`, `eth_getBlockByNumber`, `eth_getBlockReceipts`)
 
 At the RPC layer, visibility is binary: the caller either is or is not a participant (one of their linked addresses matches `from` or `to`).

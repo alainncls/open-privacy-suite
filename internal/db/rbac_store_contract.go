@@ -36,21 +36,21 @@ func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE id = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
 }
 
 func (d *DB) GetContractByAddressGlobal(ctx context.Context, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE lower(address) = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, strings.ToLower(address)))
@@ -61,7 +61,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		return make(map[string]*rbac.Contract), nil
 	}
 
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(ids))
@@ -80,7 +80,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 
 		err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-			&deployedByUserID, &deployedAt, &metadata,
+			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		)
 		if err != nil {
@@ -128,7 +128,7 @@ func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -149,7 +149,7 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 	}
 
 	// Get paginated results
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
@@ -201,7 +201,7 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 		return nil, 0, fmt.Errorf("failed to count contracts: %w", err)
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
@@ -244,6 +244,18 @@ func (d *DB) GetAllRegisteredAddresses(ctx context.Context) ([]string, error) {
 
 func (d *DB) DeleteContract(ctx context.Context, id string) error {
 	_, err := d.conn.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)
+	return err
+}
+
+// UpdateContractAllowVisibleToUnlock toggles the per-contract opt-in
+// flag for the RD-874 visibleTo unlock semantic. Admin-only. Setting
+// this true authorises tx senders on this contract to grant per-event
+// access to anyone they list in `visibleTo`, scoped to that one tx.
+// See decisions.md §12 for the full security implications.
+func (d *DB) UpdateContractAllowVisibleToUnlock(ctx context.Context, id string, allow bool) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE contracts SET allow_visibleto_unlock = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, allow)
 	return err
 }
 
@@ -361,7 +373,7 @@ func scanContract(row *sql.Row) (*rbac.Contract, error) {
 
 	err := row.Scan(
 		&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-		&deployedByUserID, &deployedAt, &metadata,
+		&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
 		&contract.CreatedAt, &contract.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -402,7 +414,7 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 
 		if err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-			&deployedByUserID, &deployedAt, &metadata,
+			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract: %w", err)

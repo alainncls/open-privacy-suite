@@ -57,6 +57,7 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 	if accessCtrl != nil {
 		redactor.SetAdminContractsResolver(newDBAdminContractsResolver(accessCtrl))
 		redactor.SetEventRuleChecker(newDBEventRuleChecker(accessCtrl))
+		redactor.SetVisibleToUnlockResolver(newDBVisibleToUnlockResolver(accessCtrl))
 	}
 }
 

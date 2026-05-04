@@ -139,7 +139,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// resolver-style setter to RedactionEngine without updating
 	// wireExplorerRedactor (and this list), this assertion fires —
 	// before the gap can ship as another silently-disabled resolver.
-	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetEventRuleChecker"}
+	expectedSetters := []string{"SetABIResolver", "SetAdminContractsResolver", "SetEventRuleChecker", "SetVisibleToUnlockResolver"}
 	require.Equal(t, sortedStrings(expectedSetters), interfaceTypedSetters(engine),
 		"wireExplorerRedactor must wire every interface-typed Set* method on RedactionEngine; mismatch means a setter was added/removed without updating the helper. See wireExplorerRedactor doc-comment.")
 

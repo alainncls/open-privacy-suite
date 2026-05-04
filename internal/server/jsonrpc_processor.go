@@ -393,6 +393,14 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	var visibleTo []string
 	if req.Method == "eth_sendTransaction" {
 		visibleTo = extractAndStripVisibleTo(req)
+		if len(visibleTo) > visibleToMaxSize {
+			return &ProcessResult{
+				Error: &ProcessError{
+					StatusCode: http.StatusBadRequest,
+					Message:    fmt.Sprintf("visibleTo list exceeds maximum size of %d entries", visibleToMaxSize),
+				},
+			}
+		}
 		if len(visibleTo) > 0 {
 			_, to, data, _ := extractTxParams(req.Params)
 			if isSimpleValueTransfer(data) || to == "" || to == "0x" {
@@ -1084,6 +1092,14 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	// Only accepted on contract calls — plain transfers have no event logs.
 	var rawTxVisibleTo []string
 	rawTxVisibleTo = extractAndStripRawTxVisibleTo(req)
+	if len(rawTxVisibleTo) > visibleToMaxSize {
+		return &ProcessResult{
+			Error: &ProcessError{
+				StatusCode: http.StatusBadRequest,
+				Message:    fmt.Sprintf("visibleTo list exceeds maximum size of %d entries", visibleToMaxSize),
+			},
+		}
+	}
 	if len(rawTxVisibleTo) > 0 {
 		if isSimpleValueTransfer(data) || to == "" {
 			return &ProcessResult{
@@ -1982,6 +1998,21 @@ func (p *JSONRPCProcessor) recordRBACDecision(decision string) {
 	}
 	p.metrics.RBACDecisionsTotal.WithLabelValues(decision).Inc()
 }
+
+// visibleToMaxSize bounds the per-tx visibleTo recipient list. Lists
+// larger than this are rejected at sendTransaction with HTTP 400.
+// Bound chosen for two reasons:
+//
+//  1. Storage: every entry persists in tx_visible_to indefinitely.
+//     32 entries × ~50 bytes/DID × tx volume keeps growth predictable.
+//  2. RD-874: under the unlock semantic each entry is an effective
+//     ACL grant for that tx's events. Capping at 32 limits the blast
+//     radius of an abusive tx sender listing every DID they can
+//     enumerate.
+//
+// Operators with legitimate >32 recipient use cases should use a
+// dedicated group + grant instead of stuffing visibleTo.
+const visibleToMaxSize = 32
 
 // extractAndStripVisibleTo extracts the visibleTo field from the tx object
 // in eth_sendTransaction params[0], removes it so it's not forwarded to the node,

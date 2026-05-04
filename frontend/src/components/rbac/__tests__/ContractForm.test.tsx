@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -445,6 +445,128 @@ describe('ContractForm', () => {
 
       expect(
         screen.getByText(/After registering the contract, add grants/)
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('visibleTo unlock toggle (RD-874)', () => {
+    const visibleToUnlockUrl =
+      '/api/v1/admin/orgs/:orgId/contracts/:address/visibleto-unlock';
+
+    it('does NOT render the section in create mode', () => {
+      renderContractForm({});
+      expect(screen.queryByText(/visibleTo unlock/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the section in edit mode with the toggle reflecting the current flag', () => {
+      const off = createMockContract({ allow_visibleto_unlock: false });
+      const { unmount } = renderContractForm({ contract: off });
+      const sw = screen.getByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      expect(sw).not.toBeChecked();
+      // No "enabled" badge.
+      expect(screen.queryByText(/^enabled$/i)).not.toBeInTheDocument();
+      unmount();
+
+      renderContractForm({ contract: createMockContract({ allow_visibleto_unlock: true }) });
+      const swOn = screen.getByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      expect(swOn).toBeChecked();
+      expect(screen.getByText(/^enabled$/i)).toBeInTheDocument();
+    });
+
+    it('enabling the flag opens a confirmation dialog and only calls the API after Enable', async () => {
+      const user = userEvent.setup();
+      const contract = createMockContract({ allow_visibleto_unlock: false });
+      renderContractForm({ contract });
+
+      let putCalled = false;
+      let putBody: { allow_visibleto_unlock?: boolean } | null = null;
+      server.use(
+        http.put(visibleToUnlockUrl, async ({ request }) => {
+          putCalled = true;
+          putBody = (await request.json()) as { allow_visibleto_unlock: boolean };
+          return HttpResponse.json({ ...contract, allow_visibleto_unlock: true });
+        }),
+      );
+
+      const sw = screen.getByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      await user.click(sw);
+
+      // Confirmation modal renders; API not yet called.
+      const dialogHeading = screen.getByText(/Enable visibleTo unlock\?/i);
+      expect(dialogHeading).toBeInTheDocument();
+      expect(putCalled).toBe(false);
+
+      // Cancel keeps it disabled. Scope to the dialog — the form has
+      // its own Cancel button at the bottom.
+      const dialog = dialogHeading.closest('div.fixed') as HTMLElement;
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+      expect(putCalled).toBe(false);
+      expect(screen.queryByText(/Enable visibleTo unlock\?/i)).not.toBeInTheDocument();
+
+      // Re-open and confirm.
+      await user.click(sw);
+      const enable = await screen.findByRole('button', { name: /^enable$/i });
+      await user.click(enable);
+
+      await waitFor(() => expect(putCalled).toBe(true));
+      expect(putBody).toEqual({ allow_visibleto_unlock: true });
+      expect(
+        await screen.findByText(/visibleTo unlock enabled for this contract/i),
+      ).toBeInTheDocument();
+    });
+
+    it('disabling does NOT prompt — applies immediately', async () => {
+      const user = userEvent.setup();
+      const contract = createMockContract({ allow_visibleto_unlock: true });
+      renderContractForm({ contract });
+
+      let putBody: { allow_visibleto_unlock?: boolean } | null = null;
+      server.use(
+        http.put(visibleToUnlockUrl, async ({ request }) => {
+          putBody = (await request.json()) as { allow_visibleto_unlock: boolean };
+          return HttpResponse.json({ ...contract, allow_visibleto_unlock: false });
+        }),
+      );
+
+      const sw = screen.getByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      await user.click(sw);
+
+      // No confirmation modal for disabling.
+      expect(screen.queryByText(/Enable visibleTo unlock\?/i)).not.toBeInTheDocument();
+      await waitFor(() => expect(putBody).toEqual({ allow_visibleto_unlock: false }));
+      expect(
+        await screen.findByText(/visibleTo unlock disabled/i),
+      ).toBeInTheDocument();
+    });
+
+    it('surfaces the API error if the toggle fails', async () => {
+      const user = userEvent.setup();
+      const contract = createMockContract({ allow_visibleto_unlock: false });
+      renderContractForm({ contract });
+
+      server.use(
+        http.put(visibleToUnlockUrl, async () =>
+          HttpResponse.json({ error: 'permission denied: not an admin' }, { status: 403 }),
+        ),
+      );
+
+      const sw = screen.getByRole('switch', {
+        name: /allow visibleto to unlock event visibility/i,
+      });
+      await user.click(sw);
+      const enable = await screen.findByRole('button', { name: /^enable$/i });
+      await user.click(enable);
+
+      expect(
+        await screen.findByText(/permission denied: not an admin/i),
       ).toBeInTheDocument();
     });
   });

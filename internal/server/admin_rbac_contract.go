@@ -206,6 +206,65 @@ func (s *Server) updateContractABI(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// updateContractAllowVisibleToUnlock toggles the per-contract opt-in
+// flag for the RD-874 visibleTo unlock semantic. Admin-only — the
+// caller must already be an admin for the contract's owning org
+// (enforced by the route's middleware chain alongside the other admin
+// endpoints in this file).
+//
+// Body: {"allow_visibleto_unlock": true|false}
+//
+// PUT /orgs/:org_id/contracts/:address/visibleto-unlock
+//
+// Security note: setting this to true means any tx sender on this
+// contract can grant per-event visibility to any DID they list in
+// `visibleTo` (scoped to that one tx, gated by the viewer being in
+// some non-system group with a contract_grant). See decisions.md §12
+// for the full bypass surface (event_rules, param_rules,
+// deny-when-no-ABI gate are all bypassed for unlocked viewers on the
+// matching tx). Operators should review their grants before flipping.
+func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input struct {
+		AllowVisibleToUnlock *bool `json:"allow_visibleto_unlock" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if input.AllowVisibleToUnlock == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "allow_visibleto_unlock is required"})
+		return
+	}
+
+	if err := s.db.UpdateContractAllowVisibleToUnlock(c.Request.Context(), contract.ID, *input.AllowVisibleToUnlock); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Invalidate the org's permission cache so the new flag takes effect
+	// on the next request — the resolver caches contract records along
+	// with grants. Same pattern as other contract-mutating endpoints.
+	if s.rbacAccessCtrl != nil {
+		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+	}
+
+	contract.AllowVisibleToUnlock = *input.AllowVisibleToUnlock
+	c.JSON(http.StatusOK, contract)
+}
+
 // listContractEvents parses the stored ABI and returns the list of events with
 // their topic0 hashes and parameter info. Used by the UI to show a human-readable
 // event picker for configuring event rules.

@@ -134,6 +134,13 @@ export const rbacApi = {
     // ABI management
     updateABI: (orgId: string, address: string, abi: string) =>
       api.put<Contract>(`/orgs/${orgId}/contracts/${address}/abi`, { abi }),
+    // RD-874: per-contract visibleTo unlock toggle. Setting true
+    // authorises tx senders on this contract to grant per-event
+    // visibility to DIDs they list in `visibleTo`. Default false.
+    updateAllowVisibleToUnlock: (orgId: string, address: string, allow: boolean) =>
+      api.put<Contract>(`/orgs/${orgId}/contracts/${address}/visibleto-unlock`, {
+        allow_visibleto_unlock: allow,
+      }),
     // Event signatures from ABI (for event rules UI)
     listEvents: (orgId: string, address: string) =>
       api.get<{ events: EventSignature[]; message?: string }>(`/orgs/${orgId}/contracts/${address}/events`),

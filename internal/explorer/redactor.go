@@ -123,13 +123,34 @@ type AdminContractsResolver interface {
 	Resolve(ctx context.Context, viewerDID string, addresses []string) map[string]bool
 }
 
+// VisibleToUnlockResolver returns the subset of supplied contract
+// addresses where the per-contract `allow_visibleto_unlock` flag is set
+// AND the viewer is eligible for the unlock — both gates from RD-874.
+// The map is consumed by Phase 4 of RedactLogs along with the
+// visibleTxHashes opt: when both the contract is unlockable AND the
+// log's tx hash is in the visibleTo set, the log passes unredacted
+// (bypasses event_rules, param_rules, and the deny-when-no-ABI gate).
+//
+// Implementations MUST be org-scoped: a viewer who is in another org
+// must never appear unlock-eligible for a contract whose owning org
+// they are not a member of. Same defence as AdminContractsResolver.
+//
+// This resolver mirrors the JSON-RPC layer's
+// `buildVisibleToUnlockableMap` so both layers honour the same unlock
+// set per (viewer, contract) — required by the access/visibility
+// symmetry invariant in REDACTION_SPEC.md.
+type VisibleToUnlockResolver interface {
+	Resolve(ctx context.Context, viewerDID string, addresses []string) map[string]bool
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
-	store                  ContractStore
-	db                     Database // The main privacy proxy DB for RBAC checks
-	eventRuleChecker       EventRuleChecker
-	abiResolver            ABIResolver
-	adminContractsResolver AdminContractsResolver
+	store                   ContractStore
+	db                      Database // The main privacy proxy DB for RBAC checks
+	eventRuleChecker        EventRuleChecker
+	abiResolver             ABIResolver
+	adminContractsResolver  AdminContractsResolver
+	visibleToUnlockResolver VisibleToUnlockResolver
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -172,6 +193,18 @@ func (r *RedactionEngine) SetEventRuleChecker(checker EventRuleChecker) {
 // Production server startup wires it.
 func (r *RedactionEngine) SetAdminContractsResolver(resolver AdminContractsResolver) {
 	r.adminContractsResolver = resolver
+}
+
+// SetVisibleToUnlockResolver wires the per-contract visibleTo unlock
+// resolver (RD-874). When set, Phase 4 of RedactLogs treats logs from
+// unlock-eligible contracts as fully visible for the duration of any
+// transaction the viewer is listed in via visibleTo — bypassing
+// event_rules, param_rules, and the deny-when-no-ABI gate for that
+// specific tx. Without the resolver wired the unlock branch is
+// disabled and the redactor falls back to the additive visibleTo
+// behaviour. Production server startup wires it.
+func (r *RedactionEngine) SetVisibleToUnlockResolver(resolver VisibleToUnlockResolver) {
+	r.visibleToUnlockResolver = resolver
 }
 
 // SetABIResolver wires the unified ABI resolver (RD-889 / Stage 2 of the
@@ -1223,10 +1256,44 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		adminContracts = r.adminContractsResolver.Resolve(ctx, viewerDID, uniqueAddrs)
 	}
 
+	// Phase 3d (RD-874): resolve the per-contract visibleTo unlock map.
+	// True for contracts where (a) `allow_visibleto_unlock` is set in the
+	// DB AND (b) the viewer holds a contract_grant via an eligible
+	// (non-system) group in the contract's owning org. Both gates must
+	// hold; the resolver returns the conjunction. Combined with a per-tx
+	// visibleTxHashes membership check below, this drives the unlock
+	// branch in Phase 4. Mirrors processor_event_rules.go's
+	// buildVisibleToUnlockableMap so RPC and explorer agree on the
+	// (viewer, contract, tx) triple.
+	unlockableContracts := map[string]bool{}
+	if r.visibleToUnlockResolver != nil && viewerDID != "" && len(addrMap) > 0 {
+		uniqueAddrs := make([]string, 0, len(addrMap))
+		for a := range addrMap {
+			uniqueAddrs = append(uniqueAddrs, a)
+		}
+		unlockableContracts = r.visibleToUnlockResolver.Resolve(ctx, viewerDID, uniqueAddrs)
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
-		level := visMap[strings.ToLower(l.Address)]
+		contractAddrLower := strings.ToLower(l.Address)
+
+		// RD-874 visibleTo unlock: when the contract is unlockable AND the
+		// viewer is listed in the tx's visibleTo set, pass the log
+		// through with no redaction — bypassing visibility, the deny-
+		// when-no-ABI gate, event_rules, and param_rules. The unlock is
+		// per-tx-all-events and explicitly opted in by the contract
+		// owner via `allow_visibleto_unlock`. See decisions.md §12 for
+		// the full matrix and security rationale.
+		if unlockableContracts[contractAddrLower] && visibleTxHashes[strings.ToLower(l.TxHash)] {
+			redacted := l
+			redacted.AddressMetadata = make(map[string]VisibilityReason)
+			result = append(result, redacted)
+			continue
+		}
+
+		level := visMap[contractAddrLower]
 
 		// Participant override: if the viewer is from/to of the parent tx,
 		// upgrade Redacted emitting contracts so they can see their own logs.
@@ -1244,7 +1311,7 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 			continue
 		}
 
-		contractAddr := strings.ToLower(l.Address)
+		contractAddr := contractAddrLower
 
 		// RD-889 deny-when-no-ABI gate: mirror rbac.FilterEventLogs (RD-875
 		// / decisions.md §2 G5). Without a resolvable ABI we cannot decode

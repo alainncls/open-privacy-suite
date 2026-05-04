@@ -28,14 +28,14 @@ func (t *Tx) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (t *Tx) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE id = $1`
 
 	return scanContractRow(t.tx.QueryRowContext(ctx, query, id))
 }
 
 func (t *Tx) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
 	return scanContractRow(t.tx.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
@@ -69,7 +69,7 @@ func (t *Tx) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		return make(map[string]*rbac.Contract), nil
 	}
 
-	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, created_at, updated_at
+	query := `SELECT id, org_id, address, name, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
 	rows, err := t.tx.QueryContext(ctx, query, pq.Array(ids))
@@ -88,7 +88,7 @@ func (t *Tx) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 
 		err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name,
-			&deployedByUserID, &deployedAt, &metadata,
+			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		)
 		if err != nil {
@@ -462,7 +462,7 @@ func scanContractRow(row *sql.Row) (*rbac.Contract, error) {
 
 	err := row.Scan(
 		&contract.ID, &contract.OrgID, &contract.Address, &name,
-		&deployedByUserID, &deployedAt, &metadata,
+		&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
 		&contract.CreatedAt, &contract.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {

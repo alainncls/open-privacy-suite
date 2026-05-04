@@ -80,6 +80,12 @@ export interface Contract {
   deployed_at?: string | null;
   owner_group_id?: string; // legacy format - deprecated
   metadata: Record<string, unknown>;
+  // RD-874: when true, per-tx `visibleTo` lists act as an opt-in
+  // unlock for event visibility — a tx sender on this contract can
+  // grant per-event access to anyone they list in `visibleTo`,
+  // bypassing event_rules and param_rules for that one tx. Default
+  // false. Admin-only flag; flip via the dedicated endpoint.
+  allow_visibleto_unlock: boolean;
   created_at: string;
   updated_at: string;
 }
