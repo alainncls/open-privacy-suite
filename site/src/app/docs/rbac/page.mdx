@@ -352,3 +352,57 @@ The list groups endpoint supports optional filters:
 
 <ApiEndpoint method="POST" path="/api/orgs/:org_id/roles" description="Create role with claims" />
 <ApiEndpoint method="POST" path="/api/users/:id/memberships" description="Assign user to a group with a role" />
+
+## Admin dry-run / impersonation
+
+Tier-2 org admins can ask the proxy "what would user X see if they made this RPC call?" without ever creating an impersonation token, mutating chain state, or exposing any data they don't already have.
+
+<ApiEndpoint method="POST" path="/api/orgs/:org_id/dry-run" description="Dry-run an RPC call as another user (admin diagnostic)" />
+
+### Who can call it
+
+- **Tier-2 org admin** in `:org_id` — yes, via JWT.
+- **Super-admin** (`X-Admin-Token`) — **no**, rejected with 403. Super-admin manages admins; this endpoint is for inspecting user-shaped views, which super-admin doesn't otherwise have data-layer reach into.
+- **Tier-3 admin** (per-contract admin claim, no `is_org_admin`) — no, rejected by org-scoping middleware.
+- **Read-Only Admin** (when shipped) — no.
+
+### Request
+
+```json
+POST /api/orgs/:org_id/dry-run
+{
+  "user_did": "did:example:bob",
+  "rpc": {
+    "method": "eth_sendTransaction",
+    "params": [{ "from": "0xbob...", "to": "0xcontract...", "data": "0xabcd" }]
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "decision": "allow" | "deny",
+  "reason":   "...",
+  "response": <redacted-as-user response, for read methods>,
+  "trace":    <debug_traceCall output, for write methods>,
+  "logs_emitted":          [...],
+  "logs_visible_to_user":  [...]
+}
+```
+
+Read methods (`eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_blockNumber`, `eth_chainId`) pass through to the upstream node and return the user's would-be response.
+
+Write methods (`eth_sendTransaction`) are translated to `debug_traceCall` against the upstream node — current state, no commit. The trace returns nested call frames + emitted logs; the proxy walks the frames and runs the logs through the impersonated user's RBAC view, returning both the full event list (`logs_emitted`) and the subset the user would actually see (`logs_visible_to_user`).
+
+### Operational requirements
+
+- The upstream node must expose `debug_traceCall` for write-method dry-run to work (Geth: `--http.api debug`). If unavailable, write-method calls return a clear error; read methods continue to work.
+- All dry-run calls are recorded in the `impersonation_log` table with the actor's DID, the impersonated user's DID, the method, a SHA-256 hash of the params (raw params are never persisted), the decision, and a correlation ID. Operators are expected to forward this log to their SIEM via the existing `audit-forwarder` integration.
+- Dry-run results have no side effects on chain state, no caching that would survive past the request, and no JWT minting at any point. The "impersonated" identity exists only inside one request handler.
+
+### Limitations
+
+- Cross-org impersonation is structurally blocked (admin in Org A can only dry-run users with a membership in Org A).
+- A "View as user" dashboard mode (continuous browse-as) is tracked under RD-872 Phase 2 and not part of this release.
