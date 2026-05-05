@@ -405,5 +405,4 @@ Write methods (`eth_sendTransaction`) are translated to `debug_traceCall` agains
 ### Limitations
 
 - Cross-org impersonation is structurally blocked (admin in Org A can only dry-run users with a membership in Org A).
-- `eth_sendRawTransaction` translation is not yet implemented; admins can decode and resubmit as `eth_sendTransaction` for dry-run purposes.
 - A "View as user" dashboard mode (continuous browse-as) is tracked under RD-872 Phase 2 and not part of this release.

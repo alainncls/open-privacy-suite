@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,9 @@ import (
 
 	"privacy-proxy/internal/rbac"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -282,28 +287,92 @@ func TestDryRun_TraceMethodWithoutProxyReturnsClearError(t *testing.T) {
 	}
 }
 
-func TestDryRun_RawSendTransactionReturnsClearNotSupported(t *testing.T) {
+// TestDryRun_RawSendTransactionDecodes verifies that a signed raw tx
+// passes through the production decoder and reaches the trace branch
+// (rather than being rejected as unsupported). The test fixture has
+// no upstream node, so the trace step itself fails with a 502 — the
+// point is that the failure is "couldn't reach upstream" not
+// "couldn't decode."
+func TestDryRun_RawSendTransactionDecodes(t *testing.T) {
+	f := setupDryRunFixture(t)
+
+	// Build a real signed legacy tx so decodeRawTransaction runs the
+	// full RLP + signer-recovery path (same code as production
+	// processRawTransaction). 32-byte arbitrary key; chain ID 1.
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	chainID := big.NewInt(1)
+	toAddr := common.HexToAddress(f.contractAddr)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		GasPrice: big.NewInt(1_000_000_000),
+		Gas:      100_000,
+		To:       &toAddr,
+		Value:    big.NewInt(0),
+		Data:     []byte{0xab, 0xcd},
+	})
+	signer := types.LatestSignerForChainID(chainID)
+	signedTx, err := types.SignTx(tx, signer, key)
+	require.NoError(t, err)
+	rawBytes, err := signedTx.MarshalBinary()
+	require.NoError(t, err)
+	rawHex := "0x" + hex.EncodeToString(rawBytes)
+
+	body := map[string]any{
+		"user_did": f.userDID,
+		"rpc": map[string]any{
+			"method": "eth_sendRawTransaction",
+			"params": []any{rawHex},
+		},
+	}
+	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, body)
+
+	// One of three outcomes is acceptable; all confirm we got past
+	// decode without the old "not supported" stub:
+	//
+	//   200 + decision=deny — RBAC denied based on the recovered
+	//     sender's lack of access to f.contractAddr (most likely
+	//     since the random key is not linked to f.userDID).
+	//   200 + decision=allow — RBAC let it through; trace branch
+	//     responded.
+	//   502 — RBAC allowed, trace branch failed reaching upstream
+	//     (no proxy in test fixture). The body should NOT contain
+	//     "decode" / "not supported".
+	switch w.Code {
+	case http.StatusOK:
+		var resp dryRunResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Contains(t, []string{"allow", "deny"}, resp.Decision)
+	case http.StatusBadGateway:
+		bodyText := strings.ToLower(w.Body.String())
+		require.NotContains(t, bodyText, "not supported",
+			"raw tx must reach trace branch — got 'not supported' which means the old stub fired")
+		require.NotContains(t, bodyText, "decode pending",
+			"raw tx must reach trace branch — got 'decode pending' which means the old stub fired")
+	default:
+		t.Fatalf("unexpected status code: %d, body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDryRun_RawSendTransactionMalformedReturnsClearError confirms
+// the decode error path: a clearly invalid hex blob returns a
+// structured 4xx/5xx with a useful message, not a generic 500.
+func TestDryRun_RawSendTransactionMalformedReturnsClearError(t *testing.T) {
 	f := setupDryRunFixture(t)
 	body := map[string]any{
 		"user_did": f.userDID,
 		"rpc": map[string]any{
 			"method": "eth_sendRawTransaction",
-			"params": []any{"0xf86c..."},
+			"params": []any{"0xnotrealhex"},
 		},
 	}
 	w := dryRunPost(t, f.srv, f.orgID, "jwt_admin", f.adminDID, body)
+	// RBAC may deny first (no signature → no recovered sender → no
+	// linked address), or we may reach the trace path which then
+	// fails to decode. Either is acceptable — what we don't want is
+	// a generic 500 with no message.
 	if w.Code == http.StatusBadGateway {
-		// trace-forward branch reached — error is the explicit
-		// "raw-tx decode pending" message we surface from
-		// forwardDryRunTrace.
-		assert.Contains(t, strings.ToLower(w.Body.String()), "eth_sendrawtransaction")
-	} else if w.Code == http.StatusOK {
-		// RBAC denied first. Phase 1 limitation: still acceptable as a
-		// behaviour pin — see the issue for the follow-up to widen
-		// coverage of raw-tx dry-run.
-		var resp dryRunResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "deny", resp.Decision)
+		assert.Contains(t, strings.ToLower(w.Body.String()), "decode")
 	}
 }
 

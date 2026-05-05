@@ -17,6 +17,13 @@ import (
 
 // RD-872 — admin dry-run / impersonation endpoint.
 //
+// Both write-method shapes (eth_sendTransaction with a tx object;
+// eth_sendRawTransaction with a signed RLP blob) are translated to
+// debug_traceCall. eth_sendRawTransaction reuses the production
+// `decodeRawTransaction` helper so dry-run sees the same (from, to,
+// data, value) the real-call path would.
+//
+//
 // Lets a tier-2 org admin in :org_id ask "what would user X see if they
 // made this RPC call?" without ever creating a user-shaped JWT,
 // mutating chain state, or exposing data that the admin doesn't already
@@ -254,30 +261,53 @@ type dryRunTraceResult struct {
 // node and returns the trace + extracted logs. No state mutation —
 // debug_traceCall executes against current state and discards.
 //
-// eth_sendRawTransaction translation requires decoding the RLP-encoded
-// tx; that decode + signer-recovery is its own moving part and lands
-// in a follow-up. Phase 1 supports eth_sendTransaction only; raw
-// returns a clear error so admins know to file the follow-up rather
-// than seeing a silent dry-run pass.
+// eth_sendRawTransaction is RLP-decoded via the production helper
+// (decodeRawTransaction in jsonrpc_processor.go) — same path the real
+// raw-tx handler uses, so dry-run reaches the trace with the same
+// (from, to, data, value) the production processor would. Sender
+// recovery uses the chain-id-aware signer; signature must be valid
+// (admins running dry-run on a malformed signed blob get a clear
+// decode error, not a silent pass).
 func (s *Server) forwardDryRunTrace(ctx context.Context, rpc dryRunRPCBlock) (*dryRunTraceResult, error) {
 	if s.proxy == nil {
 		return nil, fmt.Errorf("proxy not configured")
 	}
+
+	// Build the tx object passed to debug_traceCall. For
+	// eth_sendTransaction the admin already supplied it; for
+	// eth_sendRawTransaction we RLP-decode + recover sender, then
+	// shape the same { from, to, data, value } object.
+	var txObj map[string]any
 	switch rpc.Method {
 	case "eth_sendTransaction":
-		// fall through
+		if len(rpc.Params) == 0 {
+			return nil, fmt.Errorf("eth_sendTransaction requires a tx object")
+		}
+		obj, ok := rpc.Params[0].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("eth_sendTransaction param[0] must be a tx object")
+		}
+		txObj = obj
 	case "eth_sendRawTransaction":
-		return nil, fmt.Errorf("eth_sendRawTransaction dry-run not supported in this build (raw-tx decode pending)")
+		rawHex, err := extractRawTxHex(rpc.Params)
+		if err != nil {
+			return nil, fmt.Errorf("invalid raw transaction: %w", err)
+		}
+		from, to, data, value, _, err := decodeRawTransaction(rawHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode raw transaction: %w", err)
+		}
+		built := buildTxParams(from, to, data, value)
+		if len(built) == 0 {
+			return nil, fmt.Errorf("internal: buildTxParams returned empty")
+		}
+		obj, ok := built[0].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("internal: buildTxParams returned wrong type")
+		}
+		txObj = obj
 	default:
 		return nil, fmt.Errorf("unsupported trace method: %s", rpc.Method)
-	}
-
-	if len(rpc.Params) == 0 {
-		return nil, fmt.Errorf("eth_sendTransaction requires a tx object")
-	}
-	txObj, ok := rpc.Params[0].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("eth_sendTransaction param[0] must be a tx object")
 	}
 
 	// Build the debug_traceCall request. callTracer + withLog gives us
