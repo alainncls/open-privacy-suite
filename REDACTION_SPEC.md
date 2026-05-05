@@ -506,3 +506,51 @@ Table: `tx_visible_to` (migration 040, renamed from `tx_log_visible_to`)
 | sender_did | TEXT | DID of the transaction sender |
 | org_id | TEXT | Organization ID of the sender |
 | created_at | TIMESTAMPTZ | When the rule was created |
+
+
+---
+
+## 8. Admin dry-run / impersonation (RD-872)
+
+A tier-2 org admin can ask the proxy "what would user X see if they made this RPC call?" via `POST /api/orgs/:org_id/dry-run`. The endpoint is an *ergonomics* tool — it does NOT expand the admin's data reach.
+
+### Why it's safe at this scope
+
+- A tier-2 org admin already holds `AllClaims()` on every contract in their own org via `computeOrgAdminPermissions`. Any data the dry-run pipeline can reveal to them is already in their reach via direct RPC/explorer calls. Net new data: **zero**.
+- The endpoint does no JWT minting at any point. The "impersonated user" is a synthetic principal constructed inside the request handler from `(user.ID, :org_id)`; it is never persisted, never returned, never auth-credentialed.
+- Multi-org users are **structurally invisible across orgs**: `EffectivePermissions` are resolved scoped to admin's `:org_id` via `GetEffectivePermissionsByIDs(userID, :org_id)`. A user who is also in Org B has Org B's grants resolved to nothing in this context.
+
+### Hard gates
+
+| Gate | Enforcement | Failure |
+|---|---|---|
+| Super-admin token (`X-Admin-Token`) is **rejected** | `auth_method == "admin_token"` check at the top of `handleDryRun` | 403 with explicit reason. Super-admin's design role is admin-of-admins; impersonation would invent data-layer reach they don't have today. |
+| Tier-2 admin of `:org_id` only | adminAuthMiddleware + orgScopingMiddleware enforce upstream; handler trusts `admin_subject` | tier-3 admins fail at orgScoping; non-admins fail at adminAuth. |
+| Self-dry-run rejected | `req.UserDID == adminDID` check | 400 — would skew audit reasoning. |
+| Method allowlist | `dryRunReadMethods` ∪ `dryRunTraceMethods` | 400 with the supported set listed. |
+| Cross-org user invisible | `GetUserOrgIDs(user.ID)` must include `:org_id` | generic 404 "user not found" — identical to "user does not exist." |
+| Same RBAC pipeline | `CheckAccess` runs as the impersonated user with their own `EffectivePermissions` | no parallel implementation that could diverge from real-request behaviour. |
+
+### Write-method translation (`debug_traceCall`)
+
+`eth_sendTransaction` is rewritten to `debug_traceCall` against the upstream node — current state, no commit. The `callTracer` preset with `withLog: true` returns nested call frames + emitted logs; the handler walks the frames, extracts logs, and runs them through `rbac.FilterEventLogs` with the impersonated user's perms so the response includes both `logs_emitted` (full trace logs) and `logs_visible_to_user` (the subset they would actually see in `eth_getTransactionReceipt`).
+
+`eth_sendRawTransaction` translation is Phase 1.5 — raw-tx RLP decoding lands separately. Phase 1 returns a clear error so admins know to file the follow-up rather than seeing a silent dry-run pass.
+
+If the upstream node doesn't expose `debug_*`, write-method dry-run returns "node does not support debug_traceCall — dry-run for write methods unavailable." Read-method dry-run continues to work.
+
+### Audit log (`impersonation_log`)
+
+Migration **046** adds the dedicated table. Every dry-run writes one row with:
+
+- `actor_did` — the calling admin's DID (from JWT)
+- `impersonated_did` — the user being dry-run-as
+- `org_id`, `method`, `params_hash` (sha256, never raw params), `decision`, `reason`, `correlation_id`, `created_at`
+
+The hash means private addresses or signed-tx blobs in params never persist; reviewers correlate against external request logs. Retention is operator-side; SIEM forwarding (`internal/audit/siem.go`) handles tamper evidence.
+
+### Out of scope
+
+- Dashboard "View as user" / browse-as flow — Phase 2, deferred (see RD-872).
+- Tier-3 admin / Read-Only Admin / super-admin dry-run — explicit NO. Each adds real attack surface that the tier-2-only argument doesn't cover.
+- JWT minting / impersonation tokens — never. The synthetic principal is a per-request struct; if it leaked, it would be a bug.
