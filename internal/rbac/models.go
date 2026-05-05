@@ -129,19 +129,20 @@ type AuditRecord struct {
 // Group represents a hierarchical permission container within an organization.
 // Note: Permissions come from GroupAccess and ContractGrants, not roles.
 type Group struct {
-	ID          string    `json:"id"`
-	OrgID       string    `json:"org_id"`
-	ParentID    *string   `json:"parent_id,omitempty"`
-	Slug        string    `json:"slug"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Depth       int       `json:"depth"`
-	Path        string    `json:"path"`          // Materialized path (e.g., "root.engineering.devops")
-	IsOrgAdmin  bool      `json:"is_org_admin"`  // If true, members get all claims on all contracts in the org
-	IsSystem    bool      `json:"is_system"`     // Seeded, identity-immutable rows (e.g. anonymous, RD-870)
-	AutoCreated bool      `json:"auto_created"`  // Deprecated: always false for new groups. Column retained in DB for expand-only migration policy.
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	OrgID              string    `json:"org_id"`
+	ParentID           *string   `json:"parent_id,omitempty"`
+	Slug               string    `json:"slug"`
+	Name               string    `json:"name"`
+	Description        string    `json:"description,omitempty"`
+	Depth              int       `json:"depth"`
+	Path               string    `json:"path"`                  // Materialized path (e.g., "root.engineering.devops")
+	IsOrgAdmin         bool      `json:"is_org_admin"`          // If true, members get all claims on all contracts in the org
+	IsOrgReadonlyAdmin bool      `json:"is_org_readonly_admin"` // If true, members can read all admin endpoints in the org but cannot mutate (RD-866)
+	IsSystem           bool      `json:"is_system"`             // Seeded, identity-immutable rows (e.g. anonymous, RD-870)
+	AutoCreated        bool      `json:"auto_created"`          // Deprecated: always false for new groups. Column retained in DB for expand-only migration policy.
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Contract represents a first-class contract resource.

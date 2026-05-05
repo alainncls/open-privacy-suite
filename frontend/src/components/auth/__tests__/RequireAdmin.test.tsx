@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { AuthProvider } from '@/contexts/AuthContext';
+
+vi.unmock('@/components/auth/RequireAdmin');
 import { RequireAdmin } from '../RequireAdmin';
 
 // Helpers -------------------------------------------------------------------

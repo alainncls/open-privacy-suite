@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/table';
 import { DisclosureFilters } from '@/components/disclosure/DisclosureFilters';
 import { CreateDisclosureRequestForm } from '@/components/disclosure/CreateDisclosureRequestForm';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import { disclosureApi } from '@/api/disclosure';
 import type {
   DisclosureFilter,
@@ -55,6 +56,7 @@ interface AdminDisclosureDashboardProps {
 }
 
 export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardProps) {
+  const { isReadonlyAdmin } = useAdmin();
   const [activeTab, setActiveTab] = useState<TabValue>('pending');
   const [requestsResult, setRequestsResult] = useState<DisclosureListResult | null>(null);
   const [grantsResult, setGrantsResult] = useState<GrantListResult | null>(null);
@@ -232,10 +234,12 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="default" size="sm" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Create Request
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button variant="default" size="sm" onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Create Request
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={fetchData} disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -346,7 +350,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                     <TableHead>Level</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead>Expires</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {!isReadonlyAdmin && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -396,20 +400,22 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                       <TableCell className="text-sm text-neutral-500">
                         {formatDate(request.valid_until)}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedRequestId(request.id);
-                            setDeleteDialogOpen(true);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4 mr-1" />
-                          Remove
-                        </Button>
-                      </TableCell>
+                      {!isReadonlyAdmin && (
+                        <TableCell className="text-right">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedRequestId(request.id);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            Remove
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -446,7 +452,7 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                     <TableHead>Level</TableHead>
                     <TableHead>Granted</TableHead>
                     <TableHead>Expires</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {!isReadonlyAdmin && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -487,20 +493,22 @@ export function AdminDisclosureDashboard({ onError }: AdminDisclosureDashboardPr
                       <TableCell className="text-sm text-neutral-500">
                         {formatDate(grant.valid_until)}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedGrantId(grant.id);
-                            setRevokeDialogOpen(true);
-                          }}
-                        >
-                          <ShieldOff className="w-4 h-4 mr-1" />
-                          Revoke
-                        </Button>
-                      </TableCell>
+                      {!isReadonlyAdmin && (
+                        <TableCell className="text-right">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedGrantId(grant.id);
+                              setRevokeDialogOpen(true);
+                            }}
+                          >
+                            <ShieldOff className="w-4 h-4 mr-1" />
+                            Revoke
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

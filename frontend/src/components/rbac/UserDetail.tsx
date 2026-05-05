@@ -28,6 +28,7 @@ import {
   AlertCircle,
   Wallet,
 } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 interface UserDetailProps {
   user: User;
@@ -43,6 +44,7 @@ interface LinkedAddress {
 
 export default function UserDetail({ user, onUpdate }: UserDetailProps) {
   const { organizations } = useOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const [memberships, setMemberships] = useState<MembershipWithDetails[]>([]);
   const [effectivePermsByOrg, setEffectivePermsByOrg] = useState<Record<string, EffectivePermissions>>({});
   const [loadingPerms, setLoadingPerms] = useState(false);
@@ -247,6 +249,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 type="checkbox"
                 checked={kyc}
                 onChange={e => setKyc(e.target.checked)}
+                disabled={isReadonlyAdmin}
                 className="peer sr-only"
               />
               <div className="w-5 h-5 rounded border border-neutral-300 bg-neutral-100 peer-checked:bg-green-500 peer-checked:border-green-500 transition-all flex items-center justify-center">
@@ -266,6 +269,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                 type="checkbox"
                 checked={banned}
                 onChange={e => setBanned(e.target.checked)}
+                disabled={isReadonlyAdmin}
                 className="peer sr-only"
               />
               <div className="w-5 h-5 rounded border border-neutral-300 bg-neutral-100 peer-checked:bg-red-500 peer-checked:border-red-500 transition-all flex items-center justify-center">
@@ -285,12 +289,13 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
           <Textarea
             value={note}
             onChange={e => setNote(e.target.value)}
+            disabled={isReadonlyAdmin}
             placeholder="Add a note about this user..."
             className="h-20"
           />
         </div>
 
-        {hasChanges && (
+        {hasChanges && !isReadonlyAdmin && (
           <div className="flex justify-end">
             <Button onClick={handleSaveUser} disabled={saving} size="sm" className="gap-2">
               {saving ? (
@@ -353,15 +358,17 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium text-neutral-700">Group Memberships</h4>
-          <Button
-            onClick={() => setShowMembershipForm(true)}
-            size="sm"
-            variant="outline"
-            className="gap-1"
-          >
-            <Plus className="w-4 h-4" />
-            Add
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              onClick={() => setShowMembershipForm(true)}
+              size="sm"
+              variant="outline"
+              className="gap-1"
+            >
+              <Plus className="w-4 h-4" />
+              Add
+            </Button>
+          )}
         </div>
 
         {loading ? (
@@ -418,7 +425,7 @@ export default function UserDetail({ user, onUpdate }: UserDetailProps) {
                         </div>
                       </div>
                     </div>
-                    {m.membership?.id && (
+                    {m.membership?.id && !isReadonlyAdmin && (
                       <Button
                         variant="ghost"
                         size="sm"

@@ -13,12 +13,14 @@ import Pagination from '@/components/ui/Pagination';
 import { Loader2, Plus, AlertCircle, ShieldBan, Trash2 } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import type { SanctionedAddress } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
 
 export default function SanctionsList() {
   const { organizations } = useComplianceOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
 
   const [addresses, setAddresses] = useState<SanctionedAddress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -135,10 +137,12 @@ export default function SanctionsList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-base font-medium text-neutral-700">Sanctioned Addresses</h3>
-        <Button size="sm" onClick={openCreateForm}>
-          <Plus className="w-4 h-4 mr-1" />
-          Add Address
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button size="sm" onClick={openCreateForm}>
+            <Plus className="w-4 h-4 mr-1" />
+            Add Address
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -168,7 +172,7 @@ export default function SanctionsList() {
                 <TableHead>Source</TableHead>
                 <TableHead>Scope</TableHead>
                 <TableHead>Added</TableHead>
-                <TableHead className="w-[50px]"></TableHead>
+                {!isReadonlyAdmin && <TableHead className="w-[50px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -189,11 +193,13 @@ export default function SanctionsList() {
                   <TableCell className="text-neutral-500 text-sm">
                     {new Date(addr.created_at).toLocaleDateString()}
                   </TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(addr)}>
-                      <Trash2 className="w-4 h-4 text-error-dark" />
-                    </Button>
-                  </TableCell>
+                  {!isReadonlyAdmin && (
+                    <TableCell>
+                      <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(addr)}>
+                        <Trash2 className="w-4 h-4 text-error-dark" />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

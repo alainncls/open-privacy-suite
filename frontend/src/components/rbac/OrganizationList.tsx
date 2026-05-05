@@ -28,11 +28,13 @@ import {
   Trash2,
   Loader2,
 } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 const PAGE_SIZE = 25;
 
 export default function OrganizationList() {
   const { refreshOrgs, setSelectedOrg } = useOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -100,10 +102,12 @@ export default function OrganizationList() {
             Top-level tenants that contain groups and contracts
           </p>
         </div>
-        <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-          <Plus className="w-4 h-4" />
-          Add Organization
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Organization
+          </Button>
+        )}
       </div>
 
       {loading ? (
@@ -116,14 +120,16 @@ export default function OrganizationList() {
             <Building2 className="w-8 h-8 text-neutral-400" />
           </div>
           <p className="text-neutral-500 mb-4">No organizations found</p>
-          <Button
-            variant="outline"
-            onClick={() => setShowForm(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Create your first organization
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => setShowForm(true)}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Create your first organization
+            </Button>
+          )}
         </div>
       ) : (
         <Table>
@@ -159,29 +165,33 @@ export default function OrganizationList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setEditing(org);
-                      }}
-                      title="Edit organization"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setDeleteTarget(org);
-                      }}
-                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                      title="Delete organization"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setEditing(org);
+                          }}
+                          title="Edit organization"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setDeleteTarget(org);
+                          }}
+                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                          title="Delete organization"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

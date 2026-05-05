@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { createContext, useContext, ReactNode, useEffect, useState } from 'react';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -8,9 +8,27 @@ interface RequireAdminProps {
 
 type AdminCheckState = 'loading' | 'admin' | 'denied' | 'error';
 
+export interface AdminContextType {
+  isAdmin: boolean;
+  isReadonlyAdmin: boolean;
+  adminOrgIds: string[];
+  readonlyAdminOrgIds: string[];
+}
+
+const AdminContext = createContext<AdminContextType | undefined>(undefined);
+
+export function useAdmin() {
+  const context = useContext(AdminContext);
+  if (context === undefined) {
+    throw new Error('useAdmin must be used within a RequireAdmin component');
+  }
+  return context;
+}
+
 export function RequireAdmin({ children }: RequireAdminProps) {
   const { accessToken, isLoading: authLoading } = useAuth();
   const [state, setState] = useState<AdminCheckState>('loading');
+  const [adminData, setAdminData] = useState<AdminContextType | null>(null);
 
   useEffect(() => {
     // Wait for AuthProvider to finish restoring session from localStorage.
@@ -37,7 +55,17 @@ export function RequireAdmin({ children }: RequireAdminProps) {
         }
 
         const data = await response.json();
-        setState(data.is_admin ? 'admin' : 'denied');
+        if (data.is_admin) {
+          setAdminData({
+            isAdmin: data.is_admin,
+            isReadonlyAdmin: data.is_readonly_admin,
+            adminOrgIds: data.admin_org_ids || [],
+            readonlyAdminOrgIds: data.readonly_admin_org_ids || [],
+          });
+          setState('admin');
+        } else {
+          setState('denied');
+        }
       } catch {
         if (!cancelled) {
           setState('error');
@@ -91,5 +119,9 @@ export function RequireAdmin({ children }: RequireAdminProps) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <AdminContext.Provider value={adminData!}>
+      {children}
+    </AdminContext.Provider>
+  );
 }

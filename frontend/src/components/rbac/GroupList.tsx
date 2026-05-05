@@ -29,11 +29,13 @@ import {
   X,
   Search,
 } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 const PAGE_SIZE = 50;
 
 export default function GroupList() {
   const { selectedOrg } = useOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id || '';
   const [groups, setGroups] = useState<GroupWithAccess[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,10 +142,12 @@ export default function GroupList() {
             Groups define what methods and addresses users can access
           </p>
         </div>
-        <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-          <Plus className="w-4 h-4" />
-          Add Group
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Group
+          </Button>
+        )}
       </div>
 
       {/* Search + Filter bar */}
@@ -171,16 +175,18 @@ export default function GroupList() {
           <span className="text-sm font-medium text-error-dark">
             {selectedIds.size} selected
           </span>
-          <Button
-            data-testid="batch-delete-btn"
-            size="sm"
-            variant="destructive"
-            className="gap-1.5"
-            onClick={() => setShowBatchDelete(true)}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete Selected
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              data-testid="batch-delete-btn"
+              size="sm"
+              variant="destructive"
+              className="gap-1.5"
+              onClick={() => setShowBatchDelete(true)}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected
+            </Button>
+          )}
           <Button
             data-testid="clear-selection-btn"
             size="sm"
@@ -219,14 +225,16 @@ export default function GroupList() {
           </div>
           <>
             <p className="text-neutral-500 mb-4">No groups found</p>
-            <Button
-              variant="outline"
-              onClick={() => setShowForm(true)}
-              className="gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Create your first group
-            </Button>
+            {!isReadonlyAdmin && (
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                className="gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create your first group
+              </Button>
+            )}
           </>
         </div>
       ) : (
@@ -277,31 +285,35 @@ export default function GroupList() {
                   </div>
 
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingAccess(gwa.group)}
-                      title="Edit access settings"
-                    >
-                      <Settings className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditing(gwa.group)}
-                      title="Edit group"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(gwa.group)}
-                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                      title="Delete group"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingAccess(gwa.group)}
+                          title="Edit access settings"
+                        >
+                          <Settings className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditing(gwa.group)}
+                          title="Edit group"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTarget(gwa.group)}
+                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                          title="Delete group"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
