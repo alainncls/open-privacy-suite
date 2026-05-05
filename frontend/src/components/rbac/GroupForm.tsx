@@ -24,6 +24,7 @@ export default function GroupForm({
   const [slug, setSlug] = useState(group?.slug || '');
   const [description, setDescription] = useState(group?.description || '');
   const [isOrgAdmin, setIsOrgAdmin] = useState(group?.is_org_admin || false);
+  const [isOrgReadonlyAdmin, setIsOrgReadonlyAdmin] = useState(group?.is_org_readonly_admin || false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +53,7 @@ export default function GroupForm({
           name,
           description,
           is_org_admin: isOrgAdmin,
+          is_org_readonly_admin: isOrgReadonlyAdmin,
         });
       } else {
         await rbacApi.groups.create(orgId, {
@@ -60,6 +62,7 @@ export default function GroupForm({
           description,
           parent_id: null,
           is_org_admin: isOrgAdmin,
+          is_org_readonly_admin: isOrgReadonlyAdmin,
         });
       }
       onSave();
@@ -132,7 +135,10 @@ export default function GroupForm({
       <div className="space-y-2">
         <label
           className="flex items-start gap-3 p-3 rounded-lg bg-warning-light border border-warning/40 cursor-pointer hover:bg-yellow-200 transition-colors"
-          onClick={() => setIsOrgAdmin(!isOrgAdmin)}
+          onClick={() => {
+            setIsOrgAdmin(!isOrgAdmin);
+            if (!isOrgAdmin) setIsOrgReadonlyAdmin(false);
+          }}
         >
           <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
             isOrgAdmin
@@ -153,8 +159,36 @@ export default function GroupForm({
         </label>
       </div>
 
-      <div className="p-3 rounded-lg bg-primary-50 border border-primary-200">
-        <p className="text-sm text-primary-600">
+      {/* Read-only Admin Toggle */}
+      <div className="space-y-2">
+        <label
+          className="flex items-start gap-3 p-3 rounded-lg bg-primary-50 border border-primary-200 cursor-pointer hover:bg-primary-100 transition-colors"
+          onClick={() => {
+            setIsOrgReadonlyAdmin(!isOrgReadonlyAdmin);
+            if (!isOrgReadonlyAdmin) setIsOrgAdmin(false);
+          }}
+        >
+          <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
+            isOrgReadonlyAdmin
+              ? 'bg-primary border-primary'
+              : 'border-neutral-300 bg-white'
+          }`}>
+            {isOrgReadonlyAdmin && <Check className="w-3 h-3 text-white" />}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-primary-700" />
+              <span className="text-sm font-medium text-primary-700">Read-only Org Admin</span>
+            </div>
+            <p className="text-xs text-neutral-500 mt-1">
+              Members get read-only access to the admin dashboard (auditor role). They cannot modify settings or resources.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+        <p className="text-sm text-neutral-600">
           <strong>Tip:</strong> After creating the group, use the settings icon to configure
           allowed RPC methods, claims, and rate limits.
         </p>

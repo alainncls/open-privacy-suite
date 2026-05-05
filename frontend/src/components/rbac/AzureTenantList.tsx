@@ -36,8 +36,10 @@ import {
   Save,
   X,
 } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 export default function AzureTenantList() {
+  const { isReadonlyAdmin } = useAdmin();
   const [tenants, setTenants] = useState<AllowedAzureTenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -98,10 +100,12 @@ export default function AzureTenantList() {
             Control which Azure AD tenants can authenticate
           </p>
         </div>
-        <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-          <Plus className="w-4 h-4" />
-          Add Tenant
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Tenant
+          </Button>
+        )}
       </div>
 
       {loading ? (
@@ -117,14 +121,16 @@ export default function AzureTenantList() {
           <p className="text-neutral-400 text-xs mb-4">
             Azure AD authentication will be blocked until you add at least one tenant.
           </p>
-          <Button
-            variant="outline"
-            onClick={() => setShowForm(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Allow your first tenant
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => setShowForm(true)}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Allow your first tenant
+            </Button>
+          )}
         </div>
       ) : (
         <Table>
@@ -165,23 +171,27 @@ export default function AzureTenantList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditing(tenant)}
-                      title="Edit tenant"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(tenant)}
-                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                      title="Delete tenant"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditing(tenant)}
+                          title="Edit tenant"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTarget(tenant)}
+                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                          title="Delete tenant"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

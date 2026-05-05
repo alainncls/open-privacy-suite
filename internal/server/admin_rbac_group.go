@@ -49,11 +49,12 @@ func (s *Server) createGroup(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		Slug        string  `json:"slug" binding:"required"`
-		Name        string  `json:"name" binding:"required"`
-		Description string  `json:"description"`
-		ParentID    *string `json:"parent_id"`
-		IsOrgAdmin  bool    `json:"is_org_admin"`
+		Slug               string  `json:"slug" binding:"required"`
+		Name               string  `json:"name" binding:"required"`
+		Description        string  `json:"description"`
+		ParentID           *string `json:"parent_id"`
+		IsOrgAdmin         bool    `json:"is_org_admin"`
+		IsOrgReadonlyAdmin bool    `json:"is_org_readonly_admin"`
 	}
 	// Note: auto_created is intentionally NOT accepted from API input.
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -67,10 +68,11 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot create org admin groups.
-	// Only super admins (X-Admin-Token) can set is_org_admin = true.
-	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin groups"})
+	// Escalation prevention: JWT admins (tier 2) cannot create org admin or
+	// readonly admin groups. Only super admins (X-Admin-Token) can mint
+	// is_org_admin or is_org_readonly_admin groups (RD-866).
+	if c.GetString("auth_method") == "jwt_admin" && (input.IsOrgAdmin || input.IsOrgReadonlyAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin or readonly admin groups"})
 		return
 	}
 
@@ -78,14 +80,15 @@ func (s *Server) createGroup(c *gin.Context) {
 	// The DB column is retained per expand-only migration policy.
 
 	group := &rbac.Group{
-		ID:          uuid.New().String(),
-		OrgID:       orgID,
-		Slug:        input.Slug,
-		Name:        input.Name,
-		Description: input.Description,
-		Depth:       0,
-		Path:        input.Slug,
-		IsOrgAdmin:  input.IsOrgAdmin,
+		ID:                 uuid.New().String(),
+		OrgID:              orgID,
+		Slug:               input.Slug,
+		Name:               input.Name,
+		Description:        input.Description,
+		Depth:              0,
+		Path:               input.Slug,
+		IsOrgAdmin:         input.IsOrgAdmin,
+		IsOrgReadonlyAdmin: input.IsOrgReadonlyAdmin,
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
@@ -137,20 +140,24 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 
 	var input struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		IsOrgAdmin  *bool   `json:"is_org_admin"`
+		Name               *string `json:"name"`
+		Description        *string `json:"description"`
+		IsOrgAdmin         *bool   `json:"is_org_admin"`
+		IsOrgReadonlyAdmin *bool   `json:"is_org_readonly_admin"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin = true.
-	// Only super admins (X-Admin-Token) can promote groups to org admin status.
-	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin != nil && *input.IsOrgAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin status on groups"})
-		return
+	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin or
+	// is_org_readonly_admin to true. Only super admins (X-Admin-Token) can
+	// promote groups to (readonly) org admin status (RD-866).
+	if c.GetString("auth_method") == "jwt_admin" {
+		if (input.IsOrgAdmin != nil && *input.IsOrgAdmin) || (input.IsOrgReadonlyAdmin != nil && *input.IsOrgReadonlyAdmin) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin or readonly admin status on groups"})
+			return
+		}
 	}
 
 	if input.Name != nil {
@@ -161,6 +168,9 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 	if input.IsOrgAdmin != nil {
 		group.IsOrgAdmin = *input.IsOrgAdmin
+	}
+	if input.IsOrgReadonlyAdmin != nil {
+		group.IsOrgReadonlyAdmin = *input.IsOrgReadonlyAdmin
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {

@@ -277,7 +277,7 @@ func TestTimeBasedPrune_WritesAnchor(t *testing.T) {
 	ids, hashes := seedAccessLogs(t, ctx, database, 5, "")
 
 	// Backdate the first 3 rows so they fall outside the retention window.
-	cutoff := time.Now().Add(-1 * time.Hour)
+	cutoff := time.Now().UTC().Add(-1 * time.Hour)
 	if _, err := database.Conn().ExecContext(ctx,
 		`UPDATE access_logs SET created_at = $1 WHERE id <= $2`, cutoff.Add(-time.Minute), ids[2]); err != nil {
 		t.Fatalf("backdate: %v", err)

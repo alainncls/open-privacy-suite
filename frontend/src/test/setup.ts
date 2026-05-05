@@ -85,3 +85,17 @@ Object.defineProperty(window, 'ResizeObserver', {
 
 // Mock scrollIntoView (not available in JSDOM)
 Element.prototype.scrollIntoView = vi.fn();
+
+// Mock useAdmin hook globally since it's used deeply in many components
+vi.mock('@/components/auth/RequireAdmin', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/auth/RequireAdmin')>();
+  return {
+    ...actual,
+    useAdmin: vi.fn().mockReturnValue({
+      isAdmin: true,
+      isReadonlyAdmin: false,
+      adminOrgIds: [],
+      readonlyAdminOrgIds: [],
+    }),
+  };
+});

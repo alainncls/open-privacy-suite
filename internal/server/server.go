@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
@@ -28,6 +27,7 @@ import (
 	"privacy-proxy/internal/tracer"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -90,12 +90,12 @@ type Server struct {
 	azureAuthenticator *auth.AzureADAuthenticator
 	azureStateStore    AzureStateManager
 	metrics            *metrics.Metrics
-explorerStore    explorer.ExplorerBackend
-	explorerMu       sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
-	explorerRedactor *explorer.RedactionEngine
-	siemForwarder    *audit.SIEMForwarder
-	retentionCleaner *audit.RetentionCleaner
-	redisCloser      io.Closer
+	explorerStore      explorer.ExplorerBackend
+	explorerMu         sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
+	explorerRedactor   *explorer.RedactionEngine
+	siemForwarder      *audit.SIEMForwarder
+	retentionCleaner   *audit.RetentionCleaner
+	redisCloser        io.Closer
 }
 
 // DB returns the database instance (for testing)
@@ -385,8 +385,8 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		azureAuthenticator: azureAuthenticator,
 		azureStateStore:    azureStateStore,
 		metrics:            m,
-explorerStore:    explorerBackend,
-		explorerRedactor: explorer.NewRedactionEngine(explorerBackend, database),
+		explorerStore:      explorerBackend,
+		explorerRedactor:   explorer.NewRedactionEngine(explorerBackend, database),
 		redisCloser:        redisCloser,
 	}
 	// RD-889: wire the unified ABI resolver so the explorer redactor
@@ -943,16 +943,25 @@ func (s *Server) adminAuthMiddleware() gin.HandlerFunc {
 					c.Abort()
 					return
 				}
-				if !isOrgAdmin {
-					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: org admin required"})
+
+				isReadonlyAdmin, readonlyAdminOrgIDs, err := s.db.IsOrgReadonlyAdmin(c.Request.Context(), user.ID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check readonly admin status"})
+					c.Abort()
+					return
+				}
+
+				if !isOrgAdmin && !isReadonlyAdmin {
+					c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: org admin or read-only admin required"})
 					c.Abort()
 					return
 				}
 
 				c.Set("auth_method", "jwt_admin")
 				c.Set("admin_subject", claims.Subject)
-				c.Set("admin_user_id", user.ID)       // Internal Postgres UUID
-				c.Set("admin_org_ids", adminOrgIDs)    // Org IDs where user is org admin
+				c.Set("admin_user_id", user.ID)                      // Internal Postgres UUID
+				c.Set("admin_org_ids", adminOrgIDs)                  // Org IDs where user is org admin
+				c.Set("admin_readonly_org_ids", readonlyAdminOrgIDs) // Org IDs where user is read-only org admin
 				c.Next()
 				return
 			}
@@ -1003,27 +1012,72 @@ func (s *Server) orgScopingMiddleware() gin.HandlerFunc {
 			// These are safe for any authenticated org admin — they don't expose
 			// cross-org data. The individual handlers enforce further scoping
 			// where needed (e.g., user list filters by org).
+
+			// For global routes without org_id, if they are mutating (POST/PUT/DELETE)
+			// the user must have full admin rights in at least one org.
+			if c.Request.Method != http.MethodGet {
+				adminOrgIDsRaw, existsAdmin := c.Get("admin_org_ids")
+				hasFullAdmin := false
+				if existsAdmin {
+					if ids, ok := adminOrgIDsRaw.([]string); ok && len(ids) > 0 {
+						hasFullAdmin = true
+					}
+				}
+				if !hasFullAdmin {
+					c.JSON(http.StatusForbidden, gin.H{"error": "mutating actions are restricted for read-only admins"})
+					c.Abort()
+					return
+				}
+			}
+
 			c.Next()
 			return
 		}
 
-		// Check if the org_id is in the admin's scoped org list.
-		adminOrgIDsRaw, exists := c.Get("admin_org_ids")
-		if !exists {
+		// Check if the org_id is in the admin's scoped org list or read-only list.
+		adminOrgIDsRaw, existsAdmin := c.Get("admin_org_ids")
+		readonlyOrgIDsRaw, existsReadonly := c.Get("admin_readonly_org_ids")
+
+		if !existsAdmin && !existsReadonly {
 			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
 			c.Abort()
 			return
 		}
 
-		adminOrgIDs, ok := adminOrgIDsRaw.([]string)
-		if !ok {
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
-			c.Abort()
-			return
+		var allowedOrgIDs []string
+		if existsAdmin {
+			if ids, ok := adminOrgIDsRaw.([]string); ok {
+				allowedOrgIDs = append(allowedOrgIDs, ids...)
+			}
+		}
+		if existsReadonly {
+			if ids, ok := readonlyOrgIDsRaw.([]string); ok {
+				allowedOrgIDs = append(allowedOrgIDs, ids...)
+			}
 		}
 
-		for _, id := range adminOrgIDs {
+		for _, id := range allowedOrgIDs {
 			if id == orgID {
+				// Enforce read-only restriction for mutating endpoints for this specific org.
+				if c.Request.Method != http.MethodGet {
+					isFullAdmin := false
+					if existsAdmin {
+						if ids, ok := adminOrgIDsRaw.([]string); ok {
+							for _, aid := range ids {
+								if aid == orgID {
+									isFullAdmin = true
+									break
+								}
+							}
+						}
+					}
+					if !isFullAdmin {
+						c.JSON(http.StatusForbidden, gin.H{"error": "mutating actions are restricted for read-only admins"})
+						c.Abort()
+						return
+					}
+				}
+
 				c.Next()
 				return
 			}
@@ -1121,10 +1175,10 @@ func (s *Server) localhostOnlyMiddleware() gin.HandlerFunc {
 
 // StatusResponse represents the system status
 type StatusResponse struct {
-	Proxy    ProxyStatus        `json:"proxy"`
-	Node     NodeStatus         `json:"node"`
-	Security SecurityStatus     `json:"security"`
-	Methods  MethodsStatus      `json:"methods"`
+	Proxy    ProxyStatus    `json:"proxy"`
+	Node     NodeStatus     `json:"node"`
+	Security SecurityStatus `json:"security"`
+	Methods  MethodsStatus  `json:"methods"`
 }
 
 // MethodsStatus exposes available RPC methods to the admin frontend.
@@ -1394,11 +1448,25 @@ func (s *Server) getMyAdminStatus(c *gin.Context) {
 		return
 	}
 
+	isReadonlyAdmin, readonlyOrgIDs, err := s.db.IsOrgReadonlyAdmin(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check readonly admin status"})
+		return
+	}
+
 	if orgIDs == nil {
 		orgIDs = []string{}
 	}
+	if readonlyOrgIDs == nil {
+		readonlyOrgIDs = []string{}
+	}
 
-	c.JSON(http.StatusOK, gin.H{"is_admin": isOrgAdmin, "admin_org_ids": orgIDs})
+	c.JSON(http.StatusOK, gin.H{
+		"is_admin":               isOrgAdmin || isReadonlyAdmin,
+		"admin_org_ids":          orgIDs,
+		"is_readonly_admin":      isReadonlyAdmin,
+		"readonly_admin_org_ids": readonlyOrgIDs,
+	})
 }
 
 // UserOrgResponse represents an organization the user belongs to.

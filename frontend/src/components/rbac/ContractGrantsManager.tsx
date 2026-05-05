@@ -26,6 +26,7 @@ import {
   Code2,
   Radio,
 } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 // Helper to get contract address from either new or legacy format
 const getContractAddress = (contract: Contract): string => {
@@ -60,6 +61,7 @@ export default function ContractGrantsManager({
   orgId,
   contract,
 }: ContractGrantsManagerProps) {
+  const { isReadonlyAdmin } = useAdmin();
   const [grants, setGrants] = useState<GrantWithGroup[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -270,10 +272,12 @@ export default function ContractGrantsManager({
             <Shield className="w-4 h-4 text-primary" />
             <span className="text-sm font-medium text-neutral-700">Groups with Access</span>
           </div>
-          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Group
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+              <Plus className="w-4 h-4" />
+              Add Group
+            </Button>
+          )}
         </div>
 
         {loading ? (
@@ -286,10 +290,12 @@ export default function ContractGrantsManager({
             <p className="text-sm text-neutral-500 mb-3">
               No groups have access to this contract yet
             </p>
-            <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Add a group
-            </Button>
+            {!isReadonlyAdmin && (
+              <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Add a group
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -315,23 +321,27 @@ export default function ContractGrantsManager({
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingGrant(grant)}
-                      title="Edit function access"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(grant)}
-                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                      title="Remove group access"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditingGrant(grant)}
+                          title="Edit function access"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTarget(grant)}
+                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                          title="Remove group access"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
 

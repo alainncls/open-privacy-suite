@@ -20,6 +20,7 @@ export function AccountPage() {
   const [linkedAddresses, setLinkedAddresses] = useState<EthAddressResponse[]>([]);
   const [userOrgs, setUserOrgs] = useState<UserOrg[]>([]);
   const [adminOrgIds, setAdminOrgIds] = useState<string[]>([]);
+  const [readonlyAdminOrgIds, setReadonlyAdminOrgIds] = useState<string[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,7 +38,10 @@ export function AccountPage() {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
       .then((r) => r.json())
-      .then((data) => setAdminOrgIds(data.admin_org_ids || []))
+      .then((data) => {
+        setAdminOrgIds(data.admin_org_ids || []);
+        setReadonlyAdminOrgIds(data.readonly_admin_org_ids || []);
+      })
       .catch(() => {});
   }, [accessToken]);
 
@@ -203,6 +207,9 @@ export function AccountPage() {
                         <p className="text-sm font-medium text-neutral-900">{org.name}</p>
                         {adminOrgIds.includes(org.id) && (
                           <Badge variant="info" className="text-[10px] px-1.5 py-0">admin</Badge>
+                        )}
+                        {readonlyAdminOrgIds.includes(org.id) && !adminOrgIds.includes(org.id) && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">read-only admin</Badge>
                         )}
                       </div>
                       <p className="text-xs text-neutral-400">{org.slug}</p>

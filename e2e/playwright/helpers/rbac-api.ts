@@ -213,12 +213,16 @@ export interface CreateGroupInput {
   description?: string;
   parent_id?: string;
   auto_created?: boolean;
+  is_org_admin?: boolean;
+  is_org_readonly_admin?: boolean;
 }
 
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
   auto_created?: boolean;
+  is_org_admin?: boolean;
+  is_org_readonly_admin?: boolean;
 }
 
 export interface SetGroupAccessInput {

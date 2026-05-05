@@ -26,6 +26,7 @@ export interface Group {
   depth: number;
   path: string; // Materialized path (e.g., "root.engineering.devops")
   is_org_admin?: boolean; // If true, members get all claims on all contracts in the org
+  is_org_readonly_admin?: boolean; // If true, members get read-only access to admin endpoints in the org (RD-866)
   created_at: string;
   updated_at: string;
 }
@@ -265,12 +266,14 @@ export interface CreateGroupInput {
   description?: string;
   parent_id?: string | null;
   is_org_admin?: boolean;
+  is_org_readonly_admin?: boolean;
 }
 
 export interface UpdateGroupInput {
   name?: string;
   description?: string;
   is_org_admin?: boolean;
+  is_org_readonly_admin?: boolean;
 }
 
 // Input for setting group access
