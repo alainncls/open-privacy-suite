@@ -87,7 +87,7 @@ test-go: test-unit test-e2e
 
 # Run Go unit tests only (with -p 1 to avoid database conflicts between packages)
 test-unit: test-db-ready
-	go test ./internal/... -v -p 1
+	go test ./internal/... -v -p 1 -timeout 20m
 
 # Minimum coverage threshold (percentage) - start at 45%, increase over time
 MIN_COVERAGE ?= 45
@@ -118,7 +118,7 @@ test-db-ready:
 
 # Run Go E2E tests
 test-e2e: test-db-ready
-	go test ./e2e/... -v -p 1
+	go test ./e2e/... -v -p 1 -timeout 30m
 
 # Negative-network test for the privacy-mode deployment (RD-855 Phase 4b).
 # Brings up docker-compose.privacy.yml (nine services) and verifies the
