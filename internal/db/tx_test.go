@@ -242,7 +242,7 @@ func TestDeleteGroupWithDependencies(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        group.ID,
 		AllowedMethods: []string{"eth_call"},
-		Claims:  []rbac.Claim{rbac.ClaimRead},
+		Claims:  []rbac.Claim{},
 	}
 	err = db.CreateGroupAccess(ctx, access)
 	if err != nil {

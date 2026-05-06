@@ -106,16 +106,15 @@ CREATE TABLE IF NOT EXISTS contracts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_org_address_unique ON contracts(org_id, lower(address));
 
 -- Contract grants: Links groups to contracts with specific claims
--- Claims: 'read', 'write', 'admin', 'upgrade'
---   - read: eth_call, eth_estimateGas (view functions)
---   - write: eth_sendTransaction (state-changing functions)
+-- Claims: 'admin', 'upgrade', 'deploy'
 --   - admin: full control, considered "owner" of the contract
 --   - upgrade: can upgrade proxy contracts
+--   - deploy: can deploy contracts via this group
 CREATE TABLE IF NOT EXISTS contract_grants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contract_id UUID NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    claims TEXT[] NOT NULL DEFAULT '{}', -- Array of claims: read, write, admin, upgrade
+    claims TEXT[] NOT NULL DEFAULT '{}', -- Array of claims: admin, upgrade, deploy
     functions TEXT[], -- NULL = all functions, or specific selectors ['0x12345678']
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -271,7 +270,7 @@ VALUES (
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000001',
     ARRAY['eth_blockNumber', 'eth_chainId', 'eth_gasPrice', 'eth_getBalance', 'eth_getBlockByHash', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getStorageAt', 'eth_getTransactionByHash', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_call', 'eth_estimateGas', 'eth_sendRawTransaction', 'eth_sendTransaction', 'eth_getLogs', 'eth_getBlockTransactionCountByHash', 'eth_getBlockTransactionCountByNumber', 'eth_getUncleCountByBlockHash', 'eth_getUncleCountByBlockNumber', 'eth_protocolVersion', 'eth_syncing', 'net_version', 'net_listening', 'net_peerCount', 'web3_clientVersion', 'web3_sha3'],
-    ARRAY['read', 'write'] -- Default claims for unregistered contracts
+    ARRAY[]::TEXT[] -- Default claims for unregistered contracts (none — legacy read/write removed)
 )
 ON CONFLICT (group_id) DO NOTHING;
 

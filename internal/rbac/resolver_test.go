@@ -383,14 +383,14 @@ func TestResolverFlatGroupPermissions(t *testing.T) {
 	store.groupAccess["root"] = &GroupAccess{
 		GroupID:        "root",
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead, ClaimWrite},
+		Claims:         []Claim{ClaimDeploy, ClaimUpgrade},
 	}
 
 	// Child group access - its own permissions (no intersection with root)
 	store.groupAccess["child"] = &GroupAccess{
 		GroupID:        "child",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{ClaimDeploy},
 	}
 
 	// User in child group only
@@ -422,9 +422,9 @@ func TestResolverFlatGroupPermissions(t *testing.T) {
 		t.Error("eth_sendTransaction should not be allowed (not in child group)")
 	}
 
-	// Should have child's own claims: read
-	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimRead {
-		t.Errorf("Expected only read claim, got %v", perms.Claims)
+	// Should have child's own claims: deploy
+	if len(perms.Claims) != 1 || perms.Claims[0] != ClaimDeploy {
+		t.Errorf("Expected only deploy claim, got %v", perms.Claims)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestResolverFlatGroupEdgeCases(t *testing.T) {
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: []string{},
-			Claims:         []Claim{ClaimRead},
+			Claims:         []Claim{},
 		}
 
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -545,7 +545,7 @@ func TestResolverFlatGroupEdgeCases(t *testing.T) {
 		store.groupAccess["child"] = &GroupAccess{
 			GroupID:        "child",
 			AllowedMethods: nil,
-			Claims:         []Claim{ClaimRead},
+			Claims:         []Claim{},
 		}
 
 		store.groupsByOrg["user1:org1"] = []*MembershipWithDetails{
@@ -583,13 +583,13 @@ func TestResolverMultipleMemberships(t *testing.T) {
 	store.groupAccess["groupA"] = &GroupAccess{
 		GroupID:        "groupA",
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
-		Claims:         []Claim{ClaimRead},
+		Claims:         []Claim{ClaimDeploy},
 	}
 	// Group B access
 	store.groupAccess["groupB"] = &GroupAccess{
 		GroupID:        "groupB",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimWrite},
+		Claims:         []Claim{ClaimUpgrade},
 	}
 
 	// User is member of both groups
@@ -614,7 +614,7 @@ func TestResolverMultipleMemberships(t *testing.T) {
 		t.Errorf("Expected 3 methods, got %d: %v", len(perms.AllowedMethods), perms.AllowedMethods)
 	}
 
-	// Should have UNION of default claims: read, write
+	// Should have UNION of default claims: deploy, upgrade
 	if len(perms.Claims) != 2 {
 		t.Errorf("Expected 2 default claims, got %d: %v", len(perms.Claims), perms.Claims)
 	}
@@ -646,12 +646,12 @@ func TestResolverContractGrantsFlatGroup(t *testing.T) {
 	store.groupAccess["groupA"] = &GroupAccess{
 		GroupID:        "groupA",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead, ClaimWrite, ClaimAdmin},
+		Claims:         []Claim{ClaimDeploy, ClaimUpgrade, ClaimAdmin},
 	}
 	store.groupAccess["groupB"] = &GroupAccess{
 		GroupID:        "groupB",
 		AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
-		Claims:         []Claim{ClaimRead, ClaimWrite},
+		Claims:         []Claim{ClaimDeploy, ClaimUpgrade},
 	}
 
 	// User is member of groupB only
@@ -677,7 +677,7 @@ func TestResolverContractGrantsFlatGroup(t *testing.T) {
 		t.Errorf("Expected 2 claims on contract A, got %d: %v", len(access.Claims), access.Claims)
 	}
 	if access.HasClaim(ClaimAdmin) {
-		t.Error("Should not have admin claim (groupB only has read, write)")
+		t.Error("Should not have admin claim (groupB only has deploy, upgrade)")
 	}
 }
 

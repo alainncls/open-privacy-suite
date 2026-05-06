@@ -307,7 +307,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(),
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance"},
-			Claims:  []rbac.Claim{rbac.ClaimRead},
+			Claims:  []rbac.Claim{},
 			RateLimitRPS:   intPtr(100),
 			RateLimitDaily: intPtr(10000),
 		}
@@ -342,7 +342,7 @@ func TestGroupAccess_CRUD(t *testing.T) {
 			ID:             uuid.New().String(), // New ID, but same group
 			GroupID:        group.ID,
 			AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_sendTransaction"},
-			Claims:  []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+			Claims:  []rbac.Claim{},
 			RateLimitRPS:   intPtr(200),
 		}
 
@@ -907,9 +907,9 @@ func TestEffectivePermissionsCache(t *testing.T) {
 			OrgID:          org.ID,
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]rbac.ContractAccess{
-				"0x1234": {Claims: []rbac.Claim{rbac.ClaimRead}},
+				"0x1234": {Claims: []rbac.Claim{}},
 			},
-			Claims: []rbac.Claim{rbac.ClaimRead},
+			Claims: []rbac.Claim{},
 			ComputedAt:    time.Now(),
 			ExpiresAt:     time.Now().Add(1 * time.Hour),
 		}

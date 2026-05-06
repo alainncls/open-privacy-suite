@@ -88,7 +88,7 @@ export const mockGroupAccess: GroupAccess = {
   id: 'access-1',
   group_id: 'group-1',
   allowed_methods: ['eth_call', 'eth_getBalance'],
-  claims: ['read'],
+  claims: [],
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -116,11 +116,11 @@ export const mockEffectivePermissions: EffectivePermissions = {
   allowed_methods: ['eth_call', 'eth_getBalance', 'eth_sendTransaction'],
   contract_access: {
     '0x1234567890123456789012345678901234567890': {
-      claims: ['read', 'write'] as Claim[],
+      claims: [] as Claim[],
       functions: null,
     },
   },
-  claims: ['read', 'write'] as Claim[],
+  claims: [] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   computed_at: '2024-01-01T00:00:00Z',
@@ -699,7 +699,7 @@ export const handlers = [
       allowed: true,
       reason: 'Access granted',
       rate_limit_rps: 100,
-      claims: ['read'],
+      claims: [],
     });
   }),
 

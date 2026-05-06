@@ -292,9 +292,7 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 	// The UI should never send "*" but the API accepts it for programmatic use.
 	input.AllowedMethods = rbac.ExpandWildcardMethods(input.AllowedMethods)
 
-	// Strip read/write claims (no longer used as gates) and expand hierarchy.
-	// Only deploy, upgrade, and admin are operational claims.
-	input.Claims = rbac.FilterOperationalClaims(input.Claims)
+	// Expand claim hierarchy (admin → deploy + upgrade).
 	input.Claims = rbac.ExpandClaims(input.Claims)
 
 	// Validate that allowed_methods match the claims

@@ -359,7 +359,7 @@ else
     ok "Alpha Corp deployers group already exists ($ALPHA_DEPLOYERS_ID)"
 fi
 
-# Set deployers access: deploy claim (implies read + write)
+# Set deployers access: deploy claim. Read/write is method-gated (allowlist).
 admin_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_DEPLOYERS_ID}/access" \
     '{"allowed_methods":["*"],"claims":["deploy"]}' > /dev/null
 ok "Set deployers access (deploy claim)"
@@ -374,10 +374,10 @@ else
     ok "Alpha Corp readers group already exists ($ALPHA_READERS_ID)"
 fi
 
-# Set readers access: read claim only
+# Set readers access: no operational claims — read access is method-gated.
 admin_put "/orgs/${ALPHA_ORG_ID}/groups/${ALPHA_READERS_ID}/access" \
-    '{"allowed_methods":["eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode","eth_getStorageAt","eth_getLogs","eth_getTransactionCount"],"claims":["read"]}' > /dev/null
-ok "Set readers access (read claim)"
+    '{"allowed_methods":["eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode","eth_getStorageAt","eth_getLogs","eth_getTransactionCount"],"claims":[]}' > /dev/null
+ok "Set readers access (method-gated only)"
 
 # Beta Inc deployers group
 BETA_DEPLOYERS_ID=$(find_group_by_slug "$BETA_ORG_ID" "deployers")
@@ -599,10 +599,10 @@ else
     ok "External Auditors group already exists ($EXT_AUDITORS_ID)"
 fi
 
-# Set access: read claim + standard read methods including eth_getLogs
+# Set access: standard read methods including eth_getLogs (method-gated, no operational claims)
 admin_put "/orgs/${ALPHA_ORG_ID}/groups/${EXT_AUDITORS_ID}/access" \
-    '{"allowed_methods":["eth_getLogs","eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode"],"claims":["read"]}' > /dev/null
-ok "Set External Auditors access (read claim)"
+    '{"allowed_methods":["eth_getLogs","eth_call","eth_getBalance","eth_getTransactionByHash","eth_getTransactionReceipt","eth_blockNumber","eth_getBlockByNumber","eth_getBlockByHash","eth_chainId","net_version","eth_getCode"],"claims":[]}' > /dev/null
+ok "Set External Auditors access (method-gated only)"
 
 # Add Charlie and Dave to External Auditors (cross-org access to Alpha contracts)
 create_membership "$CHARLIE_USER_ID" "$EXT_AUDITORS_ID" "Charlie -> Alpha External Auditors"

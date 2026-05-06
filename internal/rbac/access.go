@@ -1725,7 +1725,7 @@ func GetGetLogsAddresses(params []any) []string {
 // For multi-org users, this allows accessing logs from contracts in ANY org they belong to.
 // Each address in the filter must be either:
 // - Owned by an org the user is a member of
-// - A public contract (not owned by any org) and user has default read claims
+// - A public contract (not owned by any org) and the method is in the user's allowlist
 func (c *AccessController) validateGetLogsAccessWithCrossOrgCheck(ctx context.Context, perms *EffectivePermissions, userOrgIDs map[string]bool, params []any) error {
 	if len(params) == 0 {
 		return fmt.Errorf("eth_getLogs: missing filter parameter")

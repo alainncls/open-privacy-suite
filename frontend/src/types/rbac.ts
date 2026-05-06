@@ -2,7 +2,7 @@
 
 // Claims: deploy, upgrade, admin (operational gates only).
 // Read/write access is controlled by the method allowlist, not claims.
-export type Claim = 'read' | 'write' | 'admin' | 'upgrade' | 'deploy'; // read/write retained for DB compatibility
+export type Claim = 'admin' | 'upgrade' | 'deploy';
 
 export type MembershipSource = 'admin' | 'zk_attested';
 
@@ -340,8 +340,6 @@ export const ALL_CLAIMS: Claim[] = ['admin', 'upgrade', 'deploy'];
 
 // Claim labels for display
 export const CLAIM_LABELS: Record<Claim, string> = {
-  read: 'Read',
-  write: 'Write',
   admin: 'Admin',
   upgrade: 'Upgrade',
   deploy: 'Deploy',
@@ -349,8 +347,6 @@ export const CLAIM_LABELS: Record<Claim, string> = {
 
 // Claim descriptions for tooltips
 export const CLAIM_DESCRIPTIONS: Record<Claim, string> = {
-  read: '(Legacy — read access is now controlled by method allowlist)',
-  write: '(Legacy — write access is now controlled by method allowlist)',
   admin: 'Full control — implies Deploy and Upgrade',
   upgrade: 'Can upgrade proxy contract implementations',
   deploy: 'Can deploy new contracts to new addresses',

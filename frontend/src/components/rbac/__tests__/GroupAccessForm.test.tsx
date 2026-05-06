@@ -279,7 +279,7 @@ describe('GroupAccessForm', () => {
           return HttpResponse.json({
             ...mockGroupAccess,
             allowed_methods: walletMethods,
-            claims: ['read', 'write'],
+            claims: [],
           });
         })
       );

@@ -326,7 +326,7 @@ func (d *DB) GetContractOwnerOrgID(ctx context.Context, address string) (string,
 
 // GetContractDeployerByAddress returns the user ID that deployed a contract at the given address.
 // Returns nil if the contract is not found or has no deployer recorded.
-// This is used for deployer auto-grant: the user who deployed a contract automatically gets read+write access.
+// Used by the deployer auto-grant: the deployer's group is automatically granted access to the contract.
 func (d *DB) GetContractDeployerByAddress(ctx context.Context, address string) (*string, error) {
 	query := `SELECT deployed_by_user_id FROM contracts WHERE LOWER(address) = LOWER($1)`
 	var deployerID sql.NullString

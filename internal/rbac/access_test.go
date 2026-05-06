@@ -460,11 +460,11 @@ func TestEffectivePermissionsMethods(t *testing.T) {
 	perms := &EffectivePermissions{
 		AllowedMethods: []string{"eth_call", "eth_getBalance"},
 		ContractAccess: map[string]ContractAccess{
-			"0xaddress1": {Claims: []Claim{ClaimRead, ClaimWrite}},
-			"0xaddress2": {Claims: []Claim{ClaimRead}},
-			"0xowned1":   {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
+			"0xaddress1": {Claims: []Claim{ClaimDeploy}},
+			"0xaddress2": {Claims: []Claim{}},
+			"0xowned1":   {Claims: []Claim{ClaimDeploy, ClaimAdmin}},
 		},
-		Claims: []Claim{ClaimRead},
+		Claims: []Claim{ClaimDeploy},
 	}
 
 	// Test HasMethod
@@ -484,20 +484,20 @@ func TestEffectivePermissionsMethods(t *testing.T) {
 	}
 
 	// Test HasDefaultClaim
-	if !perms.HasDefaultClaim(ClaimRead) {
-		t.Error("Expected HasDefaultClaim to return true for ClaimRead")
+	if !perms.HasDefaultClaim(ClaimDeploy) {
+		t.Error("Expected HasDefaultClaim to return true for ClaimDeploy")
 	}
-	if perms.HasDefaultClaim(ClaimWrite) {
-		t.Error("Expected HasDefaultClaim to return false for ClaimWrite")
+	if perms.HasDefaultClaim(ClaimUpgrade) {
+		t.Error("Expected HasDefaultClaim to return false for ClaimUpgrade")
 	}
 
 	// Test contract access claims
 	access := perms.ContractAccess["0xaddress1"]
-	if !access.HasClaim(ClaimRead) {
-		t.Error("Expected contract access to have read claim")
+	if !access.HasClaim(ClaimDeploy) {
+		t.Error("Expected contract access to have deploy claim")
 	}
-	if !access.HasClaim(ClaimWrite) {
-		t.Error("Expected contract access to have write claim")
+	if access.HasClaim(ClaimUpgrade) {
+		t.Error("Expected contract access to not have upgrade claim")
 	}
 	if access.HasClaim(ClaimAdmin) {
 		t.Error("Expected contract access to not have admin claim")
@@ -1087,11 +1087,11 @@ func TestValidateGetLogsAccess(t *testing.T) {
 			errorSubstr: ErrContractAccessDenied,
 		},
 		{
-			name:  "Single address - read-only user denied unregistered contract (all private)",
+			name:  "Single address - user with no claims denied unregistered contract (all private)",
 			perms: &EffectivePermissions{
 				AllowedMethods: []string{"eth_getLogs"},
 				ContractAccess: map[string]ContractAccess{},
-				Claims:         []Claim{ClaimRead},
+				Claims:         []Claim{},
 			},
 			params: []any{map[string]any{
 				"address": "0xunregisteredcontract",
@@ -1179,9 +1179,9 @@ func TestCrossOrgIsolation(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xmycontract": {Claims: []Claim{ClaimRead}},
+				"0xmycontract": {Claims: []Claim{}},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: []Claim{},
 		}
 
 		if !perms.IsContractRegistered("0xmycontract") {
@@ -1199,9 +1199,9 @@ func TestCrossOrgIsolation(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xmycontract": {Claims: []Claim{ClaimRead, ClaimWrite}},
+				"0xmycontract": {Claims: []Claim{ClaimDeploy, ClaimUpgrade}},
 			},
-			Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			Claims: []Claim{ClaimDeploy},
 		}
 
 		// Registered contract should return explicit access
@@ -1249,7 +1249,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xmycontract": {Claims: []Claim{ClaimRead}},
+				"0xmycontract": {Claims: []Claim{}},
 			},
 			Claims: []Claim{}, // No default claims
 		}
@@ -1270,12 +1270,9 @@ func TestGetContractAccessUnregisteredRestriction(t *testing.T) {
 		claims   []Claim
 		expected bool // true = access returned, false = nil
 	}{
-		{"read-only denied", []Claim{ClaimRead}, false},
-		{"write-only denied", []Claim{ClaimWrite}, false},
-		{"read+write denied", []Claim{ClaimRead, ClaimWrite}, false},
-		{"upgrade+read+write denied", []Claim{ClaimUpgrade, ClaimRead, ClaimWrite}, false},
-		{"deploy denied", []Claim{ClaimDeploy, ClaimRead, ClaimWrite}, false},
-		{"admin denied", []Claim{ClaimAdmin, ClaimDeploy, ClaimRead, ClaimWrite, ClaimUpgrade}, false},
+		{"upgrade denied", []Claim{ClaimUpgrade}, false},
+		{"deploy denied", []Claim{ClaimDeploy}, false},
+		{"admin denied", []Claim{ClaimAdmin, ClaimDeploy, ClaimUpgrade}, false},
 		{"empty claims denied", []Claim{}, false},
 	}
 
@@ -1413,42 +1410,36 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
+				contractOrgA: {Claims: []Claim{ClaimDeploy}},
 			},
 			Claims: []Claim{},
 		}
 
-		// User has full access to their own contract
+		// User has access to their own contract
 		access := perms.GetContractAccess(contractOrgA)
 		if access == nil {
 			t.Fatal("User should have access to their own org's contract")
 		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("User should have read claim on their own contract")
-		}
-		if !access.HasClaim(ClaimWrite) {
-			t.Error("User should have write claim on their own contract")
+		if !access.HasClaim(ClaimDeploy) {
+			t.Error("User should have deploy claim on their own contract")
 		}
 
 		// Verify HasContractClaim
-		if !perms.HasContractClaim(contractOrgA, ClaimRead) {
-			t.Error("HasContractClaim should return true for read")
-		}
-		if !perms.HasContractClaim(contractOrgA, ClaimWrite) {
-			t.Error("HasContractClaim should return true for write")
+		if !perms.HasContractClaim(contractOrgA, ClaimDeploy) {
+			t.Error("HasContractClaim should return true for deploy")
 		}
 		if perms.HasContractClaim(contractOrgA, ClaimAdmin) {
 			t.Error("HasContractClaim should return false for admin (not granted)")
 		}
 	})
 
-	t.Run("read-only user denied access to unregistered contract (all private)", func(t *testing.T) {
+	t.Run("user denied access to unregistered contract (all private)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				contractOrgA: {Claims: []Claim{ClaimRead, ClaimWrite}},
+				contractOrgA: {Claims: []Claim{}},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: []Claim{},
 		}
 
 		// All unregistered contracts are private by default — no access
@@ -1459,15 +1450,15 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 	})
 
 	t.Run("default_claims do not grant access to other org contracts", func(t *testing.T) {
-		// User with default_claims=['read','write'] still cannot access OrgB's contracts
+		// User with default claims still cannot access OrgB's contracts
 		// This is enforced at the controller level, not EffectivePermissions
 		// The controller checks IsContractRegisteredToAnyOrg before applying default_claims
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call", "eth_sendTransaction"},
 			ContractAccess: map[string]ContractAccess{
-				contractOrgA: {Claims: []Claim{ClaimRead}},
+				contractOrgA: {Claims: []Claim{ClaimDeploy}},
 			},
-			Claims: []Claim{ClaimRead, ClaimWrite}, // Wide default claims
+			Claims: []Claim{ClaimDeploy}, // Wide default claims
 		}
 
 		// GetContractAccess returns default claims for unknown contracts
@@ -1485,7 +1476,7 @@ func TestCrossOrgIsolationComprehensive(t *testing.T) {
 		if accessA == nil {
 			t.Fatal("Should have explicit access to contractOrgA")
 		}
-		if accessA.HasClaim(ClaimWrite) {
+		if accessA.HasClaim(ClaimAdmin) {
 			t.Error("ContractOrgA should only have explicit claims, not inherit from default")
 		}
 	})
@@ -1497,7 +1488,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xabcdef1234567890abcdef1234567890abcdef12": {Claims: []Claim{ClaimRead}},
+				"0xabcdef1234567890abcdef1234567890abcdef12": {Claims: []Claim{}},
 			},
 			Claims: []Claim{},
 		}
@@ -1525,7 +1516,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{}, // Empty
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			Claims:         []Claim{ClaimDeploy},
 		}
 
 		// All unregistered contracts are private — even deploy users are denied
@@ -1535,11 +1526,11 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		}
 	})
 
-	t.Run("empty contract access map with read-only claims denied unregistered (all private)", func(t *testing.T) {
+	t.Run("empty contract access map with no claims denied unregistered (all private)", func(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{}, // Empty
-			Claims:  []Claim{ClaimRead},
+			Claims:         []Claim{},
 		}
 
 		// All unregistered contracts are private — denied
@@ -1553,7 +1544,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{ClaimRead}},
+				"0xaaaa000000000000000000000000000000000001": {Claims: []Claim{}},
 			},
 			Claims: []Claim{}, // No default claims
 		}
@@ -1575,7 +1566,7 @@ func TestCrossOrgIsolationEdgeCasesComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				"0xaaaa": {Claims: []Claim{ClaimRead}},
+				"0xaaaa": {Claims: []Claim{}},
 			},
 			Claims: nil, // nil
 		}
@@ -1599,7 +1590,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				addr: {Claims: []Claim{ClaimRead}},
+				addr: {Claims: []Claim{}},
 			},
 		}
 
@@ -1608,13 +1599,10 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 			t.Error("eth_call should be in allowed methods")
 		}
 
-		// Verify contract access with read claim
+		// Verify contract access entry exists
 		access := perms.GetContractAccess(addr)
 		if access == nil {
 			t.Fatal("Should have access to contract")
-		}
-		if !access.HasClaim(ClaimRead) {
-			t.Error("Should have read claim")
 		}
 	})
 
@@ -1625,7 +1613,7 @@ func TestReadOpsValidationComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_call"},
 			ContractAccess: map[string]ContractAccess{
-				userAddr: {Claims: []Claim{ClaimRead}},
+				userAddr: {Claims: []Claim{}},
 			},
 			Claims: []Claim{}, // No default claims
 		}
@@ -1710,11 +1698,11 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				addr: {
-					Claims:    []Claim{ClaimRead, ClaimWrite},
+					Claims:    []Claim{ClaimDeploy, ClaimUpgrade},
 					Functions: []FunctionRule{{Selector: "0xa9059cbb"}, {Selector: "0x095ea7b3"}},
 				},
 			},
-			Claims: []Claim{ClaimRead},
+			Claims: []Claim{ClaimDeploy},
 		}
 
 		access := perms.GetContractAccess(addr)
@@ -1724,8 +1712,8 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		if len(access.Claims) != 2 {
 			t.Errorf("Should have 2 explicit claims, got %d", len(access.Claims))
 		}
-		if !access.HasClaim(ClaimWrite) {
-			t.Error("Should have write claim")
+		if !access.HasClaim(ClaimUpgrade) {
+			t.Error("Should have upgrade claim")
 		}
 		if len(access.Functions) != 2 {
 			t.Errorf("Should have 2 function rules, got %d", len(access.Functions))
@@ -1738,7 +1726,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
-				userAddr: {Claims: []Claim{ClaimRead}},
+				userAddr: {Claims: []Claim{}},
 			},
 			Claims: []Claim{}, // Empty
 		}
@@ -1755,9 +1743,9 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
-				userAddr: {Claims: []Claim{ClaimRead, ClaimWrite}},
+				userAddr: {Claims: []Claim{ClaimDeploy}},
 			},
-			Claims: []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			Claims: []Claim{ClaimDeploy},
 		}
 
 		access := perms.GetContractAccess(publicAddr)
@@ -1817,7 +1805,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				addr: {
-					Claims:    []Claim{ClaimRead},
+					Claims:    []Claim{},
 					Functions: nil, // No restrictions
 				},
 			},
@@ -1837,7 +1825,7 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
 				addr: {
-					Claims:    []Claim{ClaimRead},
+					Claims:    []Claim{},
 					Functions: []FunctionRule{}, // Explicitly empty = deny all
 				},
 			},
@@ -1854,8 +1842,8 @@ func TestGetContractAccessComprehensive(t *testing.T) {
 
 		perms := &EffectivePermissions{
 			ContractAccess: map[string]ContractAccess{
-				adminAddr:  {Claims: []Claim{ClaimRead, ClaimWrite, ClaimAdmin}},
-				normalAddr: {Claims: []Claim{ClaimRead, ClaimWrite}},
+				adminAddr:  {Claims: []Claim{ClaimAdmin}},
+				normalAddr: {Claims: []Claim{ClaimDeploy}},
 			},
 		}
 
@@ -2009,8 +1997,8 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{
-				addr1: {Claims: []Claim{ClaimRead}},
-				addr3: {Claims: []Claim{ClaimRead}},
+				addr1: {Claims: []Claim{}},
+				addr3: {Claims: []Claim{}},
 				// addr2 not accessible
 			},
 			Claims: []Claim{}, // No default
@@ -2034,8 +2022,8 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{
-				addr1: {Claims: []Claim{ClaimRead}},
-				addr2: {Claims: []Claim{ClaimRead}},
+				addr1: {Claims: []Claim{}},
+				addr2: {Claims: []Claim{}},
 			},
 			Claims: []Claim{},
 		}
@@ -2056,7 +2044,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:  []Claim{ClaimDeploy, ClaimRead, ClaimWrite},
+			Claims:         []Claim{ClaimDeploy},
 		}
 
 		params := []any{map[string]any{
@@ -2069,13 +2057,13 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 		}
 	})
 
-	t.Run("eth_getLogs read-only user denied for unregistered contract (all private)", func(t *testing.T) {
+	t.Run("eth_getLogs user with no claims denied for unregistered contract (all private)", func(t *testing.T) {
 		publicAddr := "0xcccc000000000000000000000000000000000003"
 
 		perms := &EffectivePermissions{
 			AllowedMethods: []string{"eth_getLogs"},
 			ContractAccess: map[string]ContractAccess{},
-			Claims:  []Claim{ClaimRead},
+			Claims:         []Claim{},
 		}
 
 		params := []any{map[string]any{
@@ -2084,7 +2072,7 @@ func TestGetLogsSecurityAdditional(t *testing.T) {
 
 		err := ValidateGetLogsAccess(perms, params)
 		if err == nil {
-			t.Error("Should deny read-only user on unregistered contract (all private)")
+			t.Error("Should deny user with no claims on unregistered contract (all private)")
 		}
 	})
 
@@ -2932,12 +2920,12 @@ func TestCheckAccessParamConstraints(t *testing.T) {
 				{Membership: &UserMembership{ID: "mem-1", UserID: "user-1", GroupID: "group-a"}, Group: group},
 			}
 
-			// Set up group access with read claim
+			// Set up group access (no operational claims needed)
 			store.groupAccess["group-a"] = &GroupAccess{
 				ID:             "access-a",
 				GroupID:        "group-a",
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
-				Claims:         []Claim{ClaimRead},
+				Claims:         []Claim{},
 			}
 
 			// Set up contract ownership
@@ -2954,11 +2942,11 @@ func TestCheckAccessParamConstraints(t *testing.T) {
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
 				ContractAccess: map[string]ContractAccess{
 					addr: {
-						Claims:    []Claim{ClaimRead},
+						Claims:    []Claim{},
 						Functions: tt.functionRules,
 					},
 				},
-				Claims:     []Claim{ClaimRead},
+				Claims:     []Claim{},
 				ComputedAt: time.Now(),
 				ExpiresAt:  time.Now().Add(1 * time.Hour),
 			}
@@ -3080,7 +3068,7 @@ func TestDeployUserParamConstraints(t *testing.T) {
 				ID:             "access-d",
 				GroupID:        "group-d",
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
-				Claims:         []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+				Claims:         []Claim{ClaimDeploy},
 			}
 
 			addr := strings.ToLower(contractAddr)
@@ -3098,13 +3086,13 @@ func TestDeployUserParamConstraints(t *testing.T) {
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
 				ContractAccess: map[string]ContractAccess{
 					addr: {
-						Claims: []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+						Claims: []Claim{ClaimDeploy},
 						Functions: []FunctionRule{
 							{Selector: balanceOfSelector, ParamRules: []ParamRule{{Index: 0, MustBe: "self"}}},
 						},
 					},
 				},
-				Claims:     []Claim{ClaimRead, ClaimWrite, ClaimDeploy},
+				Claims:     []Claim{ClaimDeploy},
 				ComputedAt: time.Now(),
 				ExpiresAt:  time.Now().Add(1 * time.Hour),
 			}
@@ -3229,12 +3217,12 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 				{Membership: &UserMembership{ID: "mem-2", UserID: "user-2", GroupID: "group-b"}, Group: group},
 			}
 
-			// Set up group access with read+write claims
+			// Set up group access (no operational claims needed)
 			store.groupAccess["group-b"] = &GroupAccess{
 				ID:             "access-b",
 				GroupID:        "group-b",
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
-				Claims:         []Claim{ClaimRead, ClaimWrite},
+				Claims:         []Claim{},
 			}
 
 			// Set up contract ownership
@@ -3251,11 +3239,11 @@ func TestEmptySelectorDeniedWithFunctionRestrictions(t *testing.T) {
 				AllowedMethods: []string{"eth_call", "eth_sendTransaction", "eth_estimateGas"},
 				ContractAccess: map[string]ContractAccess{
 					addr: {
-						Claims:    []Claim{ClaimRead, ClaimWrite},
+						Claims:    []Claim{},
 						Functions: tt.functionRules,
 					},
 				},
-				Claims:     []Claim{ClaimRead, ClaimWrite},
+				Claims:     []Claim{},
 				ComputedAt: time.Now(),
 				ExpiresAt:  time.Now().Add(1 * time.Hour),
 			}
@@ -3641,11 +3629,11 @@ func TestFunctionSelectorGateOnlyForCallMethods(t *testing.T) {
 				AllowedMethods: tt.allowedMethods,
 				ContractAccess: map[string]ContractAccess{
 					addr: {
-						Claims:    []Claim{ClaimRead, ClaimWrite},
+						Claims:    []Claim{},
 						Functions: tt.functions,
 					},
 				},
-				Claims:     []Claim{ClaimRead, ClaimWrite},
+				Claims:     []Claim{},
 				ComputedAt: time.Now(),
 				ExpiresAt:  time.Now().Add(time.Hour),
 			}
