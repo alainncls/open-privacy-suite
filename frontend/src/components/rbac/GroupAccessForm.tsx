@@ -45,6 +45,11 @@ export default function GroupAccessForm({
   const [presetApplied, setPresetApplied] = useState(false);
   // Extra RPC namespaces from server config (chain-specific methods)
   const [extraNamespaces, setExtraNamespaces] = useState<Record<string, string[]>>({});
+  // Wildcard-enabled namespaces: namespace name → { prefix, deny[] }. When a
+  // namespace appears here the form renders a single "Allow all <prefix>*"
+  // toggle that, when checked, stores the literal "<prefix>*" glob in
+  // allowed_methods (the backend honors it via HasMethod + MatchWildcard).
+  const [extraWildcards, setExtraWildcards] = useState<Record<string, { prefix: string; deny?: string[] }>>({});
 
   useEffect(() => {
     loadAccess();
@@ -98,9 +103,22 @@ export default function GroupAccessForm({
       if (ns && Object.keys(ns).length > 0) {
         setExtraNamespaces(ns);
       }
+      const wc = response.data?.methods?.extra_wildcards;
+      if (wc && Object.keys(wc).length > 0) {
+        setExtraWildcards(wc);
+      }
     } catch {
       // Non-critical — extra namespaces just won't show
     }
+  };
+
+  const toggleWildcard = (prefix: string) => {
+    const glob = `${prefix}*`;
+    setAllowedMethods(prev =>
+      prev.includes(glob)
+        ? prev.filter(m => m !== glob)
+        : [...prev, glob]
+    );
   };
 
   const toggleMethod = (method: string) => {
@@ -298,67 +316,144 @@ export default function GroupAccessForm({
         })}
 
         {/* Extra RPC namespaces (chain-specific, from server config) */}
-        {Object.entries(extraNamespaces).map(([nsName, nsMethods]) => {
+        {Array.from(new Set([
+          ...Object.keys(extraNamespaces),
+          ...Object.keys(extraWildcards),
+        ])).sort().map((nsName) => {
+          const nsMethods = extraNamespaces[nsName] ?? [];
+          const wildcard = extraWildcards[nsName];
           const selectedCount = allowedMethods.filter(m => nsMethods.includes(m)).length;
+          const wildcardGlob = wildcard ? `${wildcard.prefix}*` : null;
+          const wildcardOn = wildcardGlob ? allowedMethods.includes(wildcardGlob) : false;
           return (
             <div key={nsName} className="border rounded-lg border-neutral-200">
               <div className="flex items-center justify-between p-3">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-neutral-700">{nsName}</span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">
-                    {selectedCount} / {nsMethods.length}
-                  </span>
+                  {nsMethods.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600">
+                      {selectedCount} / {nsMethods.length}
+                    </span>
+                  )}
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
                     Extension
                   </span>
                 </div>
-                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    className="text-xs text-primary hover:text-primary-600 font-medium"
-                    onClick={() => selectAllInSection(nsMethods)}
-                  >
-                    Select All
-                  </button>
-                  <span className="text-neutral-200">|</span>
-                  <button
-                    type="button"
-                    className="text-xs text-neutral-500 hover:text-neutral-700 font-medium"
-                    onClick={() => clearSection(nsMethods)}
-                  >
-                    Clear
-                  </button>
-                </div>
+                {nsMethods.length > 0 && (
+                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="text-xs text-primary hover:text-primary-600 font-medium"
+                      onClick={() => selectAllInSection(nsMethods)}
+                    >
+                      Select All
+                    </button>
+                    <span className="text-neutral-200">|</span>
+                    <button
+                      type="button"
+                      className="text-xs text-neutral-500 hover:text-neutral-700 font-medium"
+                      onClick={() => clearSection(nsMethods)}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="px-3 pb-2">
                 <p className="text-xs text-neutral-400">Chain-specific methods configured by the operator.</p>
               </div>
-              <div className="border-t border-neutral-200 p-3">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {nsMethods.map((method) => (
-                    <label
-                      key={method}
-                      className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer border border-transparent hover:border-neutral-100 transition-colors"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        toggleMethod(method);
-                      }}
-                    >
-                      <div className={cn(
-                        'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors',
-                        allowedMethods.includes(method)
-                          ? 'bg-primary border-primary'
-                          : 'border-neutral-300 bg-white'
-                      )}>
-                        {allowedMethods.includes(method) && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+
+              {/* Wildcard passthrough toggle — checked = "<prefix>*" stored in allowed_methods */}
+              {wildcard && (
+                <div className="border-t border-neutral-200 p-3 bg-amber-50/30">
+                  <label
+                    className="flex items-start gap-2 p-1.5 rounded hover:bg-amber-50 cursor-pointer border border-transparent hover:border-amber-200 transition-colors"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      toggleWildcard(wildcard.prefix);
+                    }}
+                  >
+                    <div className={cn(
+                      'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
+                      wildcardOn ? 'bg-amber-500 border-amber-500' : 'border-neutral-300 bg-white'
+                    )}>
+                      {wildcardOn && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-neutral-800 font-semibold">{wildcard.prefix}*</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium uppercase">
+                          Passthrough
+                        </span>
                       </div>
-                      <span className="text-xs font-mono text-neutral-700 truncate" title={method}>
-                        {method}
-                      </span>
-                    </label>
-                  ))}
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Allow any method starting with <code>{wildcard.prefix}</code>. The proxy forwards these to the upstream node as-is —
+                        no contract access check, no response redaction. Use only when you trust the upstream chain's namespace.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* Operator deny list — visually marked as a denied set, distinct from the amber wildcard tone */}
+                  {wildcard.deny && wildcard.deny.length > 0 && (
+                    <div
+                      className="mt-2 p-2 rounded border border-error/30 bg-error-light/40"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <X className="w-3 h-3 text-error-dark stroke-[3]" />
+                        <span className="text-[11px] font-semibold text-error-dark uppercase tracking-wide">
+                          Always denied · operator block list
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {wildcard.deny.map((d) => (
+                          <span
+                            key={d}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-error/40 text-[10px] font-mono text-error-dark"
+                            title={`Rejected even when ${wildcard.prefix}* is enabled`}
+                          >
+                            <X className="w-2.5 h-2.5" />
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-neutral-500 mt-1.5">
+                        Rejected even with the wildcard above enabled. Configured by the operator at startup; not editable from this form.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {/* Explicit chain-specific methods */}
+              {nsMethods.length > 0 && (
+                <div className="border-t border-neutral-200 p-3">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {nsMethods.map((method) => (
+                      <label
+                        key={method}
+                        className="flex items-center gap-2 p-1.5 rounded hover:bg-primary-50 cursor-pointer border border-transparent hover:border-neutral-100 transition-colors"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          toggleMethod(method);
+                        }}
+                      >
+                        <div className={cn(
+                          'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors',
+                          allowedMethods.includes(method)
+                            ? 'bg-primary border-primary'
+                            : 'border-neutral-300 bg-white'
+                        )}>
+                          {allowedMethods.includes(method) && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                        </div>
+                        <span className="text-xs font-mono text-neutral-700 truncate" title={method}>
+                          {method}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}

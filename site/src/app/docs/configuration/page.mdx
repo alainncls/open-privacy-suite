@@ -98,7 +98,12 @@ To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), creat
 EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
 ```
 
-The file format is a versioned JSON object. Each method entry can be a plain string (passthrough) or an object with an `alias` field to inherit access control from a standard method:
+The file format is a versioned JSON object. Two schema versions are supported:
+
+- **v1** — explicit method list per namespace; each method needs an `alias` to a standard Ethereum method (recommended for tightly-controlled deployments).
+- **v2** — same as v1, plus an optional `wildcard` block per namespace that lets any method matching a prefix pass through without enumeration. Wildcard-matched methods are forwarded as-is — no contract access check, no response redaction. Use only when you trust the upstream chain's namespace.
+
+### v1 — explicit methods
 
 ```json
 {
@@ -106,8 +111,7 @@ The file format is a versioned JSON object. Each method entry can be a plain str
   "namespaces": {
     "Linea": [
       {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
-      {"method": "linea_getProof", "alias": "eth_getProof"},
-      "linea_getTransactionExclusionStatusV1"
+      {"method": "linea_getProof", "alias": "eth_getProof"}
     ]
   }
 }
@@ -115,22 +119,111 @@ The file format is a versioned JSON object. Each method entry can be a plain str
 
 | Field | Description |
 |-------|-------------|
-| `version` | Schema version (currently `1`). Required for forward compatibility. |
-| `namespaces` | Map of display label to method list. The key appears as the section heading in the admin UI. |
+| `version` | Schema version (`1` or `2`). Required for forward compatibility. |
+| `namespaces` | Map of display label to method list (v1) or namespace object (v2). The key appears as the section heading in the admin UI. |
 
-### Method entries
+Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently. The proxy rejects the config at startup if any method is missing an alias.
 
-Every method must specify an `alias` — a standard Ethereum method it inherits access control and response filtering from. This ensures contract-level checks, storage slot tiering, deployment detection, and participant-based response filtering apply consistently.
+### v2 — explicit methods + optional wildcard passthrough
+
+In v2 each namespace value can be either an array (same as v1) or an object with `explicit` and optional `wildcard`:
 
 ```json
-{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
+{
+  "version": 2,
+  "namespaces": {
+    "Linea": {
+      "explicit": [
+        {"method": "linea_estimateGas", "alias": "eth_estimateGas"},
+        {"method": "linea_getProof", "alias": "eth_getProof"}
+      ],
+      "wildcard": {
+        "prefix": "linea_",
+        "deny": ["linea_sendTransaction", "linea_sendRawTransaction", "linea_sign*"]
+      }
+    },
+    "Trace": {
+      "explicit": [],
+      "wildcard": {"prefix": "trace_"}
+    }
+  }
+}
 ```
 
-The proxy will reject the config at startup if any method is missing an alias.
+| Wildcard field | Description |
+|-------|-------------|
+| `prefix` | Required. Method-name prefix that opts methods into passthrough (e.g. `linea_`). |
+| `deny` | Optional list of method names or `prefix*` globs that the proxy rejects even when they match the wildcard prefix. Useful for state-mutating shapes the operator never wants exposed. |
 
-Extra methods appear as toggleable methods in the admin dashboard group access form, under their namespace heading. They do not require claims and are not included in the standard role presets.
+**What "passthrough" means for wildcard-matched methods.** The proxy:
 
-When `*` (wildcard) is used in a group's allowed methods, extra methods are included in the expansion.
+- forwards the request to the upstream node verbatim;
+- does **not** apply contract-level access checks (it doesn't know whether the method has an address parameter);
+- does **not** redact response fields (it doesn't know the response shape);
+- still applies the global block list (`debug_*`, `admin_*`, `personal_*`, `miner_*`, `txpool_*`, `clique_*`, `les_*` are always rejected);
+- still applies the namespace's `deny` list (evaluated before the prefix allow);
+- logs the call with `matched_via: "wildcard"` and the matched prefix in the SIEM audit stream.
+
+**Operator responsibility for wildcard mode.** When you enable a wildcard, you are stating that you trust the upstream chain's namespace and accept that methods you haven't explicitly mapped don't get the proxy's privacy guarantees. If a future upstream release adds a method under the prefix that returns sensitive data your tenants shouldn't see, that data passes through. To narrow the surface:
+
+1. Keep the deny list current as the upstream chain's catalog evolves.
+2. Prefer `explicit` entries (with proper `alias`) for any method that benefits from contract-access checks or response filtering.
+3. Don't enable a wildcard for namespaces you don't actually run.
+
+Standard Ethereum-method redaction (`eth_getLogs` filtering, `eth_call` return-data redaction, etc.) is unaffected — it continues to operate on the alias target for explicit methods and on standard methods directly.
+
+### Group `allowed_methods` interaction
+
+A group's `allowed_methods` list works the same in both schemas, plus one v2-only addition: an entry of the form `<prefix>*` is honored only when a wildcard with that exact prefix is registered globally. Groups cannot invent prefixes the operator hasn't enabled.
+
+```json
+{
+  "allowed_methods": [
+    "eth_call",
+    "eth_getLogs",
+    "linea_estimateGas",
+    "linea_*"
+  ]
+}
+```
+
+In the admin UI, wildcard-enabled namespaces render a single togglable "Allow all `<prefix>*` methods (passthrough)" entry alongside the explicit method checkboxes. The deny list is shown read-only as context.
+
+When `*` (the bare wildcard) is used in a group's allowed methods, all explicitly-known methods are included in the expansion; wildcard-matched methods continue to pass at request time via prefix match.
+
+### Precedence: explicit always wins over wildcard
+
+When a method could be matched both ways, explicit entries take precedence at every layer.
+
+**Alias resolution.** A method that appears in any namespace's `explicit` list keeps its declared alias and goes through the normal access-control + redaction path. The wildcard does not override that. If the same method also matches the namespace's wildcard prefix, the wildcard never sees it — alias resolution stops at the first explicit hit.
+
+**Group allowlist.** Inside a group's `allowed_methods`, an exact method name wins over a `<prefix>*` glob. The proxy first checks for `*` (admin shortcut) or an exact match; only if neither hits does it fall through to glob entries.
+
+**Deny list scope.** The wildcard's `deny` list narrows the wildcard's surface — it does not act as a global block. If an operator explicitly grants a deny-listed method to a group by exact name (either by listing it in a namespace's `explicit` block, or by adding the literal method name to a group's `allowed_methods`), that grant succeeds. The deny list only fires when access would otherwise be granted via the wildcard prefix. To block a method system-wide, rely on `GlobalBlockedMethods` (compile-time) or simply don't grant it to any group.
+
+Worked example with the config below:
+
+```json
+{
+  "version": 2,
+  "namespaces": {
+    "Linea": {
+      "explicit": [{"method": "linea_estimateGas", "alias": "eth_estimateGas"}],
+      "wildcard": {"prefix": "linea_", "deny": ["linea_sendTransaction", "linea_sign*"]}
+    }
+  }
+}
+```
+
+Group with `allowed_methods: ["linea_estimateGas", "linea_*"]`:
+
+| Method | Alias used | HasMethod | Outcome |
+|---|---|---|---|
+| `linea_estimateGas` | `eth_estimateGas` (explicit) | true (exact match) | contract checks + redaction via alias |
+| `linea_getProof` | none (no explicit entry) | true (via `linea_*` → wildcard match) | passthrough, no redaction |
+| `linea_sendTransaction` | none | false (wildcard match blocked by deny) | rejected with "method not allowed" |
+| `linea_signFoo` | none | false (deny `linea_sign*` glob) | rejected |
+| `debug_traceTransaction` | n/a | n/a | rejected by `GlobalBlockedMethods` before RBAC |
 
 A ready-to-use example is provided in `rpc-namespaces.example.json` — copy and customize it:
 

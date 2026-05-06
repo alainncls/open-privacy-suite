@@ -224,7 +224,7 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 			if statusCode >= 500 {
 				outcome = "error"
 			}
-			p.siemForwarder.Send(audit.SIEMEvent{
+			event := audit.SIEMEvent{
 				Timestamp:     createdAt,
 				EventType:     "access",
 				CorrelationID: req.CorrelationID,
@@ -234,7 +234,14 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 				Details:       fmt.Sprintf("decision=%d response=%d", statusCode, respStatus),
 				SourceIP:      req.ClientIP,
 				EntryHash:     hash,
-			})
+			}
+			// Tag wildcard-resolved methods so SIEM consumers can filter on the
+			// passthrough surface independently from explicitly-listed methods.
+			if w := rbac.MatchWildcard(req.Method); w != nil {
+				event.MatchedVia = "wildcard"
+				event.MatchedPrefix = w.Prefix
+			}
+			p.siemForwarder.Send(event)
 		}
 		return
 	}

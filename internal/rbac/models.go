@@ -469,8 +469,36 @@ type ContractGrantSummary struct {
 
 // HasMethod checks if the effective permissions allow a specific method.
 // "*" in AllowedMethods means all methods are permitted (used by admin auto-grant).
+//
+// Glob entries of shape "prefix*" are honored only when a global wildcard
+// namespace is registered with the same prefix AND that wildcard would allow
+// the method (deny list checked there). This prevents groups from inventing
+// prefixes the operator hasn't enabled in EXTRA_RPC_NAMESPACES.
 func (e *EffectivePermissions) HasMethod(method string) bool {
-	return slices.Contains(e.AllowedMethods, "*") || slices.Contains(e.AllowedMethods, method)
+	if slices.Contains(e.AllowedMethods, "*") || slices.Contains(e.AllowedMethods, method) {
+		return true
+	}
+	for _, entry := range e.AllowedMethods {
+		if entry == "*" || !strings.HasSuffix(entry, "*") {
+			continue
+		}
+		groupPrefix := strings.TrimSuffix(entry, "*")
+		if groupPrefix == "" {
+			continue // bare "*" handled above; an empty prefix would match everything
+		}
+		if !strings.HasPrefix(method, groupPrefix) {
+			continue
+		}
+		// The group glob is honored only if a registered global wildcard
+		// covers this method (so the deny list and operator opt-in apply).
+		if !HasWildcardForPrefix(groupPrefix) {
+			continue
+		}
+		if MatchWildcard(method) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // GetContractAccess returns the access for a specific contract address.

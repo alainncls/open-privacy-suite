@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetClaimForMethod(t *testing.T) {
@@ -289,16 +290,19 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	origExtra := ExtraMethods
 	origNS := ExtraNamespaces
 	origAliases := MethodAliases
+	origWildcards := Wildcards
 	defer func() {
 		ExtraMethods = origExtra
 		ExtraNamespaces = origNS
 		MethodAliases = origAliases
+		Wildcards = origWildcards
 	}()
 
 	// Reset state
 	ExtraMethods = map[string]bool{}
 	ExtraNamespaces = nil
 	MethodAliases = map[string]string{}
+	Wildcards = nil
 
 	namespaces := map[string][]string{
 		"Linea": {"linea_estimateGas", "linea_getProof"},
@@ -309,7 +313,7 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 		"linea_getProof":    "eth_getProof",
 	}
 
-	RegisterExtraNamespaces(namespaces, aliases)
+	RegisterExtraNamespaces(namespaces, aliases, nil)
 
 	// Verify ExtraMethods populated
 	assert.True(t, ExtraMethods["linea_estimateGas"])
@@ -345,6 +349,106 @@ func TestRegisterExtraNamespaces(t *testing.T) {
 	}
 	assert.True(t, expandedSet["linea_estimateGas"], "extra method should be in wildcard expansion")
 	assert.True(t, expandedSet["trace_transaction"], "extra method should be in wildcard expansion")
+}
+
+// TestMatchWildcard exercises the prefix-wildcard passthrough matcher: prefix
+// match, deny-glob override, and namespaces with no wildcard.
+func TestMatchWildcard(t *testing.T) {
+	origWildcards := Wildcards
+	defer func() { Wildcards = origWildcards }()
+
+	Wildcards = []*WildcardNamespace{
+		{
+			Namespace: "Linea",
+			Prefix:    "linea_",
+			Deny:      []string{"linea_sendTransaction", "linea_sendRawTransaction", "linea_sign*"},
+		},
+		{
+			Namespace: "Trace",
+			Prefix:    "trace_",
+			Deny:      nil,
+		},
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		expectNS string // empty = expect nil match
+	}{
+		{"linea unknown method matches", "linea_brandNewMethod", "Linea"},
+		{"linea explicit also matches", "linea_estimateGas", "Linea"},
+		{"linea deny exact match", "linea_sendTransaction", ""},
+		{"linea deny suffix glob", "linea_signTypedData", ""},
+		{"linea deny suffix glob exact", "linea_sign", ""},
+		{"unrelated prefix", "eth_call", ""},
+		{"trace any method passes (no deny list)", "trace_anything", "Trace"},
+		{"empty method", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchWildcard(tt.method)
+			if tt.expectNS == "" {
+				assert.Nil(t, got, "expected no wildcard match for %q", tt.method)
+				return
+			}
+			require.NotNil(t, got, "expected wildcard match for %q", tt.method)
+			assert.Equal(t, tt.expectNS, got.Namespace)
+		})
+	}
+}
+
+// TestHasWildcardForPrefix is the lookup that GroupAccess.HasMethod uses to
+// validate that a "<prefix>*" entry in a group's allowed_methods binds to a
+// real registered wildcard. Groups can't invent prefixes the operator hasn't
+// enabled globally.
+func TestHasWildcardForPrefix(t *testing.T) {
+	origWildcards := Wildcards
+	defer func() { Wildcards = origWildcards }()
+
+	Wildcards = []*WildcardNamespace{
+		{Namespace: "Linea", Prefix: "linea_"},
+	}
+
+	assert.True(t, HasWildcardForPrefix("linea_"))
+	assert.False(t, HasWildcardForPrefix("zksync_"))
+	assert.False(t, HasWildcardForPrefix(""))
+}
+
+// TestRegisterExtraNamespaces_WithWildcards verifies that wildcards passed to
+// RegisterExtraNamespaces are stored alongside the explicit-method registry,
+// and that explicit methods continue to win for alias resolution (a method can
+// be both explicit and covered by a wildcard prefix).
+func TestRegisterExtraNamespaces_WithWildcards(t *testing.T) {
+	origExtra := ExtraMethods
+	origNS := ExtraNamespaces
+	origAliases := MethodAliases
+	origWildcards := Wildcards
+	defer func() {
+		ExtraMethods = origExtra
+		ExtraNamespaces = origNS
+		MethodAliases = origAliases
+		Wildcards = origWildcards
+	}()
+	ExtraMethods = map[string]bool{}
+	ExtraNamespaces = nil
+	MethodAliases = map[string]string{}
+	Wildcards = nil
+
+	RegisterExtraNamespaces(
+		map[string][]string{"Linea": {"linea_estimateGas"}},
+		map[string]string{"linea_estimateGas": "eth_estimateGas"},
+		[]*WildcardNamespace{{Namespace: "Linea", Prefix: "linea_", Deny: []string{"linea_sign*"}}},
+	)
+
+	// Explicit method has its alias.
+	assert.Equal(t, "eth_estimateGas", ResolveMethodAlias("linea_estimateGas"))
+	// Wildcard-only method passes through (no alias).
+	assert.Equal(t, "linea_brandNew", ResolveMethodAlias("linea_brandNew"))
+	// Wildcard match returns the namespace for both explicit-also-matched and unknown methods.
+	require.NotNil(t, MatchWildcard("linea_estimateGas"))
+	require.NotNil(t, MatchWildcard("linea_brandNew"))
+	// Deny still wins.
+	assert.Nil(t, MatchWildcard("linea_signFoo"))
 }
 
 func TestAccessCheckRequest_EffectiveMethod(t *testing.T) {

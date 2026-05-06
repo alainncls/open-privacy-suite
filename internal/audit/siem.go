@@ -35,6 +35,11 @@ type SIEMEvent struct {
 	Details       string    `json:"details,omitempty"`
 	SourceIP      string    `json:"source_ip,omitempty"`
 	EntryHash     string    `json:"entry_hash,omitempty"`
+	// MatchedVia is "wildcard" when the action method passed the allowlist
+	// via a chain-namespace wildcard rather than an explicit entry.
+	MatchedVia    string    `json:"matched_via,omitempty"`
+	// MatchedPrefix is the wildcard prefix that allowed the method (e.g. "linea_").
+	MatchedPrefix string    `json:"matched_prefix,omitempty"`
 }
 
 // SIEMForwarder batches audit events and forwards them to a SIEM webhook.
