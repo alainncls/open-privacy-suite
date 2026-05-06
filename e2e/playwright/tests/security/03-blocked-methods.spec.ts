@@ -101,15 +101,17 @@ test.describe('Blocked Method Enforcement', () => {
     for (const method of debugMethods) {
       test(`BLOCKED-001: ${method} is blocked`, async ({ request }) => {
         const result = await rpcCall(request, method);
-        expect(result.status).toBe(403);
-        expect(result.body.error).toContain('globally blocked');
+        // Globally-blocked methods return opaque 404. Methods not in the global
+        // blocklist but also not in the user's allowlist may return 400 (bad
+        // request) — both are denials.
+        expect([404, 400]).toContain(result.status);
       });
     }
 
     test('BLOCKED-002: Unknown debug_* method is blocked by prefix', async ({ request }) => {
       const result = await rpcCall(request, 'debug_newFutureMethod');
-      expect(result.status).toBe(403);
-      expect(result.body.error).toContain('globally blocked');
+      expect(result.status).toBe(404); // opaque RBAC denial
+      expect(result.body.error).toContain('method not found');
     });
   });
 
@@ -130,8 +132,8 @@ test.describe('Blocked Method Enforcement', () => {
     for (const method of adminMethods) {
       test(`BLOCKED-003: ${method} is blocked`, async ({ request }) => {
         const result = await rpcCall(request, method);
-        expect(result.status).toBe(403);
-        expect(result.body.error).toContain('globally blocked');
+        expect(result.status).toBe(404); // opaque RBAC denial
+        expect(result.body.error).toContain('method not found');
       });
     }
   });
@@ -150,8 +152,8 @@ test.describe('Blocked Method Enforcement', () => {
     for (const method of personalMethods) {
       test(`BLOCKED-004: ${method} is blocked`, async ({ request }) => {
         const result = await rpcCall(request, method);
-        expect(result.status).toBe(403);
-        expect(result.body.error).toContain('globally blocked');
+        expect(result.status).toBe(404); // opaque RBAC denial
+        expect(result.body.error).toContain('method not found');
       });
     }
   });
@@ -168,8 +170,8 @@ test.describe('Blocked Method Enforcement', () => {
     for (const method of minerMethods) {
       test(`BLOCKED-005: ${method} is blocked`, async ({ request }) => {
         const result = await rpcCall(request, method);
-        expect(result.status).toBe(403);
-        expect(result.body.error).toContain('globally blocked');
+        expect(result.status).toBe(404); // opaque RBAC denial
+        expect(result.body.error).toContain('method not found');
       });
     }
   });
@@ -178,17 +180,17 @@ test.describe('Blocked Method Enforcement', () => {
   test.describe('Txpool Namespace Blocking', () => {
     test('BLOCKED-006: txpool_content is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'txpool_content');
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('BLOCKED-007: txpool_status is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'txpool_status');
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('BLOCKED-008: txpool_inspect is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'txpool_inspect');
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
   });
 
@@ -211,12 +213,12 @@ test.describe('Blocked Method Enforcement', () => {
   test.describe('Signing Method Blocking', () => {
     test('BLOCKED-010: eth_sign is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'eth_sign', ['0x123', '0xabc']);
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('BLOCKED-011: eth_signTransaction is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'eth_signTransaction', [{}]);
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
   });
 
@@ -224,12 +226,12 @@ test.describe('Blocked Method Enforcement', () => {
   test.describe('Subscription Blocking', () => {
     test('BLOCKED-012: eth_subscribe is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'eth_subscribe', ['newHeads']);
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('BLOCKED-013: eth_unsubscribe is blocked', async ({ request }) => {
       const result = await rpcCall(request, 'eth_unsubscribe', ['0x1']);
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
   });
 });
@@ -252,7 +254,7 @@ test.describe('Blocked Method Bypass Attempts', () => {
     for (const method of caseVariations) {
       const result = await rpcCall(request, method);
       // Method should either be blocked (if normalized) or not found
-      expect([403, 400]).toContain(result.status);
+      expect([403, 404, 400]).toContain(result.status);
     }
   });
 
@@ -266,7 +268,7 @@ test.describe('Blocked Method Bypass Attempts', () => {
     for (const method of homoglyphs) {
       const result = await rpcCall(request, method);
       // Should either be blocked or treated as unknown method
-      expect([403, 400]).toContain(result.status);
+      expect([403, 404, 400]).toContain(result.status);
     }
   });
 
@@ -284,19 +286,19 @@ test.describe('Blocked Method Bypass Attempts', () => {
     for (const method of variations) {
       const result = await rpcCall(request, method);
       // Should not be allowed
-      expect([403, 400]).toContain(result.status);
+      expect([403, 404, 400]).toContain(result.status);
     }
   });
 
   test('BYPASS-004: URL encoding does not bypass blocking', async ({ request }) => {
     // If method name is URL-decoded somewhere
     const result = await rpcCall(request, 'debug%5ftraceTransaction'); // %5f = _
-    expect([403, 400]).toContain(result.status);
+    expect([403, 404, 400]).toContain(result.status);
   });
 
   test('BYPASS-005: Null bytes do not bypass blocking', async ({ request }) => {
     const result = await rpcCall(request, 'debug_traceTransaction\x00safe');
-    expect([403, 400]).toContain(result.status);
+    expect([403, 404, 400]).toContain(result.status);
   });
 });
 

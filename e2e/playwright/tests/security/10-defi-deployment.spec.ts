@@ -102,7 +102,13 @@ const ROUTER_CONSTRUCTOR_ABI = JSON.stringify([
   }
 ]);
 
-test.describe.serial('DeFi Contract Deployment Flow', () => {
+// OBSOLETE: this entire flow exercises the CREATE3 factory infrastructure
+// (admin /addresses/preregister and /config/create3 endpoints), which was
+// removed in commit f926200 ("redundant with runtime tracing"). The remaining
+// runtime-tracing path is covered by 09-runtime-tracing.spec.ts and the Go
+// integration tests in e2e/create2_test.go. Skipping rather than rewriting
+// because the equivalent Go tests already cover the post-CREATE3 design.
+test.describe.skip('DeFi Contract Deployment Flow', () => {
   let orgId: string;
   let orgSlug: string;
   let groupId: string;
@@ -661,7 +667,9 @@ test.describe('DeFi Deployment Error Handling', () => {
     expect(result.status).toBeGreaterThanOrEqual(400);
   });
 
-  test('DEFI-022: Text salt prefix is allowed (not just hex)', async ({ request }) => {
+  // OBSOLETE: CREATE3 factory infrastructure was removed (commit f926200), so
+  // /addresses/preregister no longer exists. Test kept for reference, skipped.
+  test.skip('DEFI-022: Text salt prefix is allowed (not just hex)', async ({ request }) => {
     // Text salt prefixes are intentionally allowed - they get hashed internally
     // Examples: "myapp-v1", "token-deployment", etc.
     const result = await apiCall(request, 'POST', `/api/v1/admin/orgs/${testOrgId}/addresses/preregister`, {
@@ -718,7 +726,8 @@ test.describe('DeFi Deployment Error Handling', () => {
     expect(result.ok).toBe(false);
   });
 
-  test('DEFI-026: Duplicate salt prefix handling', async ({ request }) => {
+  // OBSOLETE: CREATE3 factory infrastructure removed.
+  test.skip('DEFI-026: Duplicate salt prefix handling', async ({ request }) => {
     const factoryAddr = '0x' + '2'.repeat(40);
     const saltPrefix = generateSaltPrefix('dup');
 

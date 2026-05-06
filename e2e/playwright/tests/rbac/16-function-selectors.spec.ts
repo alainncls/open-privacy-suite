@@ -199,8 +199,9 @@ test.describe('RBAC Function Selector Enforcement', () => {
       'latest',
     ]);
 
-    expect(status).toBe(403);
+    // Function-selector denials return opaque 404 (privacy-by-default).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('function');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 });

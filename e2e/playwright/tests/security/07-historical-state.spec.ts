@@ -273,7 +273,7 @@ test.describe('Block Parameter Variations', () => {
       '0x0'
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('HIST-015: Block 0x1 is historical', async ({ request }) => {
@@ -282,7 +282,7 @@ test.describe('Block Parameter Variations', () => {
       '0x1'
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('HIST-016: "earliest" tag is historical', async ({ request }) => {
@@ -324,7 +324,7 @@ test.describe('Block Parameter Variations', () => {
     ]);
 
     // Future block numbers are still "historical" (specific vs current)
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 });
 

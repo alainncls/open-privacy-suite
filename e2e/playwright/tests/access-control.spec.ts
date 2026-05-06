@@ -54,9 +54,10 @@ test.describe('Access Control', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_sendTransaction', [{}]);
 
-    expect(status).toBe(403);
+    // RBAC denials return opaque 404 "method not found" (privacy-by-default; reason logged server-side).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('not allowed');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('denies banned user', async ({ request }) => {
@@ -75,9 +76,9 @@ test.describe('Access Control', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
 
-    expect(status).toBe(403);
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('banned');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('denies user without KYC', async ({ request }) => {
@@ -95,9 +96,9 @@ test.describe('Access Control', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
 
-    expect(status).toBe(403);
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('KYC');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('denies user without membership', async ({ request }) => {
@@ -119,9 +120,9 @@ test.describe('Access Control', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
 
-    expect(status).toBe(403);
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    // Without membership, user has no permissions
-    expect((body as { error: string }).error).toContain('no organization membership');
+    // Without membership, user has no permissions; proxy returns opaque 404.
+    expect((body as { error: string }).error).toContain('method not found');
   });
 });

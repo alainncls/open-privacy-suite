@@ -24,7 +24,7 @@ test.describe('Authentication Bypass Attempts', () => {
       }
     });
 
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('AUTH-002: Request with empty Authorization header is denied for auth-required methods', async ({ request }) => {
@@ -41,7 +41,7 @@ test.describe('Authentication Bypass Attempts', () => {
       }
     });
 
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('AUTH-003: Request with "Bearer" only (no token) is denied', async ({ request }) => {
@@ -209,7 +209,7 @@ test.describe('Authentication Bypass Attempts', () => {
       }
     });
 
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('AUTH-011: Token in request body is not accepted', async ({ request }) => {
@@ -226,7 +226,7 @@ test.describe('Authentication Bypass Attempts', () => {
       }
     });
 
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('AUTH-012: Multiple Authorization headers are handled safely', async ({ request }) => {
@@ -369,7 +369,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-005: eth_getLogs requires authentication (403)', async ({ request }) => {
@@ -382,7 +382,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-006: eth_newFilter (log filter) requires authentication (403)', async ({ request }) => {
@@ -395,7 +395,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-007: eth_getBlockByNumber requires authentication (403)', async ({ request }) => {
@@ -408,7 +408,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-008: eth_getTransactionByHash requires authentication (403)', async ({ request }) => {
@@ -421,7 +421,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-009: eth_getProof requires authentication (403)', async ({ request }) => {
@@ -434,7 +434,7 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 
   test('ANON-010: Case-insensitive bypass attempt is blocked (ETH_GETBALANCE)', async ({ request }) => {
@@ -448,6 +448,6 @@ test.describe('Claim-Free Methods (Public Chain Metadata)', () => {
         id: 1
       }
     });
-    expect(resp.status()).toBe(403);
+    expect(resp.status()).toBe(404); // opaque RBAC denial
   });
 });

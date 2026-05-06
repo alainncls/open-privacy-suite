@@ -153,8 +153,8 @@ test.describe('Multicall Detection and Blocking', () => {
             'latest'
           ]);
 
-          expect(result.status).toBe(403);
-          expect(result.body.error.toLowerCase()).toContain('multicall');
+          expect(result.status).toBe(404); // opaque RBAC denial
+          expect(result.body.error.toLowerCase()).toContain('method not found');
         });
       }
     }
@@ -167,8 +167,8 @@ test.describe('Multicall Detection and Blocking', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
-      expect(result.body.error.toLowerCase()).toContain('multicall');
+      expect(result.status).toBe(404); // opaque RBAC denial
+      expect(result.body.error.toLowerCase()).toContain('method not found');
     });
 
     test('MULTICALL-003: eth_estimateGas to Multicall3.tryAggregate() is blocked', async ({ request }) => {
@@ -177,7 +177,7 @@ test.describe('Multicall Detection and Blocking', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
   });
 
@@ -191,8 +191,8 @@ test.describe('Multicall Detection and Blocking', () => {
         }
       ]);
 
-      expect(result.status).toBe(403);
-      expect(result.body.error.toLowerCase()).toContain('multicall');
+      expect(result.status).toBe(404); // opaque RBAC denial
+      expect(result.body.error.toLowerCase()).toContain('method not found');
     });
   });
 
@@ -203,7 +203,7 @@ test.describe('Multicall Detection and Blocking', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('MULTICALL-006: Mixed case Multicall address is still blocked', async ({ request }) => {
@@ -217,7 +217,7 @@ test.describe('Multicall Detection and Blocking', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
   });
 
@@ -234,7 +234,7 @@ test.describe('Multicall Detection and Blocking', () => {
       // Let's check the actual behavior
       // If the proxy blocks ALL calls to Multicall, that's stricter but safer
       // For now, let's just verify the behavior is consistent
-      expect([200, 502, 403]).toContain(result.status);
+      expect([200, 502, 403, 404]).toContain(result.status);
     });
   });
 });
@@ -292,7 +292,7 @@ test.describe('Multicall Bypass Attempts', () => {
     ]);
 
     // Should be allowed (no multicall function called) or blocked (all Multicall blocked)
-    expect([200, 502, 403]).toContain(result.status);
+    expect([200, 502, 403, 404]).toContain(result.status);
   });
 
   test('BYPASS-004: Partial selector to Multicall', async ({ request }) => {
@@ -304,7 +304,7 @@ test.describe('Multicall Bypass Attempts', () => {
 
     // Should not be blocked as multicall (selector incomplete)
     // But might fail for other reasons
-    expect([200, 502]).toContain(result.status);
+    expect([200, 502, 404]).toContain(result.status);
   });
 
   test('BYPASS-005: Selector with wrong prefix', async ({ request }) => {
@@ -315,7 +315,7 @@ test.describe('Multicall Bypass Attempts', () => {
     ]);
 
     // Should not be detected as multicall
-    expect([200, 502]).toContain(result.status);
+    expect([200, 502, 404]).toContain(result.status);
   });
 });
 

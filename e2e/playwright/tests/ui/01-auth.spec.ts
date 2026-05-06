@@ -26,7 +26,7 @@ test.describe('Authentication Flow', () => {
     await expect(page.locator(selectors.login.authTitle)).toContainText('Sign In');
 
     // Verify the Privacy Proxy branding
-    await expect(page.getByText('Privacy Proxy')).toBeVisible();
+    await expect(page.getByText('Open Privacy Suite')).toBeVisible();
     await expect(page.getByText('Authenticated RPC Access')).toBeVisible();
   });
 
@@ -134,7 +134,7 @@ test.describe('Authentication Flow', () => {
     await expect(page.locator(selectors.login.page)).toBeVisible();
 
     // Check for proper heading hierarchy
-    await expect(page.getByRole('heading', { name: 'Privacy Proxy' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Open Privacy Suite' })).toBeVisible();
 
     // Check for proper form/card structure
     await expect(page.locator(selectors.login.authCard)).toBeVisible();

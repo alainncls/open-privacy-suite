@@ -209,8 +209,8 @@ test.describe('Runtime Transaction Tracing', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
-      expect(result.body.error).toContain('contract access denied');
+      expect(result.status).toBe(404); // opaque RBAC denial
+      expect(result.body.error).toContain('method not found');
     });
 
     test('TRACE-002: Transaction touching only own org contracts is allowed', async ({ request }) => {
@@ -384,7 +384,7 @@ test.describe('Runtime Transaction Tracing', () => {
         'latest'
       ]);
 
-      expect(result.status).toBe(403);
+      expect(result.status).toBe(404); // opaque RBAC denial
     });
 
     test('TRACE-011b: CRITICAL - Org-owned contract making cross-org call must be denied', async ({ request }) => {
@@ -428,7 +428,7 @@ test.describe('Runtime Transaction Tracing', () => {
         { to: contractB, data: '0x' },
         'latest'
       ]);
-      expect(otherOrgResult.status).toBe(403);
+      expect(otherOrgResult.status).toBe(404); // opaque RBAC denial
     });
 
     test('TRACE-012: Deep call stack within same org is allowed', async ({ request }) => {
