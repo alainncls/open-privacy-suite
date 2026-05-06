@@ -294,12 +294,23 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		rbacAccessCtrl = rbac.NewAccessController(database, RBACCacheTTL)
 	}
 
-	// Register extra RPC namespaces (chain-specific method extensions)
+	// Register extra RPC namespaces (chain-specific method extensions, including
+	// any v2 wildcard passthroughs).
 	if cfg.ExtraRPCNamespaces != nil && len(cfg.ExtraRPCNamespaces.Namespaces) > 0 {
-		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.MethodNames(), cfg.ExtraRPCNamespaces.Aliases())
+		wildcardCfgs := cfg.ExtraRPCNamespaces.Wildcards()
+		wildcards := make([]*rbac.WildcardNamespace, 0, len(wildcardCfgs))
+		for ns, w := range wildcardCfgs {
+			wildcards = append(wildcards, &rbac.WildcardNamespace{
+				Namespace: ns,
+				Prefix:    w.Prefix,
+				Deny:      w.Deny,
+			})
+		}
+		rbac.RegisterExtraNamespaces(cfg.ExtraRPCNamespaces.MethodNames(), cfg.ExtraRPCNamespaces.Aliases(), wildcards)
 		slog.Info("extra RPC namespaces registered",
 			"namespaces", len(cfg.ExtraRPCNamespaces.Namespaces),
-			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()))
+			"aliases", len(cfg.ExtraRPCNamespaces.Aliases()),
+			"wildcards", len(wildcards))
 	}
 
 	// Configure RPC API key encryption for decrypting keys from the database
@@ -1129,7 +1140,33 @@ type StatusResponse struct {
 
 // MethodsStatus exposes available RPC methods to the admin frontend.
 type MethodsStatus struct {
-	ExtraNamespaces map[string][]string `json:"extra_namespaces,omitempty"`
+	ExtraNamespaces map[string][]string          `json:"extra_namespaces,omitempty"`
+	ExtraWildcards  map[string]ExtraWildcardInfo `json:"extra_wildcards,omitempty"`
+}
+
+// ExtraWildcardInfo describes a chain namespace running in prefix-wildcard mode.
+// The frontend uses this to render a single togglable picker entry per
+// wildcard-enabled namespace, plus a read-only view of the deny list.
+type ExtraWildcardInfo struct {
+	Prefix string   `json:"prefix"`
+	Deny   []string `json:"deny,omitempty"`
+}
+
+// buildExtraWildcardsResponse projects the rbac.Wildcards registry into the
+// status response shape (namespace name → prefix + deny list). Returns nil when
+// no wildcards are registered so the JSON omits the field.
+func buildExtraWildcardsResponse() map[string]ExtraWildcardInfo {
+	if len(rbac.Wildcards) == 0 {
+		return nil
+	}
+	out := make(map[string]ExtraWildcardInfo, len(rbac.Wildcards))
+	for _, w := range rbac.Wildcards {
+		out[w.Namespace] = ExtraWildcardInfo{
+			Prefix: w.Prefix,
+			Deny:   w.Deny,
+		}
+	}
+	return out
 }
 
 // ProxyStatus represents the proxy status
@@ -1176,6 +1213,7 @@ func (s *Server) getStatus(c *gin.Context) {
 		},
 		Methods: MethodsStatus{
 			ExtraNamespaces: rbac.ExtraNamespaces,
+			ExtraWildcards:  buildExtraWildcardsResponse(),
 		},
 	}
 

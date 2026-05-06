@@ -184,7 +184,13 @@ export const rbacApi = {
         proxy: { status: string; port: string };
         node: { status: string; url: string; latency_ms: number; error?: string };
         security: { travel_rule_enabled: boolean };
-        methods: { extra_namespaces?: Record<string, string[]> };
+        methods: {
+          extra_namespaces?: Record<string, string[]>;
+          // Namespaces opted into prefix-wildcard mode. The frontend renders a
+          // single "Allow all <prefix>* methods" toggle per entry; the deny list
+          // is shown read-only.
+          extra_wildcards?: Record<string, { prefix: string; deny?: string[] }>;
+        };
       }>('/status'),
   },
 

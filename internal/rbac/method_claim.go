@@ -1,6 +1,9 @@
 package rbac
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // ReadMethods classifies read-only RPC methods.
 // These methods only read blockchain state and don't modify it.
@@ -158,23 +161,45 @@ func GetAllDeployMethods() []string {
 	return methods
 }
 
-// ExtraMethods holds operator-configured chain-specific methods (e.g. linea_*).
-// Populated at startup via RegisterExtraNamespaces.
+// ExtraMethods holds operator-configured explicit chain-specific methods (e.g. linea_*).
+// Populated at startup via RegisterExtraNamespaces from the explicit list only —
+// wildcard-matched methods are open-ended and not enumerated here.
 var ExtraMethods = map[string]bool{}
 
-// ExtraNamespaces holds the structured namespace→method names mapping from config.
-// Used by the status API to expose available methods to the frontend.
+// ExtraNamespaces holds the structured namespace→explicit method names mapping
+// from config. Used by the status API to expose available methods to the frontend.
 var ExtraNamespaces map[string][]string
 
 // MethodAliases maps chain-specific methods to their standard equivalents
 // for access control purposes (e.g. "linea_estimateGas" → "eth_estimateGas").
 // Methods with aliases inherit the same contract access checks, storage slot
 // tiering, deployment detection, and function selector extraction as their target.
+//
+// Wildcard-matched methods do NOT populate this map — they pass through to the
+// upstream node without alias-based redaction (see WildcardNamespace).
 var MethodAliases = map[string]string{}
 
-// RegisterExtraNamespaces registers operator-configured chain-specific methods
-// and their access control aliases. Called once at startup from server initialization.
-func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string) {
+// WildcardNamespace describes a chain namespace that opts into prefix-wildcard
+// passthrough. Methods that start with Prefix and don't match any Deny glob are
+// allowed to pass through to the upstream node verbatim — no contract access
+// check, no field-level redaction. Operators take responsibility for what may
+// appear under the prefix; safety floor is GlobalBlockedMethods + Deny.
+type WildcardNamespace struct {
+	Namespace string   // human-readable namespace name, e.g. "Linea"
+	Prefix    string   // method-name prefix, e.g. "linea_"
+	Deny      []string // glob patterns: "linea_sendTransaction", "linea_sign*"
+}
+
+// Wildcards lists all namespaces that have wildcard mode enabled. Populated at
+// startup via RegisterExtraNamespaces. Iteration order is deterministic for
+// reproducible audit logs.
+var Wildcards []*WildcardNamespace
+
+// RegisterExtraNamespaces registers operator-configured chain-specific methods,
+// their access control aliases, and any prefix-wildcard configurations. Called
+// once at startup from server initialization. The wildcards parameter may be
+// nil for v1 configs that don't use wildcard mode.
+func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string]string, wildcards []*WildcardNamespace) {
 	ExtraNamespaces = methodNames
 	for _, methods := range methodNames {
 		for _, m := range methods {
@@ -184,15 +209,67 @@ func RegisterExtraNamespaces(methodNames map[string][]string, aliases map[string
 	for method, alias := range aliases {
 		MethodAliases[method] = alias
 	}
+	Wildcards = wildcards
 }
 
 // ResolveMethodAlias returns the standard method name that a chain-specific method
-// should be treated as for access control. Returns the method itself if no alias exists.
+// should be treated as for access control. Returns the method itself if no alias
+// is registered (which is the case for wildcard-matched methods — they pass
+// through without alias inheritance).
 func ResolveMethodAlias(method string) string {
 	if alias, ok := MethodAliases[method]; ok {
 		return alias
 	}
 	return method
+}
+
+// MatchWildcard returns the WildcardNamespace that allows the given method,
+// or nil if no wildcard covers it (or a deny glob matches first). The check
+// is case-sensitive — method names are normalized upstream of this call.
+func MatchWildcard(method string) *WildcardNamespace {
+	for _, w := range Wildcards {
+		if !strings.HasPrefix(method, w.Prefix) {
+			continue
+		}
+		if matchAnyDenyGlob(method, w.Deny) {
+			// Deny wins even when prefix matches; do not fall through to
+			// other wildcards (they would only match if their prefix is a
+			// subset, which is operator misconfiguration).
+			return nil
+		}
+		return w
+	}
+	return nil
+}
+
+// matchAnyDenyGlob reports whether method matches any of the deny patterns.
+// Patterns support a single trailing '*' wildcard; otherwise exact match.
+func matchAnyDenyGlob(method string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.HasSuffix(p, "*") {
+			if strings.HasPrefix(method, strings.TrimSuffix(p, "*")) {
+				return true
+			}
+			continue
+		}
+		if method == p {
+			return true
+		}
+	}
+	return false
+}
+
+// HasWildcardForPrefix reports whether a wildcard namespace is registered with
+// exactly the given prefix. Used by GroupAccess.HasMethod to validate that a
+// "prefix*" glob entry in a group's allowed_methods binds to a real wildcard
+// (groups can't invent prefixes the operator hasn't enabled globally).
+func HasWildcardForPrefix(prefix string) bool {
+	for _, w := range Wildcards {
+		if w.Prefix == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 // AllAllowedMethods returns every RPC method that can legitimately appear in a

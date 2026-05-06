@@ -729,12 +729,15 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 		if cfg.Version != 1 {
 			t.Errorf("Version = %d, want 1", cfg.Version)
 		}
-		methods := cfg.Namespaces["Linea"]
+		methods := cfg.Namespaces["Linea"].Explicit
 		if len(methods) != 2 {
 			t.Fatalf("expected 2 methods, got %d", len(methods))
 		}
 		if methods[0].Method != "linea_estimateGas" || methods[0].Alias != "eth_estimateGas" {
 			t.Errorf("method[0] = %+v, want linea_estimateGas/eth_estimateGas", methods[0])
+		}
+		if cfg.Namespaces["Linea"].Wildcard != nil {
+			t.Errorf("expected nil wildcard for v1 array form, got %+v", cfg.Namespaces["Linea"].Wildcard)
 		}
 	})
 
@@ -789,6 +792,123 @@ func TestExtraRPCNamespaces_UnmarshalJSON(t *testing.T) {
 		}
 		if aliases["linea_getProof"] != "eth_getProof" {
 			t.Errorf("alias for linea_getProof = %q, want eth_getProof", aliases["linea_getProof"])
+		}
+	})
+
+	// ----- v2 schema -----
+
+	t.Run("v2 array form (no wildcard) parses identically to v1", func(t *testing.T) {
+		input := `{
+			"version": 2,
+			"namespaces": {
+				"Linea": [
+					{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
+				]
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Namespaces["Linea"].Wildcard != nil {
+			t.Errorf("expected nil wildcard for array-form namespace, got %+v", cfg.Namespaces["Linea"].Wildcard)
+		}
+		if got := len(cfg.Namespaces["Linea"].Explicit); got != 1 {
+			t.Errorf("expected 1 explicit method, got %d", got)
+		}
+	})
+
+	t.Run("v2 object form with explicit + wildcard", func(t *testing.T) {
+		input := `{
+			"version": 2,
+			"namespaces": {
+				"Linea": {
+					"explicit": [
+						{"method": "linea_estimateGas", "alias": "eth_estimateGas"}
+					],
+					"wildcard": {
+						"prefix": "linea_",
+						"deny": ["linea_sendTransaction", "linea_sign*"]
+					}
+				}
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		nc := cfg.Namespaces["Linea"]
+		if len(nc.Explicit) != 1 || nc.Explicit[0].Method != "linea_estimateGas" {
+			t.Errorf("explicit[0] = %+v, want linea_estimateGas", nc.Explicit)
+		}
+		if nc.Wildcard == nil {
+			t.Fatal("expected non-nil wildcard")
+		}
+		if nc.Wildcard.Prefix != "linea_" {
+			t.Errorf("wildcard prefix = %q, want linea_", nc.Wildcard.Prefix)
+		}
+		if len(nc.Wildcard.Deny) != 2 {
+			t.Errorf("wildcard deny count = %d, want 2", len(nc.Wildcard.Deny))
+		}
+		// Aliases() still only enumerates explicit methods.
+		if cfg.Aliases()["linea_estimateGas"] != "eth_estimateGas" {
+			t.Error("explicit alias missing from Aliases() result")
+		}
+		// Wildcards() returns the wildcard config keyed by namespace.
+		ws := cfg.Wildcards()
+		if ws["Linea"] == nil || ws["Linea"].Prefix != "linea_" {
+			t.Errorf("Wildcards() = %+v, want Linea→linea_", ws)
+		}
+	})
+
+	t.Run("v2 wildcard-only namespace (empty explicit) is valid", func(t *testing.T) {
+		input := `{
+			"version": 2,
+			"namespaces": {
+				"Trace": {
+					"explicit": [],
+					"wildcard": {"prefix": "trace_"}
+				}
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		if err := cfg.UnmarshalJSON([]byte(input)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		nc := cfg.Namespaces["Trace"]
+		if len(nc.Explicit) != 0 {
+			t.Errorf("expected empty explicit, got %d entries", len(nc.Explicit))
+		}
+		if nc.Wildcard == nil || nc.Wildcard.Prefix != "trace_" {
+			t.Errorf("wildcard not parsed: %+v", nc.Wildcard)
+		}
+	})
+
+	t.Run("v2 missing prefix on wildcard fails", func(t *testing.T) {
+		input := `{
+			"version": 2,
+			"namespaces": {
+				"Linea": {"explicit": [], "wildcard": {"deny": ["foo"]}}
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "'prefix' is required") {
+			t.Fatalf("expected prefix-required error, got %v", err)
+		}
+	})
+
+	t.Run("v1 object form rejected (object requires v2)", func(t *testing.T) {
+		input := `{
+			"version": 1,
+			"namespaces": {
+				"Linea": {"explicit": [], "wildcard": {"prefix": "linea_"}}
+			}
+		}`
+		var cfg ExtraRPCNamespaces
+		err := cfg.UnmarshalJSON([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "requires version >= 2") {
+			t.Fatalf("expected version-mismatch error, got %v", err)
 		}
 	})
 }
