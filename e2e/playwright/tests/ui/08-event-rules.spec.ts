@@ -111,9 +111,11 @@ test.describe('Event rules — default state and mode switching', () => {
     }
   });
 
-  test('A1: grant form defaults to "All events visible"', async ({ page, request }) => {
+  test('A1: grant form defaults to "No events visible"', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-a1');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-a1', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-a1', { name: 'Group A1' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token A1',
@@ -128,9 +130,9 @@ test.describe('Event rules — default state and mode switching', () => {
 
     const grantDialog = await openGrantForm(page);
 
-    // "All events visible" radio should be checked by default
-    const allEventsRadio = grantDialog.locator('input[name="eventMode"][value="all"]');
-    await expect(allEventsRadio).toBeChecked();
+    // "No events visible" radio should be checked by default
+    const noneEventsRadio = grantDialog.locator('input[name="eventMode"][value="none"]');
+    await expect(noneEventsRadio).toBeChecked();
 
     // The event picker should NOT be visible in "all" mode
     await expect(grantDialog.getByText('Visible events:')).not.toBeVisible();
@@ -139,7 +141,9 @@ test.describe('Event rules — default state and mode switching', () => {
 
   test('A2: switching to "Specific events only" shows event picker', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-a2');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-a2', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-a2', { name: 'Group A2' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token A2',
@@ -170,7 +174,9 @@ test.describe('Event rules — default state and mode switching', () => {
 
   test('A3: switching back to "All events visible" hides event picker', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-a3');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-a3', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-a3', { name: 'Group A3' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token A3',
@@ -219,7 +225,9 @@ test.describe('Event rules — selecting events and constraints', () => {
 
   test('B1: selecting events from the picker adds them to the visible list', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-b1');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-b1', currentDid);
     await fixture.createGroup(org.id, 'grp-b1', { name: 'Group B1' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token B1',
@@ -245,7 +253,7 @@ test.describe('Event rules — selecting events and constraints', () => {
     await expect(grantDialog.getByText('Visible events:')).toBeVisible();
     // The selected event should show in a pill/card containing the event name
     const visibleSection = grantDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' });
-    await expect(visibleSection.getByText('Transfer')).toBeVisible();
+    await expect(visibleSection.getByText('Transfer', { exact: true }).first()).toBeVisible();
 
     // The Transfer button in the picker should now be disabled (already selected)
     const transferPickerBtn = grantDialog.locator('button').filter({ hasText: 'Transfer' }).last();
@@ -254,7 +262,9 @@ test.describe('Event rules — selecting events and constraints', () => {
 
   test('B2: removing a selected event re-enables it in the picker', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-b2');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-b2', currentDid);
     await fixture.createGroup(org.id, 'grp-b2', { name: 'Group B2' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token B2',
@@ -278,7 +288,7 @@ test.describe('Event rules — selecting events and constraints', () => {
     await expect(grantDialog.getByText('Visible events:')).toBeVisible();
 
     // Remove Transfer by clicking the X button on the selected event pill
-    const selectedEvent = grantDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' });
+    const selectedEvent = grantDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' }).first();
     await selectedEvent.locator('button').click();
 
     // "Visible events:" header should disappear (no events selected)
@@ -287,7 +297,9 @@ test.describe('Event rules — selecting events and constraints', () => {
 
   test('B3: address param constraint checkbox appears for events with address inputs', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-b3');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-b3', currentDid);
     await fixture.createGroup(org.id, 'grp-b3', { name: 'Group B3' });
     await fixture.createContractWithABI(org.id, {
       name: 'Token B3',
@@ -307,22 +319,29 @@ test.describe('Event rules — selecting events and constraints', () => {
     await expect(grantDialog.getByText('Contract events (2):')).toBeVisible({ timeout: 5000 });
     await grantDialog.getByRole('button', { name: /Transfer/ }).click();
 
-    // Transfer has address params (from, to) — should show "must be caller's own address" checkboxes
-    const selectedEvent = grantDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' });
-    await expect(selectedEvent.getByText(/must be caller.*address/i)).toBeVisible();
+    // Transfer has address params (from, to, value) — each renders as a constraint
+    // row with the param name and a <select> offering "Caller's address (self)".
+    const selectedEvent = grantDialog.locator('.border.border-primary-50.bg-neutral-50').filter({ hasText: 'Transfer' }).first();
 
-    // Specifically, 'from' and 'to' params should be listed
-    await expect(selectedEvent.getByText('from')).toBeVisible();
-    await expect(selectedEvent.getByText('to')).toBeVisible();
+    // Param name codes should be visible
+    await expect(selectedEvent.locator('code', { hasText: /^from$/ })).toBeVisible();
+    await expect(selectedEvent.locator('code', { hasText: /^to$/ })).toBeVisible();
+
+    // The address-typed constraint <select>s expose the "self" option
+    const selects = selectedEvent.locator('select');
+    await expect(selects.first()).toBeVisible();
+    await expect(selectedEvent.getByRole('option', { name: /Caller's address \(self\)/ }).first()).toBeAttached();
   });
 
   test('B4: checking a param constraint checkbox adds a param_rule', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-b4');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-b4', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-b4', { name: 'Group B4' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token B4',
@@ -346,14 +365,22 @@ test.describe('Event rules — selecting events and constraints', () => {
     await expect(grantDialog.getByText('Contract events (2):')).toBeVisible({ timeout: 5000 });
     await grantDialog.getByRole('button', { name: /Transfer/ }).click();
 
-    // Check the 'from' param constraint
-    const selectedEvent = grantDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' });
-    const fromCheckbox = selectedEvent.locator('label').filter({ hasText: 'from' }).locator('input[type="checkbox"]');
-    await fromCheckbox.check();
-    await expect(fromCheckbox).toBeChecked();
+    // The param-constraint UI is a <select> per address-typed param. The
+    // backend's GET events endpoint returns default_param_rules that pin both
+    // `from` (index 0) and `to` (index 1) to 'self', and the form auto-populates
+    // those defaults on event-add. Confirm the from select reflects 'self', then
+    // explicitly drop 'to' to 'any' so the saved rule only constrains 'from'.
+    const selectedEvent = grantDialog.locator('.border.border-primary-50.bg-neutral-50').filter({ hasText: 'Transfer' }).first();
+    const paramSelects = selectedEvent.locator('select');
+    const fromSelect = paramSelects.nth(0); // ABI index 0 (from)
+    const toSelect = paramSelects.nth(1);   // ABI index 1 (to)
+    await expect(fromSelect).toHaveValue('self');
+    await expect(toSelect).toHaveValue('self');
+    await toSelect.selectOption('any');
+    await expect(toSelect).toHaveValue('any');
 
-    // The param rule badge should appear
-    await expect(selectedEvent.getByText('param[0]=self')).toBeVisible();
+    // The 'from=self' rule chip should remain visible
+    await expect(selectedEvent.getByText('from=self')).toBeVisible();
 
     // Save the grant
     await grantDialog.getByRole('button', { name: /add group access/i }).click();
@@ -361,7 +388,8 @@ test.describe('Event rules — selecting events and constraints', () => {
     // Dialog should close
     await expect(grantDialog).not.toBeVisible({ timeout: 10000 });
 
-    // Verify via API that the grant has the event rule with param constraint
+    // Verify via API that the grant has the event rule with exactly one
+    // param_rule (the 'from'='self' constraint we kept).
     const grants = await fixture.rbac.listContractGrants(org.id, address);
     const savedGrant = grants.find(g => g.group_id === group.id);
     expect(savedGrant).toBeTruthy();
@@ -393,11 +421,13 @@ test.describe('Event rules — save and display', () => {
 
   test('C1: save grant with specific events, verify display as pills', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-c1');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-c1', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-c1', { name: 'Group C1' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token C1',
@@ -441,11 +471,13 @@ test.describe('Event rules — save and display', () => {
 
   test('C2: grant with "All events" shows "All events visible" in display', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-c2');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-c2', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-c2', { name: 'Group C2' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token C2',
@@ -462,32 +494,36 @@ test.describe('Event rules — save and display', () => {
     const grantDialog = await openGrantForm(page);
 
     // Select group
-    await grantDialog.locator('select').selectOption(group.id);
+    await grantDialog.locator('select').first().selectOption(group.id);
 
-    // Leave event mode as "All events visible" (the default)
-    // Save
+    // Explicitly choose "All events visible" — the form default is now "No events visible"
+    // (since RD-875 wildcard-event_rules support: undefined => 'none').
+    await grantDialog.locator('input[name="eventMode"][value="all"]').click();
+
     await grantDialog.getByRole('button', { name: /add group access/i }).click();
     await expect(grantDialog).not.toBeVisible({ timeout: 10000 });
 
     // Should show "All events visible" in the grant card
     const permDialog = page.locator(selectors.common.dialog);
     await expect(permDialog).toBeVisible();
-    await expect(permDialog.getByText('All events visible')).toBeVisible();
+    await expect(permDialog.getByText('All events visible').first()).toBeVisible();
 
-    // Verify via API: event_rules should be null
+    // Verify via API: event_rules should be the wildcard '*' string (RD-875)
     const grants = await fixture.rbac.listContractGrants(org.id, address);
     const savedGrant = grants.find(g => g.group_id === group.id);
     expect(savedGrant).toBeTruthy();
-    expect(savedGrant!.event_rules).toBeNull();
+    expect(savedGrant!.event_rules).toBe('*');
   });
 
   test('C3: validation error when specific mode selected but no events added', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-c3');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-c3', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-c3', { name: 'Group C3' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     await fixture.createContractWithABI(org.id, {
       name: 'Token C3',
@@ -509,10 +545,11 @@ test.describe('Event rules — save and display', () => {
     await grantDialog.getByText('Specific events only').click();
 
     // Try to save
-    await grantDialog.getByRole('button', { name: /add group access/i }).click();
+    // Submit button should be disabled natively
+    await expect(grantDialog.getByRole('button', { name: /add group access/i })).toBeDisabled();
 
     // Should show validation error
-    await expect(grantDialog.getByText(/please add at least one event/i)).toBeVisible({ timeout: 5000 });
+    await expect(grantDialog.getByText(/select at least one event/i)).toBeVisible({ timeout: 5000 });
 
     // Dialog should still be open
     await expect(grantDialog).toBeVisible();
@@ -538,11 +575,13 @@ test.describe('Event rules — editing existing grants', () => {
 
   test('D1: edit form pre-populates existing event rules', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-d1');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-d1', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-d1', { name: 'Group D1' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token D1',
@@ -580,16 +619,18 @@ test.describe('Event rules — editing existing grants', () => {
     // Transfer should appear in the "Visible events:" section
     await expect(editDialog.getByText('Visible events:')).toBeVisible();
     const visibleSection = editDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' });
-    await expect(visibleSection.getByText('Transfer')).toBeVisible();
+    await expect(visibleSection.getByText('Transfer', { exact: true }).first()).toBeVisible();
   });
 
   test('D2: edit grant to add more events', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-d2');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-d2', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-d2', { name: 'Group D2' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token D2',
@@ -625,8 +666,8 @@ test.describe('Event rules — editing existing grants', () => {
 
     // Both should now be in the visible list
     const visibleSection = editDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' });
-    await expect(visibleSection.getByText('Transfer')).toBeVisible();
-    await expect(visibleSection.getByText('Approval')).toBeVisible();
+    await expect(visibleSection.getByText('Transfer', { exact: true }).first()).toBeVisible();
+    await expect(visibleSection.getByText('Approval', { exact: true }).first()).toBeVisible();
 
     // Save
     await editDialog.getByRole('button', { name: /save changes/i }).click();
@@ -644,11 +685,13 @@ test.describe('Event rules — editing existing grants', () => {
 
   test('D3: edit grant to switch from specific events back to all events', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-d3');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-d3', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-d3', { name: 'Group D3' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token D3',
@@ -691,16 +734,16 @@ test.describe('Event rules — editing existing grants', () => {
     await editDialog.getByRole('button', { name: /save changes/i }).click();
     await expect(editDialog).not.toBeVisible({ timeout: 10000 });
 
-    // Verify via API: event_rules should be null (all events)
+    // Verify via API: event_rules should be the wildcard '*' (RD-875 — was null pre-wildcard)
     const grants = await fixture.rbac.listContractGrants(org.id, address);
     const savedGrant = grants.find(g => g.group_id === group.id);
     expect(savedGrant).toBeTruthy();
-    expect(savedGrant!.event_rules).toBeNull();
+    expect(savedGrant!.event_rules).toBe('*');
 
     // Verify in the UI: permissions dialog should show "All events visible"
     const permDialog = page.locator(selectors.common.dialog);
     await expect(permDialog).toBeVisible();
-    await expect(permDialog.getByText('All events visible')).toBeVisible();
+    await expect(permDialog.getByText('All events visible').first()).toBeVisible();
   });
 });
 
@@ -723,7 +766,9 @@ test.describe('Event rules — contract without ABI', () => {
 
   test('E1: no ABI shows warning when switching to specific events', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-e1');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-e1', currentDid);
     await fixture.createGroup(org.id, 'grp-e1', { name: 'Group E1' });
     // Create contract WITHOUT ABI
     await fixture.createContract(org.id, { name: 'No ABI Contract' });
@@ -763,11 +808,13 @@ test.describe('Event rules — persistence and validation', () => {
 
   test('P13: save rules, navigate away, return — rules still displayed', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-p13');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-p13', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-p13', { name: 'Group P13' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token P13',
@@ -835,11 +882,13 @@ test.describe('Event rules — persistence and validation', () => {
 
   test('P14: enter invalid topic0 manually — validation error', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-p14');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-p14', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-p14', { name: 'Group P14' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token P14',
@@ -848,12 +897,14 @@ test.describe('Event rules — persistence and validation', () => {
     const address = contract.address || contract.contract_address || '';
 
     // Try creating a grant with invalid topic0 directly via API — should fail
+    const adminUrl = process.env.ADMIN_URL || process.env.PROXY_URL || 'http://localhost:8080';
+    const adminToken = process.env.ADMIN_API_TOKEN || 'e2e-test-admin-token';
     const response = await request.post(
-      `http://localhost:8080/api/v1/admin/orgs/${org.id}/contracts/${address}/grants`,
+      `${adminUrl}/api/v1/admin/orgs/${org.id}/contracts/${address}/grants`,
       {
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Token': 'test-admin-token',
+          'X-Admin-Token': adminToken,
         },
         data: {
           group_id: group.id,
@@ -873,11 +924,13 @@ test.describe('Event rules — persistence and validation', () => {
 
   test('P16: delete 1 of 2 rules, save — only 1 remains', async ({ page, request }) => {
     fixture = new RBACTestFixture(request);
-    const org = await fixture.createOrg('ev-p16');
+    const currentDid = `did:privado:test_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    await mockLoginViaAPI(page, currentDid);
+    const org = await fixture.createOrgWithAdmin('ev-p16', currentDid);
     const group = await fixture.createGroup(org.id, 'grp-p16', { name: 'Group P16' });
     await fixture.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['*'],
-      claims: ['read'],
+      claims: ['deploy'],
     });
     const contract = await fixture.createContractWithABI(org.id, {
       name: 'Token P16',
@@ -912,17 +965,19 @@ test.describe('Event rules — persistence and validation', () => {
 
     // Both Transfer and Approval should appear in the "Visible events:" section
     const visibleSection = editDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' });
-    await expect(visibleSection.getByText('Transfer')).toBeVisible();
-    await expect(visibleSection.getByText('Approval')).toBeVisible();
+    await expect(visibleSection.getByText('Transfer', { exact: true }).first()).toBeVisible();
+    await expect(visibleSection.getByText('Approval', { exact: true }).first()).toBeVisible();
 
-    // Remove Transfer by clicking the X button on its pill
-    const transferPill = editDialog.locator('.border.border-primary-50').filter({ hasText: 'Transfer' });
-    await transferPill.locator('button').click();
+    // Remove Transfer by clicking the X button on its pill. The outer event
+    // pill is uniquely classed `.bg-neutral-50` — the inner event chip span
+    // shares `.border.border-primary-50` so we must qualify by bg.
+    const transferPill = editDialog.locator('.border.border-primary-50.bg-neutral-50').filter({ hasText: 'Transfer' }).first();
+    await transferPill.getByRole('button').first().click();
 
     // Only Approval should remain
-    await expect(visibleSection.getByText('Approval')).toBeVisible();
+    await expect(visibleSection.getByText('Approval', { exact: true }).first()).toBeVisible();
     // Transfer should no longer be in the visible section as a pill
-    const remainingPills = editDialog.locator('.border.border-primary-50');
+    const remainingPills = editDialog.locator('.space-y-3').filter({ hasText: 'Visible events:' }).locator('.border.border-primary-50.bg-neutral-50');
     // There should be exactly 1 pill remaining (Approval)
     await expect(remainingPills).toHaveCount(1);
 

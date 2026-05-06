@@ -346,7 +346,7 @@ func TestEscalation_JWTAdminCannotCreateOrgAdminGroup(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can create org admin groups")
+	assert.Contains(t, w.Body.String(), "only super admin can create org admin or readonly admin groups")
 }
 
 func TestEscalation_JWTAdminCanCreateNonAdminGroup(t *testing.T) {
@@ -430,7 +430,7 @@ func TestEscalation_JWTAdminCannotUpdateGroupToOrgAdmin(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can set org admin status")
+	assert.Contains(t, w.Body.String(), "only super admin can set org admin or readonly admin status")
 }
 
 func TestEscalation_JWTAdminCanUpdateGroupName(t *testing.T) {

@@ -20,6 +20,7 @@ import { Loader2, Plus, AlertCircle, Pencil, Trash2, Coins, AlertTriangle, Refre
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import type { TokenPrice, UpsertTokenPriceInput, SystemTokenPrice } from '@/types/compliance';
 
 // CoinGecko source options
@@ -41,6 +42,7 @@ function timeAgo(dateStr: string): string {
 
 export default function TokenPriceList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const { formatAmount, currencyLabel, coingeckoEnabled, currency } = useCurrency();
   const orgId = selectedOrg?.id;
 
@@ -324,7 +326,7 @@ export default function TokenPriceList() {
 
         <div className="flex items-center justify-between">
           <h3 className="text-base font-medium text-neutral-700">Per-Organization Token Prices</h3>
-          {orgId && (
+          {!isReadonlyAdmin && orgId && (
             <Button size="sm" onClick={openCreateForm}>
               <Plus className="w-4 h-4 mr-1" />
               Add Token
@@ -366,7 +368,7 @@ export default function TokenPriceList() {
                 <TableHead>Source</TableHead>
                 <TableHead>Price ({currencyLabel})</TableHead>
                 <TableHead>Updated</TableHead>
-                <TableHead className="w-[80px]"></TableHead>
+                {!isReadonlyAdmin && <TableHead className="w-[80px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -415,16 +417,18 @@ export default function TokenPriceList() {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => openEditForm(token)}>
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(token)}>
-                          <Trash2 className="w-4 h-4 text-error-dark" />
-                        </Button>
-                      </div>
-                    </TableCell>
+                    {!isReadonlyAdmin && (
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" onClick={() => openEditForm(token)}>
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(token)}>
+                            <Trash2 className="w-4 h-4 text-error-dark" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

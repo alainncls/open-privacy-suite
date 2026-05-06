@@ -30,11 +30,13 @@ import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { Input } from '@/components/ui/input';
 import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search } from 'lucide-react';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 
 const PAGE_SIZE = 25;
 
 export default function ContractList() {
   const { selectedOrg } = useOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id || '';
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,20 +233,24 @@ export default function ContractList() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={handleSyncCheck}
-            size="sm"
-            variant="outline"
-            className="gap-2"
-            disabled={syncing || contracts.length === 0}
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Checking...' : 'Sync with Chain'}
-          </Button>
-          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Contract
-          </Button>
+          {!isReadonlyAdmin && (
+            <>
+              <Button
+                onClick={handleSyncCheck}
+                size="sm"
+                variant="outline"
+                className="gap-2"
+                disabled={syncing || contracts.length === 0}
+              >
+                <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Checking...' : 'Sync with Chain'}
+              </Button>
+              <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
+                <Plus className="w-4 h-4" />
+                Add Contract
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -294,16 +300,18 @@ export default function ContractList() {
           <span className="text-sm font-medium text-primary">
             {selectedIds.size} selected
           </span>
-          <Button
-            data-testid="move-to-group-btn"
-            size="sm"
-            variant="outline"
-            className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
-            onClick={() => setShowMoveDialog(true)}
-          >
-            <ArrowRight className="w-3.5 h-3.5" />
-            Move to Group
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              data-testid="move-to-group-btn"
+              size="sm"
+              variant="outline"
+              className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+              onClick={() => setShowMoveDialog(true)}
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+              Move to Group
+            </Button>
+          )}
           <Button
             data-testid="clear-selection-btn"
             size="sm"
@@ -327,14 +335,16 @@ export default function ContractList() {
             <FileCode2 className="w-8 h-8 text-neutral-400" />
           </div>
           <p className="text-neutral-500 mb-4">No contracts registered</p>
-          <Button
-            variant="outline"
-            onClick={() => setShowForm(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Register your first contract
-          </Button>
+          {!isReadonlyAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => setShowForm(true)}
+              className="gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Register your first contract
+            </Button>
+          )}
         </div>
       ) : (
         <Table>
@@ -444,28 +454,32 @@ export default function ContractList() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setManagingGrants(contract)}
-                      title="Manage permissions"
+                      title={isReadonlyAdmin ? "View permissions" : "Manage permissions"}
                       className="text-primary hover:text-primary-600 hover:bg-primary-50"
                     >
                       <Shield className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditing(contract)}
-                      title="Edit contract"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(contract)}
-                      className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                      title="Delete contract"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditing(contract)}
+                          title="Edit contract"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTarget(contract)}
+                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
+                          title="Delete contract"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

@@ -102,6 +102,33 @@ export class RBACTestFixture {
     return org;
   }
 
+  /**
+   * Create an organization and automatically assign the test user (by DID) as an org admin.
+   */
+  async createOrgWithAdmin(slugBase: string, userDid: string, name?: string): Promise<Organization> {
+    const org = await this.createOrg(slugBase, name);
+    
+    // Find user
+    const users = await this.rbac.listUsers(1000);
+    const user = users.find((u) => u.external_id === userDid);
+    if (!user) throw new Error(`User with DID ${userDid} not found`);
+
+    // Create admin group
+    const groupSlug = this.slug('admin');
+    const group = await this.rbac.createGroup(org.id, {
+      slug: groupSlug,
+      name: `E2E_HIDDEN_ADMIN`,
+      is_org_admin: true,
+    });
+    this.groups.push({ orgId: org.id, group });
+
+    // Create membership
+    const membership = await this.rbac.createMembership(user.id, { group_id: group.id });
+    this.memberships.push({ userId: user.id, membership });
+
+    return org;
+  }
+
   // === Group Methods ===
 
   /**

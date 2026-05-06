@@ -17,6 +17,7 @@ import { Loader2, Plus, AlertCircle, AlertTriangle, FileText, Copy, Check, Trash
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import { UserSearchInput } from './UserSearchInput';
 import type { TravelRuleRecord, TransferType, TokenPrice } from '@/types/compliance';
 
@@ -50,6 +51,7 @@ function humanToWei(amount: string, decimals: number): string {
 
 export default function TravelRuleRecordList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
@@ -229,10 +231,12 @@ export default function TravelRuleRecordList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-base font-medium text-neutral-700">Travel Rule Records</h3>
-        <Button size="sm" onClick={openCreateForm}>
-          <Plus className="w-4 h-4 mr-1" />
-          Create Record
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button size="sm" onClick={openCreateForm}>
+            <Plus className="w-4 h-4 mr-1" />
+            Create Record
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -273,7 +277,7 @@ export default function TravelRuleRecordList() {
                 <TableHead>Amount ({currencyLabel})</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="w-[50px]"></TableHead>
+                {!isReadonlyAdmin && <TableHead className="w-[50px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -325,17 +329,19 @@ export default function TravelRuleRecordList() {
                     <TableCell className="text-neutral-500 text-sm">
                       {new Date(record.created_at).toLocaleDateString()}
                     </TableCell>
-                    <TableCell>
-                      {status !== 'used' && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(record); }}
-                        >
-                          <Trash2 className="w-4 h-4 text-error-dark" />
-                        </Button>
-                      )}
-                    </TableCell>
+                    {!isReadonlyAdmin && (
+                      <TableCell>
+                        {status !== 'used' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(record); }}
+                          >
+                            <Trash2 className="w-4 h-4 text-error-dark" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

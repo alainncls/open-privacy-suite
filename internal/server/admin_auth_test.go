@@ -242,7 +242,7 @@ func TestAdminAuth_JWT_ContractAdminGets403(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "org admin required")
+	assert.Contains(t, w.Body.String(), "org admin or read-only admin required")
 }
 
 func TestAdminAuth_JWT_NoAdminClaimGets403(t *testing.T) {
@@ -258,7 +258,7 @@ func TestAdminAuth_JWT_NoAdminClaimGets403(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "org admin required")
+	assert.Contains(t, w.Body.String(), "org admin or read-only admin required")
 }
 
 func TestAdminAuth_NoAuthGets401(t *testing.T) {
@@ -480,7 +480,7 @@ func TestAdminAuth_JWT_ExpiredMembershipDenied(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "org admin required")
+	assert.Contains(t, w.Body.String(), "org admin or read-only admin required")
 }
 
 func TestAdminAuth_JWT_BannedUserDenied(t *testing.T) {

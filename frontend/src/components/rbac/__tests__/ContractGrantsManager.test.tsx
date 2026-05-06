@@ -101,7 +101,7 @@ function renderManager(contract: Contract = mockContract) {
 
 describe('ContractGrantsManager — event rules display', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('shows "No events visible" when grant has null event_rules', async () => {

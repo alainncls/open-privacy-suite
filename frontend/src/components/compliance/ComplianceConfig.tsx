@@ -6,11 +6,13 @@ import { Loader2, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import type { ComplianceConfig as ComplianceConfigType } from '@/types/compliance';
 
 export default function ComplianceConfig() {
   const { selectedOrg } = useComplianceOrgContext();
   const { currencyLabel } = useCurrency();
+  const { isReadonlyAdmin } = useAdmin();
   const orgId = selectedOrg?.id;
 
   const [config, setConfig] = useState<ComplianceConfigType | null>(null);
@@ -111,9 +113,10 @@ export default function ComplianceConfig() {
           <Button
             variant={enabled ? 'default' : 'outline'}
             size="sm"
+            disabled={isReadonlyAdmin}
             onClick={() => setEnabled(!enabled)}
           >
-            {enabled ? 'Enabled' : 'Disabled'} — Click to {enabled ? 'disable' : 'enable'}
+            {enabled ? 'Enabled' : 'Disabled'} {isReadonlyAdmin ? '' : `— Click to ${enabled ? 'disable' : 'enable'}`}
           </Button>
           <p className="text-xs text-neutral-400 mt-1">
             When enabled, transfers above the threshold require a travel rule record
@@ -128,6 +131,7 @@ export default function ComplianceConfig() {
             type="number"
             value={thresholdFiat}
             onChange={e => setThresholdFiat(e.target.value)}
+            disabled={isReadonlyAdmin}
             placeholder="1000"
             min="0"
             step="0.01"
@@ -137,10 +141,12 @@ export default function ComplianceConfig() {
           </p>
         </div>
 
-        <Button onClick={handleSave} disabled={saving}>
-          {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Save Configuration
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Save Configuration
+          </Button>
+        )}
       </div>
 
       {config && (

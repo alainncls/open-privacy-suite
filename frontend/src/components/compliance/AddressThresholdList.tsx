@@ -13,12 +13,14 @@ import { Loader2, Plus, AlertCircle, MapPin, Trash2, Pencil, Copy, Check } from 
 import { complianceApi } from '@/api/compliance';
 import { useComplianceOrgContext } from './ComplianceManager';
 import { useCurrency } from './CurrencyContext';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import type { AddressThresholdOverride } from '@/types/compliance';
 
 const PAGE_SIZE = 25;
 
 export default function AddressThresholdList() {
   const { selectedOrg } = useComplianceOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const { formatAmount, currencyLabel } = useCurrency();
   const orgId = selectedOrg?.id;
 
@@ -154,10 +156,12 @@ export default function AddressThresholdList() {
             over the org-level threshold. Use {formatAmount(0)} to require travel rule data for every transfer involving this address.
           </p>
         </div>
-        <Button onClick={openCreateForm} size="sm" className="gap-2 shrink-0">
-          <Plus className="w-4 h-4" />
-          Add Override
-        </Button>
+        {!isReadonlyAdmin && (
+          <Button onClick={openCreateForm} size="sm" className="gap-2 shrink-0">
+            <Plus className="w-4 h-4" />
+            Add Override
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -188,7 +192,7 @@ export default function AddressThresholdList() {
                 <TableHead>Threshold ({currencyLabel})</TableHead>
                 <TableHead>Note</TableHead>
                 <TableHead>Updated</TableHead>
-                <TableHead className="w-[80px]"></TableHead>
+                {!isReadonlyAdmin && <TableHead className="w-[80px]"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -223,26 +227,28 @@ export default function AddressThresholdList() {
                   <TableCell className="text-xs text-neutral-500">
                     {new Date(o.updated_at).toLocaleDateString()}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEditForm(o)}
-                        className="h-7 w-7 p-0"
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-neutral-500" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDeleteTarget(o)}
-                        className="h-7 w-7 p-0 text-red-600 hover:text-error-dark"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
+                  {!isReadonlyAdmin && (
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditForm(o)}
+                          className="h-7 w-7 p-0"
+                        >
+                          <Pencil className="w-3.5 h-3.5 text-neutral-500" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTarget(o)}
+                          className="h-7 w-7 p-0 text-red-600 hover:text-error-dark"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
