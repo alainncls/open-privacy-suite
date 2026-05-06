@@ -14,10 +14,11 @@ export interface AccessLog {
   created_at: string;
 }
 
-// Outcome buckets the dashboard maps to status_code on the wire.
-// "all" = no constraint; the others map 1:1 to a status_code value the
-// backend filters on. The mapping mirrors how the SIEM forwarder labels
-// each access event (success / denied / error).
+// Outcome buckets sent to the backend as the `outcome` query param. "all" =
+// no constraint; the others map server-side to the matching HTTP status range
+// (success → 2xx, denied → 4xx, error → 5xx) so RBAC denials at any 4xx code
+// (401 anonymous, 403 authenticated, 429 rate-limited, etc.) all show up
+// under "denied". Mirrors how the SIEM forwarder buckets each access event.
 export type AccessLogOutcome = 'all' | 'success' | 'denied' | 'error';
 
 export interface AccessLogFilters {
@@ -39,22 +40,19 @@ export interface AccessLogListResponse {
   offset: number;
 }
 
-const outcomeToStatus: Record<Exclude<AccessLogOutcome, 'all'>, number> = {
-  success: 200,
-  denied: 403,
-  error: 500,
-};
-
 export const logsApi = {
   list: (filters: AccessLogFilters = {}) => {
     const params: Record<string, string | number> = {};
     if (filters.externalId) params.external_id = filters.externalId;
     if (filters.method) params.method = filters.method;
     if (filters.correlationId) params.correlation_id = filters.correlationId;
+    // status_code (exact) and outcome (range bucket) are mutually exclusive on
+    // the wire — the backend rejects both. Prefer status_code when an explicit
+    // code is set; otherwise let the bucket flow through.
     if (typeof filters.statusCode === 'number' && filters.statusCode > 0) {
       params.status_code = filters.statusCode;
     } else if (filters.outcome && filters.outcome !== 'all') {
-      params.status_code = outcomeToStatus[filters.outcome];
+      params.outcome = filters.outcome;
     }
     if (filters.from) params.from = filters.from;
     if (filters.to) params.to = filters.to;

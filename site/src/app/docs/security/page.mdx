@@ -493,7 +493,7 @@ Every JSON-RPC call routed through the proxy is recorded in `access_logs`. Each 
 
 ### Filters and pagination
 
-The dashboard supports server-side filtering on `external_id`, RPC method, outcome (success / denied / error), correlation ID, and a date range. The same filters are exposed on `GET /api/v1/admin/logs` as query parameters (`external_id`, `method`, `status_code`, `correlation_id`, `from`, `to`, `limit`, `offset`). `limit` is clamped to a maximum of 1000 entries per request — pagination via `offset` is the supported way to walk longer result sets.
+The dashboard supports server-side filtering on `external_id`, RPC method, outcome (success / denied / error), correlation ID, and a date range. The same filters are exposed on `GET /api/v1/admin/logs` as query parameters (`external_id`, `method`, `outcome`, `status_code`, `correlation_id`, `from`, `to`, `limit`, `offset`). `outcome` accepts `success` (HTTP 2xx), `denied` (HTTP 4xx — covers 401/403/404/429/etc.), `error` (HTTP 5xx), or `all`; `status_code` is the exact-match alternative. The two are mutually exclusive — passing both returns 400. `limit` is clamped to a maximum of 1000 entries per request — pagination via `offset` is the supported way to walk longer result sets.
 
 ### Retention controls
 

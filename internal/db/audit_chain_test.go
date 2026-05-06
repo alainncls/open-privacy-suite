@@ -500,6 +500,94 @@ func TestGetAccessLogs_FiltersNarrowResults(t *testing.T) {
 		}
 	})
 
+	// RD-914 — StatusClass is a range filter (status_code BETWEEN N00 AND N99)
+	// that drives the admin UI's outcome dropdown. The bug it replaces was a
+	// hard-coded exact match on 403, which missed 401/404/etc.
+	t.Run("status_class 2xx covers all success rows", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusClass: "2xx", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		// Seed has six 200 rows.
+		if len(got) != 6 {
+			t.Fatalf("expected 6 rows for 2xx, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.StatusCode < 200 || r.StatusCode > 299 {
+				t.Fatalf("2xx range leak: got %d", r.StatusCode)
+			}
+		}
+	})
+
+	t.Run("status_class 4xx covers every 4xx code, not just one", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusClass: "4xx", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		// Seed has two 401 rows.
+		if len(got) != 2 {
+			t.Fatalf("expected 2 rows for 4xx, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.StatusCode < 400 || r.StatusCode > 499 {
+				t.Fatalf("4xx range leak: got %d", r.StatusCode)
+			}
+		}
+	})
+
+	t.Run("status_class 5xx covers every 5xx code", func(t *testing.T) {
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusClass: "5xx", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		// Seed has 500 + 503.
+		if len(got) != 2 {
+			t.Fatalf("expected 2 rows for 5xx, got %d", len(got))
+		}
+		seen := map[int]bool{}
+		for _, r := range got {
+			if r.StatusCode < 500 || r.StatusCode > 599 {
+				t.Fatalf("5xx range leak: got %d", r.StatusCode)
+			}
+			seen[r.StatusCode] = true
+		}
+		if !seen[500] || !seen[503] {
+			t.Fatalf("expected 500 and 503 both present, got %v", seen)
+		}
+	})
+
+	t.Run("status_class unknown value is ignored (no constraint)", func(t *testing.T) {
+		// An unknown class returns ok=false from statusClassRange, so
+		// buildAccessLogWhere applies no clause. Handler-level validation
+		// already rejects unknowns up front; this just guards the DB layer
+		// against silent data leaks if the handler grew a new bug.
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusClass: "garbage", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != len(rows) {
+			t.Fatalf("expected unknown class to be a no-op (returning all %d rows), got %d", len(rows), len(got))
+		}
+	})
+
+	t.Run("status_code wins when both StatusCode and StatusClass set", func(t *testing.T) {
+		// Belt-and-braces: handler enforces mutual exclusion, but if a
+		// caller bypasses the handler, the DB layer falls back to the
+		// exact match — never the union.
+		got, err := database.GetAccessLogs(ctx, AccessLogFilter{StatusCode: 401, StatusClass: "5xx", Limit: 100})
+		if err != nil {
+			t.Fatalf("GetAccessLogs: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected exact StatusCode=401 to win (2 rows), got %d", len(got))
+		}
+		for _, r := range got {
+			if r.StatusCode != 401 {
+				t.Fatalf("StatusCode precedence leak: got %d", r.StatusCode)
+			}
+		}
+	})
+
 	t.Run("correlation_id filter", func(t *testing.T) {
 		got, err := database.GetAccessLogs(ctx, AccessLogFilter{CorrelationID: "corr-A", Limit: 100})
 		if err != nil {

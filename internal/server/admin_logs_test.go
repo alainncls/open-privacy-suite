@@ -106,6 +106,11 @@ func TestGetLogsHandler(t *testing.T) {
 		{"did:test:bob", "eth_call", 401, "corr-A"},
 		{"did:test:bob", "eth_call", 200, "corr-C"},
 		{"did:test:carol", "eth_getLogs", 500, ""},
+		// dave covers extra 4xx codes that the outcome=denied filter must
+		// catch alongside the 401. Without these the seed would only have
+		// one 4xx row and the bug-fix coverage would be circumstantial.
+		{"did:test:dave", "eth_call", 403, ""},
+		{"did:test:dave", "eth_sendTransaction", 404, ""},
 	}
 	insertedIDs := make([]int64, 0, len(seed))
 	for _, r := range seed {
@@ -255,5 +260,92 @@ func TestGetLogsHandler(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		assert.Equal(t, int64(1), body.Total)
+	})
+
+	// RD-914 — outcome buckets translate to status_code ranges. The bug this
+	// guards against was the frontend mapping outcome=denied to a single 403
+	// exact match, which missed 401/403/404 mixed rows.
+	t.Run("outcome=denied returns every 4xx row regardless of code", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{"outcome": []string{"denied"}})
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body struct {
+			Data  []map[string]any `json:"data"`
+			Total int64            `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		// Seed has 401 (bob), 403 (dave), 404 (dave) — three 4xx rows total.
+		assert.Equal(t, int64(3), body.Total, "denied bucket must catch every 4xx, not only 403")
+		seenCodes := map[int]bool{}
+		for _, row := range body.Data {
+			code := int(row["status_code"].(float64))
+			seenCodes[code] = true
+			assert.GreaterOrEqual(t, code, 400, "denied bucket leaked sub-400 row")
+			assert.LessOrEqual(t, code, 499, "denied bucket leaked 5xx row")
+		}
+		assert.True(t, seenCodes[401] && seenCodes[403] && seenCodes[404], "expected 401, 403, 404 all present, got %v", seenCodes)
+	})
+
+	t.Run("outcome=success returns only 2xx rows", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{"outcome": []string{"success"}})
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body struct {
+			Data  []map[string]any `json:"data"`
+			Total int64            `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		// Seed has alice×2 + bob×1 = three 2xx rows.
+		assert.Equal(t, int64(3), body.Total)
+		for _, row := range body.Data {
+			code := int(row["status_code"].(float64))
+			assert.GreaterOrEqual(t, code, 200)
+			assert.LessOrEqual(t, code, 299)
+		}
+	})
+
+	t.Run("outcome=error returns only 5xx rows", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{"outcome": []string{"error"}})
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body struct {
+			Data  []map[string]any `json:"data"`
+			Total int64            `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		// Seed has carol/500 — exactly one 5xx row.
+		assert.Equal(t, int64(1), body.Total)
+		require.Len(t, body.Data, 1)
+		assert.EqualValues(t, 500, body.Data[0]["status_code"])
+	})
+
+	t.Run("outcome=all behaves as no filter", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{"outcome": []string{"all"}})
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body struct {
+			Total int64 `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, int64(len(seed)), body.Total)
+	})
+
+	t.Run("outcome and status_code together rejected with 400", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{
+			"outcome":     []string{"denied"},
+			"status_code": []string{"401"},
+		})
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Contains(t, body["error"], "use status_code OR outcome")
+	})
+
+	t.Run("invalid outcome rejects with 400", func(t *testing.T) {
+		rec := doGetLogs(t, router, token, url.Values{"outcome": []string{"bogus"}})
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Contains(t, body["error"], "invalid outcome")
 	})
 }
