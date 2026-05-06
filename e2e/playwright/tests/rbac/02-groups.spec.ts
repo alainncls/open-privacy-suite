@@ -22,7 +22,7 @@ test.describe('RBAC Groups', () => {
     expect(group.id).toBeTruthy();
     expect(group.org_id).toBe(org.id);
     expect(group.parent_id).toBeFalsy(); // null or undefined
-    expect(group.slug).toContain('rootgroup_');
+    expect(group.slug).toContain('rootgroup-');
     expect(group.name).toBe('Root Group');
     expect(group.description).toBe('A root level group');
     expect(group.depth).toBe(0);

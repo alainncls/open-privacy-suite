@@ -11,6 +11,17 @@ import {
 } from './rbac-api.js';
 import { getJWTToken } from './auth.js';
 
+// Lazy lookup so API-only specs that don't go through ui/auth-helpers still
+// load this fixture cleanly. Returns null when no UI mock-login has run.
+async function tryGetMockAdminDID(): Promise<string | null> {
+  try {
+    const m = await import('./ui/auth-helpers.js');
+    return m.getCurrentMockAdminDID?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Hierarchy definition for creating nested group structures.
  */
@@ -62,9 +73,11 @@ export class RBACTestFixture {
 
   /**
    * Generate a unique slug for test isolation.
+   * Uses only lowercase + digits + hyphens so the slug also passes the
+   * frontend OrganizationForm pattern `^[a-z0-9]+(-[a-z0-9]+)*$`.
    */
   slug(base: string): string {
-    return `${base}_${this.testId}`;
+    return `${base}-${this.testId}`;
   }
 
   /**
@@ -99,6 +112,34 @@ export class RBACTestFixture {
       name: name ?? `Test Org ${orgSlug}`,
     });
     this.orgs.push(org);
+
+    // If a UI test has logged in via mockLoginViaAPI, auto-grant that user
+    // tier-2 admin in this newly-created org. The admin-auth middleware in
+    // server.go gates /api/v1/admin/orgs/:org_id/* on the JWT user being
+    // is_org_admin in the requested org — a JWT admin from another org
+    // gets a 403 otherwise. This keeps the API-only tests (which use
+    // X-Admin-Token and bypass JWT scoping) untouched.
+    try {
+      const adminDid = await tryGetMockAdminDID();
+      if (adminDid) {
+        const users = await this.rbac.listUsers(1000);
+        const u = users.find((x) => x.external_id === adminDid);
+        if (u) {
+          const adminGroup = await this.rbac.createGroup(org.id, {
+            slug: this.slug('mock-admin'),
+            name: 'E2E_HIDDEN_MOCK_ADMIN',
+            is_org_admin: true,
+          });
+          this.groups.push({ orgId: org.id, group: adminGroup });
+          const m = await this.rbac.createMembership(u.id, { group_id: adminGroup.id });
+          this.memberships.push({ userId: u.id, membership: m });
+        }
+      }
+    } catch {
+      // Best-effort: API-only tests don't import the UI helpers and should
+      // continue to work. Failures here are non-fatal.
+    }
+
     return org;
   }
 

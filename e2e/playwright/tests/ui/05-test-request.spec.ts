@@ -145,7 +145,9 @@ test.describe('Test Request Panel', () => {
       await expect(page.locator('pre')).toBeVisible();
       await expect(page.locator('pre')).toContainText('0x');
     } else {
-      await expect(page.getByText(/No JWT token provided|access denied|KYC/i)).toBeVisible();
+      // Multiple elements may carry the denial message (header span + body
+      // paragraph); .first() avoids strict-mode failures.
+      await expect(page.getByText(/No JWT token provided|access denied|KYC/i).first()).toBeVisible();
     }
 
     // Should show latency

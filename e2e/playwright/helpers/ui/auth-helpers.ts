@@ -48,11 +48,22 @@ export async function mockLoginViaUI(page: Page): Promise<void> {
  * @param userDID - Optional DID for the mock user (defaults to a generated DID)
  * @param options - Options for login behavior
  */
+// Tracks the DID set up by the most recent mockLoginViaAPI call. Used by
+// RBACTestFixture.createOrg so newly-created orgs automatically include the
+// test user as a tier-2 admin (is_org_admin = true). Without this, JWT
+// admins are scoped to their original `e2e-admin-org` only and the
+// admin-org middleware rejects calls to /api/v1/admin/orgs/<new-org>/...
+let _currentMockAdminDID: string | null = null;
+
+export function getCurrentMockAdminDID(): string | null {
+  return _currentMockAdminDID;
+}
+
 export async function mockLoginViaAPI(
   page: Page,
   userDID?: string,
   options: { admin?: boolean } = {},
-): Promise<void> {
+): Promise<string> {
   const { admin = true } = options;
   const did = userDID || `did:privado:dev_${Date.now()}`;
 
@@ -62,11 +73,24 @@ export async function mockLoginViaAPI(
   // Grant admin claim if needed
   if (admin) {
     await ensureAdminClaim(did);
+    _currentMockAdminDID = did;
+  } else {
+    _currentMockAdminDID = null;
   }
 
-  // Set up localStorage with auth tokens before navigating.
-  // The init script checks for a "cleared" flag so that clearAuth() can
-  // prevent re-injection on subsequent page loads/reloads.
+  // Synchronously clear any "auth_cleared" sentinel left by a beforeEach
+  // that invoked clearAuth(). This is best-effort and is allowed to fail
+  // when no document is loaded yet — the init script below will handle
+  // those cases on the next navigation.
+  try {
+    await page.evaluate(() => sessionStorage.removeItem('privacy_proxy_auth_cleared'));
+  } catch {
+    /* no document context yet, init script will pick it up */
+  }
+
+  // Set up sessionStorage with auth tokens before navigating. The init
+  // script honors the "cleared" flag so that a later clearAuth() prevents
+  // re-injection on subsequent page loads/reloads.
   await page.addInitScript((authData) => {
     if (sessionStorage.getItem('privacy_proxy_auth_cleared')) return;
     const storageKey = 'privacy_proxy_auth';
@@ -77,6 +101,8 @@ export async function mockLoginViaAPI(
     };
     sessionStorage.setItem(storageKey, JSON.stringify(auth));
   }, tokens);
+
+  return did;
 }
 
 /**
@@ -236,11 +262,12 @@ async function getOrCreateAdminGroup(): Promise<{ orgId: string; groupId: string
   const org = orgs2.find((o) => o.slug === 'e2e-admin-org');
   if (!org) throw new Error('Failed to find e2e-admin-org after creation');
 
-  // Create group
+  // Create group. is_org_admin=true matches the 3-tier admin model (RD-849):
+  // /api/v1/admin/* gates on is_org_admin, not on group_access claims alone.
   const groupRes = await fetch(`${ADMIN_URL}/api/v1/admin/orgs/${org.id}/groups`, {
     method: 'POST',
     headers: adminHeaders,
-    body: JSON.stringify({ slug: 'e2e-admin-group', name: 'E2E Admin Group' }),
+    body: JSON.stringify({ slug: 'e2e-admin-group', name: 'E2E Admin Group', is_org_admin: true }),
   });
   if (!groupRes.ok && groupRes.status !== 409) {
     throw new Error(`Failed to create admin group: ${groupRes.status} - ${await groupRes.text()}`);
