@@ -769,13 +769,37 @@ func (s *Server) getLogs(c *gin.Context) {
 		CorrelationID: strings.TrimSpace(c.Query("correlation_id")),
 	}
 
-	if statusStr := strings.TrimSpace(c.Query("status_code")); statusStr != "" {
+	statusStr := strings.TrimSpace(c.Query("status_code"))
+	outcomeStr := strings.TrimSpace(c.Query("outcome"))
+
+	// status_code (exact) and outcome (range) are mutually exclusive — operators
+	// pick one or the other to avoid contradictions like ?status_code=200&outcome=denied.
+	if statusStr != "" && outcomeStr != "" && outcomeStr != "all" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "use status_code OR outcome, not both"})
+		return
+	}
+
+	if statusStr != "" {
 		if n, err := strconv.Atoi(statusStr); err == nil && n > 0 {
 			filter.StatusCode = n
 		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status_code"})
 			return
 		}
+	}
+
+	switch outcomeStr {
+	case "", "all":
+		// no class filter
+	case "success":
+		filter.StatusClass = "2xx"
+	case "denied":
+		filter.StatusClass = "4xx"
+	case "error":
+		filter.StatusClass = "5xx"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid outcome; expected one of: success, denied, error, all"})
+		return
 	}
 
 	if fromStr := strings.TrimSpace(c.Query("from")); fromStr != "" {

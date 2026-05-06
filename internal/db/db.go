@@ -228,12 +228,28 @@ type AccessLog struct {
 type AccessLogFilter struct {
 	ExternalID    string
 	Method        string
-	StatusCode    int    // 0 = unset
+	StatusCode    int    // 0 = unset; exact match
+	StatusClass   string // "" = unset; "2xx" / "4xx" / "5xx" — range match (status_code BETWEEN N00 AND N99)
 	CorrelationID string
 	From          time.Time // zero = unset
 	To            time.Time // zero = unset
 	Limit         int       // <=0 = default 100; clamped to 1000
 	Offset        int
+}
+
+// statusClassRange returns the [low, high] inclusive bounds for a status class
+// string. Returns ok=false for unknown values; the caller should treat that as
+// "no class filter applied" (the handler validates and rejects unknowns up front).
+func statusClassRange(class string) (low, high int, ok bool) {
+	switch class {
+	case "2xx":
+		return 200, 299, true
+	case "4xx":
+		return 400, 499, true
+	case "5xx":
+		return 500, 599, true
+	}
+	return 0, 0, false
 }
 
 // MaxAccessLogQueryLimit is the server-side cap on `limit` for the access-log
@@ -262,6 +278,13 @@ func buildAccessLogWhere(f AccessLogFilter) (string, []any) {
 		clauses = append(clauses, fmt.Sprintf("status_code = $%d", idx))
 		args = append(args, f.StatusCode)
 		idx++
+	} else if low, high, ok := statusClassRange(f.StatusClass); ok {
+		// Range filter — drives the admin UI's outcome dropdown ("Denied (4xx)" etc.).
+		// Mutually exclusive with StatusCode (the handler enforces that); the
+		// "else if" here is a safety net so a misuse silently picks one branch.
+		clauses = append(clauses, fmt.Sprintf("status_code BETWEEN $%d AND $%d", idx, idx+1))
+		args = append(args, low, high)
+		idx += 2
 	}
 	if f.CorrelationID != "" {
 		clauses = append(clauses, fmt.Sprintf("correlation_id = $%d", idx))
