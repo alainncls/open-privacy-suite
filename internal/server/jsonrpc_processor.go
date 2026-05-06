@@ -622,6 +622,18 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	}
 }
 
+// viewerUUID extracts the internal user UUID from an AccessCheckResult,
+// returning "" if the result is nil. The empty string is the safe input
+// for viewerAdminContracts (which short-circuits to an empty admin map),
+// matching the visibleTo-only fallback path where the viewer has no
+// CheckAccess result but is still a legitimate visibleTo recipient.
+func viewerUUID(result *rbac.AccessCheckResult) string {
+	if result == nil {
+		return ""
+	}
+	return result.UserID
+}
+
 // applyResponseFilter applies response-level privacy filters based on the JSON-RPC method.
 // This prevents co-participants of the same contract from seeing each other's
 // transaction data, event logs, and receipts.
@@ -647,8 +659,17 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// admin claim in the tx's `to` contract's OWNING org specifically
 		// (not merged across all orgs the viewer belongs to). See
 		// viewerAdminContracts doc for why.
+		// IMPORTANT: viewerAdminContracts takes the internal user UUID
+		// (result.UserID), NOT the JWT DID — internally it queries
+		// user_memberships.user_id, which is the UUID FK. Passing the
+		// DID silently returns no matches and the bypass never fires.
+		// `result` may be nil on the visibleTo-only fallback path
+		// (the visibleTo recipient may not have a CheckAccess result);
+		// guard accordingly — empty userID makes viewerAdminContracts
+		// short-circuit to an empty map, the right answer when the
+		// viewer can't be admin-resolved.
 		contractAddrs := extractContractAddressesFromResponse(responseBody)
-		adminMap := p.viewerAdminContracts(ctx, req.UserID, contractAddrs)
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), contractAddrs)
 		isAdminOnTo := false
 		for addr := range adminMap {
 			if adminMap[addr] {
@@ -673,7 +694,9 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		// Org-scoped admin map covers both the receipt-envelope bypass
 		// (for receipt.to) and the per-log admin bypass (for each log's
 		// emitting contract). Filter handles the lookup.
-		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		// Pass the internal user UUID (result.UserID), not the JWT DID.
+		// viewerUUID() guards against nil result (visibleTo-only path).
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
 		return FilterReceiptLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetLogs):
@@ -688,8 +711,10 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		perms := p.resolvePermsForFilter(ctx, result)
 		visCtx := p.buildTxVisibilityContext(ctx, req.UserID, responseBody)
 		// Org-scoped admin-bypass map, indexed by each log's emitting
-		// contract.
-		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		// contract. Takes the internal user UUID (result.UserID), not
+		// the JWT DID — viewerAdminContracts queries user_memberships
+		// by UUID FK. viewerUUID() guards against nil result.
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
 		return FilterLogsWithEventRules(responseBody, addrs, perms, p.contractABIProvider(ctx), visCtx, adminMap)
 
 	case strings.EqualFold(m, rbac.MethodGetTransactionByBlockHashAndIndex),
@@ -698,7 +723,9 @@ func (p *JSONRPCProcessor) applyResponseFilter(ctx context.Context, req *Process
 		if err != nil {
 			addrs = nil // DB error — proceed with nil addrs; visibleTo + admin bypass still apply
 		}
-		adminMap := p.viewerAdminContracts(ctx, req.UserID, extractContractAddressesFromResponse(responseBody))
+		// Pass the internal user UUID (result.UserID), not the JWT DID.
+		// viewerUUID() guards against nil result.
+		adminMap := p.viewerAdminContracts(ctx, viewerUUID(result), extractContractAddressesFromResponse(responseBody))
 		isAdminOnTo := false
 		for _, v := range adminMap {
 			if v {

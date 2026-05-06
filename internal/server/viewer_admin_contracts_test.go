@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"privacy-proxy/internal/db"
@@ -177,6 +178,84 @@ func TestViewerAdminContracts(t *testing.T) {
 		got = proc.viewerAdminContracts(ctx, charlieUser.ID, []string{contractA1})
 		require.False(t, got[contractA1], "tier-3 per-contract admin must not bleed to other contracts")
 	})
+}
+
+// TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult is a
+// regression test for the UUID-vs-DID bug where applyResponseFilter's
+// callsites passed req.UserID (the JWT external DID) into
+// viewerAdminContracts, which expects the internal user UUID — making
+// the org-scoped admin bypass silently never fire for any logged-in
+// admin. The unit-level TestViewerAdminContracts above always passed
+// the right type (UUID), so the wiring bug slipped through. This test
+// drives the fix from the actual JSON-RPC entry point: it constructs a
+// ProcessRequest carrying the DID (matching production) and an
+// AccessCheckResult carrying the UUID (matching production), invokes
+// applyResponseFilter, and asserts the admin sees their org's logs.
+func TestApplyResponseFilter_AdminBypass_UsesUUIDFromAccessCheckResult(t *testing.T) {
+	ctx := context.Background()
+	ts := setupTestServerForRBAC(t)
+	proc := NewJSONRPCProcessor(
+		ts.rbacAccessCtrl,
+		&noopRateLimiter{},
+		nil,
+		ts.db,
+		NewCircuitBreaker(),
+		NewConcurrencyLimiter(50),
+		"",
+	)
+
+	// Org with a contract; Alice is org admin (is_org_admin=true).
+	orgID := uuid.New().String()
+	require.NoError(t, ts.db.CreateOrganization(ctx, &rbac.Organization{
+		ID: orgID, Slug: "rxf-" + orgID[:8], Name: "ResponseFilterFixture", Settings: map[string]any{},
+	}))
+	aliceUser := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:rxf-alice-" + uuid.New().String()[:8]}
+	require.NoError(t, ts.db.CreateUser(ctx, aliceUser))
+	adminGroup := mustCreateGroup(t, ts.db, orgID, "rxf-admins", nil, true)
+	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{
+		ID: uuid.New().String(), UserID: aliceUser.ID, GroupID: adminGroup,
+	}))
+	contractAddr := "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	require.NoError(t, ts.db.CreateContract(ctx, &rbac.Contract{
+		ID: uuid.New().String(), OrgID: orgID, Address: contractAddr, Name: "RxF",
+	}))
+
+	// One Transfer log emitted by the org's contract. Pre-fix, the
+	// filter would deny this because (a) admin bypass map is built
+	// from req.UserID (DID) → empty map, (b) the org-admin code path
+	// in computeOrgAdminPermissions sets ContractAccess[addr] but does
+	// NOT populate EventRules, so the allowlist branch denies. The
+	// only way an org admin sees logs is through the bypass map.
+	logEntry := []byte(`{` +
+		`"address":"` + contractAddr + `",` +
+		`"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],` +
+		`"data":"0x",` +
+		`"blockNumber":"0x1",` +
+		`"transactionHash":"0xabc"` +
+		`}`)
+	responseBody := []byte(`{"jsonrpc":"2.0","id":1,"result":[` + string(logEntry) + `]}`)
+
+	// Production wiring: req.UserID is the JWT external DID; the
+	// resolved AccessCheckResult.UserID is the internal UUID.
+	req := &ProcessRequest{
+		UserID: aliceUser.ExternalID, // DID — like production
+		Method: "eth_getLogs",
+		Params: []any{},
+	}
+	result := &rbac.AccessCheckResult{
+		Allowed: true,
+		UserID:  aliceUser.ID, // UUID — like production
+		OrgID:   orgID,
+	}
+
+	filtered := proc.applyResponseFilter(ctx, req, result, responseBody)
+
+	// Parse to count logs.
+	var resp struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(filtered, &resp))
+	require.Len(t, resp.Result, 1, "org admin must see logs from their org's contract via admin bypass; pre-fix this returned 0 because viewerAdminContracts was called with the DID")
 }
 
 // mustCreateGroup is a minimal group-creation helper for processor
