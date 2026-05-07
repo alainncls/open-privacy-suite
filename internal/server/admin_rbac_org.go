@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -95,7 +96,8 @@ func (s *Server) listOrganizations(c *gin.Context) {
 		orgs, total, err = s.db.ListOrganizationsPaginated(c.Request.Context(), limit, offset)
 	}
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("list organizations: db read failed", "err", err)
+		respondInternalError(c, "failed to list organizations")
 		return
 	}
 
@@ -134,7 +136,7 @@ func (s *Server) createOrganization(c *gin.Context) {
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -155,14 +157,20 @@ func (s *Server) createOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.CreateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
+		// Check for unique constraint violation (duplicate slug). Translating
+		// pq's error text to a 409 — not echoing the raw error to the client.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("create organization: db insert failed", "slug", input.Slug, "err", err)
+		respondInternalError(c, "failed to create organization")
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		nil,
+		map[string]any{"slug": org.Slug, "name": org.Name})
 
 	respondCreated(c, org)
 }
@@ -171,7 +179,8 @@ func (s *Server) getOrganization(c *gin.Context) {
 	orgID := c.Param("org_id")
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("get organization: db read failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to get organization")
 		return
 	}
 	if org == nil {
@@ -186,7 +195,8 @@ func (s *Server) updateOrganization(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("update organization: get failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to update organization")
 		return
 	}
 	if org == nil {
@@ -207,9 +217,11 @@ func (s *Server) updateOrganization(c *gin.Context) {
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
+
+	oldValue := map[string]any{"slug": org.Slug, "name": org.Name}
 
 	if input.Slug != nil {
 		// Validate slug format before update
@@ -227,14 +239,19 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
+		// Translate unique-constraint violations to 409 — see createOrganization.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("update organization: db update failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to update organization")
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		oldValue,
+		map[string]any{"slug": org.Slug, "name": org.Name})
 
 	respondOK(c, org)
 }
@@ -260,7 +277,8 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	// Check if organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("delete organization: get failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to delete organization")
 		return
 	}
 	if org == nil {
@@ -274,12 +292,17 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 
 	// Delete the organization (cascades to groups, contracts, etc. via DB constraints)
 	if err := s.db.DeleteOrganization(c.Request.Context(), orgID); err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("delete organization: db delete failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to delete organization")
 		return
 	}
 
 	// Invalidate cache for this organization
 	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+
+	s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		map[string]any{"slug": org.Slug, "name": org.Name},
+		nil)
 
 	respondDeleted(c, "organization")
 }
