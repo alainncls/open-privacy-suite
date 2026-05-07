@@ -584,7 +584,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			RateLimitRPS:    perms.RateLimitRPS,
 			RateLimitDaily:  perms.RateLimitDaily,
 			RPCAPIKey:       perms.RPCAPIKey,
-			RPCAPIKeyHeader: perms.RPCAPIKeyHeader,
 			Claims:          allClaims,
 		}, nil
 	}
@@ -962,7 +961,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 				RateLimitRPS:    perms.RateLimitRPS,
 				RateLimitDaily:  perms.RateLimitDaily,
 				RPCAPIKey:       perms.RPCAPIKey,
-				RPCAPIKeyHeader: perms.RPCAPIKeyHeader,
 				Claims:          allClaims,
 				DeploymentInfo: &DeploymentInfo{
 					OrgID:     org.ID,
@@ -1001,7 +999,6 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		RateLimitRPS:    perms.RateLimitRPS,
 		RateLimitDaily:  perms.RateLimitDaily,
 		RPCAPIKey:       perms.RPCAPIKey,
-		RPCAPIKeyHeader: perms.RPCAPIKeyHeader,
 		Claims:          allClaims,
 	}, nil
 }
