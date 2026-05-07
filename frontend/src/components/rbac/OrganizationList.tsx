@@ -18,14 +18,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import { rbacApi } from '@/api/rbac';
 import Pagination from '@/components/ui/Pagination';
 import {
   Building2,
-  Plus,
   Pencil,
-  Trash2,
   Loader2,
 } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
@@ -34,15 +31,20 @@ const PAGE_SIZE = 25;
 
 export default function OrganizationList() {
   const { refreshOrgs, setSelectedOrg } = useOrgContext();
-  const { isReadonlyAdmin } = useAdmin();
+  // Tier-1 (super-admin) is the only role that should create / delete orgs,
+  // and tier-1 has no UI session — `adminAuthMiddleware` only sets
+  // auth_method=admin_token via the X-Admin-Token header (RD-917 §1).
+  // So in the dashboard we never show "Add" or "Delete" — those are
+  // operator-side actions. Edit (metadata change on an own org) is allowed
+  // for tier-2 admins on rows where they are is_org_admin (full, not
+  // readonly). We use the per-org adminOrgIds set populated by
+  // /me/admin-status to decide per-row.
+  const { adminOrgIds } = useAdmin();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Organization | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Organization | null>(null);
-  const [showDeleteError, setShowDeleteError] = useState(false);
 
   useEffect(() => {
     loadPage(0);
@@ -65,24 +67,9 @@ export default function OrganizationList() {
   };
 
   const handleSave = async () => {
-    setShowForm(false);
     setEditing(null);
     await loadPage();
     await refreshOrgs(); // Update the dropdown
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteTarget) return;
-    try {
-      await rbacApi.orgs.delete(deleteTarget.id);
-      setDeleteTarget(null);
-      await loadPage();
-      await refreshOrgs(); // Update the dropdown
-    } catch (error) {
-      console.error('Failed to delete organization:', error);
-      setDeleteTarget(null);
-      setShowDeleteError(true);
-    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -102,12 +89,8 @@ export default function OrganizationList() {
             Top-level tenants that contain groups and contracts
           </p>
         </div>
-        {!isReadonlyAdmin && (
-          <Button onClick={() => setShowForm(true)} size="sm" className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Organization
-          </Button>
-        )}
+        {/* No "Add Organization" button: tenant creation is super-admin only
+            and super-admin has no UI session (X-Admin-Token via API). */}
       </div>
 
       {loading ? (
@@ -119,17 +102,7 @@ export default function OrganizationList() {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-neutral-100 flex items-center justify-center">
             <Building2 className="w-8 h-8 text-neutral-400" />
           </div>
-          <p className="text-neutral-500 mb-4">No organizations found</p>
-          {!isReadonlyAdmin && (
-            <Button
-              variant="outline"
-              onClick={() => setShowForm(true)}
-              className="gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Create your first organization
-            </Button>
-          )}
+          <p className="text-neutral-500">No organizations found</p>
         </div>
       ) : (
         <Table>
@@ -165,32 +138,23 @@ export default function OrganizationList() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    {!isReadonlyAdmin && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setEditing(org);
-                          }}
-                          title="Edit organization"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={e => {
-                            e.stopPropagation();
-                            setDeleteTarget(org);
-                          }}
-                          className="text-error-dark hover:text-error-dark hover:bg-error-light"
-                          title="Delete organization"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </>
+                    {/* Edit visible only on rows where the caller is a full
+                        is_org_admin of THIS org. Read-only-admin rows and any
+                        other-org leakage rows (shouldn't appear after the
+                        listOrganizations membership filter) get no edit
+                        button. Delete is super-admin-only — no UI button. */}
+                    {adminOrgIds.includes(org.id) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setEditing(org);
+                        }}
+                        title="Edit organization"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
                     )}
                   </div>
                 </TableCell>
@@ -202,20 +166,9 @@ export default function OrganizationList() {
 
       <Pagination total={total} limit={PAGE_SIZE} offset={offset} onPageChange={(newOffset) => loadPage(newOffset)} />
 
-      {/* Create Organization Dialog */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Organization</DialogTitle>
-          </DialogHeader>
-          <OrganizationForm
-            onClose={() => setShowForm(false)}
-            onSave={handleSave}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Organization Dialog */}
+      {/* Edit Organization Dialog (metadata only — slug, name, settings).
+          Tenant creation and deletion are platform-level operations not
+          surfaced in the dashboard. */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
@@ -231,28 +184,6 @@ export default function OrganizationList() {
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={open => !open && setDeleteTarget(null)}
-        title="Delete Organization"
-        description={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        onConfirm={handleDeleteConfirm}
-        variant="destructive"
-      />
-
-      {/* Delete Error Alert */}
-      <AlertDialog
-        open={showDeleteError}
-        onOpenChange={setShowDeleteError}
-        title="Delete Failed"
-        description="Failed to delete organization. It may have groups or contracts that need to be deleted first."
-        buttonLabel="OK"
-        variant="error"
-      />
     </div>
   );
 }

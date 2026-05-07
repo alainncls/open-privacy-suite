@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/lib/pq"
+
 	"privacy-proxy/internal/rbac"
 )
 
@@ -155,6 +157,54 @@ func (d *DB) ListOrganizationsPaginated(ctx context.Context, limit, offset int) 
 		return nil, 0, fmt.Errorf("error iterating organizations: %w", err)
 	}
 
+	return orgs, total, nil
+}
+
+// ListOrganizationsByIDsPaginated returns organizations whose ID is in the
+// allowedIDs set, ordered the same way as ListOrganizationsPaginated. The
+// caller controls the visible org set (e.g. JWT admin's admin_org_ids ∪
+// admin_readonly_org_ids), so this is used to scope the admin /orgs endpoint
+// to the caller's membership without leaking other tenants (RD-916).
+//
+// When allowedIDs is empty the result is always (nil, 0, nil) — no orgs
+// visible. Pagination is applied AFTER the membership filter so the total
+// count reflects the membership-scoped set, not the global table.
+func (d *DB) ListOrganizationsByIDsPaginated(ctx context.Context, allowedIDs []string, limit, offset int) ([]*rbac.Organization, int, error) {
+	if len(allowedIDs) == 0 {
+		return nil, 0, nil
+	}
+
+	var total int
+	if err := d.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations WHERE id = ANY($1)`, pq.Array(allowedIDs)).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count organizations: %w", err)
+	}
+
+	query := `SELECT id, slug, name, settings, is_system, created_at, updated_at
+	          FROM organizations
+	          WHERE id = ANY($1)
+	          ORDER BY created_at DESC, name ASC LIMIT $2 OFFSET $3`
+
+	rows, err := d.conn.QueryContext(ctx, query, pq.Array(allowedIDs), limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list organizations: %w", err)
+	}
+	defer rows.Close()
+
+	var orgs []*rbac.Organization
+	for rows.Next() {
+		org := &rbac.Organization{}
+		var settings []byte
+		if err := rows.Scan(&org.ID, &org.Slug, &org.Name, &settings, &org.IsSystem, &org.CreatedAt, &org.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan organization: %w", err)
+		}
+		if err := json.Unmarshal(settings, &org.Settings); err != nil {
+			return nil, 0, fmt.Errorf("failed to unmarshal settings: %w", err)
+		}
+		orgs = append(orgs, org)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating organizations: %w", err)
+	}
 	return orgs, total, nil
 }
 
