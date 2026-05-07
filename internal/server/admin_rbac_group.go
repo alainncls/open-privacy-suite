@@ -91,16 +91,50 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
-		// Check for unique constraint violation (duplicate slug in org)
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			c.JSON(http.StatusConflict, gin.H{"error": "group with this slug already exists in this organization"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(uniqueConflictStatus(err), gin.H{"error": uniqueConflictMessage(err)})
 		return
 	}
 
 	c.JSON(http.StatusCreated, group)
+}
+
+// isUniqueViolation reports whether err looks like a Postgres unique
+// constraint violation. Implemented as a string match because the DB
+// drivers in use (database/sql + lib/pq) bubble the message up rather than
+// a typed error we can errors.As against.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
+}
+
+// uniqueConflictStatus returns 409 for unique-violation errors and 500 otherwise.
+func uniqueConflictStatus(err error) int {
+	if isUniqueViolation(err) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
+
+// uniqueConflictMessage maps the unique constraint that fired to a
+// human-readable message. The DB has two relevant constraints on `groups`:
+// `groups_org_id_slug_key` (slug) and `idx_groups_org_name_unique`
+// (case-insensitive name; migration 049).
+func uniqueConflictMessage(err error) string {
+	if !isUniqueViolation(err) {
+		return err.Error()
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "idx_groups_org_name_unique"):
+		return "group with this name already exists in this organization (names are case-insensitive)"
+	case strings.Contains(msg, "groups_org_id_slug_key"):
+		return "group with this slug already exists in this organization"
+	default:
+		return "group with this slug or name already exists in this organization"
+	}
 }
 
 func (s *Server) getGroup(c *gin.Context) {
@@ -173,7 +207,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(uniqueConflictStatus(err), gin.H{"error": uniqueConflictMessage(err)})
 		return
 	}
 
