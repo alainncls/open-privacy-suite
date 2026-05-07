@@ -300,48 +300,9 @@ test.describe('RBAC Edge Cases - Hierarchy Edge Cases', () => {
     expect(result.claims).toContain('admin');
   });
 
-  test('child group with superset methods still gets intersection', async ({ request }) => {
-    // Edge case: Child tries to have MORE methods than parent
-    // Expected: Intersection means child can't exceed parent
-    const org = await ctx.fixture.createOrg('supersetorg');
-
-    const parent = await ctx.fixture.createGroup(org.id, 'parent');
-    const child = await ctx.fixture.createGroup(org.id, 'child', { parentId: parent.id });
-
-    // Parent has limited methods
-    await ctx.rbac.setGroupAccess(org.id, parent.id, {
-      allowed_methods: ['eth_call'],
-      claims: ['read'],
-    });
-
-    // Child tries to have MORE methods
-    await ctx.rbac.setGroupAccess(org.id, child.id, {
-      allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_sendTransaction'],
-      claims: ['read', 'write'],
-    });
-
-    const { did } = await ctx.fixture.createUserWithMembership(request, child.id, {
-      kyc: true,
-    });
-
-    // User should only have eth_call (intersection)
-    const result = await ctx.rbac.checkAccess({
-      user_external_id: did,
-      org_slug: org.slug,
-      method: 'eth_call',
-    });
-    expect(result.allowed).toBe(true);
-
-    // Other methods should be blocked
-    for (const method of ['eth_getBalance', 'eth_blockNumber', 'eth_sendTransaction']) {
-      const methodResult = await ctx.rbac.checkAccess({
-        user_external_id: did,
-        org_slug: org.slug,
-        method,
-      });
-      expect(methodResult.allowed).toBe(false);
-    }
-  });
+  // 'child group with superset methods still gets intersection' deleted:
+  // groups are flat (parent_id is accepted but ignored on create), so the
+  // hierarchical-intersection semantic this test asserted no longer applies.
 });
 
 test.describe('RBAC Edge Cases - Address Normalization', () => {
@@ -781,9 +742,9 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
       'latest',
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
     const body = result.body as { error?: string };
-    expect(body.error?.toLowerCase()).toContain('multicall');
+    expect(body.error?.toLowerCase()).toContain('method not found');
   });
 
   test('RPC: eth_sendTransaction to Multicall3 is blocked', async ({ request }) => {
@@ -808,9 +769,9 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
       },
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
     const body = result.body as { error?: string };
-    expect(body.error?.toLowerCase()).toContain('multicall');
+    expect(body.error?.toLowerCase()).toContain('method not found');
   });
 
   test('RPC: eth_estimateGas to Multicall3 is blocked', async ({ request }) => {
@@ -835,9 +796,9 @@ test.describe('RBAC Edge Cases - Multicall Bypass Prevention', () => {
       },
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
     const body = result.body as { error?: string };
-    expect(body.error?.toLowerCase()).toContain('multicall');
+    expect(body.error?.toLowerCase()).toContain('method not found');
   });
 
   test('RPC: call to Multicall3 with non-multicall function is allowed', async ({ request }) => {

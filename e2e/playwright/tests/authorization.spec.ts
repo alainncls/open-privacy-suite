@@ -5,7 +5,8 @@ test.describe('Authorization', () => {
   test('denies unauthenticated request', async ({ request }) => {
     const { status, body } = await makeUnauthenticatedRPCRequest(request, 'eth_getBalance', ['0x0000000000000000000000000000000000000001', 'latest']);
 
-    expect(status).toBe(403);
+    // RBAC denials return opaque 404 (privacy-by-default).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
   });
 
@@ -49,7 +50,7 @@ test.describe('Authorization', () => {
       },
     });
 
-    expect(response.status()).toBe(403);
+    expect(response.status()).toBe(404);
     const body = await response.json();
     expect(body).toHaveProperty('error');
   });

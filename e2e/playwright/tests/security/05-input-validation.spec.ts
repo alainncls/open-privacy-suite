@@ -203,8 +203,8 @@ test.describe('JSON-RPC Input Validation', () => {
         data: { jsonrpc: '2.0', params: [], id: 1 }
       });
 
-      // Should return error - 400 (bad request), 200 with error in body, or 403 (can't authorize without method)
-      expect([200, 400, 403]).toContain(resp.status());
+      // Should return error - 400 (bad request), 200 with error in body, or 404 (RBAC opaque-deny when method missing).
+      expect([200, 400, 404]).toContain(resp.status());
       if (resp.status() === 200) {
         const body = await resp.json().catch(() => ({}));
         // If 200, body should contain error
@@ -261,8 +261,8 @@ test.describe('JSON-RPC Input Validation', () => {
         data: { jsonrpc: '2.0', method: null, params: [], id: 1 }
       });
 
-      // Should return error - 400 (bad request), 200 with error in body, or 403 (can't authorize without method)
-      expect([200, 400, 403]).toContain(resp.status());
+      // Should return error - 400 (bad request), 200 with error in body, or 404 (RBAC opaque-deny when method missing).
+      expect([200, 400, 404]).toContain(resp.status());
       if (resp.status() === 200) {
         const body = await resp.json().catch(() => ({}));
         // If 200, body should contain error
@@ -303,7 +303,7 @@ test.describe('JSON-RPC Input Validation', () => {
 
       const result = await rpcCall(request, longMethod);
       // Should be rejected (not allowed or invalid)
-      expect([400, 403]).toContain(result.status);
+      expect([400, 403, 404]).toContain(result.status);
     });
   });
 });

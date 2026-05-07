@@ -492,33 +492,30 @@ test.describe('RBAC Contract Grants', () => {
       expect(result.allowed).toBe(true);
     });
 
-    test('public contract (not registered) allowed for deploy user', async ({ request }) => {
+    test('public contract (not registered) denied — all unregistered are private (RD-855)', async ({ request }) => {
       const org = await ctx.fixture.createOrg('grant-security-org3');
       const group = await ctx.fixture.createGroup(org.id, 'security-group3');
-      // This address is NOT registered to any org
+      // This address is NOT registered to any org. Since RD-855 (commit 1ba8da5),
+      // all unregistered addresses are private; only EVM precompiles (0x01..0x09)
+      // remain accessible. Deploy claim does NOT bypass this rule.
       const publicContractAddr = '0x' + 'ab'.repeat(20);
 
-      // Deploy claim required for unregistered contract access
       await ctx.rbac.setGroupAccess(org.id, group.id, {
         allowed_methods: ['eth_call'],
         claims: ['deploy'],
       });
 
-      // Create user with membership (removes default membership so only our group applies)
       const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
         kyc: true,
       });
 
-      // Do NOT register the contract - it stays public
-
-      // Access check should ALLOW for deploy user on unregistered contract
       const result = await ctx.rbac.checkAccess({
         user_external_id: did,
         org_slug: org.slug,
         method: 'eth_call',
         target_address: publicContractAddr,
       });
-      expect(result.allowed).toBe(true);
+      expect(result.allowed).toBe(false);
     });
 
     test('public contract (not registered) denied for read-only user', async ({ request }) => {

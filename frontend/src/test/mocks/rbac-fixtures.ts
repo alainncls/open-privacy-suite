@@ -169,19 +169,20 @@ export const mockGroupAccessFull: GroupAccess = {
     'eth_getBlockByNumber',
     'eth_getTransactionReceipt',
   ],
-  claims: ['read', 'write'] as Claim[],
+  claims: [] as Claim[],
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-15T00:00:00Z',
 };
 
 /**
- * Minimal read-only group access.
+ * Minimal read-only group access. No operational claims — read access
+ * is method-gated via allowed_methods.
  */
 export const mockGroupAccessReadOnly: GroupAccess = {
   id: 'access-readonly',
   group_id: 'group-operations',
   allowed_methods: ['eth_call', 'eth_getBalance', 'eth_blockNumber'],
-  claims: ['read'] as Claim[],
+  claims: [] as Claim[],
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -193,7 +194,7 @@ export const mockGroupAccessAdmin: GroupAccess = {
   id: 'access-admin',
   group_id: 'group-root',
   allowed_methods: ['*'], // All methods
-  claims: ['read', 'write', 'admin', 'upgrade', 'deploy'] as Claim[],
+  claims: ['admin', 'upgrade', 'deploy'] as Claim[],
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
 };
@@ -476,15 +477,15 @@ export const mockFullEffectivePermissions: EffectivePermissions = {
   ],
   contract_access: {
     '0x1111111111111111111111111111111111111111': {
-      claims: ['read', 'write', 'admin'] as Claim[],
+      claims: ['admin'] as Claim[],
       functions: null,
     },
     '0x2222222222222222222222222222222222222222': {
-      claims: ['read'] as Claim[],
+      claims: [] as Claim[],
       functions: ['0x70a08231'], // balanceOf only
     },
   },
-  claims: ['read', 'write'] as Claim[],
+  claims: [] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 50000,
   computed_at: '2024-02-01T12:00:00Z',
@@ -500,7 +501,7 @@ export const mockReadOnlyEffectivePermissions: EffectivePermissions = {
   org_id: 'org-1',
   allowed_methods: ['eth_call', 'eth_getBalance'],
   contract_access: {},
-  claims: ['read'] as Claim[],
+  claims: [] as Claim[],
   rate_limit_rps: 10,
   rate_limit_daily: 1000,
   computed_at: '2024-02-01T12:00:00Z',

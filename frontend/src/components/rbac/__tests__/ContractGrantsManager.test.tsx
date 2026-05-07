@@ -49,7 +49,7 @@ const mockGroupAccess: GroupAccess = {
   id: 'access-1',
   group_id: 'group-1',
   allowed_methods: ['eth_call'],
-  claims: ['read'] as Claim[],
+  claims: [] as Claim[],
   rate_limit_rps: 100,
   rate_limit_daily: 10000,
   created_at: '2024-01-01T00:00:00Z',

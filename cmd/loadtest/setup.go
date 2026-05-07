@@ -101,7 +101,7 @@ func (lt *LoadTester) setupProxyAuth(ctx context.Context) error {
 			"eth_chainId",
 			"eth_gasPrice",
 		},
-		"claims": []string{"read", "write", "deploy"},
+		"claims": []string{"deploy"},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set group access: %w", err)
@@ -299,7 +299,7 @@ func (lt *LoadTester) registerContract(ctx context.Context, addr common.Address,
 	_, err := lt.apiCall(ctx, "POST", fmt.Sprintf("/api/v1/orgs/%s/contracts", lt.orgID), map[string]interface{}{
 		"address": addr.Hex(),
 		"name":    name,
-		"claims":  []string{"read", "write"},
+		"claims":  []string{},
 	})
 	return err
 }

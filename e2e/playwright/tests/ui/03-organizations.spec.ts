@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { selectors, roles } from '../../helpers/ui/selectors';
 import { mockLoginViaAPI } from '../../helpers/ui/auth-helpers';
+import { RBACTestFixture } from '../../helpers/rbac-fixtures';
 
 // Generate unique names/slugs for test organizations to avoid collisions across workers
 const uniqueSuffix = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -137,29 +138,26 @@ test.describe('Organization CRUD', () => {
     await expect(dialog).toBeVisible();
   });
 
-  test('can edit an existing organization', async ({ page }) => {
-    // First, create an organization to edit
-    const orgName = generateOrgName();
-    const orgSlug = generateOrgSlug();
+  test('can edit an existing organization', async ({ page, request }) => {
+    // Create the org via the fixture API. This both seeds the test org and
+    // auto-grants the mock-admin user is_org_admin in it (see
+    // RBACTestFixture.createOrg) — JWT admins need is_org_admin in the
+    // target org to PUT /api/v1/admin/orgs/:id.
+    const fixture = new RBACTestFixture(request);
+    const org = await fixture.createOrg('edit-org');
+    const orgName = org.name;
 
     await page.goto('/admin/rbac/organizations');
     await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
 
-    // Create organization
-    await page.getByRole('button', { name: /add organization/i }).click();
-    let dialog = page.locator(selectors.common.dialog);
-    await dialog.getByLabel(/name/i).fill(orgName);
-    await dialog.getByLabel(/slug/i).fill(orgSlug);
-    await dialog.getByRole('button', { name: /create organization/i }).click();
-    await expect(dialog).not.toBeVisible({ timeout: 10000 });
-
-    // Wait for the new org to appear in the list
+    // Wait for the org to appear in the list
     const orgRow = page.getByRole('row').filter({ hasText: orgName });
     await expect(orgRow).toBeVisible({ timeout: 10000 });
 
     // Click edit button on the row
     const editBtn = orgRow.getByTitle(/edit organization/i);
     await editBtn.click();
+    let dialog = page.locator(selectors.common.dialog);
 
     // Edit dialog should appear
     dialog = page.locator(selectors.common.dialog);
@@ -182,21 +180,15 @@ test.describe('Organization CRUD', () => {
     await expect(page.getByText(newName)).toBeVisible({ timeout: 10000 });
   });
 
-  test('can delete an organization', async ({ page }) => {
-    // First, create an organization to delete
-    const orgName = generateOrgName();
-    const orgSlug = generateOrgSlug();
+  test('can delete an organization', async ({ page, request }) => {
+    // Create org via fixture so the mock-admin user has is_org_admin in it
+    // (DELETE /api/v1/admin/orgs/:id requires that for JWT admins).
+    const fixture = new RBACTestFixture(request);
+    const org = await fixture.createOrg('delete-org');
+    const orgName = org.name;
 
     await page.goto('/admin/rbac/organizations');
     await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
-
-    // Create organization
-    await page.getByRole('button', { name: /add organization/i }).click();
-    let dialog = page.locator(selectors.common.dialog);
-    await dialog.getByLabel(/name/i).fill(orgName);
-    await dialog.getByLabel(/slug/i).fill(orgSlug);
-    await dialog.getByRole('button', { name: /create organization/i }).click();
-    await expect(dialog).not.toBeVisible({ timeout: 10000 });
 
     // Wait for the new org to appear in the list
     const orgRow = page.getByRole('row').filter({ hasText: orgName });
@@ -206,13 +198,14 @@ test.describe('Organization CRUD', () => {
     const deleteBtn = orgRow.getByTitle(/delete organization/i);
     await deleteBtn.click();
 
-    // Confirm dialog should appear
-    dialog = page.locator(selectors.common.dialog);
+    // Confirm dialog should appear. The page may have leftover hidden
+    // dialogs (Edit dialog cached open=false), so scope to the open one.
+    const dialog = page.locator(`${selectors.common.dialog}[data-state="open"]`);
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('Delete Organization')).toBeVisible();
 
-    // Confirm deletion
-    await dialog.getByRole('button', { name: /delete/i }).click();
+    // Confirm deletion (button label is just "Delete")
+    await dialog.getByRole('button', { name: /^delete$/i }).click();
 
     // Dialog should close
     await expect(dialog).not.toBeVisible({ timeout: 10000 });

@@ -15,8 +15,6 @@ import (
 type Claim string
 
 const (
-	ClaimRead    Claim = "read"    // Legacy — retained for DB compatibility; no longer used as a gate
-	ClaimWrite   Claim = "write"   // Legacy — retained for DB compatibility; no longer used as a gate
 	ClaimAdmin   Claim = "admin"   // Full control — implies deploy + upgrade
 	ClaimUpgrade Claim = "upgrade" // Can upgrade proxy contracts
 	ClaimDeploy  Claim = "deploy"  // Can deploy new contracts (contract creation transactions)
@@ -24,7 +22,7 @@ const (
 
 // AllClaims returns all valid claims.
 func AllClaims() []Claim {
-	return []Claim{ClaimRead, ClaimWrite, ClaimAdmin, ClaimUpgrade, ClaimDeploy}
+	return []Claim{ClaimAdmin, ClaimUpgrade, ClaimDeploy}
 }
 
 // claimImplications defines which claims each claim implies.
@@ -36,31 +34,10 @@ var claimImplications = map[Claim][]Claim{
 	ClaimUpgrade: {},
 }
 
-// OperationalClaims are the claims that serve as operation-level gates.
-// Read/write access is determined by the method allowlist, not by claims.
-var OperationalClaims = map[Claim]bool{
-	ClaimDeploy:  true,
-	ClaimUpgrade: true,
-	ClaimAdmin:   true,
-}
-
-// FilterOperationalClaims removes read/write claims, keeping only
-// operational claims (deploy, upgrade, admin). This is used when
-// accepting claims from the frontend to strip legacy read/write values.
-func FilterOperationalClaims(claims []Claim) []Claim {
-	result := make([]Claim, 0, len(claims))
-	for _, c := range claims {
-		if OperationalClaims[c] {
-			result = append(result, c)
-		}
-	}
-	return result
-}
-
 // ExpandClaims expands claims according to the hierarchy:
 //   - admin → deploy, upgrade
 //
-// Read/write are no longer claim-gated; the method allowlist is the source of truth.
+// Read/write are not claim-gated; the method allowlist is the source of truth.
 // Returns a deduplicated, sorted slice.
 func ExpandClaims(claims []Claim) []Claim {
 	set := make(map[Claim]bool, len(claims))

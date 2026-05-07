@@ -248,8 +248,8 @@ test.describe('Cross-Organization Isolation', () => {
     ]);
 
     // Should be denied due to cross-org isolation
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('contract access denied');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('SECURITY-002: User B cannot access Contract A (cross-org isolation)', async ({ request }) => {
@@ -260,8 +260,8 @@ test.describe('Cross-Organization Isolation', () => {
     ]);
 
     // Should be denied due to cross-org isolation
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('contract access denied');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('SECURITY-003: User A CAN access their own Contract A', async ({ request }) => {
@@ -281,8 +281,8 @@ test.describe('Cross-Organization Isolation', () => {
     ]);
 
     // Should be denied
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('contract access denied');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('SECURITY-005: eth_getLogs with mixed-org addresses is denied', async ({ request }) => {
@@ -292,19 +292,18 @@ test.describe('Cross-Organization Isolation', () => {
     ]);
 
     // Should be denied because contractB is from another org
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
-  test('SECURITY-006: eth_getBalance on cross-org address is allowed (account query)', async ({ request }) => {
-    // eth_getBalance is an account query (returns ETH balance for EOAs and contracts alike).
-    // It does NOT go through contract-level access checks — only method-level checks apply.
-    // This is intentional: balance is public on-chain data, not contract storage.
+  test('SECURITY-006: eth_getBalance on cross-org address is denied (private-by-default)', async ({ request }) => {
+    // Per RD-855 (commit 1ba8da5), all addresses go through contract-level
+    // checks; cross-org contracts are denied even for account queries.
     const result = await rpcCall(request, userAToken, 'eth_getBalance', [
       contractB,
       'latest'
     ]);
 
-    expect(result.status).toBe(200);
+    expect(result.status).toBe(404);
   });
 
   test('SECURITY-007: Public contract (not registered to any org) is accessible', async ({ request }) => {
@@ -327,7 +326,7 @@ test.describe('Cross-Organization Isolation', () => {
       'latest'
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('SECURITY-009: eth_getStorageAt on cross-org contract is denied', async ({ request }) => {
@@ -337,7 +336,7 @@ test.describe('Cross-Organization Isolation', () => {
       'latest'
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('SECURITY-010: eth_sendTransaction to cross-org contract is denied', async ({ request }) => {

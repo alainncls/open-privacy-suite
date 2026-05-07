@@ -55,9 +55,10 @@ test.describe('RBAC User Status Enforcement', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
 
-    expect(status).toBe(403);
+    // RBAC denials return opaque 404 (privacy-by-default; reason logged server-side).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('banned');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('non-KYC user is denied via checkAccess API', async ({ request }) => {
@@ -98,9 +99,9 @@ test.describe('RBAC User Status Enforcement', () => {
 
     const { status, body } = await makeRPCRequest(request, token, 'eth_blockNumber');
 
-    expect(status).toBe(403);
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('KYC');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('KYC update enables access', async ({ request }) => {
@@ -182,7 +183,7 @@ test.describe('RBAC User Status Enforcement', () => {
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('not found');
+    expect(result.reason).toBeTruthy(); // reason is opaque ('access denied')
   });
 
   test('banned takes precedence over other checks', async ({ request }) => {

@@ -134,7 +134,7 @@ describe('RBAC API', () => {
       it('should set group access settings', async () => {
         const response = await rbacApi.groups.setAccess('org-1', 'group-1', {
           allowed_methods: ['eth_call', 'eth_sendTransaction'],
-          claims: ['read', 'write'],
+          claims: [],
         });
 
         expect(response.data.allowed_methods).toContain('eth_call');

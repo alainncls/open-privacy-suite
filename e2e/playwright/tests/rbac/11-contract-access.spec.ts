@@ -78,14 +78,17 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(result.reason).toContain('contract access denied');
   });
 
-  test('deploy user allowed access to unregistered contracts', async ({ request }) => {
+  test('deploy user denied access to unregistered contracts (private-by-default)', async ({ request }) => {
+    // Per RD-855 (commit 1ba8da5), all unregistered addresses are denied at the
+    // RPC layer regardless of claims; only EVM precompiles (0x01-0x09) are exempt.
+    // The deploy claim does not grant a free pass to arbitrary unregistered addresses.
     const org = await ctx.fixture.createOrg('defaultclaimsorg');
     const group = await ctx.fixture.createGroup(org.id, 'defaultclaimsgroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['deploy'], // Deploy claim expands to deploy+read+write; allows unregistered access
+      claims: ['deploy'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -97,10 +100,9 @@ test.describe('RBAC Contract Access Enforcement', () => {
       org_slug: org.slug,
       method: 'eth_call',
       target_address: unknownContract,
-      required_claims: ['read'],
     });
 
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
   });
 
   test('read-only user denied access to unregistered contracts', async ({ request }) => {
@@ -129,14 +131,15 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(result.allowed).toBe(false);
   });
 
-  test('admin user allowed access to unregistered contracts', async ({ request }) => {
+  test('admin user denied access to unregistered contracts (private-by-default)', async ({ request }) => {
+    // Even admin claim does not bypass the all-private-by-default rule (RD-855).
     const org = await ctx.fixture.createOrg('adminunregorg');
     const group = await ctx.fixture.createGroup(org.id, 'adminunreggroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(org.id, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['admin'], // Admin claim expands to all claims; allows unregistered access
+      claims: ['admin'],
     });
 
     const { did } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -148,10 +151,9 @@ test.describe('RBAC Contract Access Enforcement', () => {
       org_slug: org.slug,
       method: 'eth_call',
       target_address: unknownContract,
-      required_claims: ['read'],
     });
 
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
   });
 
   test('allows method without contract address', async ({ request }) => {
@@ -207,14 +209,14 @@ test.describe('RBAC Contract Access Enforcement', () => {
     expect(body).toHaveProperty('jsonrpc', '2.0');
   });
 
-  test('RPC eth_call to unregistered contract allowed with deploy claim', async ({ request }) => {
+  test('RPC eth_call to unregistered contract denied (private-by-default)', async ({ request }) => {
     const DEFAULT_ORG_ID = '00000000-0000-0000-0000-000000000001';
     const group = await ctx.fixture.createGroup(DEFAULT_ORG_ID, 'rpcdefaultgroup');
     const unknownContract = ctx.contractAddress();
 
     await ctx.rbac.setGroupAccess(DEFAULT_ORG_ID, group.id, {
       allowed_methods: ['eth_call'],
-      claims: ['deploy'], // Deploy claim required for unregistered contract access
+      claims: ['deploy'],
     });
 
     const { token } = await ctx.fixture.createUserWithMembership(request, group.id, {
@@ -222,13 +224,15 @@ test.describe('RBAC Contract Access Enforcement', () => {
       keepDefaultMembership: false,
     });
 
+    // Per RD-855 (commit 1ba8da5), unregistered addresses are private even for
+    // deploy/admin users. RPC returns opaque 404.
     const { status, body } = await makeRPCRequest(request, token, 'eth_call', [
       { to: unknownContract, data: '0x' },
       'latest',
     ]);
 
-    expect(status).toBe(200);
-    expect(body).toHaveProperty('jsonrpc', '2.0');
+    expect(status).toBe(404);
+    expect(body).toHaveProperty('error');
   });
 
   test('grants for multiple contracts work independently', async ({ request }) => {

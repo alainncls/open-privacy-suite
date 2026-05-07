@@ -58,7 +58,7 @@ test.describe('RBAC Claim Enforcement', () => {
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('claim');
+    expect(result.reason).toBeTruthy(); // reason is opaque ('access denied')
   });
 
   test('denies when user has some but not all required claims', async ({ request }) => {
@@ -82,7 +82,7 @@ test.describe('RBAC Claim Enforcement', () => {
     });
 
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('claim');
+    expect(result.reason).toBeTruthy(); // reason is opaque ('access denied')
   });
 
   test('allows when no claims are required', async ({ request }) => {

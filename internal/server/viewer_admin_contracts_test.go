@@ -40,7 +40,7 @@ func TestViewerAdminContracts(t *testing.T) {
 	// Org A: Alice is org admin (is_org_admin=true on her group).
 	//        Contract A1 is owned by org A.
 	// Org B: Alice is a member but holds no admin claim (group has
-	//        only ClaimRead). Contract B1 is owned by org B.
+	//        no operational claims). Contract B1 is owned by org B.
 	// Org C: Alice is NOT a member. Bob is admin there. Contract C1 owned by org C.
 	orgAID := uuid.New().String()
 	orgBID := uuid.New().String()
@@ -65,7 +65,7 @@ func TestViewerAdminContracts(t *testing.T) {
 	}))
 
 	// Org B: Alice is a regular reader (no admin).
-	orgBReaderGroup := mustCreateGroup(t, ts.db, orgBID, "vac-b-readers", []rbac.Claim{rbac.ClaimRead}, false)
+	orgBReaderGroup := mustCreateGroup(t, ts.db, orgBID, "vac-b-readers", nil, false)
 	require.NoError(t, ts.db.CreateMembership(ctx, &rbac.UserMembership{
 		ID: uuid.New().String(), UserID: aliceUser.ID, GroupID: orgBReaderGroup,
 	}))

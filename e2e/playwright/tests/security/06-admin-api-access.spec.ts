@@ -240,7 +240,7 @@ test.describe('Dev Endpoints', () => {
 
   test('DEV-002: POST /api/v1/admin/dev/create3-factory requires localhost', async ({ request }) => {
     const resp = await request.post(`${API_URL}/api/v1/admin/dev/create3-factory`);
-    expect([200, 403, 500]).toContain(resp.status());
+    expect([200, 403, 404, 500]).toContain(resp.status());
   });
 });
 

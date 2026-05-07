@@ -16,7 +16,7 @@ test.describe('RBAC Organizations', () => {
     const org = await ctx.fixture.createOrg('myorg', 'My Test Organization');
 
     expect(org.id).toBeTruthy();
-    expect(org.slug).toContain('myorg_');
+    expect(org.slug).toContain('myorg-');
     expect(org.slug).toContain(ctx.testId);
     expect(org.name).toBe('My Test Organization');
     expect(org.settings).toEqual({});

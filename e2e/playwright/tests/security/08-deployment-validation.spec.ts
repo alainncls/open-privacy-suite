@@ -200,8 +200,8 @@ test.describe('Deploy Claim Enforcement', () => {
     ]);
 
     // Should be denied
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('deploy');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('DEPLOY-003: eth_estimateGas for deployment also requires deploy claim', async ({ request }) => {
@@ -214,8 +214,8 @@ test.describe('Deploy Claim Enforcement', () => {
     ]);
 
     // Should be denied
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('deploy');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('DEPLOY-004: User with deploy claim can estimate deployment gas', async ({ request }) => {
@@ -241,8 +241,8 @@ test.describe('Deployment Detection', () => {
       { from: '0x' + '1'.repeat(40), data: '0x60806040' }
     ]);
 
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('deploy');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('DEPLOY-006: "to": null = deployment', async ({ request }) => {
@@ -250,8 +250,8 @@ test.describe('Deployment Detection', () => {
       { from: '0x' + '1'.repeat(40), to: null, data: '0x60806040' }
     ]);
 
-    expect(result.status).toBe(403);
-    expect(result.body.error).toContain('deploy');
+    expect(result.status).toBe(404); // opaque RBAC denial
+    expect(result.body.error).toContain('method not found');
   });
 
   test('DEPLOY-007: "to": "" = deployment', async ({ request }) => {
@@ -259,7 +259,7 @@ test.describe('Deployment Detection', () => {
       { from: '0x' + '1'.repeat(40), to: '', data: '0x60806040' }
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('DEPLOY-008: "to": "0x" = deployment', async ({ request }) => {
@@ -267,7 +267,7 @@ test.describe('Deployment Detection', () => {
       { from: '0x' + '1'.repeat(40), to: '0x', data: '0x60806040' }
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('DEPLOY-009: Valid "to" address = NOT deployment', async ({ request }) => {
@@ -466,7 +466,7 @@ test.describe('Deploy Window and Contract Registration', () => {
       'latest'
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('DEPLOY-019: Deploy-window: deploy-claim user can eth_getLogs on unregistered contract address', async ({ request }) => {
@@ -487,7 +487,7 @@ test.describe('Deploy Window and Contract Registration', () => {
       { address: addr, fromBlock: '0x0', toBlock: 'latest' }
     ]);
 
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 
   test('DEPLOY-021: After registering contract to org and granting access, org member can access it', async ({ request }) => {
@@ -497,7 +497,7 @@ test.describe('Deploy Window and Contract Registration', () => {
     const before = await rpcCall(request, nonDeployerToken, 'eth_call', [
       { to: addr, data: '0x' }, 'latest'
     ]);
-    expect(before.status).toBe(403);
+    expect(before.status).toBe(404); // opaque RBAC denial
 
     // Register the contract to the default org
     const registerResp = await request.post(`${API_URL}/api/v1/admin/orgs/${defaultOrgId}/contracts`, {
@@ -531,6 +531,6 @@ test.describe('Deploy Window and Contract Registration', () => {
     const result = await rpcCall(request, outsiderToken, 'eth_call', [
       { to: addr, data: '0x' }, 'latest'
     ]);
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(404); // opaque RBAC denial
   });
 });

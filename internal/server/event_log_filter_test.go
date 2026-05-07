@@ -44,7 +44,7 @@ func TestFilterReceiptLogsWithEventRules_AllowedEventPreserved(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic0, Name: "NumberSet"},
 				}},
@@ -131,7 +131,7 @@ func TestFilterReceiptLogsWithEventRules_NoEventRules_DenyAll(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all (same as empty [])
 			},
 		},
@@ -195,7 +195,7 @@ func TestFilterReceiptLogsWithEventRules_NonParticipant_ReturnsNull(t *testing.T
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
 				}},
@@ -300,13 +300,13 @@ func TestFilterReceiptLogsWithEventRules_MultipleContracts(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contract1: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: allowedTopic, Name: "NumberSet"},
 				}},
 			},
 			contract2: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: otherTopic, Name: "OtherEvent"},
 				}},
@@ -369,7 +369,7 @@ func TestFilterReceiptLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *test
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
 			}},
 		},
@@ -434,7 +434,7 @@ func TestFilterLogsWithEventRules_EmptyEventRules_AllLogsStripped(t *testing.T) 
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // empty = block all events
 			}},
 		},
@@ -487,7 +487,7 @@ func TestFilterReceiptLogsWithEventRules_LogsBloomZeroed(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: "0xaaa0000000000000000000000000000000000000000000000000000000000000", Name: "NumberSet"},
 				}},
@@ -647,7 +647,7 @@ func TestFilterLogs_I14_NoRules_DenyAll(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all
 			},
 		},
@@ -675,7 +675,7 @@ func TestFilterLogs_I15_AllowTransferOnly(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -714,7 +714,7 @@ func TestFilterLogs_I16_ParamRuleSelfMatch(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
@@ -750,7 +750,7 @@ func TestFilterLogs_I17_ParamRuleSelfNoMatch(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
@@ -786,7 +786,7 @@ func TestFilterLogs_I18_EmptyRulesDenyAll(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{}, // deny all
 			}},
 		},
@@ -814,7 +814,7 @@ func TestFilterLogs_I19_NoGrant_NoLogs(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			"0xother00000000000000000000000000000000001": {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 			},
 		},
 	}
@@ -842,13 +842,13 @@ func TestFilterLogs_I20_MixedContracts_DifferentRules(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
 			},
 			contractZ: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all
 			},
 		},
@@ -886,7 +886,7 @@ func TestFilterLogs_I25_CrossOrg_NoAccess(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			"0x5555555555555555555555555555555555555555": {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -916,13 +916,13 @@ func TestFilterLogs_I26_PartialContractAccess(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
 			},
 			contractZ: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -955,7 +955,7 @@ func TestFilterReceipt_I27_MixedOrgs(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			orgAContract: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -1063,7 +1063,7 @@ func TestFilterLogs_I30_ReadClaim_NoBypass(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -1098,7 +1098,7 @@ func TestFilterLogs_I31_UnionRules(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
@@ -1130,7 +1130,7 @@ func TestFilterLogs_I32_NilRulesDenyAll(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all
 			},
 		},
@@ -1161,7 +1161,7 @@ func TestFilterLogs_I33_UnionParamRules(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: integTransferTopic0,
@@ -1213,7 +1213,7 @@ func TestFilterLogs_I34_NonIndexed_SelfMatch(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
@@ -1258,7 +1258,7 @@ func TestFilterLogs_I35_NonIndexed_SelfNoMatch(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
@@ -1300,7 +1300,7 @@ func TestFilterLogs_I36_NoABI_FailClosed(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{
 						Topic0: customTopic0,
@@ -1347,7 +1347,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 	perms1 := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -1371,7 +1371,7 @@ func TestFilterLogs_I37_CacheInvalidation_Stateless(t *testing.T) {
 	perms2 := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 					{Topic0: integApprovalTopic0, Name: "Approval"},
@@ -1399,7 +1399,7 @@ func TestFilterReceipt_I21_FiltersReceiptLogs(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -1439,7 +1439,7 @@ func TestFilterReceipt_I22_NonParticipant_Null(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
@@ -1483,7 +1483,7 @@ func TestFilterReceipt_I23_NilRules_DenyAll(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all
 			},
 		},
@@ -1524,13 +1524,13 @@ func TestFilterReceipt_I24_MixedContracts(t *testing.T) {
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractX: {
-				Claims: []rbac.Claim{rbac.ClaimRead},
+				Claims: []rbac.Claim{},
 				EventRules: &rbac.EventRulesField{Rules: []rbac.EventRule{
 					{Topic0: integTransferTopic0, Name: "Transfer"},
 				}},
 			},
 			contractZ: {
-				Claims:     []rbac.Claim{rbac.ClaimRead},
+				Claims:     []rbac.Claim{},
 				EventRules: nil, // nil = deny all
 			},
 		},
@@ -1815,7 +1815,7 @@ func TestFilterReceiptLogsWithEventRules_NonParticipantAdmin_ReturnsReceipt(t *t
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimAdmin, rbac.ClaimRead, rbac.ClaimWrite},
+				Claims: []rbac.Claim{rbac.ClaimAdmin},
 			},
 		},
 	}
@@ -1887,7 +1887,7 @@ func TestFilterReceiptLogsWithEventRules_NonParticipantNonAdmin_ReturnsNull(t *t
 	perms := &rbac.EffectivePermissions{
 		ContractAccess: map[string]rbac.ContractAccess{
 			contractAddr: {
-				Claims: []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+				Claims: []rbac.Claim{},
 			},
 		},
 	}

@@ -20,7 +20,7 @@ test.describe('Admin Navigation', () => {
     await expect(page.locator(selectors.admin.nav)).toBeVisible();
 
     // Verify branding
-    await expect(page.getByText('Privacy Proxy')).toBeVisible();
+    await expect(page.getByText('Open Privacy Suite')).toBeVisible();
     await expect(page.getByText('Node Access Control')).toBeVisible();
   });
 

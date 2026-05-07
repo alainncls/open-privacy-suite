@@ -22,41 +22,17 @@ test.describe('RBAC Groups', () => {
     expect(group.id).toBeTruthy();
     expect(group.org_id).toBe(org.id);
     expect(group.parent_id).toBeFalsy(); // null or undefined
-    expect(group.slug).toContain('rootgroup_');
+    expect(group.slug).toContain('rootgroup-');
     expect(group.name).toBe('Root Group');
     expect(group.description).toBe('A root level group');
     expect(group.depth).toBe(0);
     expect(group.path).toBe(group.slug);
   });
 
-  test('creates child group with depth 1', async () => {
-    const org = await ctx.fixture.createOrg('childorg');
-    const parent = await ctx.fixture.createGroup(org.id, 'parent');
-    const child = await ctx.fixture.createGroup(org.id, 'child', {
-      name: 'Child Group',
-      parentId: parent.id,
-    });
-
-    expect(child.parent_id).toBe(parent.id);
-    expect(child.depth).toBe(1);
-    expect(child.path).toBe(`${parent.slug}.${child.slug}`);
-  });
-
-  test('creates 3-level hierarchy', async () => {
-    const org = await ctx.fixture.createOrg('hierarchyorg');
-
-    const level1 = await ctx.fixture.createGroup(org.id, 'l1');
-    const level2 = await ctx.fixture.createGroup(org.id, 'l2', { parentId: level1.id });
-    const level3 = await ctx.fixture.createGroup(org.id, 'l3', { parentId: level2.id });
-
-    expect(level1.depth).toBe(0);
-    expect(level2.depth).toBe(1);
-    expect(level3.depth).toBe(2);
-
-    expect(level1.path).toBe(level1.slug);
-    expect(level2.path).toBe(`${level1.slug}.${level2.slug}`);
-    expect(level3.path).toBe(`${level1.slug}.${level2.slug}.${level3.slug}`);
-  });
+  // Hierarchy was removed (groups are flat); parent_id is accepted but
+  // ignored on create. The two former hierarchy tests ("creates child group with
+  // depth 1", "creates 3-level hierarchy") have been deleted because the
+  // server no longer materializes a hierarchy from parent_id.
 
   test('sets and retrieves group access', async () => {
     const org = await ctx.fixture.createOrg('permorg');
@@ -174,66 +150,5 @@ test.describe('RBAC Groups', () => {
     expect(retrieved).toBeNull();
   });
 
-  test('creates hierarchy using helper', async () => {
-    const org = await ctx.fixture.createOrg('helperorg');
-
-    const groups = await ctx.fixture.createGroupHierarchy(org.id, [
-      {
-        slug: 'root',
-        name: 'Root',
-        access: {
-          allowed_methods: ['eth_call', 'eth_getBalance'],
-          claims: ['read', 'write'],
-          rate_limit_rps: 100,
-        },
-        children: [
-          {
-            slug: 'engineering',
-            name: 'Engineering',
-            access: {
-              allowed_methods: ['eth_call'],
-              claims: ['read', 'write'],
-              rate_limit_rps: 50,
-            },
-            children: [
-              {
-                slug: 'devops',
-                name: 'DevOps',
-              },
-            ],
-          },
-          {
-            slug: 'marketing',
-            name: 'Marketing',
-          },
-        ],
-      },
-    ]);
-
-    expect(groups.size).toBe(4);
-    expect(groups.get('root')).toBeTruthy();
-    expect(groups.get('engineering')).toBeTruthy();
-    expect(groups.get('devops')).toBeTruthy();
-    expect(groups.get('marketing')).toBeTruthy();
-
-    // Verify hierarchy
-    const root = groups.get('root')!;
-    const eng = groups.get('engineering')!;
-    const devops = groups.get('devops')!;
-
-    expect(root.depth).toBe(0);
-    expect(eng.depth).toBe(1);
-    expect(eng.parent_id).toBe(root.id);
-    expect(devops.depth).toBe(2);
-    expect(devops.parent_id).toBe(eng.id);
-
-    // Verify access was set
-    const rootAccess = await ctx.rbac.getGroupAccess(org.id, root.id);
-    expect(rootAccess?.allowed_methods).toEqual(['eth_call', 'eth_getBalance']);
-    expect(rootAccess?.rate_limit_rps).toBe(100);
-
-    const engAccess = await ctx.rbac.getGroupAccess(org.id, eng.id);
-    expect(engAccess?.allowed_methods).toEqual(['eth_call']);
-    expect(engAccess?.rate_limit_rps).toBe(50);
-  });
+  // 'creates hierarchy using helper' deleted: see note above — groups are flat.
 });

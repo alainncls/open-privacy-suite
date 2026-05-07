@@ -46,9 +46,10 @@ test.describe('Multicall Blocking', () => {
       'latest',
     ]);
 
-    expect(status).toBe(403);
+    // Multicall block is part of RBAC; opaque 404 (privacy-by-default).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('multicall');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
   test('blocks eth_call to Multicall3 address (lowercase)', async ({ request }) => {
@@ -62,15 +63,19 @@ test.describe('Multicall Blocking', () => {
       'latest',
     ]);
 
-    expect(status).toBe(403);
+    // Multicall block is part of RBAC; opaque 404 (privacy-by-default).
+    expect(status).toBe(404);
     expect(body).toHaveProperty('error');
-    expect((body as { error: string }).error).toContain('multicall');
+    expect((body as { error: string }).error).toContain('method not found');
   });
 
-  test('allows eth_call to non-Multicall address', async ({ request }) => {
+  test('eth_call to non-Multicall unregistered address is denied (private-by-default)', async ({ request }) => {
     const token = await createUserWithEthCallPermission(request);
 
-    // Use a regular address (e.g., WETH on mainnet)
+    // Use a regular unregistered address (e.g., WETH on mainnet). After RD-855
+    // (commit 1ba8da5), all unregistered addresses are denied at the RPC layer
+    // regardless of claims. This test now asserts that denial — the multicall
+    // block above is a *separate* mechanism from the all-private rule.
     const { status, body } = await makeRPCRequest(request, token, 'eth_call', [
       {
         to: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
@@ -79,8 +84,8 @@ test.describe('Multicall Blocking', () => {
       'latest',
     ]);
 
-    expect(status).toBe(200);
-    expect(body).toHaveProperty('jsonrpc', '2.0');
+    expect(status).toBe(404); // opaque RBAC denial
+    expect(body).toHaveProperty('error');
   });
 
   test('allows eth_getBalance even with Multicall3 as address param', async ({ request }) => {

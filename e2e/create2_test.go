@@ -466,7 +466,7 @@ func TestCreate2RuntimeDeployment_HappyPath(t *testing.T) {
 		"eth_chainId", "eth_blockNumber", "eth_getCode",
 	}
 	orgID := createOrgWithUser(t, env.srv.DB(), "test-org", "deployers", userDID,
-		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
+		[]rbac.Claim{rbac.ClaimDeploy},
 		deployMethods,
 		anvilAccount0,
 	)
@@ -582,14 +582,14 @@ func TestCreate2RuntimeDeployment_CrossOrgDenied(t *testing.T) {
 
 	// Create org-a with deploy claims.
 	orgAID := createOrgWithUser(t, env.srv.DB(), "org-a", "a-deployers", userADID,
-		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
+		[]rbac.Claim{rbac.ClaimDeploy},
 		allMethods,
 		anvilAccount0,
 	)
 
 	// Create org-b with read-only claims (no ETH address linked — different identity).
 	_ = createOrgWithUser(t, env.srv.DB(), "org-b", "b-readers", userBDID,
-		[]rbac.Claim{rbac.ClaimRead},
+		[]rbac.Claim{},
 		[]string{"eth_call", "eth_blockNumber", "eth_chainId", "eth_getCode"},
 		"",
 	)
@@ -679,7 +679,7 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 
 	// Create org with a deployer user (to deploy the factory).
 	orgID := createOrgWithUser(t, env.srv.DB(), "write-org", "deployers", deployerDID,
-		[]rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite, rbac.ClaimDeploy},
+		[]rbac.Claim{rbac.ClaimDeploy},
 		allMethods,
 		anvilAccount0,
 	)
@@ -706,7 +706,7 @@ func TestCreate2RuntimeDeployment_DeniedWithoutDeployClaim(t *testing.T) {
 		ID:             uuid.New().String(),
 		GroupID:        writerGroupID,
 		AllowedMethods: allMethods,
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{},
 	}
 	require.NoError(t, env.srv.DB().CreateGroupAccess(ctx, writerGA))
 

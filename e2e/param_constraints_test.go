@@ -95,7 +95,7 @@ func setupParamConstraintTest(t *testing.T, database *db.DB) *paramConstraintTes
 		ID:             uuid.New().String(),
 		GroupID:        setup.groupID,
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId"},
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{},
 	}
 	require.NoError(t, database.CreateGroupAccess(ctx, groupAccess))
 
@@ -360,7 +360,7 @@ func TestE2E_ParamConstraints_MultipleLinkedAddresses(t *testing.T) {
 	require.NoError(t, database.CreateGroupAccess(ctx, &rbac.GroupAccess{
 		ID: uuid.New().String(), GroupID: groupID,
 		AllowedMethods: []string{"eth_call", "eth_getBalance", "eth_blockNumber", "eth_chainId"},
-		Claims:         []rbac.Claim{rbac.ClaimRead, rbac.ClaimWrite},
+		Claims:         []rbac.Claim{},
 	}))
 	// User
 	userID := uuid.New().String()
