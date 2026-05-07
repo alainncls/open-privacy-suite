@@ -346,7 +346,34 @@ func TestEscalation_JWTAdminCannotCreateOrgAdminGroup(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can create org admin or readonly admin groups")
+	assert.Contains(t, w.Body.String(), errCreateOrgAdminGroupSuperOnly)
+}
+
+func TestEscalation_JWTAdminCanCreateReadonlyAdminGroup(t *testing.T) {
+	// RD-866 + RD-917 §2: tier-2 admins can mint is_org_readonly_admin
+	// groups within their own org. RO-admin is a strict subset of tier-2,
+	// so granting it is delegation (not escalation). Only is_org_admin
+	// remains super-admin-only.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"slug":                  "auditors",
+		"name":                  "Auditors",
+		"is_org_readonly_admin": true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
 func TestEscalation_JWTAdminCanCreateNonAdminGroup(t *testing.T) {
@@ -430,7 +457,41 @@ func TestEscalation_JWTAdminCannotUpdateGroupToOrgAdmin(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can set org admin or readonly admin status")
+	assert.Contains(t, w.Body.String(), errSetOrgAdminStatusSuperOnly)
+}
+
+func TestEscalation_JWTAdminCanUpdateGroupToReadonlyAdmin(t *testing.T) {
+	// Mirror of TestEscalation_JWTAdminCanCreateReadonlyAdminGroup for the
+	// PUT path. RD-866 + RD-917 §2.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+
+	normalGroup := &rbac.Group{
+		ID:    uuid.New().String(),
+		OrgID: orgID,
+		Slug:  "normal-" + uuid.New().String()[:8],
+		Name:  "Normal",
+		Path:  "normal",
+	}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"is_org_readonly_admin": true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/orgs/"+orgID+"/groups/"+normalGroup.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestEscalation_JWTAdminCanUpdateGroupName(t *testing.T) {

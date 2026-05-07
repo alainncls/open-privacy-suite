@@ -14,6 +14,20 @@ import (
 	"privacy-proxy/internal/rbac"
 )
 
+// Deny messages for the is_org_admin escalation gate. Referenced from the
+// handlers and from admin_tiers_test.go so the test never duplicates the
+// literal — flipping the policy here automatically updates the assertion.
+//
+// is_org_readonly_admin is intentionally NOT in this gate: a tier-2 org
+// admin granting RO-admin to a peer is delegation (strict subset of own
+// permissions), not escalation. is_org_admin granting still requires the
+// X-Admin-Token path because it creates a peer who could ban or demote
+// the granter.
+const (
+	errCreateOrgAdminGroupSuperOnly = "only super admin can create org admin groups"
+	errSetOrgAdminStatusSuperOnly   = "only super admin can set org admin status on groups"
+)
+
 // Group handlers
 
 func (s *Server) listGroups(c *gin.Context) {
@@ -67,11 +81,14 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot create org admin or
-	// readonly admin groups. Only super admins (X-Admin-Token) can mint
-	// is_org_admin or is_org_readonly_admin groups (RD-866).
-	if c.GetString("auth_method") == "jwt_admin" && (input.IsOrgAdmin || input.IsOrgReadonlyAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin or readonly admin groups"})
+	// Escalation prevention: JWT admins (tier 2) cannot create is_org_admin
+	// groups — that would create a peer who could demote them. Only super
+	// admins (X-Admin-Token) can mint is_org_admin (RD-866). Tier-2 *can*
+	// create is_org_readonly_admin groups: RO-admin is a strict subset of
+	// tier-2's permissions, so granting it is delegation, not escalation
+	// (RD-917 §2 — see PR description).
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": errCreateOrgAdminGroupSuperOnly})
 		return
 	}
 
@@ -183,12 +200,12 @@ func (s *Server) updateGroup(c *gin.Context) {
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin or
-	// is_org_readonly_admin to true. Only super admins (X-Admin-Token) can
-	// promote groups to (readonly) org admin status (RD-866).
+	// Escalation prevention: JWT admins (tier 2) cannot promote a group to
+	// is_org_admin. They CAN set is_org_readonly_admin — see the createGroup
+	// rationale above (RD-866 / RD-917 §2).
 	if c.GetString("auth_method") == "jwt_admin" {
-		if (input.IsOrgAdmin != nil && *input.IsOrgAdmin) || (input.IsOrgReadonlyAdmin != nil && *input.IsOrgReadonlyAdmin) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin or readonly admin status on groups"})
+		if input.IsOrgAdmin != nil && *input.IsOrgAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": errSetOrgAdminStatusSuperOnly})
 			return
 		}
 	}

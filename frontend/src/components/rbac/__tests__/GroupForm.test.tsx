@@ -200,14 +200,18 @@ describe('GroupForm', () => {
     });
   });
 
-  describe('Organization Admin Toggle', () => {
-    it('shows org admin toggle', () => {
+  describe('Read-only Org Admin Toggle', () => {
+    it('shows the read-only admin toggle and not the org admin toggle', () => {
+      // Tier-1 super-admin never has a UI session, and tier-2 cannot promote
+      // to is_org_admin (server returns 403). The Organization Admin checkbox
+      // is removed in the UI; only Read-only Org Admin remains.
       renderGroupForm({});
 
-      expect(screen.getByText('Organization Admin')).toBeInTheDocument();
+      expect(screen.getByText('Read-only Org Admin')).toBeInTheDocument();
+      expect(screen.queryByText('Organization Admin')).not.toBeInTheDocument();
     });
 
-    it('can toggle org admin status', async () => {
+    it('can toggle read-only org admin status', async () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       let capturedBody: Record<string, unknown> | null = null;
@@ -221,17 +225,14 @@ describe('GroupForm', () => {
 
       renderGroupForm({ onSave });
 
-      // Fill required fields
       const nameInput = screen.getByPlaceholderText(/Engineering, DevOps/);
-      await user.type(nameInput, 'Admin Team');
+      await user.type(nameInput, 'Auditors');
 
-      // Toggle org admin
-      const orgAdminLabel = screen.getByText('Organization Admin').closest('label');
-      if (orgAdminLabel) {
-        await user.click(orgAdminLabel);
+      const roLabel = screen.getByText('Read-only Org Admin').closest('label');
+      if (roLabel) {
+        await user.click(roLabel);
       }
 
-      // Submit
       const submitButton = screen.getByText('Create Group');
       await user.click(submitButton);
 
@@ -240,8 +241,10 @@ describe('GroupForm', () => {
       });
 
       expect(capturedBody).toMatchObject({
-        is_org_admin: true,
+        is_org_readonly_admin: true,
       });
+      // is_org_admin is no longer sent at all
+      expect(capturedBody).not.toHaveProperty('is_org_admin');
     });
   });
 
