@@ -111,6 +111,21 @@ These are consensus-layer data: they're identical across every RPC node on the n
 
 **Discuss:** Are 4b and 4c blocking for MVP? 4a is resolved above. 4b means `eth_call` responses are unfiltered. 4c is block-level aggregate gas/size metadata.
 
+### 4d. eth_call internal-call tracing for cross-org isolation — **RESOLVED** (RD-915)
+
+`internal/server/jsonrpc_processor.go` `validateEthCallWithTracing`
+
+Pre-RD-915, `eth_call` was gated only on the entry-point `to` address. A same-org wrapper that internally STATICCALL/DELEGATECALL/CALLs into a foreign-org private contract would bubble up state through the return value, defeating cross-org isolation on the read side. Sends were already protected by `validateWithTracing`; reads were not.
+
+RD-915 closes the read side:
+- Every `eth_call` is traced with `debug_traceCall` (uncached — proxy-pattern contracts can re-target their internal calls via storage rewrites, see `runtime_tracer.go` docstring on `TraceTransactionUncached`).
+- All internal call frames are passed through `TraceValidator.ValidateTrace` for the same cross-org check the send path uses.
+- `from` is rebound to the JWT-bound EOA via `GetLinkedEthAddresses`; user-supplied `from` that doesn't match a linked address is rejected (preserves the audit trail of spoof attempts).
+- A distinct 5s per-call timeout (`ETH_CALL_TRACE_TIMEOUT`), separate from the 30s send-side timeout, prevents a slow upstream from filling the per-JWT concurrency quota.
+- Default-on; the `RUNTIME_TRACING_ETH_CALL_ENABLED=false` env flag exists for change-management rollback only (ISO 27001 A.8.32). See `docs/rd-915-design.md` §KD-5.
+
+Open follow-up: `pure_helpers` skip-list (KD-1) to avoid tracing well-known stateless utility contracts; `access_logs.denial_reason` enum (KD-4); read-side access/visibility symmetry test (KD-6) — explorer log-data redaction for cross-org-touched txs is still a gap.
+
 ---
 
 ## 5. KYC / Billions Credential Gap

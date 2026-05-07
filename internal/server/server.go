@@ -426,6 +426,7 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.jsonrpcProcessor.SetMetrics(m)
 	s.jsonrpcProcessor.SetTxVisibilityStore(database)
 	s.jsonrpcProcessor.SetDefaultRPCAPIKeyHeader(cfg.RPCAPIKeyHeader)
+	s.jsonrpcProcessor.SetEthCallTracing(cfg.RuntimeTracingEthCallEnabled, cfg.EthCallTraceTimeout)
 
 	// Initialize compliance checker for travel rule enforcement
 	if cfg.EnableTravelRule {

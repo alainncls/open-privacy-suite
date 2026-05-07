@@ -91,6 +91,32 @@ func (rt *RuntimeTracer) TraceTransaction(
 	return result, nil
 }
 
+// TraceTransactionUncached traces a transaction WITHOUT consulting or
+// updating the cache. Used by the eth_call validation path (RD-915) where
+// caching is unsafe: proxy-pattern contracts (EIP-1967, Diamond, Beacon,
+// TransparentUpgradeable) can re-target their internal calls by rewriting
+// a storage slot, so a cache keyed by (from,to,data,value) returns stale
+// "allow" decisions after a cross-org upgrade. See docs/rd-915-design.md
+// §KD-7 for the regression net (e2e/eth_call_proxy_upgrade_test.go).
+//
+// Sibling of TraceTransaction rather than a useCache boolean parameter
+// so the cache-bypass intent is legible at every call site.
+func (rt *RuntimeTracer) TraceTransactionUncached(
+	ctx context.Context,
+	from, to, data, value string,
+) (*TraceResult, error) {
+	if !rt.enabled {
+		return nil, nil
+	}
+
+	from = strings.ToLower(strings.TrimSpace(from))
+	to = strings.ToLower(strings.TrimSpace(to))
+	data = strings.ToLower(strings.TrimSpace(data))
+	value = strings.TrimSpace(value)
+
+	return rt.tracer.TraceCall(ctx, from, to, data, value, "latest")
+}
+
 // TraceMinedTransaction traces a mined transaction to discover actual CREATE/CREATE2 addresses.
 // No caching — mined transactions are traced once during deployment finalization.
 func (rt *RuntimeTracer) TraceMinedTransaction(ctx context.Context, txHash string) (*TraceResult, error) {

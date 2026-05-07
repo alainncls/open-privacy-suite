@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -50,6 +51,10 @@ type JSONRPCProcessor struct {
 	concurrencyLimiter    *ConcurrencyLimiter
 	defaultRPCAPIKey      string
 	defaultRPCAPIKeyHeader string // global fallback header name; empty => proxy.DefaultAPIKeyHeader
+
+	// RD-915: eth_call cross-org tracing.
+	ethCallTracingEnabled bool          // RUNTIME_TRACING_ETH_CALL_ENABLED — default true; rollback knob.
+	ethCallTraceTimeout   time.Duration // ETH_CALL_TRACE_TIMEOUT — distinct from send-side TraceTimeout.
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
@@ -118,6 +123,24 @@ func NewJSONRPCProcessor(
 		circuitBreaker:     cb,
 		concurrencyLimiter: cl,
 		defaultRPCAPIKey:   defaultAPIKey,
+		// RD-915 defaults — wire-level safe-by-default. The server
+		// constructor calls SetEthCallTracing(...) right after to
+		// override from config.
+		ethCallTracingEnabled: true,
+		ethCallTraceTimeout:   5 * time.Second,
+	}
+}
+
+// SetEthCallTracing configures the RD-915 eth_call cross-org tracing knobs.
+// `enabled` defaults to true; flip to false only as a documented sev-1
+// rollback path. `timeout` caps how long the proxy waits for the upstream
+// debug_traceCall on the eth_call validation path; distinct from the
+// send-side TraceTimeout so a slow upstream cannot fill the
+// concurrency-limiter quota for read-heavy callers.
+func (p *JSONRPCProcessor) SetEthCallTracing(enabled bool, timeout time.Duration) {
+	p.ethCallTracingEnabled = enabled
+	if timeout > 0 {
+		p.ethCallTraceTimeout = timeout
 	}
 }
 
@@ -383,6 +406,18 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 		p.logAccess(ctx, req, http.StatusForbidden)
 		return &ProcessResult{
 			Error: traceErr,
+		}
+	}
+
+	// RD-915: runtime trace eth_call to enforce cross-org isolation on
+	// internal calls. Without this the entry-point access check is the
+	// only gate, and a same-org wrapper contract can STATICCALL into a
+	// foreign-org private contract and bubble up the result. No caching
+	// (proxy-pattern contracts can re-target via storage rewrites).
+	if ethCallTraceErr := p.validateEthCallWithTracing(ctx, req, targetAddr); ethCallTraceErr != nil {
+		p.logAccess(ctx, req, http.StatusForbidden)
+		return &ProcessResult{
+			Error: ethCallTraceErr,
 		}
 	}
 
@@ -933,6 +968,178 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 	}
 
 	return validationResult.CreateTargets, nil
+}
+
+// User-facing deny messages for eth_call runtime tracing (RD-915 KD-3).
+// Constants — never interpolate upstream node errors into the response,
+// and never echo a non-precompile contract address (an attacker who didn't
+// otherwise know that address exists in another org now does — same shape
+// as RD-916). Diagnostic detail goes to slog.Debug + access_logs.
+const (
+	ethCallDenyCrossOrg       = "call denied: cross-org access not permitted"
+	ethCallDenyDepthExceeded  = "call denied: trace depth exceeded; not provable as same-org"
+	ethCallDenyTracerError    = "call denied: tracing temporarily unavailable"
+	ethCallDenyInvalidRequest = "call denied: invalid request shape"
+)
+
+// validateEthCallWithTracing enforces cross-org isolation on every internal
+// CALL/STATICCALL/DELEGATECALL frame produced by an eth_call (RD-915). Today
+// the entry-point address is the only gate: an attacker can wrap a foreign-
+// org private contract with a same-org facade and bubble up state through
+// the return value. This closes the read-side of that gap. The send-side
+// equivalent is validateWithTracing.
+//
+// Differences from the send path that matter:
+//   - No caching. Proxy patterns (EIP-1967, Diamond, Beacon, transparent)
+//     can re-target their internal calls by rewriting a storage slot, so
+//     a (from,to,data,value) cache yields stale "allow" decisions after
+//     a cross-org upgrade. We use TraceTransactionUncached. Regression net
+//     in e2e/eth_call_proxy_upgrade_test.go (counting cache mock asserts
+//     Get/Set are never reached on the eth_call path).
+//   - `from` is rebound to the JWT-bound EOA. Sends pin msg.sender via the
+//     unlocked key; reads do not, and accepting user-supplied `from` lets
+//     an attacker take an "if (msg.sender == orgB-router)" branch they
+//     would never reach as themselves. Reject mismatched user-supplied
+//     `from` with 400 invalid request rather than silently rebinding,
+//     because silent rebinding would mask spoofing attempts in the logs.
+//   - Distinct timeout (default 5s) so a slow upstream can't fill the
+//     concurrency-limiter quota for a single JWT.
+//   - Distinct deny messages (the four constants above) — never %v the
+//     upstream error and never echo the denied contract address.
+//
+// Returns nil to allow the eth_call to be forwarded; non-nil to deny.
+func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *ProcessRequest, targetAddr string) *ProcessError {
+	if !p.ethCallTracingEnabled {
+		return nil
+	}
+	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
+		return nil
+	}
+	if req.Method != "eth_call" {
+		return nil
+	}
+	if targetAddr == "" {
+		// No target — nothing to trace. The entry-point access check
+		// would have already rejected this if RBAC required a target.
+		return nil
+	}
+
+	from, to, data, value := extractTxParams(req.Params)
+
+	// Input validation BEFORE tracing: malformed addresses cannot be
+	// allowed to burn a concurrency slot or emit a metric labeled with
+	// junk. gethcommon.IsHexAddress accepts mixed-case checksummed and
+	// uppercase forms.
+	if to == "" || !gethcommon.IsHexAddress(to) {
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+	}
+	if from != "" && !gethcommon.IsHexAddress(from) {
+		return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+	}
+
+	// Resolve the JWT-bound user identity and rebind `from`. The JWT
+	// already passed CheckAccess, so user lookup must succeed; if it
+	// doesn't, fail closed.
+	user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
+	if err != nil || user == nil {
+		slog.Warn("eth_call trace: user lookup failed",
+			slog.String("user", req.UserID), slog.Any("err", err))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+
+	// Discover the user's linked EOAs. Any user-supplied `from` must
+	// equal one of them. Empty `from` is allowed — the upstream node
+	// will treat it as the zero address. Rejecting a mismatch (rather
+	// than silently rebinding) preserves the audit trail of spoof
+	// attempts: the access_log row records the attempted `from` and
+	// the deny.
+	userAddrs, addrErr := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+	if addrErr != nil {
+		slog.Warn("eth_call trace: linked-address lookup failed",
+			slog.String("user", req.UserID), slog.Any("err", addrErr))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+	if from != "" {
+		fromLC := strings.ToLower(from)
+		match := false
+		for _, a := range userAddrs {
+			if strings.ToLower(a) == fromLC {
+				match = true
+				break
+			}
+		}
+		if !match {
+			slog.Info("eth_call trace: user-supplied from rejected (not in linked addresses)",
+				slog.String("user", req.UserID), slog.String("from", from))
+			return &ProcessError{StatusCode: http.StatusBadRequest, Message: ethCallDenyInvalidRequest}
+		}
+	}
+
+	// Org memberships → for ValidateTrace's cross-org check.
+	memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+	if err != nil {
+		slog.Warn("eth_call trace: membership lookup failed",
+			slog.String("user_uuid", user.ID), slog.Any("err", err))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+	userOrgIDs := make(map[string]bool)
+	for _, m := range memberships {
+		if m.Group != nil {
+			userOrgIDs[m.Group.OrgID] = true
+		}
+	}
+
+	// Per-call timeout. Distinct from the 30s send-side TraceTimeout.
+	traceCtx, cancel := context.WithTimeout(ctx, p.ethCallTraceTimeout)
+	defer cancel()
+
+	// Uncached trace — see function-level docstring.
+	traceResult, err := p.runtimeTracer.TraceTransactionUncached(traceCtx, from, to, data, value)
+	if err != nil {
+		// Distinguish depth-exceeded from upstream-node errors. Both
+		// are 403 from the user's POV (tracing-incomplete = deny), but
+		// we surface a distinct message so triage can tell deep
+		// recursion apart from a node hiccup. Never %v the err.
+		if errors.Is(err, tracer.ErrTraceDepthExceeded) {
+			slog.Info("eth_call trace: depth exceeded",
+				slog.String("user", req.UserID), slog.String("to", to))
+			return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyDepthExceeded}
+		}
+		slog.Warn("eth_call trace: upstream tracer error",
+			slog.String("user", req.UserID), slog.String("to", to), slog.Any("err", err))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+	if traceResult == nil {
+		// Tracer is enabled but returned nil — fail closed. This is
+		// the same posture as the send path (line ~910).
+		slog.Warn("eth_call trace: nil result", slog.String("user", req.UserID), slog.String("to", to))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyTracerError}
+	}
+
+	// userHasDeploy is irrelevant for read-only validation but the
+	// validator's signature requires it; the deploy-claim branch only
+	// affects CREATE-frame handling, which eth_call cannot produce.
+	userHasDeploy := p.userHasDeployClaim(ctx, memberships)
+
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	if err != nil {
+		slog.Warn("eth_call trace: validator error",
+			slog.String("user", req.UserID), slog.Any("err", err))
+		return &ProcessError{StatusCode: http.StatusInternalServerError, Message: ethCallDenyTracerError}
+	}
+	if !validationResult.Allowed {
+		// Diagnostic detail (which contract triggered the deny) goes
+		// to slog.Debug only — never to the response body.
+		slog.Info("eth_call trace: cross-org denial",
+			slog.String("user", req.UserID), slog.String("to", to))
+		slog.Debug("eth_call trace: cross-org denial detail",
+			slog.String("user", req.UserID),
+			slog.String("reason", validationResult.Reason),
+			slog.String("denied_target", validationResult.DeniedTarget))
+		return &ProcessError{StatusCode: http.StatusForbidden, Message: ethCallDenyCrossOrg}
+	}
+
+	return nil
 }
 
 // checkCompliance runs travel rule compliance checks if the checker is configured.

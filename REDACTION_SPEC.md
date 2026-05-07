@@ -294,6 +294,8 @@ At the RPC layer, visibility is binary: the caller either is or is not a partici
 | `eth_getBlockReceipts` | All receipts in block | Non-participant receipts removed | Yes | Yes |
 | `logsBloom` in blocks | All-zero (256 bytes) for every viewer | — | Yes | Yes | G6 closed (RD-873) |
 
+**`eth_call` internal-call validation (RD-915).** The table above covers response-side filtering. `eth_call` has a separate gating layer at the *request* boundary: every call is traced via `debug_traceCall` and every internal `CALL`/`STATICCALL`/`DELEGATECALL` frame is checked against the caller's org membership (`internal/server/jsonrpc_processor.go` `validateEthCallWithTracing`). Without this, a same-org wrapper contract could STATICCALL into a foreign-org private contract and bubble up the result through the return value — defeating cross-org isolation on the read side even if the response itself contains no addresses to redact. Tracing is uncached on the read path because proxy-pattern contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot, so a `(from,to,data,value)` cache yields stale "allow" decisions after a cross-org upgrade. `from` is rebound to the JWT-bound EOA via `GetLinkedEthAddresses`; spoofed `from` is rejected (not silently rebound — preserves audit trail). See `docs/rd-915-design.md`.
+
 ### 3.9 Token (Explorer API)
 
 Token visibility is determined by the token's contract address. If the address is registered as an org contract in the RBAC database, the token inherits that contract's visibility. Unregistered addresses default to `VisibilityHidden` (all contracts are private by default).
@@ -326,7 +328,7 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G15 are outstanding.
+The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G15, G23 are outstanding.
 
 ### Resolved
 
@@ -379,6 +381,9 @@ The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, 
 
 - **G21: Inbound transaction visibility — should recipient see sender?**
   When someone sends a transaction TO a user, the participant override reveals the sender's address to the recipient. This is currently correct (the recipient knows who sent them funds). However, the reverse case needs consideration: if someone receives an unsolicited transaction, should the sender's identity be revealed? On a public chain this is a non-issue, but on a private network where identity is protected, receiving a tx could be used to probe someone's explorer view. **Decision needed:** Is the current behavior (always reveal counterparty to participants) correct, or should inbound-only participants have restricted visibility?
+
+- **G23: Explorer log-data redaction does not cover cross-org-touched txs**
+  RD-915 closes the `eth_call`-side cross-org leak at the proxy boundary, but the explorer-side log-data redaction (RD-875/RD-889) is keyed on the *emitting contract* of each log, not on whether the originating tx touched a foreign-org contract via internal calls. A tx authored by org A that internally STATICCALLs an org B contract may end up with org A logs whose `data` references org B state. The RPC-layer `eth_call` gate prevents the live-query angle; the indexed/historical explorer view is still open. Follow-up needed: extend `RedactLogs` (or add a tx-level pre-filter) so that any log of a tx whose trace touched a foreign-org address is treated as cross-org for the viewer. See `docs/rd-915-design.md` §KD-6.
 
 ---
 

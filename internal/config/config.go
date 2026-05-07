@@ -255,6 +255,17 @@ type Config struct {
 	TraceCacheTTL         time.Duration // TTL for trace result cache (default: 10s)
 	TraceTimeout          time.Duration // Timeout for debug_traceCall requests (default: 30s)
 	TraceTieredValidation bool          // If true, skip trace for known org addresses (default: true)
+	// RuntimeTracingEthCallEnabled controls runtime tracing of eth_call
+	// requests for cross-org isolation (RD-915). Default true; only flip
+	// to false as a documented sev-1 rollback path. Has no effect when
+	// runtime tracing is globally off.
+	RuntimeTracingEthCallEnabled bool
+	// EthCallTraceTimeout caps how long the proxy will wait for the
+	// upstream debug_traceCall on the eth_call validation path. Distinct
+	// from the send-side TraceTimeout so a slow upstream cannot fill the
+	// concurrency-limiter quota for read-heavy callers (RD-915 KD on
+	// per-call timeout). Default 5s.
+	EthCallTraceTimeout time.Duration
 
 	// Travel rule compliance configuration
 	EnableTravelRule   bool          // If true, enable travel rule enforcement (default: false)
@@ -401,6 +412,13 @@ func Load() *Config {
 		}
 	}
 	traceTiered := getEnv("TRACE_TIERED_VALIDATION", "true") != "false"
+	ethCallTracingEnabled := getEnv("RUNTIME_TRACING_ETH_CALL_ENABLED", "true") != "false"
+	ethCallTraceTimeout := 5 * time.Second
+	if t := getEnv("ETH_CALL_TRACE_TIMEOUT", ""); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			ethCallTraceTimeout = d
+		}
+	}
 
 	// Travel rule compliance configuration
 	enableTravelRule := getEnv("ENABLE_TRAVEL_RULE", "false") == "true"
@@ -533,9 +551,11 @@ func Load() *Config {
 		DemoAutoAuthDelay:        demoDelay,
 		ExtraRPCNamespacesFile:   extraRPCNamespacesFile,
 		ExtraRPCNamespaces:       extraRPCNamespaces,
-		TraceCacheTTL:            traceCacheTTL,
-		TraceTimeout:             traceTimeout,
-		TraceTieredValidation:    traceTiered,
+		TraceCacheTTL:                traceCacheTTL,
+		TraceTimeout:                 traceTimeout,
+		TraceTieredValidation:        traceTiered,
+		RuntimeTracingEthCallEnabled: ethCallTracingEnabled,
+		EthCallTraceTimeout:          ethCallTraceTimeout,
 		EnableTravelRule:         enableTravelRule,
 		TravelRecordExpiry:       travelRecordExpiry,
 		PriceFetchInterval:       priceFetchInterval,
