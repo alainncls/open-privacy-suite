@@ -63,6 +63,19 @@ describe('LoginPage', () => {
       expect(qrCode).toBeInTheDocument();
     });
 
+    it('should show "Sign in with Billions/Privado" brand panel (RD-859)', async () => {
+      renderLoginPage();
+
+      // The brand panel renders alongside the QR section once auth is ready
+      await waitFor(() => {
+        expect(screen.getByTestId('privado-brand-panel')).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText('Sign in with Billions/Privado')
+      ).toBeInTheDocument();
+    });
+
     it('should show polling indicator when ready', async () => {
       renderLoginPage();
 
