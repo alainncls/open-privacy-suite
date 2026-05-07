@@ -219,8 +219,11 @@ func (t *Tx) DeleteGroup(ctx context.Context, id string) error {
 // Group Access operations on transaction
 
 func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'Authorization'))
+	// rpc_api_key_header column is left at its schema DEFAULT 'Authorization'
+	// (migration 043) and is not consulted at runtime. The header name is
+	// operator-wide via the RPC_API_KEY_HEADER env var.
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -228,16 +231,10 @@ func (t *Tx) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 		claims[i] = string(c)
 	}
 
-	var headerArg any
-	if access.RPCAPIKeyHeader != "" {
-		headerArg = access.RPCAPIKeyHeader
-	}
-
 	return t.tx.QueryRowContext(ctx, query,
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
 		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
-		headerArg,
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 

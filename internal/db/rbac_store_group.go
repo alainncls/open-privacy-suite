@@ -136,7 +136,7 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 	}
 
 	query := `SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.is_org_readonly_admin, g.is_system, g.auto_created, g.created_at, g.updated_at,
-	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.rpc_api_key, ga.rpc_api_key_header, ga.created_at, ga.updated_at
+	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.rpc_api_key, ga.created_at, ga.updated_at
 	          FROM groups g
 	          LEFT JOIN group_access ga ON g.id = ga.group_id
 	          WHERE g.org_id = $1
@@ -158,13 +158,13 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 		var accessID sql.NullString
 		var allowedMethods, claimsStr pq.StringArray
 		var rateLimitRPS, rateLimitDaily sql.NullInt32
-		var rpcAPIKey, rpcAPIKeyHeader sql.NullString
+		var rpcAPIKey sql.NullString
 		var accessCreatedAt, accessUpdatedAt sql.NullTime
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &rpcAPIKeyHeader, &accessCreatedAt, &accessUpdatedAt,
+			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
 		}
@@ -200,9 +200,6 @@ func (d *DB) ListGroupsWithAccessPaginated(ctx context.Context, orgID string, li
 			}
 			if rpcAPIKey.Valid {
 				access.RPCAPIKey = &rpcAPIKey.String
-			}
-			if rpcAPIKeyHeader.Valid {
-				access.RPCAPIKeyHeader = rpcAPIKeyHeader.String
 			}
 			gwa.Access = access
 		}
@@ -252,7 +249,7 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 
 	// Query with joins
 	query := fmt.Sprintf(`SELECT g.id, g.org_id, g.parent_id, g.slug, g.name, g.description, g.depth, g.path, g.is_org_admin, g.is_org_readonly_admin, g.is_system, g.auto_created, g.created_at, g.updated_at,
-	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.rpc_api_key, ga.rpc_api_key_header, ga.created_at, ga.updated_at
+	                 ga.id, ga.allowed_methods, ga.claims, ga.rate_limit_rps, ga.rate_limit_daily, ga.rpc_api_key, ga.created_at, ga.updated_at
 	          FROM groups g
 	          LEFT JOIN group_access ga ON g.id = ga.group_id
 	          WHERE %s
@@ -274,13 +271,13 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 		var accessID sql.NullString
 		var allowedMethods, claimsStr pq.StringArray
 		var rateLimitRPS, rateLimitDaily sql.NullInt32
-		var rpcAPIKey, rpcAPIKeyHeader sql.NullString
+		var rpcAPIKey sql.NullString
 		var accessCreatedAt, accessUpdatedAt sql.NullTime
 
 		if err := rows.Scan(
 			&group.ID, &group.OrgID, &parentID, &group.Slug, &group.Name,
 			&description, &group.Depth, &group.Path, &group.IsOrgAdmin, &group.IsOrgReadonlyAdmin, &group.IsSystem, &group.AutoCreated, &group.CreatedAt, &group.UpdatedAt,
-			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &rpcAPIKeyHeader, &accessCreatedAt, &accessUpdatedAt,
+			&accessID, &allowedMethods, &claimsStr, &rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &accessCreatedAt, &accessUpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan group with access: %w", err)
 		}
@@ -315,9 +312,6 @@ func (d *DB) ListGroupsWithAccessFiltered(ctx context.Context, orgID string, lim
 			}
 			if rpcAPIKey.Valid {
 				access.RPCAPIKey = &rpcAPIKey.String
-			}
-			if rpcAPIKeyHeader.Valid {
-				access.RPCAPIKeyHeader = rpcAPIKeyHeader.String
 			}
 			gwa.Access = access
 		}
@@ -421,8 +415,12 @@ func scanGroups(rows *sql.Rows) ([]*rbac.Group, error) {
 // Group Access operations
 
 func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'Authorization'))
+	// rpc_api_key_header column is intentionally not written; it stays at its
+	// schema DEFAULT 'Authorization' (migration 043) and is not consulted at
+	// runtime. The header name is operator-wide via the RPC_API_KEY_HEADER env
+	// var (see internal/config and SetDefaultRPCAPIKeyHeader).
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          RETURNING created_at, updated_at`
 
 	claims := make([]string, len(access.Claims))
@@ -434,35 +432,22 @@ func (d *DB) CreateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
 		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
-		nullableHeader(access.RPCAPIKeyHeader),
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 
-// nullableHeader returns the header name for storage. An empty value is
-// translated to NULL; SQL call sites must wrap the parameter in
-// COALESCE($n, 'Authorization') so the default applies (Postgres ignores
-// column DEFAULTs when an explicit NULL is provided). A non-empty value is
-// stored verbatim.
-func nullableHeader(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAccess, error) {
-	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header, created_at, updated_at
+	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, created_at, updated_at
 	          FROM group_access WHERE group_id = $1`
 
 	access := &rbac.GroupAccess{}
 	var allowedMethods, defaultClaims pq.StringArray
 	var rateLimitRPS, rateLimitDaily sql.NullInt32
-	var rpcAPIKey, rpcAPIKeyHeader sql.NullString
+	var rpcAPIKey sql.NullString
 
 	err := d.conn.QueryRowContext(ctx, query, groupID).Scan(
 		&access.ID, &access.GroupID,
 		&allowedMethods, &defaultClaims,
-		&rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &rpcAPIKeyHeader,
+		&rateLimitRPS, &rateLimitDaily, &rpcAPIKey,
 		&access.CreatedAt, &access.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -489,9 +474,6 @@ func (d *DB) GetGroupAccess(ctx context.Context, groupID string) (*rbac.GroupAcc
 	if rpcAPIKey.Valid {
 		access.RPCAPIKey = &rpcAPIKey.String
 	}
-	if rpcAPIKeyHeader.Valid {
-		access.RPCAPIKeyHeader = rpcAPIKeyHeader.String
-	}
 
 	return access, nil
 }
@@ -501,7 +483,7 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 		return make(map[string]*rbac.GroupAccess), nil
 	}
 
-	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header, created_at, updated_at
+	query := `SELECT id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, created_at, updated_at
 	          FROM group_access WHERE group_id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(groupIDs))
@@ -515,12 +497,12 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 		access := &rbac.GroupAccess{}
 		var allowedMethods, defaultClaims pq.StringArray
 		var rateLimitRPS, rateLimitDaily sql.NullInt32
-		var rpcAPIKey, rpcAPIKeyHeader sql.NullString
+		var rpcAPIKey sql.NullString
 
 		if err := rows.Scan(
 			&access.ID, &access.GroupID,
 			&allowedMethods, &defaultClaims,
-			&rateLimitRPS, &rateLimitDaily, &rpcAPIKey, &rpcAPIKeyHeader,
+			&rateLimitRPS, &rateLimitDaily, &rpcAPIKey,
 			&access.CreatedAt, &access.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan group access: %w", err)
@@ -543,9 +525,6 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 		if rpcAPIKey.Valid {
 			access.RPCAPIKey = &rpcAPIKey.String
 		}
-		if rpcAPIKeyHeader.Valid {
-			access.RPCAPIKeyHeader = rpcAPIKeyHeader.String
-		}
 
 		result[access.GroupID] = access
 	}
@@ -558,15 +537,15 @@ func (d *DB) GetGroupAccessBatch(ctx context.Context, groupIDs []string) (map[st
 }
 
 func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) error {
-	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key, rpc_api_key_header)
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'Authorization'))
+	// rpc_api_key_header is left untouched; see CreateGroupAccess for the rationale.
+	query := `INSERT INTO group_access (id, group_id, allowed_methods, claims, rate_limit_rps, rate_limit_daily, rpc_api_key)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          ON CONFLICT (group_id) DO UPDATE SET
 	          allowed_methods = EXCLUDED.allowed_methods,
 	          claims = EXCLUDED.claims,
 	          rate_limit_rps = EXCLUDED.rate_limit_rps,
 	          rate_limit_daily = EXCLUDED.rate_limit_daily,
 	          rpc_api_key = EXCLUDED.rpc_api_key,
-	          rpc_api_key_header = EXCLUDED.rpc_api_key_header,
 	          updated_at = CURRENT_TIMESTAMP
 	          RETURNING created_at, updated_at`
 
@@ -579,7 +558,6 @@ func (d *DB) UpdateGroupAccess(ctx context.Context, access *rbac.GroupAccess) er
 		access.ID, access.GroupID,
 		pq.Array(access.AllowedMethods), pq.Array(claims),
 		access.RateLimitRPS, access.RateLimitDaily, access.RPCAPIKey,
-		nullableHeader(access.RPCAPIKeyHeader),
 	).Scan(&access.CreatedAt, &access.UpdatedAt)
 }
 

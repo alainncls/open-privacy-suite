@@ -49,7 +49,7 @@ type JSONRPCProcessor struct {
 	circuitBreaker        *CircuitBreaker
 	concurrencyLimiter    *ConcurrencyLimiter
 	defaultRPCAPIKey      string
-	defaultRPCAPIKeyHeader string // global fallback header name; empty => proxy.DefaultAPIKeyHeader
+	defaultRPCAPIKeyHeader string // operator-wide header name from RPC_API_KEY_HEADER; empty => proxy.DefaultAPIKeyHeader
 
 	// Prometheus metrics
 	metrics *metrics.Metrics
@@ -139,26 +139,17 @@ func (p *JSONRPCProcessor) SetMetrics(m *metrics.Metrics) {
 	p.metrics = m
 }
 
-// SetDefaultRPCAPIKeyHeader sets the global fallback header name used when a
-// group does not specify its own. Empty input means "use Authorization /
-// Bearer", matching the historical behaviour.
+// SetDefaultRPCAPIKeyHeader sets the operator-wide header name used to forward
+// the RPC API key (from the RPC_API_KEY_HEADER env var). Empty input means
+// "use Authorization / Bearer" — the proxy default.
 func (p *JSONRPCProcessor) SetDefaultRPCAPIKeyHeader(name string) {
 	p.defaultRPCAPIKeyHeader = name
 }
 
-// resolveAPIKeyHeader picks the header name used to forward the upstream RPC
-// API key for a given group. Order: per-group value (when non-empty AND
-// passes ValidAPIKeyHeader) → global default from config → "Authorization".
-// The per-group value is trimmed and revalidated so a stored value containing
-// stray whitespace or characters that would produce a malformed header line
-// (e.g. CRLF) falls through to the safer default rather than being emitted
-// verbatim. The save path also rejects bad values, but defence-in-depth here
-// keeps a misconfigured row from poisoning every forwarded request.
-func (p *JSONRPCProcessor) resolveAPIKeyHeader(groupHeader string) string {
-	groupHeader = strings.TrimSpace(groupHeader)
-	if groupHeader != "" && proxy.ValidAPIKeyHeader(groupHeader) {
-		return groupHeader
-	}
+// resolveAPIKeyHeader returns the header name used to forward the upstream
+// RPC API key. The header is operator-wide (set via the RPC_API_KEY_HEADER
+// env var); there is no per-group override.
+func (p *JSONRPCProcessor) resolveAPIKeyHeader() string {
 	if p.defaultRPCAPIKeyHeader != "" {
 		return p.defaultRPCAPIKeyHeader
 	}
@@ -444,7 +435,7 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	if apiKey == "" {
 		apiKey = p.defaultRPCAPIKey
 	}
-	apiKeyHeader := p.resolveAPIKeyHeader(result.RPCAPIKeyHeader)
+	apiKeyHeader := p.resolveAPIKeyHeader()
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
@@ -1168,7 +1159,7 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 	if apiKey == "" {
 		apiKey = p.defaultRPCAPIKey
 	}
-	apiKeyHeader := p.resolveAPIKeyHeader(result.RPCAPIKeyHeader)
+	apiKeyHeader := p.resolveAPIKeyHeader()
 
 	// Check circuit breaker
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(apiKey) {
@@ -1418,7 +1409,7 @@ func (p *JSONRPCProcessor) processDebugTrace(ctx context.Context, req *ProcessRe
 	// 5. Validated & Safe! Forward the exact request to the upstream node to fetch the raw requested trace format
 	// (Since we used internal tracers like callTracer, but they might want struct logs or memory dumps)
 	traceAPIKey := p.defaultRPCAPIKey
-	traceAPIKeyHeader := p.resolveAPIKeyHeader("")
+	traceAPIKeyHeader := p.resolveAPIKeyHeader()
 	if p.circuitBreaker != nil && p.circuitBreaker.IsOpen(traceAPIKey) {
 		if p.metrics != nil {
 			p.metrics.CircuitBreakerTripsTotal.WithLabelValues(maskAPIKey(traceAPIKey)).Inc()

@@ -6,81 +6,34 @@ import (
 	"privacy-proxy/internal/proxy"
 )
 
-// TestResolveAPIKeyHeader exercises the per-group → processor-default →
-// proxy.DefaultAPIKeyHeader fallback chain inside the JSON-RPC processor.
-// The wider DB→permissions→AccessCheckResult propagation path is covered
-// by TestResolverRPCAPIKeyHeaderPropagation; this test pins the helper's
-// own three branches so a future refactor cannot silently flip the order.
+// TestResolveAPIKeyHeader pins the two-branch behaviour of the processor's
+// header resolver: the operator-wide default from RPC_API_KEY_HEADER if set,
+// otherwise proxy.DefaultAPIKeyHeader.
 func TestResolveAPIKeyHeader(t *testing.T) {
 	tests := []struct {
 		name             string
 		processorDefault string
-		groupHeader      string
 		want             string
 	}{
 		{
-			name:             "per-group header wins over processor default",
+			name:             "processor default wins when set",
 			processorDefault: "Custom-H",
-			groupHeader:      "X-API-Key",
-			want:             "X-API-Key",
-		},
-		{
-			name:             "per-group header wins when processor default empty",
-			processorDefault: "",
-			groupHeader:      "X-API-Key",
-			want:             "X-API-Key",
-		},
-		{
-			name:             "processor default used when group header empty",
-			processorDefault: "Custom-H",
-			groupHeader:      "",
 			want:             "Custom-H",
 		},
 		{
-			name:             "falls back to proxy.DefaultAPIKeyHeader when both empty",
+			name:             "falls back to proxy.DefaultAPIKeyHeader when default empty",
 			processorDefault: "",
-			groupHeader:      "",
 			want:             proxy.DefaultAPIKeyHeader,
-		},
-		{
-			name:             "whitespace-only group header falls through to processor default",
-			processorDefault: "Custom-H",
-			groupHeader:      "   ",
-			want:             "Custom-H",
-		},
-		{
-			name:             "whitespace-only group header with empty processor default falls through to DefaultAPIKeyHeader",
-			processorDefault: "",
-			groupHeader:      "\t  \n",
-			want:             proxy.DefaultAPIKeyHeader,
-		},
-		{
-			name:             "group header with leading/trailing whitespace is trimmed and used",
-			processorDefault: "Custom-H",
-			groupHeader:      "  X-API-Key  ",
-			want:             "X-API-Key",
-		},
-		{
-			name:             "group header containing CRLF is rejected and falls through",
-			processorDefault: "Custom-H",
-			groupHeader:      "X-API-Key\r\nX-Injected: bad",
-			want:             "Custom-H",
-		},
-		{
-			name:             "group header containing space is rejected and falls through",
-			processorDefault: "Custom-H",
-			groupHeader:      "X API Key",
-			want:             "Custom-H",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &JSONRPCProcessor{defaultRPCAPIKeyHeader: tt.processorDefault}
-			got := p.resolveAPIKeyHeader(tt.groupHeader)
+			got := p.resolveAPIKeyHeader()
 			if got != tt.want {
-				t.Errorf("resolveAPIKeyHeader(processorDefault=%q, groupHeader=%q) = %q, want %q",
-					tt.processorDefault, tt.groupHeader, got, tt.want)
+				t.Errorf("resolveAPIKeyHeader(processorDefault=%q) = %q, want %q",
+					tt.processorDefault, got, tt.want)
 			}
 		})
 	}
@@ -88,15 +41,15 @@ func TestResolveAPIKeyHeader(t *testing.T) {
 
 // TestSetDefaultRPCAPIKeyHeader verifies the setter wires through to the
 // resolver, since the setter is the only public way operators (via Load())
-// can populate the global fallback.
+// can populate the operator-wide default.
 func TestSetDefaultRPCAPIKeyHeader(t *testing.T) {
 	p := &JSONRPCProcessor{}
-	if got := p.resolveAPIKeyHeader(""); got != proxy.DefaultAPIKeyHeader {
-		t.Fatalf("pre-set resolveAPIKeyHeader(\"\") = %q, want %q", got, proxy.DefaultAPIKeyHeader)
+	if got := p.resolveAPIKeyHeader(); got != proxy.DefaultAPIKeyHeader {
+		t.Fatalf("pre-set resolveAPIKeyHeader() = %q, want %q", got, proxy.DefaultAPIKeyHeader)
 	}
 	p.SetDefaultRPCAPIKeyHeader("Custom-H")
-	if got := p.resolveAPIKeyHeader(""); got != "Custom-H" {
-		t.Errorf("post-set resolveAPIKeyHeader(\"\") = %q, want %q", got, "Custom-H")
+	if got := p.resolveAPIKeyHeader(); got != "Custom-H" {
+		t.Errorf("post-set resolveAPIKeyHeader() = %q, want %q", got, "Custom-H")
 	}
 }
 
