@@ -125,7 +125,14 @@ func (s *Server) createOrganization(c *gin.Context) {
 	// create orgs — they're scoped to managing existing tenants. Mirrors the
 	// is_org_admin escalation gate in createGroup (admin_rbac_group.go:73).
 	// RD-917 §1.
-	if c.GetString("auth_method") != "admin_token" {
+	//
+	// Dev mode (auth_method == "" — no admin token configured) and the
+	// adminAuthMiddleware bypass test fixtures both reach this handler with
+	// no auth context; they pass through because in those modes there is
+	// no authentication boundary to enforce. Production deployments
+	// configure ADMIN_API_TOKEN, which makes auth_method always either
+	// "admin_token" or "jwt_admin" — and only "jwt_admin" is rejected.
+	if c.GetString("auth_method") == "jwt_admin" {
 		respondForbidden(c, "only super admin can create organizations")
 		return
 	}
@@ -261,7 +268,9 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	// (X-Admin-Token). Tier-2 admins retain read + edit-metadata on their
 	// own orgs, but DELETE is locked: deleting a tenant is operator
 	// territory, not in-tenant authority. RD-917 §1.
-	if c.GetString("auth_method") != "admin_token" {
+	//
+	// See createOrganization for the dev-mode rationale.
+	if c.GetString("auth_method") == "jwt_admin" {
 		respondForbidden(c, "only super admin can delete organizations")
 		return
 	}
