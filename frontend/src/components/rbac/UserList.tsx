@@ -4,6 +4,7 @@ import { rbacApi } from '@/api/rbac';
 import type { User, GroupWithAccess, UserRoleFilter } from '@/types/rbac';
 import UserDetail from './UserDetail';
 import { useOrgContext } from './RBACManager';
+import { useAdmin } from '@/components/auth/RequireAdmin';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -55,6 +56,7 @@ export default function UserList() {
   const { userId } = useParams();
   const navigate = useNavigate();
   const { selectedOrg } = useOrgContext();
+  const { isReadonlyAdmin } = useAdmin();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -387,25 +389,27 @@ export default function UserList() {
                     className="flex items-center justify-end gap-2"
                     onClick={e => e.stopPropagation()}
                   >
-                    <Button
-                      variant={user.banned ? 'success' : 'destructive'}
-                      size="sm"
-                      onClick={() => handleToggleBan(user)}
-                      className="gap-1.5"
-                      title={user.banned ? 'Unban this user' : 'Ban this user'}
-                    >
-                      {user.banned ? (
-                        <>
-                          <Shield className="w-3.5 h-3.5" />
-                          Unban
-                        </>
-                      ) : (
-                        <>
-                          <ShieldOff className="w-3.5 h-3.5" />
-                          Ban
-                        </>
-                      )}
-                    </Button>
+                    {!isReadonlyAdmin && (
+                      <Button
+                        variant={user.banned ? 'success' : 'destructive'}
+                        size="sm"
+                        onClick={() => handleToggleBan(user)}
+                        className="gap-1.5"
+                        title={user.banned ? 'Unban this user' : 'Ban this user'}
+                      >
+                        {user.banned ? (
+                          <>
+                            <Shield className="w-3.5 h-3.5" />
+                            Unban
+                          </>
+                        ) : (
+                          <>
+                            <ShieldOff className="w-3.5 h-3.5" />
+                            Ban
+                          </>
+                        )}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
