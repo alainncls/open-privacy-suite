@@ -86,8 +86,13 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	)
 	require.NoError(t, err)
 
-	// Create RBAC access controller
+	// Create RBAC access controller. Stop() tears down the cleanup
+	// goroutine spawned by NewCache; without this every test leaks one
+	// goroutine that holds memory + a select-loop until process exit.
+	// Across ~500 tests in this package the leak compounds enough to push
+	// the suite past its 20m timeout (RD-917 follow-up).
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	t.Cleanup(rbacAccessCtrl.Stop)
 
 	// Create server with minimal setup
 	gin.SetMode(gin.TestMode)

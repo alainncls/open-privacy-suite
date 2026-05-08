@@ -108,6 +108,7 @@ func setupTestServerForContractProof(t *testing.T) *testServerContractProof {
 	require.NoError(t, err)
 
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	t.Cleanup(rbacAccessCtrl.Stop)
 	proxySvc := proxy.New(mockNode.URL)
 
 	gin.SetMode(gin.TestMode)

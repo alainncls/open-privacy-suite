@@ -61,6 +61,7 @@ func setupTestServerForUserProfile(t *testing.T) (*Server, *gin.Engine) {
 		rbacAccessCtrl: rbac.NewAccessController(database, 5*time.Minute),
 		config:         cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	router := gin.New()
 	srv.registerUserProfileRoutes(router)

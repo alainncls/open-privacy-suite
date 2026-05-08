@@ -130,6 +130,7 @@ func TestExplorerRedactorWiring_FullStack(t *testing.T) {
 	// nil; since wireExplorerRedactor wires the resolver, we pass a
 	// no-op stub.
 	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
+	t.Cleanup(accessCtrl.Stop)
 	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
 	wireExplorerRedactor(engine, database, accessCtrl)
 

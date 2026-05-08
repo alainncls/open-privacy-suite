@@ -101,6 +101,7 @@ func setupTestServerForCompliance(t *testing.T) *testServerCompliance {
 	require.NoError(t, err)
 
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	t.Cleanup(rbacAccessCtrl.Stop)
 	checker := compliance.NewChecker(database, 24*time.Hour, 15*time.Minute)
 
 	// Mock node that returns a canned JSON-RPC response

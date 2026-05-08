@@ -50,6 +50,9 @@ func setupTieredAdminTestServer(t *testing.T, adminToken string) (*Server, *gin.
 		rbacAccessCtrl: rbac.NewAccessController(database, 5*time.Minute),
 		config:         cfg,
 	}
+	// Stop the RBAC cache's cleanup goroutine when the test ends —
+	// otherwise every test leaks one and the suite slows to a halt.
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	router := gin.New()
 

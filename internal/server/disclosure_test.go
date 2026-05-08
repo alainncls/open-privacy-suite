@@ -91,6 +91,7 @@ func setupTestServerForDisclosure(t *testing.T) (*Server, *auth.JWTService, *db.
 		disclosureService: disclosureService,
 		config:            cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	return srv, jwtService, database
 }

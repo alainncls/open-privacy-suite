@@ -168,6 +168,7 @@ func setupTestServerForAuth(t *testing.T) (*Server, *auth.JWTService) {
 		sessionStore:    auth.NewSessionStore(10*time.Minute, 1*time.Minute),
 		config:          cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	return srv, jwtService
 }

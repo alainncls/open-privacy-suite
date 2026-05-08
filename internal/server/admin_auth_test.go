@@ -58,6 +58,7 @@ func setupAdminAuthTestServer(t *testing.T, adminToken string) (*Server, *gin.En
 		rbacAccessCtrl: rbac.NewAccessController(database, 5*time.Minute),
 		config:         cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	router := gin.New()
 
