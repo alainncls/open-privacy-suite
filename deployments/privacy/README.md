@@ -154,8 +154,14 @@ Optional env vars (have sane defaults):
 - `PROXY_VERSION` — registry tag for `gatewayfm/privacy-proxy-{backend,frontend}`.
   Defaults to `latest`. Pin to a tagged release in production
   (e.g. `PROXY_VERSION=v0.7.0`).
-- `EXPLORER_VERSION` — registry tag for `gatewayfm/block-explorer-{api,frontend}`.
-  Defaults to `latest`. Same pinning advice.
+- `EXPLORER_VERSION` — registry tag for the block-explorer images
+  (`gatewayfm/block-explorer-api-privacy` and
+  `gatewayfm/block-explorer-frontend`). Defaults to `latest`. Note the
+  `-privacy` suffix on the API image: block-explorer publishes a
+  separate explicit privacy build alongside the standalone variant
+  (block-explorer PR #66 / RD-922). The privacy compose pulls only
+  the privacy-tagged API image; the standalone image is for non-privacy
+  deployments. Same pinning advice as `PROXY_VERSION`.
 - `INDEXER_VERSION` — registry tag for `ghcr.io/gateway-fm/chain-indexer`.
   Defaults to `latest`.
 - `BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH` — only consumed by the
