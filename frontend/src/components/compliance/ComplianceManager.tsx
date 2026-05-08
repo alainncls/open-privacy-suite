@@ -92,6 +92,13 @@ export default function ComplianceManager() {
         } else {
           setSelectedOrg(null);
         }
+      } else if (orgs.length === 1) {
+        // Single-org admin: auto-select the only org so the user
+        // doesn't have to interact with a one-option chooser. Mirrors
+        // the RBACManager behaviour added in PR #210; the Select
+        // control below is disabled via singleOrgLock when this fires.
+        setSelectedOrg(orgs[0]);
+        setSearchParams({ org: orgs[0].id });
       }
     } catch (error) {
       console.error('Failed to load organizations:', error);
@@ -140,6 +147,12 @@ export default function ComplianceManager() {
   const showOrgSelector = activeTab !== 'sanctions';
   const blockedWithoutOrg = showOrgSelector && activeTab !== 'tokens' && !selectedOrg;
 
+  // Single-org admin: lock the dropdown. After RD-916/917 a tier-2 admin
+  // sees only orgs they're a member of; with exactly one such org there's
+  // nothing meaningful to choose, so we pre-selected it above and disable
+  // the control to avoid presenting an interactive one-item chooser.
+  const singleOrgLock = organizations.length === 1;
+
   return (
     <CurrencyProvider>
     <ComplianceOrgContext.Provider
@@ -183,8 +196,12 @@ export default function ComplianceManager() {
                   <Select
                     value={selectedOrg?.id || ''}
                     onValueChange={handleOrgChange}
+                    disabled={singleOrgLock}
                   >
-                    <SelectTrigger className={`w-full sm:w-[280px] ${!selectedOrg ? 'border-error ring-1 ring-error/20' : ''}`}>
+                    <SelectTrigger
+                      className={`w-full sm:w-[280px] ${!selectedOrg ? 'border-error ring-1 ring-error/20' : ''} ${singleOrgLock ? 'opacity-100 cursor-default' : ''}`}
+                      title={singleOrgLock ? 'You administer one organization — scope is locked to it.' : undefined}
+                    >
                       <SelectValue placeholder="Select organization" />
                     </SelectTrigger>
                     <SelectContent>
@@ -201,7 +218,7 @@ export default function ComplianceManager() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {!selectedOrg && (
+                  {!selectedOrg && !singleOrgLock && (
                     <span className="text-xs text-error whitespace-nowrap">
                       Select an org
                     </span>
