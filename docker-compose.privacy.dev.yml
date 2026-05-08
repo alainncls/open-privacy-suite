@@ -26,9 +26,17 @@
 # docker-compose.privacy.yml. The two files are siblings, not
 # base/overlay. Picking one chooses the deployment shape outright.
 #
-# By default, chain-indexer and block-explorer are expected as sibling
-# clones of privacy-proxy (same parent directory). Override paths via
-# `BLOCK_EXPLORER_PATH` / `CHAIN_INDEXER_PATH` env vars.
+# By default, block-explorer is expected as a sibling clone of
+# privacy-proxy (same parent directory). Override the path via the
+# `BLOCK_EXPLORER_PATH` env var.
+#
+# chain-indexer is pulled as a published image (Docker Hub) — pin a
+# tagged release via `INDEXER_VERSION` (defaults to a known-good version
+# below). Contributors iterating on chain-indexer source: drop a
+# `docker-compose.override.yml` with a `build:` block alongside this
+# file, or `docker compose build` your own tag and set INDEXER_VERSION
+# to it. Removes the hard requirement of a sibling chain-indexer
+# checkout for users who only run the stack.
 #
 # scripts/privacy-dev-up.sh wraps the boilerplate (secret generation,
 # `--no-cache` frontend rebuild, health-wait, URL print).
@@ -103,9 +111,11 @@ services:
     restart: unless-stopped
 
   chain-indexer:
-    build:
-      context: ${CHAIN_INDEXER_PATH:-../chain-indexer}
-      dockerfile: Dockerfile
+    # Pull a published image rather than building from a sibling clone
+    # so the dev stack is runnable without a chain-indexer checkout.
+    # Pin via INDEXER_VERSION (e.g. v0.1.2). docker-compose.override.yml
+    # can swap to `build:` for source iteration.
+    image: gatewayfm/chain-indexer:${INDEXER_VERSION:-v0.1.2}
     environment:
       - RPC_URL=http://anvil:8545
       - DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
