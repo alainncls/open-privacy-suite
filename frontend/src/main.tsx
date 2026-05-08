@@ -72,8 +72,11 @@ function Root() {
                     </RequireAuth>
                   )}
                 >
-                  <Route index element={<Navigate to="dashboard" replace />} />
-                  <Route path="dashboard" element={<Dashboard />} />
+                  <Route index element={<Navigate to="rbac" replace />} />
+                  <Route path="diagnostics" element={<Dashboard />} />
+                  {/* Back-compat: any old bookmark to /admin/dashboard
+                      lands on the renamed Diagnostics tab. */}
+                  <Route path="dashboard" element={<Navigate to="/admin/diagnostics" replace />} />
                   <Route path="logs" element={<AccessLogs />} />
                   <Route path="rbac" element={<RBACManager />}>
                     <Route index element={<Navigate to="organizations" replace />} />

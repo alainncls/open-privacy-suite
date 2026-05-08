@@ -26,6 +26,7 @@ import {
   Loader2,
   ChevronRight,
   Shield,
+  Eye,
   X,
   Search,
 } from 'lucide-react';
@@ -268,6 +269,15 @@ export default function GroupList() {
                           <Badge className="bg-warning-light text-warning-dark border-warning/40 gap-1 flex-shrink-0">
                             <Shield className="w-3 h-3" />
                             Org Admin
+                          </Badge>
+                        )}
+                        {gwa.group.is_org_readonly_admin && (
+                          <Badge
+                            variant="outline"
+                            className="bg-neutral-50 text-neutral-700 border-neutral-300 gap-1 flex-shrink-0"
+                          >
+                            <Eye className="w-3 h-3" />
+                            Read-only Admin
                           </Badge>
                         )}
                       </div>
