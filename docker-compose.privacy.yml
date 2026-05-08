@@ -8,20 +8,32 @@
 # (RD-855).
 #
 # Quick start:
-#   docker compose -f docker-compose.privacy.yml up -d
+#   docker compose -f docker-compose.privacy.yml --env-file .env.privacy up -d
 #
-# Chain-indexer is pulled from GHCR as a published image. Pin via
-# INDEXER_VERSION (e.g. INDEXER_VERSION=v1.2.3); defaults to `latest`.
-# Operators SHOULD pin to a tagged release in production — `latest`
-# is acceptable only for the default smoke-test path.
+# All services pull published images from Docker Hub / GHCR — no
+# local build required. Pin per-service via env vars (recommended in
+# production); defaults to `latest`:
 #
-# Block-explorer is still built from a sibling clone in this manifest.
-# Override the path via `BLOCK_EXPLORER_PATH=/abs/or/relative/path`
-# (defaults to `../block-explorer`).
+#   PROXY_VERSION    — gatewayfm/privacy-proxy-{backend,frontend} (Docker Hub)
+#   EXPLORER_VERSION — gatewayfm/block-explorer-{api,frontend}    (Docker Hub)
+#   INDEXER_VERSION  — ghcr.io/gateway-fm/chain-indexer
 #
-# CHAIN_INDEXER_PATH is dev-only — the dev compose
-# (docker-compose.privacy.dev.yml) builds chain-indexer from a sibling
-# clone so devs can iterate against local changes.
+# `latest` is acceptable only for default smoke-tests. Production
+# deployments SHOULD pin to a tagged release.
+#
+# For developers iterating on local source changes against the privacy
+# architecture, use docker-compose.privacy.dev.yml — it's a sibling
+# (not an overlay) with its own `build:` blocks honouring
+# CHAIN_INDEXER_PATH and BLOCK_EXPLORER_PATH for sibling-clone iteration.
+#
+# Note on block-explorer-api: the released gatewayfm/block-explorer-api
+# image IS the privacy binary by default. Its Dockerfile.api defines
+# both `standalone` and `privacy` stages; the privacy stage is the
+# last one, which Docker builds when no target: is specified — and
+# the block-explorer release workflow does not specify one. The same
+# defense-in-depth applies as before: even if a future image switched
+# to the standalone binary, INDEXER_URL is intentionally unset here
+# AND block-explorer-api has no docker-network route to indexer-zone.
 
 services:
   # ----- Trust zone --------------------------------------------------------
@@ -117,14 +129,13 @@ services:
     restart: unless-stopped
 
   proxy-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-      # Production-intent manifest: the prod target builds without the
-      # `mockauth` build tag, so MOCK_SIGNATURES / ALLOW_MOCK_LOGIN are
-      # not even linked. The dev compose (docker-compose.privacy.dev.yml)
-      # uses target: dev for the mockauth-tagged binary.
-      target: prod
+    # Production-intent manifest: pulls the published `prod`-target image
+    # from Docker Hub. The release workflow (.github/workflows/release.yml)
+    # builds with target: prod (no `mockauth` build tag), so
+    # MOCK_SIGNATURES / ALLOW_MOCK_LOGIN are not even linked into the
+    # binary. For local source iteration use docker-compose.privacy.dev.yml
+    # (sibling compose) which builds with target: dev.
+    image: gatewayfm/privacy-proxy-backend:${PROXY_VERSION:-latest}
     # Privacy-proxy is the only external-facing backend in privacy mode.
     # In production this would typically sit behind an ingress instead
     # of publishing directly; for local dev + the negative-network test
@@ -199,10 +210,7 @@ services:
   # Only user-facing SPAs live here. No backend, no database, no indexer.
 
   proxy-frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: prod
+    image: gatewayfm/privacy-proxy-frontend:${PROXY_VERSION:-latest}
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_UI:-5173}:80"
     environment:
@@ -246,14 +254,11 @@ services:
     restart: unless-stopped
 
   block-explorer-api:
-    # Build from the block-explorer repo's privacy target. Override
-    # the path via BLOCK_EXPLORER_PATH (defaults to a sibling clone).
-    # In production replace with an image reference:
-    #   image: ghcr.io/gateway-fm/block-explorer-api:${EXPLORER_VERSION:-latest}-privacy
-    build:
-      context: ${BLOCK_EXPLORER_PATH:-../block-explorer}/backend
-      dockerfile: Dockerfile.api
-      target: privacy
+    # Privacy-build BFF — see header comment for why the released
+    # gatewayfm/block-explorer-api image is the privacy binary by default.
+    # The sibling dev compose (docker-compose.privacy.dev.yml) has its
+    # own build: block honouring BLOCK_EXPLORER_PATH.
+    image: gatewayfm/block-explorer-api:${EXPLORER_VERSION:-latest}
     environment:
       - DATABASE_URL=postgres://postgres:${BLOCK_EXPLORER_POSTGRES_PASSWORD:?BLOCK_EXPLORER_POSTGRES_PASSWORD is required in privacy mode}@block-explorer-postgres:5432/explorer?sslmode=disable
       - RPC_URL=http://proxy-backend:8080
@@ -287,9 +292,12 @@ services:
   #   /api/*        -> block-explorer-api (which forwards to privacy-proxy)
   #   /ws           -> 404 (subscriptions not supported in privacy mode)
   block-explorer-frontend:
-    build:
-      context: ${BLOCK_EXPLORER_PATH:-../block-explorer}/frontend
-      dockerfile: Dockerfile
+    # Published nginx + SPA bundle. The bind-mount below replaces the
+    # in-image standalone-mode default.conf with the privacy-mode one,
+    # routing /api/* to block-explorer-api (which forwards to
+    # privacy-proxy with RBAC redaction). Same path inside the image
+    # as the standalone variant — no build-target distinction here.
+    image: gatewayfm/block-explorer-frontend:${EXPLORER_VERSION:-latest}
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_EXPLORER:-3001}:80"
     volumes:
