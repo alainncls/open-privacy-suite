@@ -111,7 +111,8 @@ not base/overlay**. Pick one — do not stack them.
 
 ```bash
 # Production manifest. Mock auth disabled, ENVIRONMENT=production,
-# proxy-backend built from --target prod, anvil ports not published.
+# all services pulled from published registry images (no local build),
+# anvil ports not published.
 docker compose -f docker-compose.privacy.yml up -d
 ```
 
@@ -150,17 +151,24 @@ Optional env vars (have sane defaults):
   the proxy should accept on browser requests and OAuth redirects. The
   origin derived from `BASE_URL` is always allowed; this is for extra
   origins (e.g. `https://explorer.example.com`).
-- `BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH` — filesystem paths to the
-  block-explorer and chain-indexer repos that the compose builds from.
-  Default to `../block-explorer` and `../chain-indexer` (sibling repos
-  alongside privacy-proxy). Override if your layout differs.
+- `PROXY_VERSION` — registry tag for `gatewayfm/privacy-proxy-{backend,frontend}`.
+  Defaults to `latest`. Pin to a tagged release in production
+  (e.g. `PROXY_VERSION=v0.7.0`).
+- `EXPLORER_VERSION` — registry tag for the block-explorer images
+  (`gatewayfm/block-explorer-api-privacy` and
+  `gatewayfm/block-explorer-frontend`). Defaults to `latest`. Note the
+  `-privacy` suffix on the API image: block-explorer publishes a
+  separate explicit privacy build alongside the standalone variant
+  (block-explorer PR #66 / RD-922). The privacy compose pulls only
+  the privacy-tagged API image; the standalone image is for non-privacy
+  deployments. Same pinning advice as `PROXY_VERSION`.
+- `INDEXER_VERSION` — registry tag for `ghcr.io/gateway-fm/chain-indexer`.
+  Defaults to `latest`.
+- `BLOCK_EXPLORER_PATH`, `CHAIN_INDEXER_PATH` — only consumed by the
+  sibling **dev** compose (`docker-compose.privacy.dev.yml`), which builds
+  from local clones. Default to `../block-explorer` and `../chain-indexer`.
+  Ignored by the prod manifest above.
 - `ENABLE_OP_DEPOSITS` — toggle OP-Stack indexing in the chain-indexer.
-- `INDEXER_VERSION` (future) — registry tag for the chain-indexer image;
-  currently the compose builds from `${CHAIN_INDEXER_PATH}`.
-
-When the chain-indexer repo is published and its image lives in a
-registry, replace the `build:` block under `services.chain-indexer`
-with `image: ghcr.io/gateway-fm/chain-indexer:...`.
 
 ## What not to do
 
