@@ -136,34 +136,13 @@ describe('Read-only admin: mutating buttons hidden (RD-866)', () => {
   });
 });
 
-// Regression coverage for the inverse: with isReadonlyAdmin=false the same
-// components must STILL render the mutating buttons. Without this, a future
-// change that hides them unconditionally would slip past the readonly tests.
-describe('Read-only admin: mutating buttons present for full admin', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(useAdmin).mockReturnValue({
-      isAdmin: true,
-      isReadonlyAdmin: false,
-      adminOrgIds: ['org-1'],
-      readonlyAdminOrgIds: [],
-    });
-    server.use(
-      http.get('/api/v1/admin/orgs', () =>
-        HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 50, offset: 0 })
-      )
-    );
-  });
-
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('OrganizationList shows Add Organization button for full admin', async () => {
-    renderWithRBACContext(<OrganizationList />);
-    await waitFor(() => {
-      expect(screen.getByText('Organizations')).toBeInTheDocument();
-    });
-    expect(screen.getByRole('button', { name: /add organization/i })).toBeInTheDocument();
-  });
-});
+// Note: a "Read-only admin: mutating buttons present for full admin"
+// describe used to live here as the inverse of the readonly assertions
+// above, with one test case for OrganizationList's Add Organization
+// button. PR #207 (RD-917 §1) removed that button from
+// OrganizationList.tsx entirely — tenant lifecycle is X-Admin-Token only
+// and that auth method never has a UI session — so the regression case
+// no longer applies. The readonly-vs-full-admin distinction is still
+// exercised by the GroupList and ContractList specs in the earlier
+// describe block; if a future PR re-introduces a tenant-create UI for
+// full admins, add a fresh describe here to pin its full-admin path.

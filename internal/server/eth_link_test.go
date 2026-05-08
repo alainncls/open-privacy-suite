@@ -70,6 +70,7 @@ func setupTestServerForEthLink(t *testing.T) *Server {
 	}
 
 	t.Cleanup(func() {
+		srv.rbacAccessCtrl.Stop()
 		srv.challengeStore.Stop()
 		srv.db.Close()
 	})

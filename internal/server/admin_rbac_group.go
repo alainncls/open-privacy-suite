@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,21 @@ import (
 	"privacy-proxy/internal/crypto"
 	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/rbac"
+)
+
+// Deny messages for the is_org_admin escalation gate. Referenced from the
+// handlers and from admin_tiers_test.go so the test never duplicates the
+// literal — flipping the policy here automatically updates the assertion.
+//
+// is_org_readonly_admin is intentionally NOT in this gate: a tier-2 org
+// admin granting RO-admin to a peer is delegation (strict subset of own
+// permissions), not escalation. is_org_admin granting still requires the
+// X-Admin-Token path because it creates a peer who could ban or demote
+// the granter.
+const (
+	errCreateOrgAdminGroupSuperOnly = "only super admin can create org admin groups"
+	errSetOrgAdminStatusSuperOnly   = "only super admin can change org admin status on groups"
+	errDeleteOrgAdminGroupSuperOnly = "only super admin can delete org admin groups"
 )
 
 // Group handlers
@@ -67,11 +83,14 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot create org admin or
-	// readonly admin groups. Only super admins (X-Admin-Token) can mint
-	// is_org_admin or is_org_readonly_admin groups (RD-866).
-	if c.GetString("auth_method") == "jwt_admin" && (input.IsOrgAdmin || input.IsOrgReadonlyAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can create org admin or readonly admin groups"})
+	// Escalation prevention: JWT admins (tier 2) cannot create is_org_admin
+	// groups — that would create a peer who could demote them. Only super
+	// admins (X-Admin-Token) can mint is_org_admin (RD-866). Tier-2 *can*
+	// create is_org_readonly_admin groups: RO-admin is a strict subset of
+	// tier-2's permissions, so granting it is delegation, not escalation
+	// (RD-917 §2 — see PR description).
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": errCreateOrgAdminGroupSuperOnly})
 		return
 	}
 
@@ -91,9 +110,22 @@ func (s *Server) createGroup(c *gin.Context) {
 	}
 
 	if err := s.db.CreateGroup(c.Request.Context(), group); err != nil {
-		c.JSON(uniqueConflictStatus(err), gin.H{"error": uniqueConflictMessage(err)})
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": uniqueConflictMessage(err)})
+			return
+		}
+		slog.Error("create group: db insert failed", "org_id", orgID, "slug", input.Slug, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create group"})
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeGroup, group.ID, group.Name,
+		nil,
+		map[string]any{
+			"slug":                  group.Slug,
+			"is_org_admin":          group.IsOrgAdmin,
+			"is_org_readonly_admin": group.IsOrgReadonlyAdmin,
+		})
 
 	c.JSON(http.StatusCreated, group)
 }
@@ -156,7 +188,8 @@ func (s *Server) updateGroup(c *gin.Context) {
 
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("update group: get failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update group"})
 		return
 	}
 	if group == nil {
@@ -179,18 +212,30 @@ func (s *Server) updateGroup(c *gin.Context) {
 		IsOrgReadonlyAdmin *bool   `json:"is_org_readonly_admin"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
-	// Escalation prevention: JWT admins (tier 2) cannot set is_org_admin or
-	// is_org_readonly_admin to true. Only super admins (X-Admin-Token) can
-	// promote groups to (readonly) org admin status (RD-866).
-	if c.GetString("auth_method") == "jwt_admin" {
-		if (input.IsOrgAdmin != nil && *input.IsOrgAdmin) || (input.IsOrgReadonlyAdmin != nil && *input.IsOrgReadonlyAdmin) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "only super admin can set org admin or readonly admin status on groups"})
-			return
-		}
+	// Escalation/DoS prevention: JWT admins (tier 2) cannot touch
+	// is_org_admin in either direction.
+	//
+	//   true → tier-2 would mint a peer admin who could demote the granter.
+	//   false → tier-2 demoting an existing admin group strips admin status
+	//           from every member (including possibly themselves), causing
+	//           an org-wide DoS that only super-admin can recover from.
+	//
+	// They CAN set is_org_readonly_admin — see the createGroup rationale
+	// above (RD-866 / RD-917 §2).
+	if c.GetString("auth_method") == "jwt_admin" && input.IsOrgAdmin != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errSetOrgAdminStatusSuperOnly})
+		return
+	}
+
+	oldValue := map[string]any{
+		"name":                  group.Name,
+		"description":           group.Description,
+		"is_org_admin":          group.IsOrgAdmin,
+		"is_org_readonly_admin": group.IsOrgReadonlyAdmin,
 	}
 
 	if input.Name != nil {
@@ -207,9 +252,23 @@ func (s *Server) updateGroup(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateGroup(c.Request.Context(), group); err != nil {
-		c.JSON(uniqueConflictStatus(err), gin.H{"error": uniqueConflictMessage(err)})
+		if isUniqueViolation(err) {
+			c.JSON(http.StatusConflict, gin.H{"error": uniqueConflictMessage(err)})
+			return
+		}
+		slog.Error("update group: db update failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update group"})
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeGroup, group.ID, group.Name,
+		oldValue,
+		map[string]any{
+			"name":                  group.Name,
+			"description":           group.Description,
+			"is_org_admin":          group.IsOrgAdmin,
+			"is_org_readonly_admin": group.IsOrgReadonlyAdmin,
+		})
 
 	// Invalidate cache for group members
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
@@ -221,14 +280,20 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 
 	// Look up the group first so we can reject deletion of system rows
-	// before invalidating cache or attempting the delete.
+	// AND of is_org_admin rows (the latter for jwt_admin only — same DoS
+	// reasoning as the updateGroup demote gate above).
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete group: get failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return
 	}
 	if group != nil && group.IsSystem {
 		c.JSON(http.StatusForbidden, gin.H{"error": "system group cannot be deleted"})
+		return
+	}
+	if group != nil && group.IsOrgAdmin && c.GetString("auth_method") == "jwt_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": errDeleteOrgAdminGroupSuperOnly})
 		return
 	}
 
@@ -236,8 +301,18 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
 
 	if err := s.db.DeleteGroup(c.Request.Context(), groupID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete group: delete failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return
+	}
+
+	if group != nil {
+		s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeGroup, group.ID, group.Name,
+			map[string]any{
+				"slug":                  group.Slug,
+				"is_org_admin":          group.IsOrgAdmin,
+				"is_org_readonly_admin": group.IsOrgReadonlyAdmin,
+			}, nil)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "group deleted"})

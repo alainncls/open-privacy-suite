@@ -20,6 +20,23 @@ vi.mock('../RBACManager', async () => {
   };
 });
 
+// Override the global useAdmin mock to grant full-admin status on every
+// fixture org. The real component shows the Edit button only when
+// adminOrgIds includes the row's org id (RD-917 §1 — tier-2 admin can edit
+// only their own orgs); for tests we treat all fixture orgs as own.
+vi.mock('@/components/auth/RequireAdmin', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/auth/RequireAdmin')>();
+  return {
+    ...actual,
+    useAdmin: vi.fn().mockReturnValue({
+      isAdmin: true,
+      isReadonlyAdmin: false,
+      adminOrgIds: ['org-1', 'org-2', 'org-3'],
+      readonlyAdminOrgIds: [],
+    }),
+  };
+});
+
 // Import after mock is set up
 import OrganizationList from '../OrganizationList';
 import { TestOrgContext } from './test-utils';
@@ -154,7 +171,10 @@ describe('OrganizationList', () => {
         expect(screen.getByText('No organizations found')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Create your first organization')).toBeInTheDocument();
+      // RD-917 §1: no "Create your first organization" CTA — tenant creation
+      // is super-admin only, super-admin has no UI session.
+      expect(screen.queryByText('Create your first organization')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /add organization/i })).not.toBeInTheDocument();
     });
 
     it('displays table with correct headers (Name, Slug, Created, Actions)', async () => {
@@ -241,34 +261,41 @@ describe('OrganizationList', () => {
   });
 
   describe('Actions', () => {
-    it('Create button opens dialog with OrganizationForm', async () => {
+    // RD-917 §1: "Add Organization" button removed entirely. Tenant creation
+    // is super-admin-only and super-admin has no UI session, so there is no
+    // path through the dashboard to call POST /admin/orgs.
+    it('does NOT render an Add Organization button (super-admin has no UI)', async () => {
       server.use(
         http.get('/api/v1/admin/orgs', () => {
           return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
         })
       );
 
-      const { user } = renderOrganizationList();
+      renderOrganizationList();
 
-      // Wait for loading to complete and table to show
       await waitFor(() => {
         expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
       });
 
-      const addButton = screen.getByRole('button', { name: /add organization/i });
-      await user.click(addButton);
+      expect(screen.queryByRole('button', { name: /add organization/i })).not.toBeInTheDocument();
+    });
 
-      // Dialog renders in a portal, use findBy for async content
+    // RD-917 §1: per-row Delete button removed entirely. Same rationale as
+    // Add — DELETE /admin/orgs/:id is super-admin-only.
+    it('does NOT render per-row Delete buttons', async () => {
+      server.use(
+        http.get('/api/v1/admin/orgs', () => {
+          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
+        })
+      );
+
+      renderOrganizationList();
+
       await waitFor(() => {
-        // Check for dialog title
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
       });
 
-      // Form fields should be visible in the dialog
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('e.g., Acme Corporation')).toBeInTheDocument();
-      });
-      expect(screen.getByPlaceholderText('e.g., acme-corp')).toBeInTheDocument();
+      expect(screen.queryAllByTitle('Delete organization')).toHaveLength(0);
     });
 
     it('Edit button opens form populated with org data', async () => {
@@ -300,132 +327,9 @@ describe('OrganizationList', () => {
       expect(slugInput).toHaveValue('acme-corp');
     });
 
-    it('Delete button shows confirmation dialog', async () => {
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
-        })
-      );
-
-      const { user } = renderOrganizationList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Verify confirmation dialog appears
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      expect(screen.getByText(/Are you sure you want to delete "Acme Corporation"/)).toBeInTheDocument();
-    });
-
-    it('Delete cancelled does not remove organization', async () => {
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
-        })
-      );
-
-      const { user } = renderOrganizationList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Wait for dialog and click Cancel
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      const cancelButton = screen.getByRole('button', { name: /cancel/i });
-      await user.click(cancelButton);
-
-      // Organization should still be present
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-    });
-
-    it('Delete success removes organization from list', async () => {
-      // Track if delete was called
-      let deleteCalled = false;
-
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          if (deleteCalled) {
-            // Return list without the deleted org
-            const remaining = mockOrganizations.slice(1);
-            return HttpResponse.json({ data: remaining, total: remaining.length, limit: 25, offset: 0 });
-          }
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
-        }),
-        http.delete('/api/v1/admin/orgs/:orgId', () => {
-          deleteCalled = true;
-          return HttpResponse.json({ message: 'Deleted' });
-        })
-      );
-
-      const { user } = renderOrganizationList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Wait for dialog and click Delete
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
-      await user.click(deleteConfirmButton);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Acme Corporation')).not.toBeInTheDocument();
-      });
-    });
-
-    it('Delete failure shows error dialog', async () => {
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 25, offset: 0 });
-        }),
-        http.delete('/api/v1/admin/orgs/:orgId', () => {
-          return HttpResponse.json(
-            { error: 'Organization has dependencies' },
-            { status: 400 }
-          );
-        })
-      );
-
-      const { user } = renderOrganizationList();
-
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Wait for confirm dialog and click Delete
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
-      await user.click(deleteConfirmButton);
-
-      // Error dialog should appear
-      await waitFor(() => {
-        expect(screen.getByText('Delete Failed')).toBeInTheDocument();
-      });
-      expect(screen.getByText(/Failed to delete organization/)).toBeInTheDocument();
-    });
+    // RD-917 §1: Delete tests removed. The Delete button is no longer
+    // surfaced (DELETE /admin/orgs/:id is super-admin-only and super-admin
+    // has no UI session). Backend rejection is covered by the Go integration
+    // tests in admin_org_isolation_test.go.
   });
 });

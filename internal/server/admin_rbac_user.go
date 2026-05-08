@@ -3,6 +3,8 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,12 +15,46 @@ import (
 
 // User handlers
 
+// errMembershipForeignOrg is returned when a JWT-authenticated org admin
+// tries to add or remove a membership whose target group lives in an org
+// they do not full-admin. The deny string is intentionally generic so it
+// also covers the "group not found" case from the same code path —
+// disclosing "this group exists but is in another org" would itself be a
+// cross-org leak (see RD-916).
+const errMembershipForeignOrg = "access denied to target group"
+
 // userListItem extends rbac.User with the user's group memberships for the
 // list response. Memberships are scoped to the caller's accessible orgs
 // for non-super-admin callers (cross-org isolation).
 type userListItem struct {
 	*rbac.User
 	Groups []rbac.UserGroupMembership `json:"groups"`
+}
+
+// jwtAdminFullAdminOrgIDs returns the slice of org IDs in which the
+// caller has is_org_admin (full admin), or nil if the caller is super
+// admin (X-Admin-Token bypass) / dev mode (no auth configured).
+//
+// Read-only admin orgs are intentionally excluded — this helper is used
+// by mutating membership handlers that must reject RO admins regardless
+// of org scope. RO admins are blocked at orgScopingMiddleware for routes
+// with :org_id, but membership routes have :user_id (not :org_id), so
+// the handler must enforce the read-only-rejection itself.
+//
+// Returns (nil, true) for super admin / dev mode (caller may target any
+// org). Returns (orgIDs, false) for jwt_admin. Returns ([], false) for
+// jwt_admin with no full-admin orgs (RO-admin-only — should be rejected).
+func jwtAdminFullAdminOrgIDs(c *gin.Context) (orgIDs []string, isSuperOrDev bool) {
+	authMethod := c.GetString("auth_method")
+	if authMethod != "jwt_admin" {
+		return nil, true
+	}
+	if v, ok := c.Get("admin_org_ids"); ok {
+		if ids, ok := v.([]string); ok {
+			return ids, false
+		}
+	}
+	return []string{}, false
 }
 
 // resolveListUsersScope returns the org IDs the caller may see, or nil when
@@ -260,8 +296,32 @@ func (s *Server) createUserMembership(c *gin.Context) {
 		GroupID string `json:"group_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
+	}
+
+	// Cross-org isolation (RD-917 §3): the route is /users/:user_id/memberships
+	// — no :org_id, so orgScopingMiddleware cannot enforce. Look up the target
+	// group and verify the caller full-admins its org. Pre-fix, a tier-2 admin
+	// of orgA could add a user to any group in orgB, including an
+	// is_org_admin group, which was a cross-tenant escalation.
+	group, err := s.db.GetGroup(c.Request.Context(), input.GroupID)
+	if err != nil {
+		slog.Error("create membership: get group failed", "group_id", input.GroupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
+		return
+	}
+	if group == nil {
+		// Same opaque error as the cross-org case so a tier-2 admin
+		// cannot probe the existence of group IDs in other orgs.
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+	if allowedOrgIDs, isSuperOrDev := jwtAdminFullAdminOrgIDs(c); !isSuperOrDev {
+		if !slices.Contains(allowedOrgIDs, group.OrgID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+			return
+		}
 	}
 
 	membership := &rbac.UserMembership{
@@ -272,12 +332,30 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	}
 
 	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Translate duplicate-key violations (user already in group) into
+		// 409 Conflict — the request is idempotent from the client's POV
+		// and existing test helpers (e2e/playwright/helpers/ui/auth-helpers.ts
+		// :323) detect the existing-membership case via the 409 status. If
+		// we collapsed everything to a generic 500, those helpers throw and
+		// every test in a parallel worker race condition fails.
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of this group"})
+			return
+		}
+		slog.Error("create membership: db insert failed", "user_id", userID, "group_id", input.GroupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
 		return
 	}
 
-	// Invalidate cache for this user
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
+
+	s.recordAuditAction(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name,
+		nil,
+		map[string]any{
+			"user_id":  userID,
+			"group_id": group.ID,
+			"org_id":   group.OrgID,
+		})
 
 	c.JSON(http.StatusCreated, membership)
 }
@@ -286,13 +364,49 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 	userID := c.Param("user_id")
 	membershipID := c.Param("membership_id")
 
-	// Invalidate cache before deleting
+	// Same cross-org check as createUserMembership: look up the membership,
+	// then its group, and verify caller full-admins the group's org.
+	membership, err := s.db.GetMembership(c.Request.Context(), membershipID)
+	if err != nil {
+		slog.Error("delete membership: get failed", "membership_id", membershipID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership"})
+		return
+	}
+	if membership == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+	group, err := s.db.GetGroup(c.Request.Context(), membership.GroupID)
+	if err != nil {
+		slog.Error("delete membership: get group failed", "group_id", membership.GroupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership"})
+		return
+	}
+	if group == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+		return
+	}
+	if allowedOrgIDs, isSuperOrDev := jwtAdminFullAdminOrgIDs(c); !isSuperOrDev {
+		if !slices.Contains(allowedOrgIDs, group.OrgID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errMembershipForeignOrg})
+			return
+		}
+	}
+
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
 
 	if err := s.db.DeleteMembership(c.Request.Context(), membershipID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete membership: db delete failed", "membership_id", membershipID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership"})
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionRevoke, rbac.ResourceTypeMembership, membershipID, group.Name,
+		map[string]any{
+			"user_id":  userID,
+			"group_id": group.ID,
+			"org_id":   group.OrgID,
+		}, nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "membership deleted"})
 }

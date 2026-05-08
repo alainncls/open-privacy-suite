@@ -60,6 +60,7 @@ func setupGetLogsTestServer(t *testing.T) (*Server, *gin.Engine, string) {
 		rbacAccessCtrl: rbac.NewAccessController(database, 5*time.Minute),
 		config:         cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	router := gin.New()
 	admin := router.Group("/api/v1/admin")

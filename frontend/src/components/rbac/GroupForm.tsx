@@ -25,7 +25,10 @@ export default function GroupForm({
   const [name, setName] = useState(group?.name || '');
   const [slug, setSlug] = useState(group?.slug || '');
   const [description, setDescription] = useState(group?.description || '');
-  const [isOrgAdmin, setIsOrgAdmin] = useState(group?.is_org_admin || false);
+  // is_org_admin is intentionally not user-editable here: tier-1 (super-admin)
+  // never has a UI session — the dashboard is always tier-2 or RO-admin —
+  // and tier-2 cannot promote to is_org_admin (server returns 403). Existing
+  // is_org_admin is preserved on edit by passing the original value through.
   const [isOrgReadonlyAdmin, setIsOrgReadonlyAdmin] = useState(group?.is_org_readonly_admin || false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +69,6 @@ export default function GroupForm({
         await rbacApi.groups.update(orgId, group.id, {
           name,
           description,
-          is_org_admin: isOrgAdmin,
           is_org_readonly_admin: isOrgReadonlyAdmin,
         });
       } else {
@@ -75,7 +77,6 @@ export default function GroupForm({
           name,
           description,
           parent_id: null,
-          is_org_admin: isOrgAdmin,
           is_org_readonly_admin: isOrgReadonlyAdmin,
         });
       }
@@ -160,41 +161,12 @@ export default function GroupForm({
         />
       </div>
 
-      {/* Organization Admin Toggle */}
-      <div className="space-y-2">
-        <label
-          className="flex items-start gap-3 p-3 rounded-lg bg-warning-light border border-warning/40 cursor-pointer hover:bg-yellow-200 transition-colors"
-          onClick={() => {
-            setIsOrgAdmin(!isOrgAdmin);
-            if (!isOrgAdmin) setIsOrgReadonlyAdmin(false);
-          }}
-        >
-          <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${
-            isOrgAdmin
-              ? 'bg-warning border-warning'
-              : 'border-neutral-300 bg-white'
-          }`}>
-            {isOrgAdmin && <Check className="w-3 h-3 text-white" />}
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-warning-dark" />
-              <span className="text-sm font-medium text-warning-dark">Organization Admin</span>
-            </div>
-            <p className="text-xs text-neutral-500 mt-1">
-              Members of this group get the admin claim (which implies deploy and upgrade) on all contracts in the organization. Use with caution.
-            </p>
-          </div>
-        </label>
-      </div>
-
       {/* Read-only Admin Toggle */}
       <div className="space-y-2">
         <label
           className="flex items-start gap-3 p-3 rounded-lg bg-primary-50 border border-primary-200 cursor-pointer hover:bg-primary-100 transition-colors"
           onClick={() => {
             setIsOrgReadonlyAdmin(!isOrgReadonlyAdmin);
-            if (!isOrgReadonlyAdmin) setIsOrgAdmin(false);
           }}
         >
           <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${

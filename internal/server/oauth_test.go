@@ -90,6 +90,7 @@ func setupTestServerForOAuth(t *testing.T) *Server {
 		oauthSessionStore: NewOAuthSessionStore(OAuthSessionTTL, OAuthCleanupInterval, DefaultMaxOAuthSessions),
 		config:            cfg,
 	}
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	return srv
 }

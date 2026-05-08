@@ -42,6 +42,7 @@ func setupTestServerForDevAdmin(t *testing.T) *Server {
 	}
 
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	t.Cleanup(rbacAccessCtrl.Stop)
 
 	// Reset the package-level devAdmin state so tests are independent.
 	devAdmin = devAdminProvisioner{}

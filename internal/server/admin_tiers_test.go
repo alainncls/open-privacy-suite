@@ -50,6 +50,9 @@ func setupTieredAdminTestServer(t *testing.T, adminToken string) (*Server, *gin.
 		rbacAccessCtrl: rbac.NewAccessController(database, 5*time.Minute),
 		config:         cfg,
 	}
+	// Stop the RBAC cache's cleanup goroutine when the test ends —
+	// otherwise every test leaks one and the suite slows to a halt.
+	t.Cleanup(srv.rbacAccessCtrl.Stop)
 
 	router := gin.New()
 
@@ -346,7 +349,34 @@ func TestEscalation_JWTAdminCannotCreateOrgAdminGroup(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can create org admin or readonly admin groups")
+	assert.Contains(t, w.Body.String(), errCreateOrgAdminGroupSuperOnly)
+}
+
+func TestEscalation_JWTAdminCanCreateReadonlyAdminGroup(t *testing.T) {
+	// RD-866 + RD-917 §2: tier-2 admins can mint is_org_readonly_admin
+	// groups within their own org. RO-admin is a strict subset of tier-2,
+	// so granting it is delegation (not escalation). Only is_org_admin
+	// remains super-admin-only.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"slug":                  "auditors",
+		"name":                  "Auditors",
+		"is_org_readonly_admin": true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
 func TestEscalation_JWTAdminCanCreateNonAdminGroup(t *testing.T) {
@@ -430,7 +460,41 @@ func TestEscalation_JWTAdminCannotUpdateGroupToOrgAdmin(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "only super admin can set org admin or readonly admin status")
+	assert.Contains(t, w.Body.String(), errSetOrgAdminStatusSuperOnly)
+}
+
+func TestEscalation_JWTAdminCanUpdateGroupToReadonlyAdmin(t *testing.T) {
+	// Mirror of TestEscalation_JWTAdminCanCreateReadonlyAdminGroup for the
+	// PUT path. RD-866 + RD-917 §2.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+
+	normalGroup := &rbac.Group{
+		ID:    uuid.New().String(),
+		OrgID: orgID,
+		Slug:  "normal-" + uuid.New().String()[:8],
+		Name:  "Normal",
+		Path:  "normal",
+	}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"is_org_readonly_admin": true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/orgs/"+orgID+"/groups/"+normalGroup.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestEscalation_JWTAdminCanUpdateGroupName(t *testing.T) {
@@ -514,4 +578,264 @@ func TestEscalation_JWTAdminCanCreateGroupWithAdminClaim(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code,
 		"org admin must be able to create groups with admin claim (tier 3 contract admin)")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: tighter is_org_admin demote / delete gate (RD-917 §2 follow-up)
+// ---------------------------------------------------------------------------
+
+func TestEscalation_JWTAdminCannotDemoteOrgAdminGroup(t *testing.T) {
+	// A tier-2 admin sending {"is_org_admin": false} on an existing
+	// is_org_admin=true group must be rejected with 403. Demoting an admin
+	// group strips admin status from every member (potentially including
+	// the demoter), causing an org-wide DoS that only super-admin can
+	// recover from. Symmetric with the promote-to-true gate.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+
+	// The org-admin group already exists from createOrgAndAdminUser; locate it.
+	groups, err := srv.db.ListGroups(ctx, orgID)
+	require.NoError(t, err)
+	var orgAdminGroupID string
+	for _, g := range groups {
+		if g.IsOrgAdmin {
+			orgAdminGroupID = g.ID
+			break
+		}
+	}
+	require.NotEmpty(t, orgAdminGroupID, "test fixture must include an is_org_admin group")
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"is_org_admin": false, // attempting to demote
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/orgs/"+orgID+"/groups/"+orgAdminGroupID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errSetOrgAdminStatusSuperOnly)
+
+	// Verify the flag is still true — gate fired before any DB write.
+	g, err := srv.db.GetGroup(ctx, orgAdminGroupID)
+	require.NoError(t, err)
+	assert.True(t, g.IsOrgAdmin, "demote attempt must not have changed the flag")
+}
+
+func TestEscalation_JWTAdminCannotDeleteOrgAdminGroup(t *testing.T) {
+	// Deleting an is_org_admin group has the same effect as demoting it —
+	// every member loses admin status. Block tier-2; super-admin only.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	userDID, orgID, _ := createOrgAndAdminUser(t, srv)
+
+	groups, err := srv.db.ListGroups(ctx, orgID)
+	require.NoError(t, err)
+	var orgAdminGroupID string
+	for _, g := range groups {
+		if g.IsOrgAdmin {
+			orgAdminGroupID = g.ID
+			break
+		}
+	}
+	require.NotEmpty(t, orgAdminGroupID)
+
+	token, err := srv.jwtService.IssueAccessToken(userDID, true)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/orgs/"+orgID+"/groups/"+orgAdminGroupID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errDeleteOrgAdminGroupSuperOnly)
+
+	g, err := srv.db.GetGroup(ctx, orgAdminGroupID)
+	require.NoError(t, err)
+	require.NotNil(t, g, "group must still exist after blocked delete")
+}
+
+func TestEscalation_SuperAdminCanDeleteOrgAdminGroup(t *testing.T) {
+	// Super-admin (X-Admin-Token) can delete an org-admin group — the gate
+	// only fires for jwt_admin. Sanity check.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	_, orgID, _ := createOrgAndAdminUser(t, srv)
+	groups, err := srv.db.ListGroups(ctx, orgID)
+	require.NoError(t, err)
+	var orgAdminGroupID string
+	for _, g := range groups {
+		if g.IsOrgAdmin {
+			orgAdminGroupID = g.ID
+			break
+		}
+	}
+	require.NotEmpty(t, orgAdminGroupID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/orgs/"+orgID+"/groups/"+orgAdminGroupID, nil)
+	req.Header.Set("X-Admin-Token", "secret")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: createUserMembership / deleteUserMembership cross-org scoping (RD-917 §3)
+// ---------------------------------------------------------------------------
+
+func TestMembership_JWTAdminCannotAddUserToForeignOrgGroup(t *testing.T) {
+	// A tier-2 admin of orgA must not be able to add a user to a group
+	// that lives in orgB. The membership route has no :org_id, so the
+	// orgScopingMiddleware cannot enforce; the handler must.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	// Alice: tier-2 admin of orgA.
+	aliceDID, _, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	// orgB with its own normal group and a target user.
+	orgB := &rbac.Organization{ID: uuid.New().String(), Slug: "org-b-" + uuid.New().String()[:8], Name: "Org B"}
+	require.NoError(t, srv.db.CreateOrganization(ctx, orgB))
+	orgBGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgB.ID, Slug: "b-grp", Name: "B Grp", Path: "b-grp"}
+	require.NoError(t, srv.db.CreateGroup(ctx, orgBGroup))
+
+	targetUser := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:bob-" + uuid.New().String()[:8], KYC: true}
+	require.NoError(t, srv.db.CreateUser(ctx, targetUser))
+
+	body := map[string]interface{}{"group_id": orgBGroup.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+targetUser.ID+"/memberships", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errMembershipForeignOrg)
+
+	// Verify no membership row was inserted.
+	memberships, err := srv.db.ListUserMemberships(ctx, targetUser.ID)
+	require.NoError(t, err)
+	assert.Empty(t, memberships, "blocked add must not have inserted a row")
+}
+
+func TestMembership_JWTAdminCannotRemoveForeignOrgMembership(t *testing.T) {
+	// Symmetric: tier-2 admin of orgA must not be able to delete a
+	// membership row whose group lives in orgB.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	aliceDID, _, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	orgB := &rbac.Organization{ID: uuid.New().String(), Slug: "org-b-" + uuid.New().String()[:8], Name: "Org B"}
+	require.NoError(t, srv.db.CreateOrganization(ctx, orgB))
+	orgBGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgB.ID, Slug: "b-grp", Name: "B Grp", Path: "b-grp"}
+	require.NoError(t, srv.db.CreateGroup(ctx, orgBGroup))
+	bob := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:bob-" + uuid.New().String()[:8], KYC: true}
+	require.NoError(t, srv.db.CreateUser(ctx, bob))
+	bobMembership := &rbac.UserMembership{ID: uuid.New().String(), UserID: bob.ID, GroupID: orgBGroup.ID, Source: rbac.MembershipSourceAdmin}
+	require.NoError(t, srv.db.CreateMembership(ctx, bobMembership))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/users/"+bob.ID+"/memberships/"+bobMembership.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), errMembershipForeignOrg)
+
+	// Verify membership still exists.
+	got, err := srv.db.GetMembership(ctx, bobMembership.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got, "blocked delete must not have removed the row")
+}
+
+func TestMembership_JWTAdminCanAddUserToOwnOrgGroup(t *testing.T) {
+	// Positive path: tier-2 admin of orgA can add a user to a normal group
+	// in orgA.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	aliceDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	normalGroup := &rbac.Group{ID: uuid.New().String(), OrgID: orgID, Slug: "team", Name: "Team", Path: "team"}
+	require.NoError(t, srv.db.CreateGroup(ctx, normalGroup))
+	bob := &rbac.User{ID: uuid.New().String(), ExternalID: "did:test:bob-" + uuid.New().String()[:8], KYC: true}
+	require.NoError(t, srv.db.CreateUser(ctx, bob))
+
+	body := map[string]interface{}{"group_id": normalGroup.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+bob.ID+"/memberships", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Test: audit log writes (RD-917 §4 — RBAC audit-log evidence completeness)
+// ---------------------------------------------------------------------------
+
+func TestAuditLog_GroupCreateRecorded(t *testing.T) {
+	// Creating a group via the admin API must produce a row in
+	// rbac_audit_log so Vanta / ISO 27001 access-review can trace the
+	// change. Pre-fix, the rbac_audit_log table was only written for
+	// user creation (internal/rbac/access.go); no group / org / membership
+	// mutations were logged.
+	srv, router := setupTieredAdminTestServer(t, "secret")
+	ctx := t.Context()
+
+	aliceDID, orgID, _ := createOrgAndAdminUser(t, srv)
+	aliceToken, err := srv.jwtService.IssueAccessToken(aliceDID, true)
+	require.NoError(t, err)
+
+	body := map[string]interface{}{
+		"slug":                  "audited",
+		"name":                  "Audited Group",
+		"is_org_readonly_admin": true,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/orgs/"+orgID+"/groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var created map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	groupID := created["id"].(string)
+
+	entries, err := srv.db.ListAuditLogs(ctx, rbac.ResourceTypeGroup, &groupID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "exactly one audit entry expected for the create")
+	entry := entries[0]
+	assert.Equal(t, rbac.AuditActionCreate, entry.Action)
+	assert.Equal(t, aliceDID, entry.ActorExternalID)
+	assert.Equal(t, "Audited Group", entry.ResourceName)
+	assert.NotNil(t, entry.NewValue)
+	assert.Equal(t, true, entry.NewValue["is_org_readonly_admin"])
 }

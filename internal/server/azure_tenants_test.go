@@ -84,6 +84,7 @@ func setupTestServerForAzureTenants(t *testing.T) *testServerAzureTenants {
 	require.NoError(t, err)
 
 	rbacAccessCtrl := rbac.NewAccessController(database, 5*time.Minute)
+	t.Cleanup(rbacAccessCtrl.Stop)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -85,6 +85,7 @@ func TestVisibleToUnlock_Matrix(t *testing.T) {
 
 	// Wire the explorer redactor exactly as production does.
 	accessCtrl := rbac.NewAccessController(database, 1*time.Minute)
+	t.Cleanup(accessCtrl.Stop)
 	engine := explorer.NewRedactionEngine(noopContractStore{}, database)
 	wireExplorerRedactor(engine, database, accessCtrl)
 

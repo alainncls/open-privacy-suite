@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,13 +50,57 @@ func parsePaginationParams(c *gin.Context, defaultLimit int) (limit, offset int)
 
 // Organization handlers
 
+// listOrganizations enumerates orgs visible to the caller.
+//
+// Cross-org isolation (RD-916): super-admin (X-Admin-Token) sees every org.
+// JWT admins see only orgs where they're is_org_admin or is_org_readonly_admin
+// — i.e. their tenant boundary matches what `orgScopingMiddleware` already
+// enforces on per-:org_id routes. Without this scope a JWT admin of org A
+// could enumerate every other tenant's slug/name/UUID via this endpoint.
 func (s *Server) listOrganizations(c *gin.Context) {
 	limit, offset := parsePaginationParams(c, 50)
-	orgs, total, err := s.db.ListOrganizationsPaginated(c.Request.Context(), limit, offset)
+
+	var (
+		orgs  []*rbac.Organization
+		total int
+		err   error
+	)
+	if c.GetString("auth_method") == "jwt_admin" {
+		// Build the visible-orgs set from middleware-populated context.
+		// Both is_org_admin and is_org_readonly_admin grant visibility — a
+		// readonly admin still has legitimate dashboard access to their org.
+		seen := make(map[string]struct{})
+		var allowed []string
+		appendUnique := func(ids []string) {
+			for _, id := range ids {
+				if _, ok := seen[id]; ok {
+					continue
+				}
+				seen[id] = struct{}{}
+				allowed = append(allowed, id)
+			}
+		}
+		if v, ok := c.Get("admin_org_ids"); ok {
+			if slice, ok := v.([]string); ok {
+				appendUnique(slice)
+			}
+		}
+		if v, ok := c.Get("admin_readonly_org_ids"); ok {
+			if slice, ok := v.([]string); ok {
+				appendUnique(slice)
+			}
+		}
+		orgs, total, err = s.db.ListOrganizationsByIDsPaginated(c.Request.Context(), allowed, limit, offset)
+	} else {
+		// admin_token (super-admin) — full visibility.
+		orgs, total, err = s.db.ListOrganizationsPaginated(c.Request.Context(), limit, offset)
+	}
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("list organizations: db read failed", "err", err)
+		respondInternalError(c, "failed to list organizations")
 		return
 	}
+
 	includeSystem := c.Query("include_system") == "true"
 	filtered := make([]*rbac.Organization, 0, len(orgs))
 	for _, org := range orgs {
@@ -75,13 +120,30 @@ func (s *Server) listOrganizations(c *gin.Context) {
 }
 
 func (s *Server) createOrganization(c *gin.Context) {
+	// Tenant lifecycle (creating a new org / tenant) is platform-level and
+	// reserved for super-admin (X-Admin-Token). JWT-admin tier-2 cannot
+	// create orgs — they're scoped to managing existing tenants. Mirrors the
+	// is_org_admin escalation gate in createGroup (admin_rbac_group.go:73).
+	// RD-917 §1.
+	//
+	// Dev mode (auth_method == "" — no admin token configured) and the
+	// adminAuthMiddleware bypass test fixtures both reach this handler with
+	// no auth context; they pass through because in those modes there is
+	// no authentication boundary to enforce. Production deployments
+	// configure ADMIN_API_TOKEN, which makes auth_method always either
+	// "admin_token" or "jwt_admin" — and only "jwt_admin" is rejected.
+	if c.GetString("auth_method") == "jwt_admin" {
+		respondForbidden(c, "only super admin can create organizations")
+		return
+	}
+
 	var input struct {
 		Slug     string         `json:"slug" binding:"required"`
 		Name     string         `json:"name" binding:"required"`
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -102,14 +164,20 @@ func (s *Server) createOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.CreateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
+		// Check for unique constraint violation (duplicate slug). Translating
+		// pq's error text to a 409 — not echoing the raw error to the client.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("create organization: db insert failed", "slug", input.Slug, "err", err)
+		respondInternalError(c, "failed to create organization")
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		nil,
+		map[string]any{"slug": org.Slug, "name": org.Name})
 
 	respondCreated(c, org)
 }
@@ -118,7 +186,8 @@ func (s *Server) getOrganization(c *gin.Context) {
 	orgID := c.Param("org_id")
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("get organization: db read failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to get organization")
 		return
 	}
 	if org == nil {
@@ -133,7 +202,8 @@ func (s *Server) updateOrganization(c *gin.Context) {
 
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("update organization: get failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to update organization")
 		return
 	}
 	if org == nil {
@@ -154,9 +224,11 @@ func (s *Server) updateOrganization(c *gin.Context) {
 		Settings map[string]any `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "invalid request body")
 		return
 	}
+
+	oldValue := map[string]any{"slug": org.Slug, "name": org.Name}
 
 	if input.Slug != nil {
 		// Validate slug format before update
@@ -174,19 +246,35 @@ func (s *Server) updateOrganization(c *gin.Context) {
 	}
 
 	if err := s.db.UpdateOrganization(c.Request.Context(), org); err != nil {
-		// Check for unique constraint violation (duplicate slug)
+		// Translate unique-constraint violations to 409 — see createOrganization.
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			respondConflict(c, "organization with this slug already exists")
 			return
 		}
-		respondInternalError(c, err.Error())
+		slog.Error("update organization: db update failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to update organization")
 		return
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		oldValue,
+		map[string]any{"slug": org.Slug, "name": org.Name})
 
 	respondOK(c, org)
 }
 
 func (s *Server) deleteOrganization(c *gin.Context) {
+	// Tenant deletion is platform-level and reserved for super-admin
+	// (X-Admin-Token). Tier-2 admins retain read + edit-metadata on their
+	// own orgs, but DELETE is locked: deleting a tenant is operator
+	// territory, not in-tenant authority. RD-917 §1.
+	//
+	// See createOrganization for the dev-mode rationale.
+	if c.GetString("auth_method") == "jwt_admin" {
+		respondForbidden(c, "only super admin can delete organizations")
+		return
+	}
+
 	orgID := c.Param("org_id")
 
 	// Prevent deleting the default organization
@@ -198,7 +286,8 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	// Check if organization exists
 	org, err := s.db.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("delete organization: get failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to delete organization")
 		return
 	}
 	if org == nil {
@@ -212,12 +301,17 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 
 	// Delete the organization (cascades to groups, contracts, etc. via DB constraints)
 	if err := s.db.DeleteOrganization(c.Request.Context(), orgID); err != nil {
-		respondInternalError(c, err.Error())
+		slog.Error("delete organization: db delete failed", "org_id", orgID, "err", err)
+		respondInternalError(c, "failed to delete organization")
 		return
 	}
 
 	// Invalidate cache for this organization
 	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+
+	s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeOrganization, org.ID, org.Name,
+		map[string]any{"slug": org.Slug, "name": org.Name},
+		nil)
 
 	respondDeleted(c, "organization")
 }

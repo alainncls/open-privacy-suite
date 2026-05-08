@@ -361,60 +361,17 @@ describe('RBACManager Integration Tests', () => {
   // Full CRUD Flow Tests
   // ===========================================================================
   describe('Full CRUD Flow', () => {
-    it('creates organization and shows it in the list', async () => {
-      const newOrg = createMockOrganization({ name: 'New Test Org', slug: 'new-test-org' });
-      let orgsCreated = 0;
-
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          if (orgsCreated > 0) {
-            const all = [...mockOrganizations, newOrg];
-            return HttpResponse.json({ data: all, total: all.length, limit: 1000, offset: 0 });
-          }
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
-        }),
-        http.post('/api/v1/admin/orgs', async ({ request }) => {
-          orgsCreated++;
-          const body = await request.json() as { slug: string; name: string };
-          return HttpResponse.json({
-            ...newOrg,
-            slug: body.slug,
-            name: body.name,
-          });
-        })
-      );
-
-      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
-
+    it('does not expose an add-organization button (RD-917 §1: tier-1-only)', async () => {
+      // Tenant lifecycle is reserved for super-admin (X-Admin-Token) which
+      // never has a UI session. The button was removed from
+      // OrganizationList.tsx; this assertion guards the dashboard from
+      // re-introducing it. Original test exercised the create flow which
+      // no longer exists.
+      renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
       await waitFor(() => {
         expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
       });
-
-      // Click add organization button
-      const addButton = screen.getByRole('button', { name: /add organization/i });
-      await user.click(addButton);
-
-      // Fill in the form
-      await waitFor(() => {
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
-      });
-
-      const nameInput = screen.getByPlaceholderText('e.g., Acme Corporation');
-      const slugInput = screen.getByPlaceholderText('e.g., acme-corp');
-
-      await user.clear(nameInput);
-      await user.type(nameInput, 'New Test Org');
-      await user.clear(slugInput);
-      await user.type(slugInput, 'new-test-org');
-
-      // Submit the form
-      const createButton = screen.getByRole('button', { name: /create/i });
-      await user.click(createButton);
-
-      // Should show the new org in the list
-      await waitFor(() => {
-        expect(screen.getByText('New Test Org')).toBeInTheDocument();
-      });
+      expect(screen.queryByRole('button', { name: /add organization/i })).not.toBeInTheDocument();
     });
 
     it('opens group creation dialog from Groups tab', async () => {
@@ -561,45 +518,15 @@ describe('RBACManager Integration Tests', () => {
       }, { timeout: 5000 });
     });
 
-    it('refreshes data after deleting organization', async () => {
-      let deleteCalled = false;
-
-      server.use(
-        http.get('/api/v1/admin/orgs', () => {
-          if (deleteCalled) {
-            // Return list without the first org
-            const remaining = mockOrganizations.slice(1);
-            return HttpResponse.json({ data: remaining, total: remaining.length, limit: 1000, offset: 0 });
-          }
-          return HttpResponse.json({ data: mockOrganizations, total: mockOrganizations.length, limit: 1000, offset: 0 });
-        }),
-        http.delete('/api/v1/admin/orgs/:orgId', () => {
-          deleteCalled = true;
-          return HttpResponse.json({ message: 'Deleted' });
-        })
-      );
-
-      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
-
+    it('does not expose per-row delete-organization buttons (RD-917 §1: tier-1-only)', async () => {
+      // Tenant deletion is super-admin only; the per-row Delete button was
+      // removed from OrganizationList.tsx. Original test exercised the
+      // delete flow which no longer exists.
+      renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
       await waitFor(() => {
         expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
       });
-
-      // Click delete on first org
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Wait for confirmation dialog and click Delete
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
-      await user.click(deleteConfirmButton);
-
-      // Org should be removed from list
-      await waitFor(() => {
-        expect(screen.queryByText('Acme Corporation')).not.toBeInTheDocument();
-      });
+      expect(screen.queryAllByTitle('Delete organization')).toHaveLength(0);
     });
 
     it('refreshes data after deleting group', async () => {
@@ -766,38 +693,10 @@ describe('RBACManager Integration Tests', () => {
       });
     });
 
-    it('shows error dialog when organization delete fails', async () => {
-      server.use(
-        http.delete('/api/v1/admin/orgs/:orgId', () => {
-          return HttpResponse.json(
-            { error: 'Organization has dependencies' },
-            { status: 400 }
-          );
-        })
-      );
-
-      const { user } = renderRBACManager({ initialRoute: '/admin/rbac/organizations' });
-
-      await waitFor(() => {
-        expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
-      });
-
-      const deleteButtons = screen.getAllByTitle('Delete organization');
-      await user.click(deleteButtons[0]);
-
-      // Wait for confirmation dialog and click Delete
-      await waitFor(() => {
-        expect(screen.getByText('Delete Organization')).toBeInTheDocument();
-      });
-      const deleteConfirmButton = screen.getByRole('button', { name: /^delete$/i });
-      await user.click(deleteConfirmButton);
-
-      // Error dialog should appear
-      await waitFor(() => {
-        expect(screen.getByText('Delete Failed')).toBeInTheDocument();
-      });
-      expect(screen.getByText(/Failed to delete organization/)).toBeInTheDocument();
-    });
+    // Removed: 'shows error dialog when organization delete fails' — the
+    // delete-org button no longer exists in the dashboard (RD-917 §1).
+    // The error-path coverage moved to backend integration tests in
+    // internal/server/admin_org_isolation_test.go.
 
     it('shows error dialog when group delete fails', async () => {
       server.use(
