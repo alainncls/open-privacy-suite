@@ -8,7 +8,8 @@ import { AlertCircle, Save, X, Loader2, Shield, Check } from 'lucide-react';
 
 interface GroupFormProps {
   orgId: string;
-  groups?: Group[]; // kept for API compat but unused (no parent hierarchy)
+  groups?: Group[]; // sibling groups in this org; used for client-side
+                    // name-uniqueness pre-validation. Server is source of truth.
   group?: Group;
   onClose: () => void;
   onSave: () => void;
@@ -16,6 +17,7 @@ interface GroupFormProps {
 
 export default function GroupForm({
   orgId,
+  groups = [],
   group,
   onClose,
   onSave,
@@ -29,6 +31,18 @@ export default function GroupForm({
   const [error, setError] = useState<string | null>(null);
 
   const isEditing = !!group;
+
+  // Names are unique within an org (case-insensitive). Match the server-side
+  // constraint exactly; this is a UX shortcut that surfaces the conflict
+  // before the user clicks Save. The backend is still authoritative — it's
+  // what catches concurrent creates between two browser tabs.
+  const trimmedName = name.trim();
+  const nameConflict = trimmedName !== '' && groups.some(
+    g => g.id !== group?.id && g.name.toLowerCase() === trimmedName.toLowerCase()
+  );
+  const slugConflict = !isEditing && slug !== '' && groups.some(
+    g => g.slug.toLowerCase() === slug.toLowerCase()
+  );
 
   // Auto-generate slug from name (only for new groups)
   const handleNameChange = (value: string) => {
@@ -98,7 +112,14 @@ export default function GroupForm({
           onChange={e => handleNameChange(e.target.value)}
           placeholder="e.g., Engineering, DevOps, Auditors"
           required
+          aria-invalid={nameConflict}
+          className={nameConflict ? 'border-error ring-1 ring-error/20' : ''}
         />
+        {nameConflict && (
+          <p className="text-xs text-error-dark">
+            A group named &quot;{trimmedName}&quot; already exists in this organization (names are case-insensitive). Pick a different name.
+          </p>
+        )}
       </div>
 
       {!isEditing && (
@@ -112,10 +133,18 @@ export default function GroupForm({
             required
             pattern="^[a-z0-9]+(_[a-z0-9]+)*$"
             title="Lowercase letters, numbers, and underscores only"
+            aria-invalid={slugConflict}
+            className={slugConflict ? 'border-error ring-1 ring-error/20' : ''}
           />
-          <p className="text-xs text-neutral-400">
-            URL-friendly identifier (lowercase, underscores allowed)
-          </p>
+          {slugConflict ? (
+            <p className="text-xs text-error-dark">
+              A group with slug &quot;{slug}&quot; already exists in this organization.
+            </p>
+          ) : (
+            <p className="text-xs text-neutral-400">
+              URL-friendly identifier (lowercase, underscores allowed)
+            </p>
+          )}
         </div>
       )}
 
@@ -205,7 +234,7 @@ export default function GroupForm({
           <X className="w-4 h-4" />
           Cancel
         </Button>
-        <Button type="submit" disabled={saving} className="gap-2">
+        <Button type="submit" disabled={saving || nameConflict || slugConflict} className="gap-2">
           {saving ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
