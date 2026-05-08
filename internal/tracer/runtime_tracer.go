@@ -97,7 +97,10 @@ func (rt *RuntimeTracer) TraceTransaction(
 // TransparentUpgradeable) can re-target their internal calls by rewriting
 // a storage slot, so a cache keyed by (from,to,data,value) returns stale
 // "allow" decisions after a cross-org upgrade. See docs/rd-915-design.md
-// §KD-7 for the regression net (e2e/eth_call_proxy_upgrade_test.go).
+// §KD-7. Regression net: TestTraceTransactionUncached_BypassesCachedHit
+// in this package (cache leak at the tracer layer) plus
+// TestEthCallTracing_ProxyImplementationFlip in internal/server (proxy
+// re-targeting flips the validator decision on the second call).
 //
 // Sibling of TraceTransaction rather than a useCache boolean parameter
 // so the cache-bypass intent is legible at every call site.

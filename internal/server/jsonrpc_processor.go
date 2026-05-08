@@ -993,17 +993,23 @@ const (
 //   - No caching. Proxy patterns (EIP-1967, Diamond, Beacon, transparent)
 //     can re-target their internal calls by rewriting a storage slot, so
 //     a (from,to,data,value) cache yields stale "allow" decisions after
-//     a cross-org upgrade. We use TraceTransactionUncached. Regression net
-//     in e2e/eth_call_proxy_upgrade_test.go (counting cache mock asserts
-//     Get/Set are never reached on the eth_call path).
+//     a cross-org upgrade. We use TraceTransactionUncached. Regression net:
+//     internal/server/eth_call_tracing_integration_test.go
+//     (TestEthCallTracing_ProxyImplementationFlip exercises the same
+//     (from,to,data,value) twice with different upstream traces and
+//     confirms the second decision is fresh, plus
+//     TestTraceTransactionUncached_BypassesCachedHit at the tracer layer).
 //   - `from` is rebound to the JWT-bound EOA. Sends pin msg.sender via the
 //     unlocked key; reads do not, and accepting user-supplied `from` lets
 //     an attacker take an "if (msg.sender == orgB-router)" branch they
 //     would never reach as themselves. Reject mismatched user-supplied
 //     `from` with 400 invalid request rather than silently rebinding,
 //     because silent rebinding would mask spoofing attempts in the logs.
-//   - Distinct timeout (default 5s) so a slow upstream can't fill the
-//     concurrency-limiter quota for a single JWT.
+//   - Distinct timeout (default 5s) caps individual trace duration. Note
+//     this is NOT a quota cap — the concurrency limiter is acquired at
+//     line ~460, AFTER this function runs, so a single JWT can issue many
+//     concurrent eth_calls that each pin a tracer goroutine for up to the
+//     timeout. Per-user gating before the tracer is tracked in RD-923.
 //   - Distinct deny messages (the four constants above) — never %v the
 //     upstream error and never echo the denied contract address.
 //

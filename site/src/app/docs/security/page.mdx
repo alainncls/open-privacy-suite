@@ -108,6 +108,8 @@ graph TD
 - Provides comprehensive cross-org isolation
 - Defense-in-depth alongside bytecode validation
 
+**Read-side coverage.** The same trace-and-validate flow is applied to `eth_call`. Without it, a same-org wrapper contract could STATICCALL/DELEGATECALL into another organization's private contract and bubble up state through the return value, defeating cross-org isolation on the read path. Tracing on `eth_call` is uncached because proxy contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot. See [Configuration](/docs/configuration#runtime-tracing) for the rollback knob and the per-call timeout. `eth_estimateGas` is gated at the entry-point address but does not yet trace internal frames; treat it as a less-strict surface until that follow-up lands.
+
 **Performance:** approximately 50--200 ms additional latency per transaction. Tiered validation skips tracing for calls to known org-owned addresses.
 
 ---

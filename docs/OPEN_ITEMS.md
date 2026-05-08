@@ -121,10 +121,10 @@ RD-915 closes the read side:
 - Every `eth_call` is traced with `debug_traceCall` (uncached — proxy-pattern contracts can re-target their internal calls via storage rewrites, see `runtime_tracer.go` docstring on `TraceTransactionUncached`).
 - All internal call frames are passed through `TraceValidator.ValidateTrace` for the same cross-org check the send path uses.
 - `from` is rebound to the JWT-bound EOA via `GetLinkedEthAddresses`; user-supplied `from` that doesn't match a linked address is rejected (preserves the audit trail of spoof attempts).
-- A distinct 5s per-call timeout (`ETH_CALL_TRACE_TIMEOUT`), separate from the 30s send-side timeout, prevents a slow upstream from filling the per-JWT concurrency quota.
+- A distinct 5s per-call timeout (`ETH_CALL_TRACE_TIMEOUT`), separate from the 30s send-side timeout, caps individual trace duration on the read path. *Note:* this does not cap how many concurrent traces a single JWT may issue — the concurrency limiter is acquired after the trace runs. Tracked separately as RD-923.
 - Default-on; the `RUNTIME_TRACING_ETH_CALL_ENABLED=false` env flag exists for change-management rollback only (ISO 27001 A.8.32). See `docs/rd-915-design.md` §KD-5.
 
-Open follow-up: `pure_helpers` skip-list (KD-1) to avoid tracing well-known stateless utility contracts; `access_logs.denial_reason` enum (KD-4); read-side access/visibility symmetry test (KD-6) — explorer log-data redaction for cross-org-touched txs is still a gap.
+Open follow-up: `pure_helpers` skip-list (KD-1) to avoid tracing well-known stateless utility contracts; `access_logs.denial_reason` enum (KD-4); read-side access/visibility symmetry test (KD-6) — explorer log-data redaction for cross-org-touched txs is still a gap; per-user concurrency / RPS gate before the tracer (RD-923); apply the same cross-org tracing to `eth_estimateGas` (RD-924).
 
 ---
 

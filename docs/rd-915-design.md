@@ -93,6 +93,13 @@ A contract pattern like `function leak(address t) external { (bool ok, bytes mem
 
 **Why:** the architect's order ships the user-facing trace check before the regression net. Anyone who notices a perf regression in the four-week gap before step 7 lands could re-introduce input-keyed caching unchallenged.
 
+**Post-implementation note (2026-05-08):** the "land skipped first" sequencing was not adopted in the merged PR. The regression net is delivered in two places that together cover the same surface:
+
+- `internal/tracer/runtime_tracer_test.go` — `TestTraceTransactionUncached_BypassesCachedHit` and `_DoesNotPopulateCache` pin the cache-bypass at the tracer layer (a future `useCache=true` regression breaks these).
+- `internal/server/eth_call_tracing_integration_test.go` — `TestEthCallTracing_ProxyImplementationFlip` exercises the same `(from,to,data,value)` twice with different upstream traces and asserts the second decision is fresh (a future cache-introducing regression breaks this end-to-end).
+
+The counting `TraceCache` mock is not used; the same guarantee is delivered by asserting upstream-hit count on the scripted httptest server. No `e2e/eth_call_proxy_upgrade_test.go` file exists — references to it elsewhere in this doc are historical.
+
 ## Items the architect got right (move on)
 
 - Helper extraction `runTraceAndValidate` from the three duplicate blocks in `jsonrpc_processor.go` (send / raw / debug). DRY beats blast-radius risk; the existing tests pin the send path.
@@ -103,9 +110,9 @@ A contract pattern like `function leak(address t) external { (bool ok, bytes mem
 
 ## Items added by security review that the architect missed
 
-- **Per-call timeout for eth_call** distinct from the 30s send-side budget. 5s recommended. Slow upstream cannot fill the concurrency-limiter quota for a JWT.
+- **Per-call timeout for eth_call** distinct from the 30s send-side budget. 5s recommended. Caps individual trace duration on the read path. *Note (2026-05-08):* the original framing claimed this also prevented filling the concurrency-limiter quota for a JWT. That claim was wrong — the limiter is acquired *after* the trace runs (`jsonrpc_processor.go:460`), so the timeout caps a single trace's duration but not how many concurrent traces a single JWT may pin. Tracked separately as [RD-923](https://linear.app/gateway-fm/issue/RD-923) (orthogonal to the cross-org isolation logic).
 - **Input validation**: `IsHexAddress` on `to` and `from` *before* trace, so a malformed request doesn't burn a concurrency slot.
-- **`eth_estimateGas` is a sibling read RPC that runs the EVM** and can leak the same state (revert reasons, SLOAD-derived branches). RD-915 must either include it or explicitly defer with a follow-up ticket. **Decision: defer — file [RD-9xx] follow-up.** Including it doubles the PR scope and the threat shape is identical, so the follow-up is mechanical.
+- **`eth_estimateGas` is a sibling read RPC that runs the EVM** and can leak the same state (revert reasons, SLOAD-derived branches). RD-915 must either include it or explicitly defer with a follow-up ticket. **Decision: defer — tracked as [RD-924](https://linear.app/gateway-fm/issue/RD-924).** Including it doubles the PR scope and the threat shape is identical, so the follow-up is mechanical.
 
 ## Implementation order (final)
 
@@ -113,10 +120,10 @@ This PR (V1) ships the core feature plus the regression net plus the doc-update 
 
 V1 (this PR):
 
-1. Add `e2e/eth_call_proxy_upgrade_test.go` with `t.Skip("RD-915 — fixture for the deny path; un-skipped when validateEthCallWithTracing lands")`. Includes the counting `TraceCache` mock asserting Get/Set not called on the eth_call path. Land + green.
+1. Add cache-bypass regression net in `internal/tracer/runtime_tracer_test.go` (`TestTraceTransactionUncached_BypassesCachedHit`, `_DoesNotPopulateCache`). The `e2e/eth_call_proxy_upgrade_test.go` file in earlier drafts of this plan was never created; the same guarantee is delivered at the tracer layer (above) and at the wrapper layer in `internal/server/eth_call_tracing_integration_test.go` (`TestEthCallTracing_ProxyImplementationFlip`).
 2. Refactor `jsonrpc_processor.go`: extract `runTraceAndValidate` shared helper. Pin send-path behaviour with new tests *before* the refactor. Land + green.
 3. Add `RuntimeTracer.TraceTransactionUncached`. Land + unit test.
-7. `validateEthCallWithTracing` + wire into `Process` for `eth_call`. Forces `from := jwtBoundEOA`. New env flag `RUNTIME_TRACING_ETH_CALL_ENABLED` (default true). New ProcessError types with constant messages (no `%v`). 5s timeout for tracing. `IsHexAddress` validation pre-trace. Land + unit + e2e cross-org test. Un-skip step 1's regression test.
+7. `validateEthCallWithTracing` + wire into `Process` for `eth_call`. Forces `from := jwtBoundEOA`. New env flag `RUNTIME_TRACING_ETH_CALL_ENABLED` (default true). New ProcessError types with constant messages (no `%v`). 5s timeout for tracing. `IsHexAddress` validation pre-trace. Land + unit + integration cross-org tests (`internal/server/eth_call_tracing_integration_test.go`).
 10. Doc updates: new `OPEN_ITEMS.md` §4d; fix the over-promise in three site/ pages; add `REDACTION_SPEC.md` paragraph on read-side tracing. Land.
 
 Deferred (file follow-up tickets in same session):

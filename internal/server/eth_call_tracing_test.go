@@ -16,6 +16,11 @@ import (
 // Same setup pattern as debug_trace_test.go (a tracer pointed at an
 // unreachable URL — tests assert behavior at gates that fire before the
 // HTTP call, or on the upstream-error path).
+//
+// The integration tests that actually drive the trace-and-decide path
+// (cross-org deny, multi-hop, proxy-flip, STATICCALL/DELEGATECALL semantics,
+// depth limit, reverted subcalls, EOA target, precompile/shared-infra) live
+// in eth_call_tracing_integration_test.go.
 
 func setupEthCallProc(t *testing.T) (*JSONRPCProcessor, *testServerRBAC) {
 	t.Helper()
