@@ -1,10 +1,10 @@
 import { ErrorInfo, Component, ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Shield, LayoutDashboard, ScrollText, Users, FileKey, Scale } from 'lucide-react';
+import { Shield, Activity, ScrollText, Users, FileKey, Scale } from 'lucide-react';
 import { AccountDropdown } from './components/auth/AccountDropdown';
 
-type Tab = 'dashboard' | 'logs' | 'rbac' | 'compliance' | 'disclosure' | 'none';
+type Tab = 'rbac' | 'compliance' | 'disclosure' | 'logs' | 'diagnostics' | 'none';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -60,11 +60,15 @@ function App() {
   // Derive active tab from URL
   const getActiveTab = (): Tab => {
     if (location.pathname.includes('/account')) return 'none';
-    if (location.pathname.includes('/logs')) return 'logs';
     if (location.pathname.includes('/rbac')) return 'rbac';
     if (location.pathname.includes('/compliance')) return 'compliance';
     if (location.pathname.includes('/disclosure')) return 'disclosure';
-    return 'dashboard';
+    if (location.pathname.includes('/logs')) return 'logs';
+    if (location.pathname.includes('/diagnostics')) return 'diagnostics';
+    // Default landing tab is RBAC (primary tier-2 admin work). The
+    // diagnostics tab is intentionally last in the nav and not the
+    // landing page — see findings doc #2.
+    return 'rbac';
   };
 
   const activeTab = getActiveTab();
@@ -75,12 +79,6 @@ function App() {
     const suffix = orgParam ? `?org=${orgParam}` : '';
 
     switch (value) {
-      case 'dashboard':
-        navigate('/admin/dashboard');
-        break;
-      case 'logs':
-        navigate('/admin/logs');
-        break;
       case 'rbac':
         navigate('/admin/rbac' + suffix);
         break;
@@ -89,6 +87,12 @@ function App() {
         break;
       case 'disclosure':
         navigate('/admin/disclosure' + suffix);
+        break;
+      case 'logs':
+        navigate('/admin/logs');
+        break;
+      case 'diagnostics':
+        navigate('/admin/diagnostics');
         break;
     }
   };
@@ -111,17 +115,14 @@ function App() {
                 </div>
               </div>
 
-              {/* Navigation Tabs */}
+              {/* Navigation Tabs — order: primary daily-driver tabs first
+                  (RBAC → Compliance → Disclosure), forensic / diagnostic
+                  tabs last (Access Logs, Diagnostics). Diagnostics replaces
+                  the prior "Dashboard" landing tab; its content (system
+                  status + test request panel + demo deploy) is dev / ops
+                  tooling, not where admins start their day. */}
               <Tabs value={activeTab} onValueChange={handleTabChange} data-testid="admin-nav">
                 <TabsList>
-                  <TabsTrigger value="dashboard" className="gap-2" data-testid="nav-dashboard">
-                    <LayoutDashboard className="w-4 h-4" />
-                    <span className="hidden sm:inline">Dashboard</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="logs" className="gap-2" data-testid="nav-logs">
-                    <ScrollText className="w-4 h-4" />
-                    <span className="hidden sm:inline">Access Logs</span>
-                  </TabsTrigger>
                   <TabsTrigger value="rbac" className="gap-2" data-testid="nav-rbac">
                     <Users className="w-4 h-4" />
                     <span className="hidden sm:inline">RBAC</span>
@@ -133,6 +134,14 @@ function App() {
                   <TabsTrigger value="disclosure" className="gap-2">
                     <FileKey className="w-4 h-4" />
                     <span className="hidden sm:inline">Disclosure</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="logs" className="gap-2" data-testid="nav-logs">
+                    <ScrollText className="w-4 h-4" />
+                    <span className="hidden sm:inline">Access Logs</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="diagnostics" className="gap-2" data-testid="nav-diagnostics">
+                    <Activity className="w-4 h-4" />
+                    <span className="hidden sm:inline">Diagnostics</span>
                   </TabsTrigger>
                 </TabsList>
               </Tabs>

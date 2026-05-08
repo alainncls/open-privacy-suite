@@ -513,9 +513,17 @@ func resolveContractABI(contract *rbac.Contract) string {
 // silent no-op rules.
 const noABIForEventRulesErrorMessage = "cannot save event_rules: contract has no ABI registered. Upload an ABI for the contract or set its metadata token_type to a known value (\"ERC20\" or \"ERC721\") to use the built-in ABI registry. Without an ABI, log redaction cannot decode non-indexed address parameters and event visibility is denied at runtime regardless of the rules below."
 
-// validateEventRulesWithABI validates event param_rules against a contract ABI.
-// If abiJSON is empty, validation is skipped (returns ""). Otherwise, each rule's
-// param_rules are checked:
+// validateEventRulesWithABI validates event rules against a contract ABI.
+// If abiJSON is empty, validation is skipped (returns ""). Otherwise:
+//
+//   - **Topic0 must match an event declared by the ABI.** This is the
+//     allowlist-integrity gate: a rule whose topic0 isn't in the ABI is
+//     either a typo, a stale demo seed, or a copy-paste from a different
+//     contract — all three would silently never fire and pollute the
+//     audit surface. Reject at save time. (Decision: no legitimate
+//     "topic0 not in ABI" case for the privacy product.)
+//
+//   - Per-rule param_rules are checked:
 //   - index must be within the event's input count
 //   - "self" constraints must target an address-typed parameter
 //   - hex value constraints must have the correct byte length for the param type
@@ -528,7 +536,9 @@ func validateEventRulesWithABI(rules []rbac.EventRule, abiJSON string) string {
 
 	events, err := rbac.ExtractEventSignatures(abiJSON)
 	if err != nil {
-		// ABI is unparseable — skip validation rather than blocking saves
+		// ABI is unparseable — skip validation rather than blocking saves.
+		// Topic0 vs ABI checks share the same fall-through: if we can't
+		// parse the ABI we can't compare topics either.
 		return ""
 	}
 
@@ -539,14 +549,24 @@ func validateEventRulesWithABI(rules []rbac.EventRule, abiJSON string) string {
 	}
 
 	for _, rule := range rules {
-		if len(rule.ParamRules) == 0 {
-			continue
-		}
-
 		ev, ok := eventByTopic[strings.ToLower(rule.Topic0)]
 		if !ok {
-			// topic0 not found in ABI — can't validate param rules against it.
-			// This is not necessarily an error (custom events not in ABI), skip.
+			// Topic0 not in the contract's ABI. Reject the save — every
+			// rule must correspond to an event the ABI declares, otherwise
+			// it's dead config. Surface the available topics in the error
+			// so admins can copy-paste the correct value.
+			available := make([]string, 0, len(events))
+			for i := range events {
+				available = append(available, fmt.Sprintf("%s (%s)", events[i].Topic0, events[i].Name))
+			}
+			return fmt.Sprintf(
+				"event rule topic0 %s does not match any event in the contract's ABI; available events: [%s]",
+				rule.Topic0,
+				strings.Join(available, ", "),
+			)
+		}
+
+		if len(rule.ParamRules) == 0 {
 			continue
 		}
 

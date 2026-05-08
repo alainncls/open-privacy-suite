@@ -750,6 +750,61 @@ func TestAdminEventRulesABIValidation(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		assert.Contains(t, w.Body.String(), "not address")
 	})
+
+	// V07: topic0 not declared by the contract's ABI -> 400. Demo seeds and
+	// admin typos used to silently persist as orphan rules; this gate makes
+	// each rule prove the event exists in the ABI before save.
+	t.Run("V07_TopicNotInABI_Rejected", func(t *testing.T) {
+		// All-zero topic0 is the canonical "definitely not in any real ABI"
+		// hex — guaranteed not to match Transfer or Approval on the ERC-20
+		// fixture above.
+		const orphanTopic0 = "0x0000000000000000000000000000000000000000000000000000000000000000"
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.secondGroupID,
+			"event_rules": []map[string]any{
+				{
+					"topic0": orphanTopic0,
+					"name":   "GhostEvent",
+				},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		body200 := w.Body.String()
+		assert.Contains(t, body200, "topic0")
+		assert.Contains(t, body200, "does not match any event")
+		// Error should list the contract's actual events so admins can
+		// copy-paste the right value.
+		assert.Contains(t, body200, "Transfer")
+		assert.Contains(t, body200, "Approval")
+	})
+
+	// V07b: param-less rule with bad topic0 also rejected (proves the gate
+	// fires whether or not param_rules are present — the prior permissive
+	// behaviour only checked when param_rules were set).
+	t.Run("V07b_TopicNotInABI_NoParamRules_Rejected", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"group_id": f.secondGroupID,
+			"event_rules": []map[string]any{
+				// Wrong-length hex would fail at the JSON layer; use a
+				// well-formed but non-matching keccak256 hash.
+				{"topic0": "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "name": "BogusEvent"},
+			},
+		})
+		url := "/api/orgs/" + f.orgID + "/contracts/" + f.contractAddress + "/grants"
+		req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.server.router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Contains(t, w.Body.String(), "does not match any event")
+	})
 }
 
 // ---------------------------------------------------------------------------

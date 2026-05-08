@@ -93,6 +93,14 @@ export default function RBACManager() {
         } else {
           setSelectedOrg(null);
         }
+      } else if (orgs.length === 1) {
+        // Single-org admin: auto-select the only org so the user
+        // doesn't have to interact with a one-option chooser. The
+        // Select control below is disabled in this case (see
+        // singleOrgLock derived flag); keeping selectedOrg in sync
+        // with the URL so deep-links still work.
+        setSelectedOrg(orgs[0]);
+        setSearchParams({ org: orgs[0].id });
       }
     } catch (error) {
       console.error('Failed to load organizations:', error);
@@ -151,6 +159,12 @@ export default function RBACManager() {
   const orgBlockedTabs: RBACTab[] = ['groups', 'contracts'];
   const blockedWithoutOrg = orgBlockedTabs.includes(activeTab) && !selectedOrg;
 
+  // Single-org admin: lock the dropdown. After RD-916/917 a tier-2 admin
+  // sees only orgs they're a member of; with exactly one such org there's
+  // nothing meaningful to choose, so we pre-selected it above and disable
+  // the control to avoid presenting an interactive one-item chooser.
+  const singleOrgLock = organizations.length === 1;
+
   return (
     <OrgContext.Provider
       value={{
@@ -197,8 +211,14 @@ export default function RBACManager() {
                   <Select
                     value={selectedOrg?.id || '__all__'}
                     onValueChange={handleOrgChange}
+                    disabled={singleOrgLock}
                   >
-                    <SelectTrigger className={`w-full sm:w-[280px] ${blockedWithoutOrg ? 'border-error ring-1 ring-error/20' : ''}`} aria-label="Select organization scope" data-testid="org-selector">
+                    <SelectTrigger
+                      className={`w-full sm:w-[280px] ${blockedWithoutOrg ? 'border-error ring-1 ring-error/20' : ''} ${singleOrgLock ? 'opacity-100 cursor-default' : ''}`}
+                      aria-label="Select organization scope"
+                      data-testid="org-selector"
+                      title={singleOrgLock ? 'You administer one organization — scope is locked to it.' : undefined}
+                    >
                       {selectedOrg ? (
                         <SelectValue placeholder="Select organization" />
                       ) : (
@@ -209,7 +229,7 @@ export default function RBACManager() {
                       )}
                     </SelectTrigger>
                     <SelectContent>
-                      {!blockedWithoutOrg && (
+                      {!blockedWithoutOrg && !singleOrgLock && (
                         <SelectItem value="__all__">
                           <div className="flex items-center gap-2 whitespace-nowrap">
                             <Globe className="w-4 h-4 text-neutral-400 shrink-0" />
