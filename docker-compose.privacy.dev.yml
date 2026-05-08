@@ -269,6 +269,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_EXPLORER:-3001}:80"
+    environment:
+      # Mirror the prod compose flag — entrypoint.sh writes VITE_* into
+      # window.__runtimeConfig at container start, lib/features.ts reads
+      # it to hide the contract-verification surface (block-explorer
+      # rc1 #5). The BFF also strips matching backend routes via the
+      # `privacy` Go build tag.
+      - VITE_PRIVACY_MODE=true
     volumes:
       - ./deployments/privacy/nginx.privacy.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:

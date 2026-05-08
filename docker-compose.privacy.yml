@@ -292,6 +292,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${HOST_BIND:-127.0.0.1}:${HOST_PORT_EXPLORER:-3001}:80"
+    environment:
+      # Tells the SPA we're in privacy mode. The block-explorer entrypoint.sh
+      # writes every VITE_* env var into /config.js as window.__runtimeConfig,
+      # which lib/features.ts reads at runtime to compile the contract-
+      # verification surface out of the UI (block-explorer rc1 #5). The BFF
+      # also strips the matching backend routes via the `privacy` Go build
+      # tag, so the gate is enforced both client and server side.
+      - VITE_PRIVACY_MODE=true
     volumes:
       - ./deployments/privacy/nginx.privacy.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
