@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -331,6 +332,16 @@ func (s *Server) createUserMembership(c *gin.Context) {
 	}
 
 	if err := s.db.CreateMembership(c.Request.Context(), membership); err != nil {
+		// Translate duplicate-key violations (user already in group) into
+		// 409 Conflict — the request is idempotent from the client's POV
+		// and existing test helpers (e2e/playwright/helpers/ui/auth-helpers.ts
+		// :323) detect the existing-membership case via the 409 status. If
+		// we collapsed everything to a generic 500, those helpers throw and
+		// every test in a parallel worker race condition fails.
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of this group"})
+			return
+		}
 		slog.Error("create membership: db insert failed", "user_id", userID, "group_id", input.GroupID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create membership"})
 		return
