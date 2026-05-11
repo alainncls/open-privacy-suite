@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import ContractGrantsManager from '../ContractGrantsManager';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { rbacApi } from '@/api/rbac';
 import type { Contract, ContractGrant, Group, GroupAccess, GroupWithAccess, Claim } from '@/types/rbac';
 
@@ -91,7 +92,9 @@ function stubApis(grants: ContractGrant[]) {
 
 function renderManager(contract: Contract = mockContract) {
   return render(
-    <ContractGrantsManager orgId="org-1" contract={contract} />
+    <TooltipProvider>
+      <ContractGrantsManager orgId="org-1" contract={contract} />
+    </TooltipProvider>
   );
 }
 
