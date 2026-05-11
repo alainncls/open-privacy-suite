@@ -109,7 +109,7 @@ describe('GroupAccessForm', () => {
       );
     });
 
-    it('renders all four preset cards', async () => {
+    it('renders all three preset cards', async () => {
       renderGroupAccessForm({});
 
       await waitFor(() => {
@@ -120,7 +120,6 @@ describe('GroupAccessForm', () => {
       expect(screen.getByText('End users with wallets — send payments, check balances')).toBeInTheDocument();
       expect(screen.getByText('Automated systems — raw transactions, event monitoring')).toBeInTheDocument();
       expect(screen.getByText('Engineers — deploy, debug, inspect contract state')).toBeInTheDocument();
-      expect(screen.getByText('Full control — all methods, all claims')).toBeInTheDocument();
     });
 
     it('clicking preset fills methods', async () => {
@@ -527,7 +526,7 @@ describe('GroupAccessForm', () => {
       expect(claims).not.toContain('upgrade');
     });
 
-    it('save derives admin claim for Admin preset', async () => {
+    it('manual claims selection includes deploy and upgrade when admin is checked', async () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       let capturedBody: Record<string, unknown> | null = null;
@@ -548,13 +547,9 @@ describe('GroupAccessForm', () => {
         expect(screen.getByText('Quick Start')).toBeInTheDocument();
       });
 
-      // Apply Admin preset
-      const adminCard = screen.getByText('Full control — all methods, all claims').closest('button')!;
-      await user.click(adminCard);
-
-      await waitFor(() => {
-        expect(adminCard.className).toContain('border-primary');
-      });
+      // Click Admin claim checkbox using its description to avoid matching the Admin preset
+      const adminClaimLabel = screen.getByText('Full control — implies Deploy and Upgrade').closest('label')!;
+      await user.click(adminClaimLabel);
 
       // Save
       const saveButton = screen.getByText('Save Access Settings');
@@ -564,7 +559,6 @@ describe('GroupAccessForm', () => {
         expect(onSave).toHaveBeenCalled();
       });
 
-      // Admin preset sets admin claim which implies deploy+upgrade (not read/write)
       expect(capturedBody).toBeDefined();
       const claims = capturedBody!.claims as string[];
       expect(claims).toContain('admin');

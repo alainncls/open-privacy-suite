@@ -5,7 +5,6 @@ import {
   PERMISSION_PRESETS,
   RPC_METHODS_BY_CLAIM,
   getPresetMethods,
-  deriveClaims,
   getClosestPresetLabel,
   detectMatchingPreset,
 } from '../rbac';
@@ -99,7 +98,6 @@ describe('getPresetMethods', () => {
   const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
   const servicePreset = PERMISSION_PRESETS.find(p => p.id === 'service_backend')!;
   const developerPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;
-  const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin')!;
 
   it('Wallet User preset returns exactly the Wallet User section methods', () => {
     const methods = getPresetMethods(walletPreset);
@@ -123,12 +121,7 @@ describe('getPresetMethods', () => {
     expect(methods).toHaveLength(expected);
   });
 
-  it('Admin preset returns same methods as Developer (difference is adminClaim flag)', () => {
-    const devMethods = getPresetMethods(developerPreset);
-    const adminMethods = getPresetMethods(adminPreset);
-    expect(adminMethods).toHaveLength(devMethods.length);
-    expect(new Set(adminMethods)).toEqual(new Set(devMethods));
-  });
+
 
   it('no duplicate methods in any preset', () => {
     for (const preset of PERMISSION_PRESETS) {
@@ -158,61 +151,6 @@ describe('getPresetMethods', () => {
   });
 });
 
-describe('deriveClaims', () => {
-  it('Wallet User methods derive no claims (method allowlist controls access)', () => {
-    const walletPreset = PERMISSION_PRESETS.find(p => p.id === 'wallet_user')!;
-    const methods = getPresetMethods(walletPreset);
-    const claims = deriveClaims(methods);
-    expect(claims).toHaveLength(0);
-  });
-
-  it('Developer methods derive deploy (debug_trace* is deploy-gated)', () => {
-    const devPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;
-    const methods = getPresetMethods(devPreset);
-    const claims = deriveClaims(methods);
-    expect(claims).toContain('deploy');
-    expect(claims).not.toContain('read');
-    expect(claims).not.toContain('write');
-    expect(claims).not.toContain('admin');
-  });
-
-  it('admin flag produces admin, deploy, upgrade', () => {
-    const claims = deriveClaims([], true);
-    expect(claims).toContain('admin');
-    expect(claims).toContain('deploy');
-    expect(claims).toContain('upgrade');
-    expect(claims).not.toContain('read');
-    expect(claims).not.toContain('write');
-    expect(claims).toHaveLength(3);
-  });
-
-  it('empty methods returns empty claims', () => {
-    const claims = deriveClaims([]);
-    expect(claims).toEqual([]);
-  });
-
-  it('single read method returns no claims', () => {
-    const claims = deriveClaims(['eth_call']);
-    expect(claims).toEqual([]);
-  });
-
-  it('single write method returns no claims', () => {
-    const claims = deriveClaims(['eth_sendTransaction']);
-    expect(claims).toEqual([]);
-  });
-
-  it('single deploy method returns [deploy]', () => {
-    const claims = deriveClaims(['debug_traceTransaction']);
-    expect(claims).toContain('deploy');
-    expect(claims).toHaveLength(1);
-  });
-
-  it('admin flag overrides methods — even empty methods get admin claims', () => {
-    const claims = deriveClaims([], true);
-    expect(claims).toHaveLength(3);
-    expect(claims).toContain('admin');
-  });
-});
 
 describe('getClosestPresetLabel', () => {
   it('exact Wallet User match returns "Wallet User"', () => {
@@ -233,11 +171,7 @@ describe('getClosestPresetLabel', () => {
     expect(getClosestPresetLabel(methods)).toBe('Developer');
   });
 
-  it('Admin methods match Developer label (same method set, Developer wins first)', () => {
-    const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin')!;
-    const methods = getPresetMethods(adminPreset);
-    expect(getClosestPresetLabel(methods)).toBe('Developer');
-  });
+
 
   it('Developer + 1 extra method returns "Developer +1"', () => {
     const devPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;
@@ -288,12 +222,7 @@ describe('detectMatchingPreset', () => {
     expect(detectMatchingPreset(methods)).toBe('developer');
   });
 
-  it('exact Admin methods returns "admin"', () => {
-    const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin')!;
-    const methods = getPresetMethods(adminPreset);
-    const result = detectMatchingPreset(methods);
-    expect(result === 'developer' || result === 'admin').toBe(true);
-  });
+
 
   it('Developer + 1 extra method returns null (no exact match)', () => {
     const devPreset = PERMISSION_PRESETS.find(p => p.id === 'developer')!;

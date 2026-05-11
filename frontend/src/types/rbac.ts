@@ -556,7 +556,6 @@ export interface PermissionPreset {
   description: string;
   icon: string; // lucide-react icon name
   sections: (keyof typeof METHOD_SECTIONS)[]; // which sections to check
-  adminClaim?: boolean; // if true, set admin claim instead of deriving
 }
 
 export const PERMISSION_PRESETS: PermissionPreset[] = [
@@ -581,30 +580,11 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
     icon: 'Code',
     sections: ['Wallet User', 'Service / Backend', 'Developer'],
   },
-  {
-    id: 'admin',
-    name: 'Admin',
-    description: 'Full control — all methods, all claims',
-    icon: 'ShieldCheck',
-    sections: ['Wallet User', 'Service / Backend', 'Developer'],
-    adminClaim: true,
-  },
 ];
 
 // Get all methods for a preset
 export function getPresetMethods(preset: PermissionPreset): string[] {
   return preset.sections.flatMap(s => [...METHOD_SECTIONS[s].methods]);
-}
-
-// Derive operational claims from selected methods.
-// Only deploy-tier methods (debug_trace*) require a claim; read/write methods
-// are gated by the method allowlist alone.
-export function deriveClaims(methods: string[], isAdmin?: boolean): Claim[] {
-  if (isAdmin) return ExpandClaims(['admin'] as Claim[]);
-  const claims: Claim[] = [];
-  const methodSet = new Set(methods);
-  if (RPC_METHODS_BY_CLAIM.deploy.some(m => methodSet.has(m))) claims.push('deploy' as Claim);
-  return ExpandClaims(claims);
 }
 
 // Find closest matching preset for a method set. Returns badge text.
