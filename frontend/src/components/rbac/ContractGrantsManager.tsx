@@ -25,7 +25,14 @@ import {
   Pencil,
   Code2,
   Radio,
+  Eye,
+  ShieldAlert,
 } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 
 // Helper to get contract address from either new or legacy format
@@ -66,9 +73,18 @@ export default function ContractGrantsManager({
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingGrant, setEditingGrant] = useState<GrantWithGroup | null>(null);
+  const [editingGrant, setEditingGrant] = useState<{ grant: GrantWithGroup, mode: 'functions' | 'events' } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GrantWithGroup | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
+
+  // RD-874: visibleTo unlock toggle
+  const [allowVisibleToUnlock, setAllowVisibleToUnlock] = useState(
+    !!contract?.allow_visibleto_unlock,
+  );
+  const [savingUnlock, setSavingUnlock] = useState(false);
+  const [unlockSuccess, setUnlockSuccess] = useState<string | null>(null);
+  const [pendingUnlockEnable, setPendingUnlockEnable] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
 
   const contractAddress = getContractAddress(contract);
 
@@ -143,6 +159,23 @@ export default function ContractGrantsManager({
       setTimeout(() => setCopiedAddress(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+  };
+
+  const applyUnlockToggle = async (allow: boolean) => {
+    setSavingUnlock(true);
+    setUnlockError(null);
+    setUnlockSuccess(null);
+    try {
+      await rbacApi.contracts.updateAllowVisibleToUnlock(orgId, contractAddress, allow);
+      setAllowVisibleToUnlock(allow);
+      setUnlockSuccess(allow ? 'visibleTo unlock enabled for this contract' : 'visibleTo unlock disabled');
+    } catch (err: unknown) {
+      console.error('Failed to update visibleTo unlock flag:', err);
+      const axiosError = err as { response?: { data?: { error?: string } } };
+      setUnlockError(axiosError.response?.data?.error || 'Failed to update visibleTo unlock setting.');
+    } finally {
+      setSavingUnlock(false);
     }
   };
 
@@ -265,6 +298,124 @@ export default function ContractGrantsManager({
         </p>
       </div>
 
+      {/* RD-874: per-contract visibleTo unlock toggle */}
+      {!isReadonlyAdmin && (
+        <div className="space-y-2">
+          {unlockError && (
+            <div className="p-3 rounded-lg bg-error-light border border-error/30 flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-error-dark flex-shrink-0 mt-0.5" />
+              <span className="text-error-dark text-sm">{unlockError}</span>
+            </div>
+          )}
+          <div className="flex items-start justify-between gap-3 p-3 rounded-lg border border-neutral-200">
+            <div className="flex items-start gap-3 min-w-0">
+              <Eye className="w-5 h-5 mt-0.5 text-neutral-500 flex-shrink-0" />
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-neutral-700">
+                    visibleTo unlock
+                  </span>
+                  {allowVisibleToUnlock && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                      enabled
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-500">
+                  When enabled, a transaction sender on this contract can grant
+                  per-event visibility to anyone they list in the tx's <code>visibleTo</code>{' '}
+                  array — bypassing the contract grant's event rules and parameter
+                  rules for that one transaction. Default off; existing additive
+                  behaviour stays.
+                </p>
+                {allowVisibleToUnlock && (
+                  <p className="text-xs text-amber-700 flex items-center gap-1">
+                    <ShieldAlert className="w-3 h-3" />
+                    Tx senders on this contract may now share full event payloads
+                    with any DID they list.
+                  </p>
+                )}
+                {unlockSuccess && (
+                  <p className="text-xs text-success-dark flex items-center gap-1">
+                    <Check className="w-3 h-3" />
+                    {unlockSuccess}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center">
+              {savingUnlock ? (
+                <Loader2 className="w-4 h-4 animate-spin text-neutral-500" />
+              ) : (
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Allow visibleTo to unlock event visibility"
+                  checked={allowVisibleToUnlock}
+                  disabled={savingUnlock}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setPendingUnlockEnable(true);
+                    } else {
+                      void applyUnlockToggle(false);
+                    }
+                  }}
+                  className="w-4 h-4 cursor-pointer"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingUnlockEnable && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-base font-semibold text-neutral-900">
+                  Enable visibleTo unlock?
+                </h3>
+                <p className="text-sm text-neutral-600 mt-1">
+                  Once enabled, any transaction sender on this contract can grant
+                  per-event visibility (bypassing event rules and parameter rules)
+                  to anyone they list in <code>visibleTo</code> on a transaction.
+                  Listed users still need contract-level group access in this org —
+                  cross-org and anonymous viewers remain denied.
+                </p>
+                <p className="text-sm text-neutral-600 mt-2">
+                  Set this only on contracts where shared per-tx visibility is the
+                  intended workflow.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setPendingUnlockEnable(false)}
+                disabled={savingUnlock}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={async () => {
+                  setPendingUnlockEnable(false);
+                  await applyUnlockToggle(true);
+                }}
+                disabled={savingUnlock}
+                className="gap-2"
+              >
+                {savingUnlock ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                Enable
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Grants section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -326,14 +477,6 @@ export default function ContractGrantsManager({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => setEditingGrant(grant)}
-                          title="Edit function access"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
                           onClick={() => setDeleteTarget(grant)}
                           className="text-error-dark hover:text-error-dark hover:bg-error-light"
                           title="Remove group access"
@@ -360,9 +503,10 @@ export default function ContractGrantsManager({
                 </div>
 
                 {/* Function access */}
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-neutral-500">Functions:</span>
-                  {!grant.functions || grant.functions.length === 0 ? (
+                <div className="mt-2 flex items-start justify-between gap-4 group">
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span className="text-xs text-neutral-500">Functions:</span>
+                    {!grant.functions || grant.functions.length === 0 ? (
                     <span className="text-xs text-success font-medium">All functions allowed</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -389,12 +533,31 @@ export default function ContractGrantsManager({
                       })}
                     </div>
                   )}
+                  </div>
+                  {!isReadonlyAdmin && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-50 group-hover:opacity-100 transition-opacity"
+                          onClick={() => setEditingGrant({ grant, mode: 'functions' })}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit function access</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
 
                 {/* Event visibility */}
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-neutral-500">Events:</span>
-                  {grant.event_rules === '*' ? (
+                <div className="mt-2 flex items-start justify-between gap-4 group">
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span className="text-xs text-neutral-500">Events:</span>
+                    {grant.event_rules === '*' ? (
                     <span className="text-xs text-success font-medium">All events visible</span>
                   ) : grant.event_rules === null || grant.event_rules === undefined || grant.event_rules.length === 0 ? (
                     grant.group?.is_org_admin || grant.groupAccess?.claims?.includes('admin') ? (
@@ -426,6 +589,24 @@ export default function ContractGrantsManager({
                       })}
                     </div>
                   )}
+                  </div>
+                  {!isReadonlyAdmin && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-50 group-hover:opacity-100 transition-opacity"
+                          onClick={() => setEditingGrant({ grant, mode: 'events' })}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit event visibility</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
               </div>
             ))}
@@ -435,7 +616,7 @@ export default function ContractGrantsManager({
 
       {/* Add Group Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Add Group Access</DialogTitle>
           </DialogHeader>
@@ -447,27 +628,30 @@ export default function ContractGrantsManager({
             existingGrantGroupIds={existingGrantGroupIds}
             onClose={() => setShowForm(false)}
             onSave={handleSave}
+            editMode="add"
           />
         </DialogContent>
       </Dialog>
 
-      {/* Edit Grant Dialog */}
       <Dialog open={!!editingGrant} onOpenChange={open => !open && setEditingGrant(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
-            <DialogTitle>Edit Grant Rules</DialogTitle>
+            <DialogTitle>
+              {editingGrant?.mode === 'functions' ? 'Edit Function Rules' : 'Edit Event Rules'}
+            </DialogTitle>
           </DialogHeader>
           {editingGrant && (
             <ContractGrantForm
-              key={editingGrant.id}
+              key={editingGrant.grant.id}
               orgId={orgId}
               contractAddress={contractAddress}
               contractAbi={contract.abi}
-              grant={editingGrant}
+              grant={editingGrant.grant}
               groups={groups}
               existingGrantGroupIds={existingGrantGroupIds}
               onClose={() => setEditingGrant(null)}
               onSave={handleSave}
+              editMode={editingGrant.mode}
             />
           )}
         </DialogContent>

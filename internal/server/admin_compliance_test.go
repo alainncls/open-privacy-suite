@@ -363,3 +363,56 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 		})
 	}
 }
+
+
+func TestUpdateComplianceConfig_UnknownPricePolicy(t *testing.T) {
+	ts := setupTestServerForCompliance(t)
+	seed := seedComplianceTestData(t, ts.db)
+	
+	ctx := context.Background()
+	orgID := seed.orgID
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantPolicy compliance.UnknownPricePolicy
+	}{
+		{
+			name:       "valid allowed policy",
+			body:       `{"unknown_price_policy": "allowed"}`,
+			wantStatus: http.StatusOK,
+			wantPolicy: compliance.UnknownPriceAllowed,
+		},
+		{
+			name:       "valid forbidden policy",
+			body:       `{"unknown_price_policy": "forbidden"}`,
+			wantStatus: http.StatusOK,
+			wantPolicy: compliance.UnknownPriceForbidden,
+		},
+		{
+			name:       "invalid policy rejected",
+			body:       `{"unknown_price_policy": "ignore"}`,
+			wantStatus: http.StatusBadRequest,
+			wantPolicy: compliance.UnknownPriceForbidden, // should not have changed
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPut, "/", bytes.NewBuffer([]byte(tc.body)))
+			c.Params = gin.Params{gin.Param{Key: "org_id", Value: orgID}}
+			
+			ts.updateComplianceConfig(c)
+			
+			assert.Equal(t, tc.wantStatus, w.Code)
+			
+			// Verify DB
+			cfg, err := ts.db.GetComplianceConfig(ctx, orgID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantPolicy, cfg.UnknownPricePolicy)
+		})
+	}
+}

@@ -152,7 +152,25 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	}
 	if priceFiat < 0 {
 		// Sentinel: price unavailable
-		reason := fmt.Sprintf("no price configured for token %s", tokenAddr)
+		if config.UnknownPricePolicy == UnknownPriceAllowed {
+			reason := fmt.Sprintf("no price configured for token %s, allowing per unknown price policy", tokenAddr)
+			slog.Info("compliance allowed (unknown price policy)", "org", req.OrgID, "user", req.UserID, "reason", reason)
+			if err := c.logDecision(ctx, req, info, nil, nil, "allowed", "", nil, currency); err != nil {
+				slog.Error("failed to log allowed decision, failing closed", "org", req.OrgID, "user", req.UserID, "error", err)
+				return &CheckResult{
+					Allowed:      false,
+					Reason:       "compliance audit log unavailable, failing closed",
+					TransferInfo: info,
+				}, nil
+			}
+			return &CheckResult{
+				Allowed:      true,
+				Reason:       reason,
+				TransferInfo: info,
+			}, nil
+		}
+
+		reason := fmt.Sprintf("no price configured for token %s and unknown price policy is forbidden", tokenAddr)
 		slog.Warn("compliance denied (fail closed)", "org", req.OrgID, "user", req.UserID, "reason", reason)
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
 			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)

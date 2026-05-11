@@ -53,14 +53,23 @@ const (
 	TransferTypeERC20 TransferType = "erc20"
 )
 
+// UnknownPricePolicy indicates the policy when a token price is unknown.
+type UnknownPricePolicy string
+
+const (
+	UnknownPriceAllowed   UnknownPricePolicy = "allowed"
+	UnknownPriceForbidden UnknownPricePolicy = "forbidden"
+)
+
 // ComplianceConfig stores per-org compliance settings.
 type ComplianceConfig struct {
-	ID            string    `json:"id"`
-	OrgID         string    `json:"org_id"`
-	Enabled       bool      `json:"enabled"`
-	ThresholdFiat float64   `json:"threshold_fiat"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                 string             `json:"id"`
+	OrgID              string             `json:"org_id"`
+	Enabled            bool               `json:"enabled"`
+	ThresholdFiat      float64            `json:"threshold_fiat"`
+	UnknownPricePolicy UnknownPricePolicy `json:"unknown_price_policy"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
 }
 
 // TokenPrice stores admin-configured fiat valuation for a token.

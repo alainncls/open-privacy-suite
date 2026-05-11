@@ -95,8 +95,9 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 	orgID := c.Param("org_id")
 
 	var input struct {
-		Enabled       *bool    `json:"enabled"`
-		ThresholdFiat *float64 `json:"threshold_fiat"`
+		Enabled            *bool                          `json:"enabled"`
+		ThresholdFiat      *float64                       `json:"threshold_fiat"`
+		UnknownPricePolicy *compliance.UnknownPricePolicy `json:"unknown_price_policy"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -128,6 +129,13 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 			return
 		}
 		config.ThresholdFiat = *input.ThresholdFiat
+	}
+	if input.UnknownPricePolicy != nil {
+		if *input.UnknownPricePolicy != compliance.UnknownPriceAllowed && *input.UnknownPricePolicy != compliance.UnknownPriceForbidden {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_price_policy must be 'allowed' or 'forbidden'"})
+			return
+		}
+		config.UnknownPricePolicy = *input.UnknownPricePolicy
 	}
 
 	if err := s.db.UpsertComplianceConfig(c.Request.Context(), config); err != nil {
