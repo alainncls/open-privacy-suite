@@ -5,8 +5,11 @@ import {
   METHOD_SECTIONS,
   PERMISSION_PRESETS,
   getPresetMethods,
-  deriveClaims,
   detectMatchingPreset,
+  ExpandClaims,
+  Claim,
+  CLAIM_LABELS,
+  CLAIM_DESCRIPTIONS,
 } from '@/types/rbac';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -36,7 +39,7 @@ export default function GroupAccessForm({
   const [loading, setLoading] = useState(true);
   const [allowedMethods, setAllowedMethods] = useState<string[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
-  const [isAdminPreset, setIsAdminPreset] = useState(false);
+  const [selectedClaims, setSelectedClaims] = useState<Claim[]>([]);
   const [rpcApiKey, setRpcApiKey] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +66,6 @@ export default function GroupAccessForm({
     }
     const match = detectMatchingPreset(allowedMethods);
     setSelectedPresetId(match);
-    setIsAdminPreset(match === 'admin');
   }, [allowedMethods]);
 
   const loadAccess = async () => {
@@ -75,17 +77,7 @@ export default function GroupAccessForm({
         const methods = (access.allowed_methods || []).filter((m: string) => m !== '*');
         setAllowedMethods(methods);
         setRpcApiKey(access.rpc_api_key || '');
-        // Admin detection: if all admin claims present, treat as admin preset
-        if (access.claims?.includes('admin')) {
-          const adminPreset = PERMISSION_PRESETS.find(p => p.id === 'admin');
-          if (adminPreset) {
-            const presetMethods = getPresetMethods(adminPreset);
-            const methodSet = new Set(methods);
-            if (presetMethods.every(m => methodSet.has(m)) && presetMethods.length === methodSet.size) {
-              setIsAdminPreset(true);
-            }
-          }
-        }
+        setSelectedClaims(access.claims || []);
       }
     } catch {
       // No access settings yet, that's OK
@@ -131,7 +123,6 @@ export default function GroupAccessForm({
     const methods = getPresetMethods(preset);
     setPresetApplied(true);
     setAllowedMethods(methods);
-    setIsAdminPreset(preset.adminClaim === true);
     setSelectedPresetId(preset.id);
   };
 
@@ -154,10 +145,9 @@ export default function GroupAccessForm({
     setError(null);
 
     try {
-      const claims = deriveClaims(allowedMethods, isAdminPreset);
       const input: SetGroupAccessInput = {
         allowed_methods: allowedMethods,
-        claims: claims,
+        claims: ExpandClaims(selectedClaims),
         rpc_api_key: rpcApiKey || null,
       };
 
@@ -195,11 +185,70 @@ export default function GroupAccessForm({
         </div>
       )}
 
+      {/* Operational Claims */}
+      <div className="space-y-3 bg-neutral-50 border border-neutral-200 rounded-lg p-4">
+        <div>
+          <h3 className="text-sm font-semibold text-neutral-900">Operational Claims</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Explicit permissions for proxy management. These are required for advanced operations independent of RPC methods.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {(['admin', 'deploy', 'upgrade'] as Claim[]).map(claim => {
+            const isChecked = selectedClaims.includes(claim);
+            // If admin is checked, deploy and upgrade are effectively checked/disabled
+            const isAdminChecked = selectedClaims.includes('admin');
+            const isDisabled = (claim === 'deploy' || claim === 'upgrade') && isAdminChecked;
+            const effectivelyChecked = isChecked || isDisabled;
+
+            return (
+              <label
+                key={claim}
+                className={cn(
+                  'flex items-start gap-3 p-3 rounded-lg border transition-colors',
+                  effectivelyChecked ? 'border-primary bg-white shadow-sm' : 'border-neutral-200 hover:border-primary-200 bg-white',
+                  isDisabled && 'opacity-60 cursor-not-allowed'
+                )}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (isDisabled) return;
+                  
+                  setSelectedClaims(prev => {
+                    if (prev.includes(claim)) {
+                      return prev.filter(c => c !== claim);
+                    } else {
+                      const newClaims = [...prev, claim];
+                      if (claim === 'admin') {
+                        // Admin implies others, so we visually check them too
+                        if (!newClaims.includes('deploy')) newClaims.push('deploy');
+                        if (!newClaims.includes('upgrade')) newClaims.push('upgrade');
+                      }
+                      return newClaims;
+                    }
+                  });
+                }}
+              >
+                <div className={cn(
+                  'w-4 h-4 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors',
+                  effectivelyChecked ? 'bg-primary border-primary' : 'border-neutral-300 bg-white'
+                )}>
+                  {effectivelyChecked && <Check className="w-3 h-3 text-white stroke-[3]" />}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-neutral-900">{CLAIM_LABELS[claim]}</div>
+                  <div className="text-[11px] text-neutral-500 leading-tight mt-0.5">{CLAIM_DESCRIPTIONS[claim]}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Preset cards */}
       <div className="space-y-2">
         <label className="block text-sm font-medium text-neutral-700">Quick Start</label>
         <p className="text-xs text-neutral-400">Select a role to pre-fill permissions, or pick methods manually below.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {PERMISSION_PRESETS.map(preset => {
             const IconComponent = PRESET_ICONS[preset.icon] || ShieldCheck;
             return (
