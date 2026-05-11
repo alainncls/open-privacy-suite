@@ -509,3 +509,4 @@ func TestAdminAuth_JWT_BannedUserDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "banned")
 }
+

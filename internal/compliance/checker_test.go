@@ -1447,3 +1447,53 @@ func TestResolveTokenPrice_MultiCurrency(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckerUnknownPricePolicy(t *testing.T) {
+	req := &CheckRequest{
+		OrgID: "org-1",
+		From:  "0x1111",
+		To:    "0x2222",
+		Value: "0xde0b6b3a7640000", // 1 token
+	}
+
+	tests := []struct {
+		name    string
+		policy  UnknownPricePolicy
+		allowed bool
+	}{
+		{
+			name:    "forbidden policy denies transfer when price is unknown",
+			policy:  UnknownPriceForbidden,
+			allowed: false,
+		},
+		{
+			name:    "allowed policy permits transfer when price is unknown",
+			policy:  UnknownPriceAllowed,
+			allowed: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockComplianceStore{
+				config: &ComplianceConfig{
+					OrgID:              "org-1",
+					Enabled:            true,
+					ThresholdFiat:      1000,
+					UnknownPricePolicy: tc.policy,
+				},
+			}
+			// No token price set -> price is unknown
+
+			
+			checker := NewChecker(store, 24*time.Hour, 15*time.Minute)
+			res, err := checker.Check(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Check failed: %v", err)
+			}
+			if res.Allowed != tc.allowed {
+				t.Errorf("got allowed=%v, want %v. reason: %s", res.Allowed, tc.allowed, res.Reason)
+			}
+		})
+	}
+}

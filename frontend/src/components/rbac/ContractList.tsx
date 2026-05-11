@@ -29,7 +29,7 @@ import {
 import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { Input } from '@/components/ui/input';
-import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search } from 'lucide-react';
+import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search, Eye } from 'lucide-react';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 
 const PAGE_SIZE = 25;
@@ -401,7 +401,14 @@ export default function ContractList() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm">{contract.name || '-'}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{contract.name || '-'}</span>
+                    {contract.allow_visibleto_unlock && (
+                      <span title="visibleTo bypass enabled">
+                        <Eye className="w-4 h-4 text-amber-500" />
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-center">
                   {contract.abi ? (
@@ -556,7 +563,7 @@ export default function ContractList() {
 
       {/* Grants Manager Dialog */}
       <Dialog open={!!managingGrants} onOpenChange={open => !open && setManagingGrants(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Contract Permissions</DialogTitle>
           </DialogHeader>

@@ -6,6 +6,7 @@ export interface ComplianceConfig {
   org_id: string;
   enabled: boolean;
   threshold_fiat: number;
+  unknown_price_policy: 'allowed' | 'forbidden';
   created_at: string;
   updated_at: string;
 }
@@ -13,6 +14,7 @@ export interface ComplianceConfig {
 export interface UpdateComplianceConfigInput {
   enabled?: boolean;
   threshold_fiat?: number;
+  unknown_price_policy?: 'allowed' | 'forbidden';
 }
 
 export interface TokenPrice {

@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
 import { complianceApi } from '@/api/compliance';
@@ -23,6 +30,7 @@ export default function ComplianceConfig() {
 
   const [enabled, setEnabled] = useState(false);
   const [thresholdFiat, setThresholdFiat] = useState('1000');
+  const [unknownPricePolicy, setUnknownPricePolicy] = useState<'allowed' | 'forbidden'>('forbidden');
 
   const loadConfig = async () => {
     if (!orgId) return;
@@ -34,6 +42,7 @@ export default function ComplianceConfig() {
       setConfig(cfg);
       setEnabled(cfg.enabled);
       setThresholdFiat(String(cfg.threshold_fiat));
+      setUnknownPricePolicy(cfg.unknown_price_policy || 'forbidden');
     } catch (err: unknown) {
       const axiosError = err as { response?: { status?: number; data?: { error?: string } } };
       if (axiosError.response?.status === 404) {
@@ -41,6 +50,7 @@ export default function ComplianceConfig() {
         setConfig(null);
         setEnabled(false);
         setThresholdFiat('1000');
+        setUnknownPricePolicy('forbidden');
       } else {
         setError(axiosError.response?.data?.error || 'Failed to load compliance config');
       }
@@ -62,6 +72,7 @@ export default function ComplianceConfig() {
       const response = await complianceApi.config.update(orgId, {
         enabled,
         threshold_fiat: parseFloat(thresholdFiat) || 0,
+        unknown_price_policy: unknownPricePolicy,
       });
       setConfig(response.data);
       setSuccess(true);
@@ -138,6 +149,28 @@ export default function ComplianceConfig() {
           />
           <p className="text-xs text-neutral-400 mt-1">
             Transfers above this value will require travel rule compliance
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+            Transfers with unknown price
+          </label>
+          <Select
+            value={unknownPricePolicy}
+            onValueChange={(val: 'allowed' | 'forbidden') => setUnknownPricePolicy(val)}
+            disabled={isReadonlyAdmin}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select policy" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="allowed">Allowed</SelectItem>
+              <SelectItem value="forbidden">Forbidden</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-neutral-400 mt-1">
+            When token price is missing, Allowed bypasses the threshold; Forbidden fails closed
           </p>
         </div>
 

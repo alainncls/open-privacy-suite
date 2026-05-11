@@ -14,6 +14,7 @@ interface ContractGrantFormProps {
   existingGrantGroupIds: string[]; // Groups that already have grants (for filtering)
   onClose: () => void;
   onSave: () => void;
+  editMode?: 'add' | 'functions' | 'events';
 }
 
 // Parsed ABI function entry
@@ -232,6 +233,7 @@ export default function ContractGrantForm({
   existingGrantGroupIds,
   onClose,
   onSave,
+  editMode = 'add',
 }: ContractGrantFormProps) {
   const [selectedGroupId, setSelectedGroupId] = useState<string>(grant?.group_id || '');
   const [functionMode, setFunctionMode] = useState<'all' | 'specific'>(
@@ -252,9 +254,15 @@ export default function ContractGrantForm({
   const [eventsLoading, setEventsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState(1);
   const formRef = useRef<HTMLFormElement>(null);
 
   const isEditing = !!grant;
+
+  // Determine what to show based on mode and step
+  const showGroupSelect = editMode === 'add' && step === 1;
+  const showFunctions = editMode === 'functions' || (editMode === 'add' && step === 1);
+  const showEvents = editMode === 'events' || (editMode === 'add' && step === 2);
 
   // Fetch available events from the backend (ABI-parsed)
   useEffect(() => {
@@ -420,13 +428,19 @@ export default function ContractGrantForm({
       return;
     }
 
-    if (functionMode === 'specific' && functions.length === 0) {
+    if (showFunctions && functionMode === 'specific' && functions.length === 0) {
       setError('Please add at least one function selector, or select "All functions"');
       return;
     }
 
-    if (eventMode === 'specific' && eventRules.length === 0) {
+    if (showEvents && eventMode === 'specific' && eventRules.length === 0) {
       setError('Please add at least one event, or select "No events visible"');
+      return;
+    }
+
+    // Wizard Next Step
+    if (editMode === 'add' && step === 1) {
+      setStep(2);
       return;
     }
 
@@ -434,21 +448,33 @@ export default function ContractGrantForm({
 
     try {
       const resolvedEventRules = eventMode === 'all' ? '*' : eventMode === 'none' ? [] : eventRules;
-      const input: CreateContractGrantInput = {
-        group_id: selectedGroupId,
-        // claims field is deprecated - permissions come from the group's GroupAccess.claims
-        functions: functionMode === 'all' ? null : functions,
-        event_rules: resolvedEventRules,
-      };
+      const inputFunctions = functionMode === 'all' ? null : functions;
 
       if (isEditing) {
-        // Update existing grant
-        await rbacApi.contracts.updateGrant(orgId, contractAddress, grant.group_id, {
-          functions: functionMode === 'all' ? null : functions,
-          event_rules: resolvedEventRules,
-        });
+        // Update existing grant - preserve the section not being edited
+        const updateData: Partial<CreateContractGrantInput> = {};
+        
+        if (editMode === 'functions') {
+          updateData.functions = inputFunctions;
+          updateData.event_rules = grant.event_rules; // Preserve existing
+        } else if (editMode === 'events') {
+          updateData.event_rules = resolvedEventRules;
+          updateData.functions = grant.functions; // Preserve existing
+        } else {
+          // Should not happen with current logic since 'add' mode means isEditing = false,
+          // but just in case we allow editing both at once in the future
+          updateData.functions = inputFunctions;
+          updateData.event_rules = resolvedEventRules;
+        }
+
+        await rbacApi.contracts.updateGrant(orgId, contractAddress, grant.group_id, updateData);
       } else {
         // Create new grant
+        const input: CreateContractGrantInput = {
+          group_id: selectedGroupId,
+          functions: inputFunctions,
+          event_rules: resolvedEventRules,
+        };
         await rbacApi.contracts.createGrant(orgId, contractAddress, input);
       }
       onSave();
@@ -489,7 +515,8 @@ export default function ContractGrantForm({
       )}
 
       {/* Group selection */}
-      <div className="space-y-2">
+      {showGroupSelect && (
+        <div className="space-y-2">
         <label className="block text-sm font-medium text-neutral-700">
           Select Group
         </label>
@@ -515,9 +542,10 @@ export default function ContractGrantForm({
           </p>
         )}
       </div>
+      )}
 
       {/* Show selected group's info */}
-      {selectedGroup && (
+      {showGroupSelect && selectedGroup && (
         <div className="p-4 rounded-lg bg-primary-50 border border-primary-50">
           <div className="flex items-center gap-3 mb-2">
             <Users className="w-5 h-5 text-primary" />
@@ -530,7 +558,8 @@ export default function ContractGrantForm({
       )}
 
       {/* Function Access */}
-      <div className="space-y-3">
+      {showFunctions && (
+        <div className="space-y-3">
         <label className="block text-sm font-medium text-neutral-700">
           Function Access
         </label>
@@ -749,9 +778,11 @@ export default function ContractGrantForm({
           </div>
         )}
       </div>
+      )}
 
       {/* Event Visibility */}
-      <div className="space-y-3">
+      {showEvents && (
+        <div className="space-y-3">
         <label className="block text-sm font-medium text-neutral-700">
           Event Visibility
         </label>
@@ -943,6 +974,7 @@ export default function ContractGrantForm({
           </div>
         )}
       </div>
+      )}
 
       {error && (
         <div className="p-4 rounded-lg bg-error-light border border-error/30 flex items-start gap-3">
@@ -951,33 +983,28 @@ export default function ContractGrantForm({
         </div>
       )}
 
-      <div className="flex justify-end gap-3 pt-2">
+      <div className="flex justify-end gap-3 pt-4 border-t border-neutral-200">
         <Button
           type="button"
-          variant="ghost"
-          onClick={onClose}
+          variant="outline"
+          onClick={editMode === 'add' && step === 2 ? () => setStep(1) : onClose}
           disabled={saving}
           className="gap-2"
         >
-          <X className="w-4 h-4" />
-          Cancel
+          {editMode !== 'add' || step === 1 ? <X className="w-4 h-4" /> : null}
+          {editMode === 'add' && step === 2 ? 'Back' : 'Cancel'}
         </Button>
         <Button
           type="submit"
-          disabled={saving || !selectedGroupId || (!isEditing && availableGroups.length === 0) || (eventMode === 'specific' && eventRules.length === 0) || (functionMode === 'specific' && functions.length === 0)}
+          disabled={saving || !selectedGroupId || (!isEditing && availableGroups.length === 0) || (showEvents && eventMode === 'specific' && eventRules.length === 0) || (showFunctions && functionMode === 'specific' && functions.length === 0)}
           className="gap-2"
         >
           {saving ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {isEditing ? 'Saving...' : 'Adding...'}
-            </>
-          ) : (
-            <>
-              <Save className="w-4 h-4" />
-              {isEditing ? 'Save Changes' : 'Add Group Access'}
-            </>
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : editMode === 'add' && step === 1 ? null : (
+            <Save className="w-4 h-4" />
           )}
+          {editMode === 'add' && step === 1 ? 'Next' : isEditing ? 'Save Changes' : 'Create Grant'}
         </Button>
       </div>
     </form>

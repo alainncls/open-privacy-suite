@@ -111,7 +111,7 @@ describe('ContractGrantForm', () => {
     stubListEvents();
     renderForm();
 
-    expect(screen.getByRole('button', { name: 'Add Group Access' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });
 
   it('disables save button when in specific functions mode with no selectors', async () => {
@@ -122,7 +122,7 @@ describe('ContractGrantForm', () => {
     await user.selectOptions(screen.getByRole('combobox'), 'group-1');
     await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
 
-    const saveBtn = screen.getByRole('button', { name: 'Add Group Access' });
+    const saveBtn = screen.getByRole('button', { name: 'Next' });
     expect(saveBtn).toBeDisabled();
   });
 
@@ -137,7 +137,8 @@ describe('ContractGrantForm', () => {
     await user.selectOptions(screen.getByRole('combobox'), 'group-1');
     await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
     await user.click(screen.getByRole('button', { name: /balanceOf/ }));
-    await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
     await waitFor(() => {
       expect(createGrantSpy).toHaveBeenCalledWith(
@@ -165,7 +166,8 @@ describe('ContractGrantForm', () => {
     await user.click(screen.getByRole('radio', { name: /Specific functions only/i }));
     await user.click(screen.getByRole('button', { name: /balanceOf/ }));
     await user.click(screen.getByLabelText(/account.*must be caller's own address/i));
-    await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
     await waitFor(() => {
       expect(createGrantSpy).toHaveBeenCalledWith(
@@ -200,9 +202,10 @@ describe('ContractGrantForm', () => {
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-01T00:00:00Z',
       },
+      editMode: 'functions',
     });
 
-    expect(screen.getByRole('combobox')).toBeDisabled();
+    // Group select is hidden in editMode='functions'
     await user.click(screen.getByRole('radio', { name: /All functions/i }));
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
 
@@ -211,7 +214,7 @@ describe('ContractGrantForm', () => {
         'org-1',
         '0x1111111111111111111111111111111111111111',
         'group-2',
-        { functions: null, event_rules: [] }
+        { functions: null, event_rules: undefined }
       );
       expect(onSave).toHaveBeenCalledTimes(1);
     });
@@ -229,7 +232,8 @@ describe('ContractGrantForm', () => {
     renderForm();
 
     await user.selectOptions(screen.getByRole('combobox'), 'group-1');
-    await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
     await waitFor(() => {
       const msgs = screen.getAllByText('event Transfer: custom param constraints require a contract ABI');
@@ -243,9 +247,17 @@ describe('ContractGrantForm', () => {
   // ===========================================================================
 
   describe('Event Rules', () => {
+    const navigateToEvents = async (user: any) => {
+      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+    };
+
     it('defaults to "No events visible" mode', async () => {
+      const user = userEvent.setup();
       stubListEvents();
       renderForm();
+
+      await navigateToEvents(user);
 
       const noneRadio = screen.getByRole('radio', { name: /No events visible/i });
       expect(noneRadio).toBeChecked();
@@ -255,6 +267,8 @@ describe('ContractGrantForm', () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       renderForm();
+
+      await navigateToEvents(user);
 
       // Initially no "Visible events" or event picker
       expect(screen.queryByText('Visible events:')).not.toBeInTheDocument();
@@ -271,6 +285,8 @@ describe('ContractGrantForm', () => {
       const user = userEvent.setup();
       const listEventsSpy = stubListEvents(mockEvents);
       renderForm();
+
+      await navigateToEvents(user);
 
       // Verify API was called
       expect(listEventsSpy).toHaveBeenCalledWith(
@@ -292,6 +308,8 @@ describe('ContractGrantForm', () => {
       stubListEvents([]); // No events
       renderForm();
 
+      await navigateToEvents(user);
+
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
       await waitFor(() => {
@@ -305,6 +323,8 @@ describe('ContractGrantForm', () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       renderForm();
+
+      await navigateToEvents(user);
 
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
@@ -345,6 +365,8 @@ describe('ContractGrantForm', () => {
       stubListEvents(mockEvents);
       renderForm();
 
+      await navigateToEvents(user);
+
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
       await waitFor(() => {
@@ -367,10 +389,11 @@ describe('ContractGrantForm', () => {
       stubListEvents(mockEvents);
       renderForm();
 
-      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await navigateToEvents(user);
+      
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
-      const saveBtn = screen.getByRole('button', { name: 'Add Group Access' });
+      const saveBtn = screen.getByRole('button', { name: 'Create Grant' });
       expect(saveBtn).toBeDisabled();
     });
 
@@ -382,9 +405,10 @@ describe('ContractGrantForm', () => {
         .mockResolvedValue(mockGrantResponse());
       renderForm();
 
-      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await navigateToEvents(user);
+
       // Default is "No events visible"
-      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+      await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
       await waitFor(() => {
         expect(createGrantSpy).toHaveBeenCalledWith(
@@ -405,7 +429,8 @@ describe('ContractGrantForm', () => {
         .mockResolvedValue(mockGrantResponse());
       renderForm();
 
-      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await navigateToEvents(user);
+
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
       // Wait for events, then add Transfer
@@ -413,7 +438,7 @@ describe('ContractGrantForm', () => {
         expect(screen.getByRole('button', { name: /Transfer/ })).toBeInTheDocument();
       });
       await user.click(screen.getByRole('button', { name: /Transfer/ }));
-      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+      await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
       await waitFor(() => {
         expect(createGrantSpy).toHaveBeenCalledWith(
@@ -436,7 +461,8 @@ describe('ContractGrantForm', () => {
         .mockResolvedValue(mockGrantResponse());
       renderForm();
 
-      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await navigateToEvents(user);
+
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
 
       await waitFor(() => {
@@ -459,7 +485,7 @@ describe('ContractGrantForm', () => {
       if (fromParamSelect) {
         await user.selectOptions(fromParamSelect, 'self');
       }
-      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+      await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
       await waitFor(() => {
         expect(createGrantSpy).toHaveBeenCalledWith(
@@ -492,6 +518,7 @@ describe('ContractGrantForm', () => {
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         },
+        editMode: 'events',
       });
 
       // Should be in "Specific events only" mode
@@ -503,8 +530,11 @@ describe('ContractGrantForm', () => {
     });
 
     it('"No events visible" is the default mode', async () => {
+      const user = userEvent.setup();
       stubListEvents();
       renderForm();
+
+      await navigateToEvents(user);
 
       const noneRadio = screen.getByRole('radio', { name: /No events visible/i });
       expect(noneRadio).toBeInTheDocument();
@@ -515,6 +545,8 @@ describe('ContractGrantForm', () => {
       const user = userEvent.setup();
       stubListEvents(mockEvents);
       renderForm();
+
+      await navigateToEvents(user);
 
       // Switch to specific first to see the picker
       await user.click(screen.getByRole('radio', { name: /Specific events only/i }));
@@ -536,9 +568,10 @@ describe('ContractGrantForm', () => {
         .mockResolvedValue(mockGrantResponse());
       renderForm();
 
-      await user.selectOptions(screen.getByRole('combobox'), 'group-1');
+      await navigateToEvents(user);
+
       await user.click(screen.getByRole('radio', { name: /No events visible/i }));
-      await user.click(screen.getByRole('button', { name: 'Add Group Access' }));
+      await user.click(screen.getByRole('button', { name: 'Create Grant' }));
 
       await waitFor(() => {
         expect(createGrantSpy).toHaveBeenCalledWith(
@@ -563,6 +596,7 @@ describe('ContractGrantForm', () => {
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         },
+        editMode: 'events',
       });
 
       expect(screen.getByRole('radio', { name: /No events visible/i })).toBeChecked();
@@ -591,6 +625,7 @@ describe('ContractGrantForm', () => {
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         },
+        editMode: 'events',
       });
 
       // Switch to "No events visible"
