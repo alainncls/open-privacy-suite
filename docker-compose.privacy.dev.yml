@@ -166,6 +166,7 @@ services:
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
+      - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods (opt-in; empty = skip)
       - INDEXER_URL=chain-indexer:50051
       - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
       # DEV-ONLY: mock-login + mock-signatures. Both runtime-gated AND
@@ -173,6 +174,8 @@ services:
       # (see internal/config/config.go:215-229).
       - ALLOW_MOCK_LOGIN=true
       - MOCK_SIGNATURES=true
+    volumes:
+      - ./rpc-namespaces.json:/app/config/rpc-namespaces.json:ro
     depends_on:
       privacy-postgres:
         condition: service_healthy
