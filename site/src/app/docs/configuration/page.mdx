@@ -98,6 +98,8 @@ To support chain-specific JSON-RPC methods (e.g. Linea, zkSync, Optimism), creat
 EXTRA_RPC_NAMESPACES_FILE=./rpc-namespaces.json
 ```
 
+All three compose files (`docker-compose.yml`, `docker-compose.privacy.yml`, and `docker-compose.privacy.dev.yml`) include the volume mount and env-var passthrough. The backend only loads the file when `EXTRA_RPC_NAMESPACES_FILE` is set; leave it empty to disable the feature.
+
 The file format is a versioned JSON object. Two schema versions are supported:
 
 - **v1** — explicit method list per namespace; each method needs an `alias` to a standard Ethereum method (recommended for tightly-controlled deployments).

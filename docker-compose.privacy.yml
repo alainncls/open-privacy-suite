@@ -178,6 +178,7 @@ services:
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required in privacy mode (bootstrap admin credential)}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in privacy mode}@redis:6379
       - ENABLE_TRAVEL_RULE=true
+      - EXTRA_RPC_NAMESPACES_FILE=${EXTRA_RPC_NAMESPACES_FILE:-}  # Path to JSON file with chain-specific RPC methods (opt-in; empty = skip)
       # Indexer integration — this is what flips privacy-proxy's explorer
       # backend from direct SQL to gRPC. The explorer postgres variable is
       # still accepted for standalone fallback (ABI writes, indexer
@@ -185,6 +186,8 @@ services:
       # deployment it points at the same indexer postgres read-only.
       - INDEXER_URL=chain-indexer:50051
       - EXPLORER_DATABASE_URL=postgres://postgres:${INDEXER_POSTGRES_PASSWORD:?INDEXER_POSTGRES_PASSWORD is required in privacy mode}@indexer-postgres:5432/chain_indexer?sslmode=disable
+    volumes:
+      - ./rpc-namespaces.json:/app/config/rpc-namespaces.json:ro
     depends_on:
       privacy-postgres:
         condition: service_healthy
