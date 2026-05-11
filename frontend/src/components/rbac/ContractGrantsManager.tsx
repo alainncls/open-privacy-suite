@@ -28,6 +28,11 @@ import {
   Eye,
   ShieldAlert,
 } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 
 // Helper to get contract address from either new or legacy format
@@ -530,15 +535,21 @@ export default function ContractGrantsManager({
                   )}
                   </div>
                   {!isReadonlyAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => setEditingGrant({ grant, mode: 'functions' })}
-                      title="Edit function access"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-50 group-hover:opacity-100 transition-opacity"
+                          onClick={() => setEditingGrant({ grant, mode: 'functions' })}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit function access</p>
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
 
@@ -580,15 +591,21 @@ export default function ContractGrantsManager({
                   )}
                   </div>
                   {!isReadonlyAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => setEditingGrant({ grant, mode: 'events' })}
-                      title="Edit event visibility"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-6 h-6 shrink-0 text-neutral-400 hover:text-primary opacity-50 group-hover:opacity-100 transition-opacity"
+                          onClick={() => setEditingGrant({ grant, mode: 'events' })}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit event visibility</p>
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
               </div>

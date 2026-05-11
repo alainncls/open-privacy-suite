@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Shield, Activity, ScrollText, Users, FileKey, Scale } from 'lucide-react';
 import { AccountDropdown } from './components/auth/AccountDropdown';
+import { TooltipProvider } from './components/ui/tooltip';
 
 type Tab = 'rbac' | 'compliance' | 'disclosure' | 'logs' | 'diagnostics' | 'none';
 
@@ -99,7 +100,8 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-neutral-100" data-testid="admin-app">
+      <TooltipProvider delayDuration={500}>
+        <div className="min-h-screen bg-neutral-100" data-testid="admin-app">
         {/* Navigation Header */}
         <header className="bg-white border-b border-neutral-200 shadow-sm sticky top-0 z-40" data-testid="admin-header">
           <div className="max-w-7xl mx-auto px-6 py-4">
@@ -159,6 +161,7 @@ function App() {
           </div>
         </main>
       </div>
+      </TooltipProvider>
     </ErrorBoundary>
   );
 }

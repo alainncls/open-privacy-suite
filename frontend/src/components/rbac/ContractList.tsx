@@ -30,6 +30,11 @@ import { ConfirmDialog, AlertDialog } from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { Input } from '@/components/ui/input';
 import { FileCode2, Plus, Pencil, Trash2, Loader2, Copy, Check, RefreshCw, AlertTriangle, Shield, ArrowRight, X, Search, Eye } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useAdmin } from '@/components/auth/RequireAdmin';
 
 const PAGE_SIZE = 25;
@@ -404,9 +409,14 @@ export default function ContractList() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm">{contract.name || '-'}</span>
                     {contract.allow_visibleto_unlock && (
-                      <span title="visibleTo bypass enabled">
-                        <Eye className="w-4 h-4 text-amber-500" />
-                      </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Eye className="w-4 h-4 text-amber-500 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>visibleTo bypass enabled</p>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                   </div>
                 </TableCell>
