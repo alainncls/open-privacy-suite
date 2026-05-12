@@ -91,7 +91,13 @@ type callFrame struct {
 
 // TraceCall performs a debug_traceCall on the upstream node and returns
 // the parsed trace result with all call targets.
-func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, blockTag string) (*TraceResult, error) {
+//
+// blockParam accepts either a string tag/hex ("latest", "0x1234", "pending",
+// etc.) or an EIP-1898 object ({"blockNumber": "0x.."} or {"blockHash":
+// "0x..", "requireCanonical": bool}). The value is forwarded verbatim into
+// the JSON-RPC params slot, matching what geth's debug_traceCall expects.
+// Callers that need a literal "latest" should pass the string.
+func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, blockParam any) (*TraceResult, error) {
 	// Build the call object
 	callObj := map[string]string{}
 	if from != "" {
@@ -115,11 +121,17 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 		},
 	}
 
+	// nil falls back to "latest" so older callers that passed an empty string
+	// (which would have produced a malformed JSON-RPC request) keep working.
+	if blockParam == nil || blockParam == "" {
+		blockParam = "latest"
+	}
+
 	// Build the JSON-RPC request
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",
 		Method:  "debug_traceCall",
-		Params:  []any{callObj, blockTag, tracerConfig},
+		Params:  []any{callObj, blockParam, tracerConfig},
 		ID:      1,
 	}
 
@@ -186,14 +198,16 @@ func (t *Tracer) TraceCall(ctx context.Context, from, to, data, value string, bl
 // extractCallTargets recursively extracts all call targets from a call frame.
 const maxTraceDepth = 256 // Prevent stack overflow from malicious/deeply nested traces
 
-// errTraceDepthExceeded is returned when a trace exceeds the max recursion depth.
-// The caller should fail closed (deny the transaction) since deeper call targets
-// were not validated.
-var errTraceDepthExceeded = fmt.Errorf("trace exceeds maximum depth (%d)", maxTraceDepth)
+// ErrTraceDepthExceeded is returned when a trace exceeds the max recursion depth.
+// The caller should fail closed (deny the request) since deeper call targets
+// were not validated. Exported so the JSON-RPC processor can distinguish depth
+// failures from upstream-node failures and surface a distinct deny message
+// (RD-915 KD-3 — see docs/rd-915-design.md).
+var ErrTraceDepthExceeded = fmt.Errorf("trace exceeds maximum depth (%d)", maxTraceDepth)
 
 func (t *Tracer) extractCallTargets(frame *callFrame, result *TraceResult, depth int) error {
 	if depth > maxTraceDepth {
-		return errTraceDepthExceeded
+		return ErrTraceDepthExceeded
 	}
 	// Check the type and add to result
 	switch frame.Type {

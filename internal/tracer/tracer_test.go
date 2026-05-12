@@ -418,24 +418,24 @@ func buildNestedFrameChain(chainDepth int) *callFrame {
 }
 
 // TestExtractCallTargets_MaxDepthExceeded verifies that a malicious / pathological
-// trace deeper than maxTraceDepth fails closed with errTraceDepthExceeded rather
+// trace deeper than maxTraceDepth fails closed with ErrTraceDepthExceeded rather
 // than blowing the stack. The check is depth > maxTraceDepth, so a chain that
 // reaches depth == maxTraceDepth+1 must trip it.
 func TestExtractCallTargets_MaxDepthExceeded(t *testing.T) {
 	tracer := NewTracer("http://localhost:8545", DefaultTimeout)
 
 	// Build a chain such that the deepest extractCallTargets invocation sees
-	// depth = maxTraceDepth+1 (= 257), which must return errTraceDepthExceeded.
+	// depth = maxTraceDepth+1 (= 257), which must return ErrTraceDepthExceeded.
 	// That requires maxTraceDepth+2 frames (root at depth 0 ... leaf at 257).
 	root := buildNestedFrameChain(maxTraceDepth + 2)
 
 	result := &TraceResult{}
 	err := tracer.extractCallTargets(root, result, 0)
 	if err == nil {
-		t.Fatal("expected errTraceDepthExceeded, got nil")
+		t.Fatal("expected ErrTraceDepthExceeded, got nil")
 	}
-	if err != errTraceDepthExceeded {
-		t.Fatalf("expected errTraceDepthExceeded, got %v", err)
+	if err != ErrTraceDepthExceeded {
+		t.Fatalf("expected ErrTraceDepthExceeded, got %v", err)
 	}
 }
 

@@ -36,10 +36,26 @@ type TraceValidator struct {
 // TraceValidationResult contains the result of trace validation.
 type TraceValidationResult struct {
 	Allowed       bool           // Whether the transaction trace is allowed
-	Reason        string         // Reason for denial (if any)
-	DeniedTarget  string         // Address that caused denial (if any)
+	Reason        string         // User-facing reason for denial (single opaque string to prevent enumeration)
+	DenialKind    DenialKind     // Structured denial classification for audit/logging — never reaches the response body
+	DeniedTarget  string         // Address that caused denial (if any) — never reaches the response body
 	CreateTargets []CreateTarget // Contract addresses created during trace execution
 }
+
+// DenialKind classifies why a trace was denied so audit logs and SIEM events
+// can distinguish "touched another org" from "touched no org" from
+// "tried to deploy without the claim". The user-facing Reason stays opaque
+// (ErrContractAccessDenied) per the contract-enumeration rule in access.go;
+// this field is consumed by slog.Debug + access_logs + metrics labels only.
+type DenialKind string
+
+const (
+	DenialKindNone           DenialKind = ""
+	DenialKindForeignOrg     DenialKind = "foreign_org"          // target is owned by an org the caller is not in
+	DenialKindUnregistered   DenialKind = "unregistered"         // target is not in the Contract registry at all
+	DenialKindDeployClaim    DenialKind = "deploy_claim_missing" // trace contains CREATE/CREATE2 but caller lacks deploy
+	DenialKindCreateForeign  DenialKind = "create_foreign_org"   // CREATE/CREATE2 collides with an address registered to another org
+)
 
 // CreateTarget represents a contract address created during trace execution.
 type CreateTarget struct {
@@ -95,8 +111,9 @@ func (v *TraceValidator) ValidateTrace(
 	if trace.HasCreate || trace.HasCreate2 {
 		if !userHasDeploy {
 			return &TraceValidationResult{
-				Allowed: false,
-				Reason:  "runtime contract creation requires deploy claim",
+				Allowed:    false,
+				Reason:     "runtime contract creation requires deploy claim",
+				DenialKind: DenialKindDeployClaim,
 			}, nil
 		}
 
@@ -120,6 +137,7 @@ func (v *TraceValidator) ValidateTrace(
 				return &TraceValidationResult{
 					Allowed:      false,
 					Reason:       "contract access denied",
+					DenialKind:   DenialKindCreateForeign,
 					DeniedTarget: addr,
 				}, nil
 			}
@@ -187,6 +205,7 @@ func (v *TraceValidator) ValidateTrace(
 			return &TraceValidationResult{
 				Allowed:      false,
 				Reason:       ErrContractAccessDenied,
+				DenialKind:   DenialKindForeignOrg,
 				DeniedTarget: addr,
 			}, nil
 		}
@@ -198,6 +217,7 @@ func (v *TraceValidator) ValidateTrace(
 		return &TraceValidationResult{
 			Allowed:      false,
 			Reason:       ErrContractAccessDenied,
+			DenialKind:   DenialKindUnregistered,
 			DeniedTarget: addr,
 		}, nil
 	}

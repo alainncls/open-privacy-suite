@@ -91,6 +91,48 @@ func (rt *RuntimeTracer) TraceTransaction(
 	return result, nil
 }
 
+// TraceTransactionUncached traces a transaction WITHOUT consulting or
+// updating the cache. Used by the eth_call validation path (RD-915) where
+// caching is unsafe: proxy-pattern contracts (EIP-1967, Diamond, Beacon,
+// TransparentUpgradeable) can re-target their internal calls by rewriting
+// a storage slot, so a cache keyed by (from,to,data,value) returns stale
+// "allow" decisions after a cross-org upgrade. See docs/rd-915-design.md
+// §KD-7. Regression net: TestTraceTransactionUncached_BypassesCachedHit
+// in this package (cache leak at the tracer layer) plus
+// TestEthCallTracing_ProxyImplementationFlip in internal/server (proxy
+// re-targeting flips the validator decision on the second call).
+//
+// blockParam must match the block parameter that the corresponding eth_call
+// will be forwarded with — otherwise the trace runs against a different
+// chain state than the actual call and an attacker can mount a time-shifted
+// variant of the proxy-flip attack (allow at latest, exfil at
+// historical-where-foreign). Accepts the same shapes as eth_call's second
+// param: a string tag/hex, an EIP-1898 object, or nil/"" (treated as
+// "latest"). The caller is responsible for shape validation.
+//
+// Sibling of TraceTransaction rather than a useCache boolean parameter
+// so the cache-bypass intent is legible at every call site.
+func (rt *RuntimeTracer) TraceTransactionUncached(
+	ctx context.Context,
+	from, to, data, value string,
+	blockParam any,
+) (*TraceResult, error) {
+	if !rt.enabled {
+		return nil, nil
+	}
+
+	from = strings.ToLower(strings.TrimSpace(from))
+	to = strings.ToLower(strings.TrimSpace(to))
+	data = strings.ToLower(strings.TrimSpace(data))
+	value = strings.TrimSpace(value)
+	// TraceCall handles the empty-string/nil → "latest" fallback itself.
+	if s, ok := blockParam.(string); ok {
+		blockParam = strings.ToLower(strings.TrimSpace(s))
+	}
+
+	return rt.tracer.TraceCall(ctx, from, to, data, value, blockParam)
+}
+
 // TraceMinedTransaction traces a mined transaction to discover actual CREATE/CREATE2 addresses.
 // No caching — mined transactions are traced once during deployment finalization.
 func (rt *RuntimeTracer) TraceMinedTransaction(ctx context.Context, txHash string) (*TraceResult, error) {

@@ -1,0 +1,182 @@
+package server
+
+import (
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+
+	"privacy-proxy/internal/audit"
+	"privacy-proxy/internal/rbac"
+)
+
+// Admin "system" endpoints — fleet-wide settings the super-admin can flip
+// at runtime without a redeploy. Pre-RD-915 the eth_call cross-org tracing
+// knob was env-only; that's still the durable control (a restart re-arms
+// the env value), but ops sometimes needs a faster lever for sev-1 rollback
+// (ISO 27001 A.8.32, see docs/rd-915-design.md §KD-5).
+//
+// Risk model and mitigations (the "is it safe to have this endpoint?"
+// question):
+//
+//   - The endpoint flips a security-critical control, so the auth bar is
+//     the strongest one in the system: super-admin token only
+//     (auth_method == "admin_token", i.e. ADMIN_API_TOKEN). Tier-2 org
+//     admin JWTs cannot reach it.
+//   - The toggle is **in-memory only**. A restart re-installs the env
+//     value, so a compromised token cannot durably disable the protection
+//     without ALSO redeploying with a tampered env, which is the
+//     change-management touchpoint that gets audited separately.
+//   - Every toggle writes a row to rbac_audit_log (and fires a SIEM event
+//     when configured) so the action is reviewable.
+//   - The GET endpoint exposes the current effective state plus
+//     change-metadata so an auditor can prove "control was on" without
+//     needing pod access.
+//
+// The reverse threat — "what if an attacker turns tracing ON?" — has
+// no exploit value: tracing is the protective layer, enabling it does
+// not weaken anything else.
+
+// systemEthCallTracingToggleRequest is the request body for POST.
+type systemEthCallTracingToggleRequest struct {
+	Enabled *bool  `json:"enabled" binding:"required"` // pointer so we distinguish "false" from "omitted"
+	Reason  string `json:"reason"`
+}
+
+// systemEthCallTracingResponse is the GET / POST response shape.
+type systemEthCallTracingResponse struct {
+	Enabled    bool   `json:"enabled"`
+	EnvDefault bool   `json:"env_default"`
+	Source     string `json:"source"` // "env" | "runtime_override"
+	ChangedAt  string `json:"changed_at,omitempty"`
+	ChangedBy  string `json:"changed_by,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+func snapshotToResponse(s ethCallTracingState) systemEthCallTracingResponse {
+	resp := systemEthCallTracingResponse{
+		Enabled:    s.Enabled,
+		EnvDefault: s.EnvDefault,
+		Source:     s.Source,
+		ChangedBy:  s.ChangedBy,
+		Reason:     s.Reason,
+	}
+	if !s.ChangedAt.IsZero() {
+		resp.ChangedAt = s.ChangedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	return resp
+}
+
+// handleGetEthCallTracing returns the current state of the eth_call
+// cross-org tracing knob. Available to any caller the admin middleware
+// chain admits (super-admin token OR tier-2 admin JWT) — the read is
+// harmless and ops dashboards may want it.
+func (s *Server) handleGetEthCallTracing(c *gin.Context) {
+	if s.jsonrpcProcessor == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
+		return
+	}
+	snap := s.jsonrpcProcessor.EthCallTracingSnapshot()
+	c.JSON(http.StatusOK, snapshotToResponse(snap))
+}
+
+// handlePostEthCallTracing toggles the in-memory eth_call cross-org
+// tracing knob. Super-admin (admin_token) only. Audit-logged. The
+// effect is **not persisted** — the next restart re-installs the env
+// value, which is the durable control.
+func (s *Server) handlePostEthCallTracing(c *gin.Context) {
+	if s.jsonrpcProcessor == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "processor not initialised"})
+		return
+	}
+	// Super-admin only. Mirrors the system-group guard in
+	// admin_rbac_group.go:261 — system-wide mutations are gated to the
+	// super-admin token (ADMIN_API_TOKEN), not tier-2 org admin JWTs.
+	if c.GetString("auth_method") != "admin_token" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "system settings require super-admin authentication",
+		})
+		return
+	}
+
+	var req systemEthCallTracingToggleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled field is required"})
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "reason is required — this toggle is audited and reviewers need to know why",
+		})
+		return
+	}
+	if len(reason) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reason too long (max 500 chars)"})
+		return
+	}
+
+	actor := "system:admin_token" // super-admin token has no DID
+	prev := s.jsonrpcProcessor.EthCallTracingSnapshot()
+	next := s.jsonrpcProcessor.SetEthCallTracingRuntimeOverride(*req.Enabled, actor, reason)
+
+	// Audit log + SIEM. We do these in best-effort fashion — the toggle
+	// has already taken effect. A log-write failure should not roll back
+	// the operator's emergency action, but it should be noisy.
+	if store := s.rbacAccessCtrl.Store(); store != nil {
+		if auditErr := store.CreateAuditLog(c.Request.Context(), &rbac.AuditLogEntry{
+			ActorExternalID: actor,
+			Action:          rbac.AuditActionUpdate,
+			ResourceType:    "system_setting",
+			ResourceName:    "eth_call_tracing",
+			OldValue: map[string]any{
+				"enabled": prev.Enabled,
+				"source":  prev.Source,
+			},
+			NewValue: map[string]any{
+				"enabled": next.Enabled,
+				"source":  next.Source,
+				"reason":  reason,
+			},
+			IPAddress: c.ClientIP(),
+		}); auditErr != nil {
+			// Loud failure — if audit logging is broken, the toggle is
+			// not reviewable. Operators should treat this as a sev-2.
+			slog.Error("system setting toggle: audit log write failed",
+				slog.String("setting", "eth_call_tracing"),
+				slog.Any("err", auditErr))
+		}
+	}
+	if s.siemForwarder != nil {
+		s.siemForwarder.Send(audit.SIEMEvent{
+			EventType:     "system_setting_change",
+			Action:        "toggle_eth_call_tracing",
+			ActorID:       actor,
+			Outcome:       boolStr(next.Enabled, "enabled", "disabled"),
+			SourceIP:      c.ClientIP(),
+			CorrelationID: c.GetHeader("X-Correlation-ID"),
+			Details:       "eth_call cross-org tracing toggled via super-admin endpoint; reason=" + reason,
+		})
+	}
+	slog.Warn("system setting: eth_call tracing toggled",
+		slog.Bool("enabled", next.Enabled),
+		slog.Bool("was_enabled", prev.Enabled),
+		slog.String("actor", actor),
+		slog.String("client_ip", c.ClientIP()),
+		slog.String("reason", reason))
+
+	c.JSON(http.StatusOK, snapshotToResponse(*next))
+}
+
+// boolStr returns one of two strings based on a bool.
+func boolStr(b bool, ifTrue, ifFalse string) string {
+	if b {
+		return ifTrue
+	}
+	return ifFalse
+}
