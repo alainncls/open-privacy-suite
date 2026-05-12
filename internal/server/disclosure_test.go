@@ -349,13 +349,19 @@ func TestGetDisclosureRequest(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
+		// C3 (security audit follow-up): pre-fix this returned 404 on
+		// not-found. The handler now returns 403 with the opaque
+		// errTargetForeignOrg so a caller cannot distinguish "doesn't
+		// exist" from "exists in another org I can't see" — same
+		// existence-oracle shape RD-916/917/PR #207 closed for the
+		// membership and group surfaces.
 		req := httptest.NewRequest("GET", "/api/disclosure/requests/"+uuid.New().String(), nil)
 		req.Header.Set("X-Forwarded-For", "127.0.0.1")
 
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 }
 

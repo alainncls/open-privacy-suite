@@ -260,9 +260,13 @@ func TestTokenSingle_HiddenReturns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code, "hidden token should return 404")
 }
 
-// TestTokenSingle_RedactedReturnsMaskedFields verifies that GET /tokens/:address
-// returns the token with redacted fields when the address is VisibilityRedacted.
-func TestTokenSingle_RedactedReturnsMaskedFields(t *testing.T) {
+// TestTokenSingle_RedactedReturns404 pins the M12 fix: pre-fix this
+// endpoint returned 200-with-masked-fields when the token's
+// visibility was Redacted, creating an enumeration oracle (200 →
+// "registered to some org", 404 → "not registered"). The same shape
+// G16 closed for /check-address. Now Hidden AND Redacted both return
+// 404 so an attacker cannot distinguish the two.
+func TestTokenSingle_RedactedReturns404(t *testing.T) {
 	srv, conn := setupTokenTestServer(t)
 	router := setupTokenRouter(srv)
 
@@ -272,23 +276,13 @@ func TestTokenSingle_RedactedReturnsMaskedFields(t *testing.T) {
 
 	seedToken(t, conn, privateAddr, "PRV", "Private Token", "ERC-20")
 
-	// Anonymous request.
+	// Anonymous request — visibility resolves to Redacted.
 	req := httptest.NewRequest("GET", "/api/v1/explorer/tokens/"+privateAddr, nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	var token explorer.Token
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &token))
-
-	assert.Equal(t, "[PRIVATE]", token.Address, "address should be redacted")
-	assert.Empty(t, token.Symbol, "symbol should be empty")
-	assert.Nil(t, token.Name, "name should be nil")
-	assert.Nil(t, token.CreationTx, "creationTx should be nil")
-	assert.Nil(t, token.L1Address, "l1Address should be nil")
-	assert.Nil(t, token.TotalSupply, "totalSupply should be nil")
-	assert.Equal(t, 0, token.HolderCount, "holderCount should be 0")
-	assert.Equal(t, 0, token.TransferCount, "transferCount should be 0")
+	require.Equal(t, http.StatusNotFound, w.Code,
+		"Redacted token must return 404 (same shape as Hidden) to avoid the enumeration oracle")
 }
 
 // TestTokenHolders_HiddenTokenReturns404 verifies that the holders endpoint

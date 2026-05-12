@@ -344,19 +344,22 @@ func TestAzureAD_Integration_BannedUser(t *testing.T) {
 		"UPDATE users SET banned = true WHERE auth_tenant_id = $1", tenantID)
 	require.NoError(t, err)
 
-	t.Run("banned user JWT still passes middleware — ban is login-time only", func(t *testing.T) {
-		// NOTE: This documents a known limitation. The banned flag is checked
-		// during Azure AD callback (login), not on every request. An already-issued
-		// JWT remains valid until expiration. To immediately revoke access,
-		// the admin must also revoke the JWT/refresh tokens.
+	t.Run("banned user JWT is rejected by middleware (security audit L5)", func(t *testing.T) {
+		// L5 (security audit follow-up): OptionalJWTAuthMiddleware now
+		// enforces user.Banned at the auth boundary via the
+		// auth.BannedChecker extension (db.IsUserBannedBySubject).
+		// Pre-fix this case asserted that banned users with an
+		// already-issued JWT could still pass the middleware until
+		// expiry — a property that depended on every downstream
+		// consumer routing through CheckAccess. Easy to silently
+		// regress, so the middleware now closes the gap.
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, azureSubject)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		// This still succeeds because OptionalJWTAuthMiddleware does NOT check banned.
-		assert.Equal(t, http.StatusOK, w.Code,
-			"banned user with valid JWT still passes middleware — ban is enforced at login time only")
+		assert.Equal(t, http.StatusForbidden, w.Code,
+			"banned user with valid JWT must be rejected at the middleware")
 	})
 
 	t.Run("banned user login is rejected at callback level", func(t *testing.T) {
