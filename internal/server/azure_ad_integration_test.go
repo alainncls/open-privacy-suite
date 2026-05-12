@@ -353,13 +353,21 @@ func TestAzureAD_Integration_BannedUser(t *testing.T) {
 		// expiry — a property that depended on every downstream
 		// consumer routing through CheckAccess. Easy to silently
 		// regress, so the middleware now closes the gap.
+		//
+		// The deny uses the same opaque 404 + "method not found"
+		// response shape the JSON-RPC processor's CheckAccess emits
+		// for RBAC denials, so the caller can't distinguish a banned
+		// user from any other denied request. See e2e/proxy_test.go::
+		// TestE2E_BannedUser for the JSON-RPC variant.
 		req := httptest.NewRequest("GET", "/api/v1/explorer/transactions/paginated?page=1&pageSize=10", nil)
 		addBearerToken(t, req, srv, azureSubject)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusForbidden, w.Code,
-			"banned user with valid JWT must be rejected at the middleware")
+		assert.Equal(t, http.StatusNotFound, w.Code,
+			"banned user must be rejected with the opaque 404 'method not found' deny")
+		assert.NotContains(t, w.Body.String(), "banned",
+			"deny response must not leak the ban reason")
 	})
 
 	t.Run("banned user login is rejected at callback level", func(t *testing.T) {

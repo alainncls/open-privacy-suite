@@ -131,7 +131,19 @@ func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin
 					return
 				}
 				if banned {
-					c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+					// L5: deny with the same opaque JSON-RPC error shape
+					// the downstream processor emits for RBAC denials —
+					// pre-fix the JSON-RPC processor's CheckAccess
+					// translated "user is banned" into the canonical
+					// 404 / "method not found" response. Mirroring that
+					// shape here keeps the ban status from leaking to
+					// the caller (per CLAUDE.md security review:
+					// "error message exposure" — never echo the
+					// denial reason). The middleware sits on JSON-RPC
+					// roots and the explorer route group; both treat
+					// 404 + method-not-found as an acceptable opaque
+					// deny.
+					c.JSON(http.StatusNotFound, gin.H{"error": "method not found"})
 					c.Abort()
 					return
 				}
