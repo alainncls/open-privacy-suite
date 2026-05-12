@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,23 +23,63 @@ func (d *DB) IsSharedInfrastructure(ctx context.Context, address string) (bool, 
 	return exists, nil
 }
 
+// GetSharedInfrastructure returns the full row for a tagged address,
+// or nil when not tagged. Used by the M5 codehash-pin path in
+// TraceValidator — the bool IsSharedInfrastructure alone is not
+// enough because we need the stored codehash to decide whether to
+// trust the tag at trace time.
+func (d *DB) GetSharedInfrastructure(ctx context.Context, address string) (*rbac.SharedInfrastructure, error) {
+	query := `
+		SELECT address, name, description, codehash, created_at
+		FROM shared_infrastructure
+		WHERE LOWER(address) = LOWER($1)
+	`
+	infra := &rbac.SharedInfrastructure{}
+	var description, codehash sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, address).Scan(
+		&infra.Address,
+		&infra.Name,
+		&description,
+		&codehash,
+		&infra.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get shared infrastructure: %w", err)
+	}
+	if description.Valid {
+		infra.Description = description.String
+	}
+	if codehash.Valid {
+		s := codehash.String
+		infra.Codehash = &s
+	}
+	return infra, nil
+}
+
 // CreateSharedInfrastructure inserts a new shared infrastructure record.
 func (d *DB) CreateSharedInfrastructure(ctx context.Context, infra *rbac.SharedInfrastructure) error {
 	query := `
-		INSERT INTO shared_infrastructure (address, name, description)
-		VALUES ($1, $2, $3)
+		INSERT INTO shared_infrastructure (address, name, description, codehash)
+		VALUES ($1, $2, $3, $4)
 		RETURNING created_at
 	`
 
-	var description sql.NullString
+	var description, codehash sql.NullString
 	if infra.Description != "" {
 		description = sql.NullString{String: infra.Description, Valid: true}
+	}
+	if infra.Codehash != nil && *infra.Codehash != "" {
+		codehash = sql.NullString{String: strings.ToLower(*infra.Codehash), Valid: true}
 	}
 
 	err := d.conn.QueryRowContext(ctx, query,
 		strings.ToLower(infra.Address),
 		infra.Name,
 		description,
+		codehash,
 	).Scan(&infra.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create shared infrastructure: %w", err)
@@ -50,7 +91,7 @@ func (d *DB) CreateSharedInfrastructure(ctx context.Context, infra *rbac.SharedI
 // ListSharedInfrastructure returns all shared infrastructure records.
 func (d *DB) ListSharedInfrastructure(ctx context.Context) ([]*rbac.SharedInfrastructure, error) {
 	query := `
-		SELECT address, name, description, created_at
+		SELECT address, name, description, codehash, created_at
 		FROM shared_infrastructure
 		ORDER BY created_at DESC
 	`
@@ -90,12 +131,13 @@ func scanSharedInfrastructureRows(rows *sql.Rows) ([]*rbac.SharedInfrastructure,
 	var infras []*rbac.SharedInfrastructure
 	for rows.Next() {
 		infra := &rbac.SharedInfrastructure{}
-		var description sql.NullString
+		var description, codehash sql.NullString
 
 		if err := rows.Scan(
 			&infra.Address,
 			&infra.Name,
 			&description,
+			&codehash,
 			&infra.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan shared infrastructure: %w", err)
@@ -103,6 +145,10 @@ func scanSharedInfrastructureRows(rows *sql.Rows) ([]*rbac.SharedInfrastructure,
 
 		if description.Valid {
 			infra.Description = description.String
+		}
+		if codehash.Valid {
+			s := codehash.String
+			infra.Codehash = &s
 		}
 
 		infras = append(infras, infra)

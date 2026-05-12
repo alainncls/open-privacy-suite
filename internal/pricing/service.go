@@ -184,15 +184,29 @@ func (s *Service) fetchAndUpdate(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		// Filter to only valid currencies (defense against compromised CoinGecko responses)
+		// Filter to only valid currencies AND positive prices (defense against
+		// compromised/incomplete CoinGecko responses — security audit M17).
+		// Zero/negative entries previously silently wrote into
+		// prices_by_currency; the next checker fail-closed (safe), but the
+		// row carried no usable value until the next fetch with no alert.
 		filtered := make(map[string]float64, len(currencyPrices))
 		for code, price := range currencyPrices {
-			if compliance.IsValidCurrency(code) {
-				filtered[code] = price
+			if !compliance.IsValidCurrency(code) {
+				continue
 			}
+			if price <= 0 {
+				slog.Warn("pricing: dropping non-positive price from upstream",
+					"coingecko_id", id, "currency", code, "price", price)
+				continue
+			}
+			filtered[code] = price
 		}
 		sp.PricesByCurrency = filtered
-		sp.PriceFiat = currencyPrices[activeCurrency]
+		if active, ok := filtered[activeCurrency]; ok {
+			sp.PriceFiat = active
+		} else {
+			sp.PriceFiat = 0
+		}
 		sp.UpdatedAt = time.Now()
 		if err := s.store.UpsertSystemTokenPrice(ctx, sp); err != nil {
 			slog.Warn("failed to update system price", "coingecko_id", id, "error", err)

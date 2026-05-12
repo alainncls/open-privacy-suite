@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -1052,32 +1053,58 @@ func (s *Server) updateContractGrant(c *gin.Context) {
 }
 
 // lookupContractByAddress looks up a contract by address globally and returns
-// the contract info, its organization, and all grants with group+access details.
+// lookupContractByAddress is a cross-org lookup used during the
+// claim-unregistered-contract flow ("is this contract already
+// registered to some org?"). Audit H2: pre-fix this returned the
+// full contract record + owning organization + every grant's
+// group+access (allowed_methods, claims, rate limits) for any
+// address — a topology-mapping oracle for any tier-2 admin.
+//
+// Now: JWT admins receive only a minimal {address, registered}
+// payload when the contract is owned by an org outside their
+// scope. Super-admin and JWT admins of the owning org receive the
+// full payload.
 // GET /contracts/by-address/:address
 func (s *Server) lookupContractByAddress(c *gin.Context) {
 	address := c.Param("address")
 
 	contract, err := s.db.GetContractByAddressGlobal(c.Request.Context(), address)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("lookup contract: db read failed", "address", address, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up contract"})
 		return
 	}
 	if contract == nil {
+		// Match the not-found error shape regardless of caller.
 		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	// Audit H2: minimal response for callers outside the owning org's
+	// scope. They learn only whether the address is registered (which
+	// they need for the claim-unregistered flow); they do NOT learn
+	// which org owns it or any of its grant topology.
+	if c.GetString("auth_method") == "jwt_admin" && !inScope(c, contract.OrgID) {
+		c.JSON(http.StatusOK, gin.H{
+			"address":    contract.Address,
+			"registered": true,
+		})
 		return
 	}
 
 	// Get the organization
 	org, err := s.db.GetOrganization(c.Request.Context(), contract.OrgID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("lookup contract: org read failed", "org_id", contract.OrgID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up contract"})
 		return
 	}
 
 	// Get grants for this contract
 	grants, err := s.db.ListContractGrantsByContract(c.Request.Context(), contract.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("lookup contract: grants read failed", "contract_id", contract.ID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up contract"})
 		return
 	}
 

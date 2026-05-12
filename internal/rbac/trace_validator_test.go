@@ -11,26 +11,37 @@ import (
 // MockTraceStore implements the Store interface for trace validator tests.
 type MockTraceStore struct {
 	*MockStore
-	sharedInfrastructure map[string]bool            // address -> is shared
-	ownedAddresses       map[string]map[string]bool // orgID -> address -> owned
+	sharedInfrastructure map[string]*SharedInfrastructure // address -> row (nil = not tagged)
+	ownedAddresses       map[string]map[string]bool       // orgID -> address -> owned
 }
 
 func NewMockTraceStore() *MockTraceStore {
 	return &MockTraceStore{
 		MockStore:            NewMockStore(),
-		sharedInfrastructure: make(map[string]bool),
+		sharedInfrastructure: make(map[string]*SharedInfrastructure),
 		ownedAddresses:       make(map[string]map[string]bool),
 	}
 }
 
 func (m *MockTraceStore) IsSharedInfrastructure(ctx context.Context, address string) (bool, error) {
 	addr := strings.ToLower(address)
-	return m.sharedInfrastructure[addr], nil
+	return m.sharedInfrastructure[addr] != nil, nil
+}
+
+func (m *MockTraceStore) GetSharedInfrastructure(ctx context.Context, address string) (*SharedInfrastructure, error) {
+	addr := strings.ToLower(address)
+	if row, ok := m.sharedInfrastructure[addr]; ok {
+		return row, nil
+	}
+	return nil, nil
 }
 
 func (m *MockTraceStore) CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error {
 	addr := strings.ToLower(infra.Address)
-	m.sharedInfrastructure[addr] = true
+	// Copy to insulate test state from caller mutation.
+	row := *infra
+	row.Address = addr
+	m.sharedInfrastructure[addr] = &row
 	return nil
 }
 
@@ -68,7 +79,17 @@ func (m *MockTraceStore) GrantContractToDeployerGroup(ctx context.Context, orgID
 
 func (m *MockTraceStore) AddSharedInfrastructure(address string) {
 	addr := strings.ToLower(address)
-	m.sharedInfrastructure[addr] = true
+	m.sharedInfrastructure[addr] = &SharedInfrastructure{Address: addr}
+}
+
+// AddSharedInfrastructureWithCodehash tags an address with a stored
+// codehash so the M5 codehash-pin path can be exercised. Tests that
+// want to assert mismatch behaviour set this to one value and inject a
+// MockCodeHashFetcher returning a different value.
+func (m *MockTraceStore) AddSharedInfrastructureWithCodehash(address, codehash string) {
+	addr := strings.ToLower(address)
+	h := codehash
+	m.sharedInfrastructure[addr] = &SharedInfrastructure{Address: addr, Codehash: &h}
 }
 
 func (m *MockTraceStore) AddOwnedAddress(orgID, address string) {
@@ -77,6 +98,133 @@ func (m *MockTraceStore) AddOwnedAddress(orgID, address string) {
 		m.ownedAddresses[orgID] = make(map[string]bool)
 	}
 	m.ownedAddresses[orgID][addr] = true
+}
+
+// staticCodeHashFetcher is a CodeHashFetcher stub for M5 tests.
+// Returns whatever the test injected for a given address; missing
+// addresses return ("", nil) — the validator treats that as "no hash
+// to compare against" which currently falls through to the legacy
+// skip path. For the rotation-detection tests we inject a value that
+// differs from the stored attestation.
+type staticCodeHashFetcher struct {
+	hashes map[string]string
+}
+
+func (s *staticCodeHashFetcher) GetCodeHash(ctx context.Context, address string) (string, error) {
+	return s.hashes[strings.ToLower(address)], nil
+}
+
+// M6 (security audit follow-up to RD-915): DELEGATECALL into shared
+// infrastructure must be denied even when the target is tagged.
+// DELEGATECALL executes the callee's bytecode against the caller's
+// storage; trusting any address based on a tag would let an operator-
+// misconfigured proxy whose bytecode is rotated exfiltrate or
+// impersonate caller storage. CALL and STATICCALL stay allowed.
+func TestValidateTrace_M6_DelegateCallSharedInfraDenied(t *testing.T) {
+	store := NewMockTraceStore()
+	store.AddSharedInfrastructure("0xaaaa000000000000000000000000000000000000")
+	validator := NewTraceValidator(store)
+
+	cases := []struct {
+		name       string
+		callType   string
+		wantAllow  bool
+		wantReason DenialKind
+	}{
+		{"CALL allowed", "CALL", true, DenialKindNone},
+		{"STATICCALL allowed", "STATICCALL", true, DenialKindNone},
+		{"DELEGATECALL denied", "DELEGATECALL", false, DenialKindDelegateSharedInfra},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			trace := &tracer.TraceResult{
+				CallTargets: []tracer.CallTarget{
+					{Type: tc.callType, To: "0xaaaa000000000000000000000000000000000000"},
+				},
+			}
+			result, err := validator.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Allowed != tc.wantAllow {
+				t.Errorf("Allowed=%v, want %v (reason=%q kind=%q)", result.Allowed, tc.wantAllow, result.Reason, result.DenialKind)
+			}
+			if !tc.wantAllow && result.DenialKind != tc.wantReason {
+				t.Errorf("DenialKind=%q, want %q", result.DenialKind, tc.wantReason)
+			}
+		})
+	}
+}
+
+// M5 (security audit follow-up to RD-915): tagged shared
+// infrastructure with a stored codehash must verify the current
+// bytecode hash before skipping the trace. Pre-fix an operator who
+// pointed a proxy at a tagged address could silently bypass the
+// validator after an implementation rotation. The fix:
+//   - codehash unset → keep the skip (back-compat).
+//   - codehash set + match → keep the skip.
+//   - codehash set + mismatch → deny.
+//
+// The fetcher is optional on the validator; when not set the check is
+// disabled (back-compat for callers without node access).
+func TestValidateTrace_M5_CodehashPin(t *testing.T) {
+	const addr = "0xbbbb000000000000000000000000000000000000"
+	const attested = "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+	const rotated = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	t.Run("no codehash stored → skip allowed (back-compat)", func(t *testing.T) {
+		store := NewMockTraceStore()
+		store.AddSharedInfrastructure(addr)
+		v := NewTraceValidator(store)
+		v.SetCodeHashFetcher(&staticCodeHashFetcher{hashes: map[string]string{addr: rotated}})
+		trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+		res, err := v.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+		if err != nil || !res.Allowed {
+			t.Fatalf("legacy entry must still be allowed: err=%v allowed=%v", err, res.Allowed)
+		}
+	})
+
+	t.Run("codehash matches → skip allowed", func(t *testing.T) {
+		store := NewMockTraceStore()
+		store.AddSharedInfrastructureWithCodehash(addr, attested)
+		v := NewTraceValidator(store)
+		v.SetCodeHashFetcher(&staticCodeHashFetcher{hashes: map[string]string{addr: attested}})
+		trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+		res, err := v.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+		if err != nil || !res.Allowed {
+			t.Fatalf("matching codehash must be allowed: err=%v allowed=%v", err, res.Allowed)
+		}
+	})
+
+	t.Run("codehash mismatch → denied with mismatch kind", func(t *testing.T) {
+		store := NewMockTraceStore()
+		store.AddSharedInfrastructureWithCodehash(addr, attested)
+		v := NewTraceValidator(store)
+		v.SetCodeHashFetcher(&staticCodeHashFetcher{hashes: map[string]string{addr: rotated}})
+		trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+		res, err := v.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Allowed {
+			t.Fatalf("rotated bytecode must deny — operator's attestation no longer applies")
+		}
+		if res.DenialKind != DenialKindCodehashMismatch {
+			t.Errorf("DenialKind=%q, want %q", res.DenialKind, DenialKindCodehashMismatch)
+		}
+	})
+
+	t.Run("codehash match is case-insensitive", func(t *testing.T) {
+		store := NewMockTraceStore()
+		store.AddSharedInfrastructureWithCodehash(addr, strings.ToUpper(attested))
+		v := NewTraceValidator(store)
+		v.SetCodeHashFetcher(&staticCodeHashFetcher{hashes: map[string]string{addr: attested}})
+		trace := &tracer.TraceResult{CallTargets: []tracer.CallTarget{{Type: "CALL", To: addr}}}
+		res, err := v.ValidateTrace(context.Background(), map[string]bool{"org1": true}, trace, false)
+		if err != nil || !res.Allowed {
+			t.Fatalf("case-insensitive match must be allowed: err=%v allowed=%v", err, res.Allowed)
+		}
+	})
 }
 
 func TestValidateTrace_NilTrace(t *testing.T) {

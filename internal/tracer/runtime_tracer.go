@@ -58,6 +58,20 @@ func (rt *RuntimeTracer) HasCode(ctx context.Context, address string) (bool, err
 	return rt.tracer.HasCode(ctx, address)
 }
 
+// GetCodeHash returns the keccak256 of the bytecode at address at the
+// latest block, as a lowercase 0x-prefixed hex string. Empty
+// bytecode (EOA) returns the keccak of the empty byte slice. Used by
+// the M5 codehash-pin path in rbac.TraceValidator (see
+// rbac.CodeHashFetcher interface).
+//
+// The hash is computed over the raw bytecode the node returns from
+// eth_getCode — not the deployment bytecode and not the metadata-
+// stripped variant. Operators who attest a codehash should compute it
+// the same way (eth_getCode → keccak256).
+func (rt *RuntimeTracer) GetCodeHash(ctx context.Context, address string) (string, error) {
+	return rt.tracer.GetCodeHash(ctx, address)
+}
+
 // TraceTransaction traces a transaction and returns all call targets.
 // It uses the cache to avoid redundant traces for identical transactions.
 func (rt *RuntimeTracer) TraceTransaction(

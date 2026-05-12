@@ -16,6 +16,7 @@ import (
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/compliance"
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/rbac"
 )
 
 // Default travel rule record expiration duration.
@@ -111,13 +112,22 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		return
 	}
 
+	isNew := false
 	if config == nil {
+		isNew = true
 		config = &compliance.ComplianceConfig{
 			ID:            uuid.New().String(),
 			OrgID:         orgID,
 			Enabled:       false,
 			ThresholdFiat: 1000,
 		}
+	}
+
+	// Capture before-image for audit log (M2).
+	before := map[string]any{
+		"enabled":              config.Enabled,
+		"threshold_fiat":       config.ThresholdFiat,
+		"unknown_price_policy": config.UnknownPricePolicy,
 	}
 
 	if input.Enabled != nil {
@@ -142,6 +152,20 @@ func (s *Server) updateComplianceConfig(c *gin.Context) {
 		internalError(c, "failed to save compliance config", err)
 		return
 	}
+
+	// M2: audit-log the mutation (including the new unknown_price_policy
+	// "allowed" flip, which is the only fail-OPEN path in compliance).
+	action := rbac.AuditActionUpdate
+	if isNew {
+		action = rbac.AuditActionCreate
+	}
+	s.recordAuditActionScoped(c, action, rbac.ResourceTypeCompliance, config.ID, "compliance_config", orgID,
+		before,
+		map[string]any{
+			"enabled":              config.Enabled,
+			"threshold_fiat":       config.ThresholdFiat,
+			"unknown_price_policy": config.UnknownPricePolicy,
+		})
 
 	c.JSON(http.StatusOK, config)
 }
@@ -254,8 +278,25 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		CoingeckoID:      input.CoingeckoID,
 	}
 
+	// M2: record updater for ISO-27001 / SOC2 evidence. The SQL schema
+	// has the column but the handler previously never populated it,
+	// leaving it permanently NULL.
+	if uid := c.GetString("admin_user_id"); uid != "" {
+		price.UpdatedByUserID = &uid
+	}
+
+	var before map[string]any
+	action := rbac.AuditActionCreate
 	if existing != nil {
 		price.ID = existing.ID
+		action = rbac.AuditActionUpdate
+		before = map[string]any{
+			"symbol":             existing.Symbol,
+			"decimals":           existing.Decimals,
+			"price_fiat":         existing.PriceFiat,
+			"prices_by_currency": existing.PricesByCurrency,
+			"coingecko_id":       existing.CoingeckoID,
+		}
 	} else {
 		price.ID = uuid.New().String()
 	}
@@ -264,6 +305,18 @@ func (s *Server) upsertTokenPrice(c *gin.Context) {
 		internalError(c, "failed to save token price", err)
 		return
 	}
+
+	// M2: audit-log the mutation.
+	s.recordAuditActionScoped(c, action, rbac.ResourceTypeTokenPrice, price.ID, price.Symbol, orgID,
+		before,
+		map[string]any{
+			"symbol":             price.Symbol,
+			"decimals":           price.Decimals,
+			"price_fiat":         price.PriceFiat,
+			"prices_by_currency": price.PricesByCurrency,
+			"coingecko_id":       price.CoingeckoID,
+			"token_address":      price.TokenAddress,
+		})
 
 	c.JSON(http.StatusOK, price)
 }
@@ -520,12 +573,31 @@ func (s *Server) deleteTravelRuleRecord(c *gin.Context) {
 
 // Sanctioned Address handlers
 
+// listSanctionedAddresses returns sanction rows.
+//
+// Audit H8: pre-fix the ?org_id= query was honoured verbatim — any
+// tier-2 admin could enumerate every other org's blocklist. JWT
+// admins are now restricted to their own scope (and to global rows
+// for super-admin only).
 func (s *Server) listSanctionedAddresses(c *gin.Context) {
 	limit, offset := compliancePaginationParams(c, 50)
 
 	var orgID *string
 	if q := c.Query("org_id"); q != "" {
 		orgID = &q
+	}
+
+	// For JWT admins, the caller MUST specify org_id (and it must be in
+	// scope); listing global sanctions (org_id IS NULL) is super-admin
+	// only.
+	if c.GetString("auth_method") == "jwt_admin" {
+		if orgID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "org_id query parameter is required"})
+			return
+		}
+		if !requireTargetInScope(c, *orgID) {
+			return
+		}
 	}
 
 	addresses, total, err := s.db.ListSanctionedAddresses(c.Request.Context(), orgID, limit, offset)
@@ -537,6 +609,13 @@ func (s *Server) listSanctionedAddresses(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": addresses, "total": total, "limit": limit, "offset": offset})
 }
 
+// addSanctionedAddress adds a row to the compliance blocklist.
+//
+// Audit C6: pre-fix this accepted any org_id (or nil for "global")
+// in the body with no scope check. A tier-2 admin in Org A could
+// inject sanctions into Org B's blocklist or create a tenant-wide
+// global sanction. Now the org_id must be in caller's scope; global
+// (nil) requires super-admin.
 func (s *Server) addSanctionedAddress(c *gin.Context) {
 	var input struct {
 		OrgID   *string `json:"org_id"`
@@ -545,7 +624,7 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 		Source  string  `json:"source"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
@@ -557,6 +636,18 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 	if len(input.Reason) > 1000 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reason must be 1000 characters or fewer"})
 		return
+	}
+
+	// Cross-org gate. JWT admins must scope to their own org; global
+	// sanctions (org_id == nil) require super-admin.
+	if c.GetString("auth_method") == "jwt_admin" {
+		if input.OrgID == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "only super-admin can add global sanctions"})
+			return
+		}
+		if !requireFullAdminInScope(c, *input.OrgID) {
+			return
+		}
 	}
 
 	sanction := &compliance.SanctionedAddress{
@@ -572,9 +663,30 @@ func (s *Server) addSanctionedAddress(c *gin.Context) {
 		return
 	}
 
+	scopeOrgID := ""
+	if sanction.OrgID != nil {
+		scopeOrgID = *sanction.OrgID
+	}
+	s.recordAuditActionScoped(c, rbac.AuditActionCreate, rbac.ResourceTypeSanction, sanction.ID, sanction.Address, scopeOrgID,
+		nil,
+		map[string]any{
+			"address": sanction.Address,
+			"reason":  sanction.Reason,
+			"source":  sanction.Source,
+			"org_id":  sanction.OrgID,
+		})
+
 	c.JSON(http.StatusCreated, sanction)
 }
 
+// removeSanctionedAddress deletes a sanction row.
+//
+// Audit C7: pre-fix the handler resolved the row's org_id but never
+// compared it to the caller's scope. A tier-2 admin in Org A could
+// delete sanctions added by any org or globally — silently weakening
+// any other tenant's blocklist. Now the loaded row's org_id must be
+// in caller's full-admin scope; deletion of global rows requires
+// super-admin.
 func (s *Server) removeSanctionedAddress(c *gin.Context) {
 	id := c.Param("id")
 
@@ -584,14 +696,37 @@ func (s *Server) removeSanctionedAddress(c *gin.Context) {
 		return
 	}
 	if existing == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "sanctioned address not found"})
+		// Generic 403 to avoid existence oracle across orgs.
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
+	}
+
+	if c.GetString("auth_method") == "jwt_admin" {
+		if existing.OrgID == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "only super-admin can remove global sanctions"})
+			return
+		}
+		if !requireFullAdminInScope(c, *existing.OrgID) {
+			return
+		}
 	}
 
 	if err := s.db.RemoveSanctionedAddress(c.Request.Context(), id); err != nil {
 		internalError(c, "failed to remove sanctioned address", err)
 		return
 	}
+
+	scopeOrgID := ""
+	if existing.OrgID != nil {
+		scopeOrgID = *existing.OrgID
+	}
+	s.recordAuditActionScoped(c, rbac.AuditActionDelete, rbac.ResourceTypeSanction, existing.ID, existing.Address, scopeOrgID,
+		map[string]any{
+			"address": existing.Address,
+			"reason":  existing.Reason,
+			"source":  existing.Source,
+			"org_id":  existing.OrgID,
+		}, nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "sanctioned address removed"})
 }
@@ -826,13 +961,23 @@ func (s *Server) getBaseCurrency(c *gin.Context) {
 	})
 }
 
+// setBaseCurrency switches the cluster-wide compliance base currency.
+//
+// Audit C5: pre-fix this mutation was reachable by any tier-2 JWT
+// admin, allowing a malicious admin in Org A to fail-close every
+// other org's value transfers by switching to a currency whose
+// prices they don't have. Restrict to super-admin (X-Admin-Token);
+// it's a platform-wide setting that affects every tenant.
 func (s *Server) setBaseCurrency(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	var input struct {
 		Currency string `json:"currency" binding:"required"`
 		Force    bool   `json:"force"` // set true to switch even if manual tokens lack prices for this currency
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
@@ -922,6 +1067,23 @@ func (s *Server) setBaseCurrency(c *gin.Context) {
 			}
 		}
 	}
+
+	// M18: kick a fresh CoinGecko poll so any currency that wasn't in
+	// the cached prices_by_currency at switch time is populated as
+	// soon as possible — without this, system tokens with no cached
+	// price for the new currency stay at zero (fail-closed) until the
+	// next scheduled refresh.
+	if s.priceService != nil {
+		s.priceService.RefreshNow()
+	}
+
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeBaseCurrency, "system", "base_currency",
+		nil,
+		map[string]any{
+			"currency":        input.Currency,
+			"force":           input.Force,
+			"affected_tokens": len(affected),
+		})
 
 	resp := gin.H{
 		"currency": input.Currency,

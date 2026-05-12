@@ -29,6 +29,25 @@ func (s *Server) recordAuditAction(
 	resourceName string,
 	oldValue, newValue map[string]any,
 ) {
+	s.recordAuditActionScoped(c, action, resourceType, resourceID, resourceName, "", oldValue, newValue)
+}
+
+// recordAuditActionScoped is the org-aware variant used by cross-org-sensitive
+// resource types (group, contract, organization, grant, sanction, …). Pass
+// the natural parent org_id of the affected resource so listAuditLogs can
+// filter for JWT admins (security audit H1).
+//
+// orgID may be empty for resource types without a natural org (user,
+// membership) — those entries are visible only to super-admin.
+func (s *Server) recordAuditActionScoped(
+	c *gin.Context,
+	action string,
+	resourceType string,
+	resourceID string,
+	resourceName string,
+	orgID string,
+	oldValue, newValue map[string]any,
+) {
 	if s.db == nil {
 		return
 	}
@@ -45,6 +64,11 @@ func (s *Server) recordAuditAction(
 		}
 	}
 
+	var orgIDPtr *string
+	if orgID != "" {
+		orgIDPtr = &orgID
+	}
+
 	entry := &rbac.AuditLogEntry{
 		ActorID:         actorID,
 		ActorExternalID: actorExternalID,
@@ -52,6 +76,7 @@ func (s *Server) recordAuditAction(
 		ResourceType:    resourceType,
 		ResourceID:      &resourceID,
 		ResourceName:    resourceName,
+		OrgID:           orgIDPtr,
 		OldValue:        oldValue,
 		NewValue:        newValue,
 		IPAddress:       c.ClientIP(),

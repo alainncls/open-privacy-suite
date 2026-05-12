@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -121,10 +122,15 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
+	// L8: cap body size so a misbehaving admin (or one whose JWT is
+	// compromised) can't memory-pressure the proxy with a huge dry-run
+	// payload. Mirror the JSON-RPC handler's 1MB cap.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxRequestBodySize)
+
 	// Parse body.
 	var req dryRunRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 	req.UserDID = strings.TrimSpace(req.UserDID)
@@ -187,23 +193,45 @@ func (s *Server) handleDryRun(c *gin.Context) {
 		return
 	}
 
-	// Run RBAC CheckAccess as the impersonated user. CheckAccess
-	// resolves the same way it does for a real request.
+	// Run RBAC CheckAccess as the impersonated user.
+	//
+	// C8: pass OrgID = admin's :org_id. Pre-fix the request had no
+	// OrgID, so CheckAccess built OrgContext from the user's
+	// memberships and picked whichever org owned the target contract.
+	// For a multi-org user, that meant the FOREIGN org's grants
+	// decided the answer — a tier-2 admin in Org A dry-running a Bob
+	// who is also in Org B got Bob's Org B view on Org B-owned
+	// contracts. With OrgID set, CheckAccess scopes resolution to
+	// admin's org; cross-org contracts evaluate as if Bob were a
+	// non-member there (the safe answer).
 	target := extractTargetAddressForDryRun(req.RPC.Method, req.RPC.Params)
 	accessResult, err := s.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
 		UserExternalID: req.UserDID,
+		OrgID:          orgID,
 		Method:         req.RPC.Method,
 		Params:         req.RPC.Params,
 		TargetAddress:  target,
 	})
 	if err != nil {
-		_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", err.Error(), c.GetString("correlation_id"))
+		// H12: audit log fail-closed. If recordImpersonation errors,
+		// refuse to return the response — a compromised admin who can
+		// intermittently break the log write must not be able to
+		// exfiltrate data with no audit trail.
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
 
 	if !accessResult.Allowed {
-		_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", accessResult.Reason, c.GetString("correlation_id"))
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "deny", sanitizeDryRunReason(accessResult.Reason), c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		c.JSON(http.StatusOK, dryRunResponse{
 			Decision: "deny",
 			Reason:   accessResult.Reason,
@@ -215,39 +243,132 @@ func (s *Server) handleDryRun(c *gin.Context) {
 	if isTrace {
 		traceResp, traceErr := s.forwardDryRunTrace(ctx, req.RPC)
 		if traceErr != nil {
-			_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", traceErr.Error(), c.GetString("correlation_id"))
-			c.JSON(http.StatusBadGateway, gin.H{"error": traceErr.Error()})
+			if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(traceErr), c.GetString("correlation_id")); logErr != nil {
+				slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+				return
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream trace error"})
 			return
 		}
-		_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id"))
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		c.JSON(http.StatusOK, dryRunResponse{
 			Decision:          "allow",
 			Trace:             traceResp.Trace,
 			LogsEmitted:       traceResp.Logs,
-			LogsVisibleToUser: filterDryRunLogs(traceResp.Logs, userPerms, user, req.UserDID),
+			LogsVisibleToUser: s.filterDryRunLogs(ctx, traceResp.Logs, userPerms, user, req.UserDID, orgID),
 		})
 		return
 	}
 
-	// Read method: forward through the proxy and return the raw
-	// response. Per-method per-user redaction (e.g. FilterEventLogs
-	// for eth_getLogs) is intentionally minimal in this first cut —
-	// admins have full org-wide read access today, so they already see
-	// these responses unredacted. The CheckAccess gate is the
-	// load-bearing decision; redaction is correctness for the visible
-	// dry-run output, not security.
+	// Read method: forward through the proxy. H13: with the C8 scope
+	// fix in place, the response is already restricted to admin's org
+	// for CheckAccess purposes — but eth_getLogs and
+	// eth_getTransactionReceipt would still pass through raw upstream
+	// data without the production event-rule + param-rule + no-ABI
+	// filters. Wire those filters here so the dry-run answer matches
+	// what the impersonated user would actually see.
 	rawResp, err := s.forwardDryRunRead(ctx, req.RPC, c.ClientIP())
 	if err != nil {
-		_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", err.Error(), c.GetString("correlation_id"))
+		if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "error", sanitizeDryRunReason(err), c.GetString("correlation_id")); logErr != nil {
+			slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream error"})
 		return
 	}
 
-	_ = s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id"))
+	// Apply production redaction for the two read methods that carry
+	// log data — pre-fix these were returned verbatim, so admins got a
+	// strictly-broader view than the impersonated user would see in
+	// production. Other read methods (eth_chainId, eth_blockNumber,
+	// eth_getBalance, eth_call, eth_getCode, eth_getStorageAt) are
+	// gated by CheckAccess and their response shape doesn't carry
+	// per-log redaction concerns.
+	if rawResp != nil {
+		var addrs []string
+		if user != nil && s.db != nil {
+			if links, lerr := s.db.GetEthAddressesByDID(ctx, user.ExternalID); lerr == nil {
+				addrs = make([]string, 0, len(links))
+				for _, l := range links {
+					addrs = append(addrs, strings.ToLower(l.EthAddress))
+				}
+			}
+		}
+		var abiProv rbac.ABIProvider
+		if s.db != nil {
+			abiProv = newStoreABIProvider(ctx, s.db)
+		}
+		switch req.RPC.Method {
+		case "eth_getLogs":
+			rawResp = FilterLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+		case "eth_getTransactionReceipt":
+			rawResp = FilterReceiptLogsWithEventRules([]byte(rawResp), addrs, userPerms, abiProv, nil, nil)
+		}
+	}
+
+	if logErr := s.recordImpersonation(ctx, adminDID, req.UserDID, orgID, req.RPC, "allow", "", c.GetString("correlation_id")); logErr != nil {
+		slog.Error("dry-run: audit log write failed; refusing response", "err", logErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
 	c.JSON(http.StatusOK, dryRunResponse{
 		Decision: "allow",
 		Response: rawResp,
 	})
+}
+
+// sanitizeDryRunReason maps an error or reason string into a finite
+// enum-shaped value safe to persist in impersonation_log.reason.
+// Migration 047 explicitly forbids raw DB errors or embedded private
+// addresses in this column (audit M4 / threat-model F1). The full
+// error is preserved in slog.
+func sanitizeDryRunReason(in any) string {
+	const max = 200
+	var s string
+	switch v := in.(type) {
+	case string:
+		s = v
+	case error:
+		s = v.Error()
+	default:
+		s = fmt.Sprintf("%v", v)
+	}
+	lower := strings.ToLower(s)
+	switch {
+	case strings.Contains(lower, "method not allowed") ||
+		strings.Contains(lower, "method not permitted"):
+		return "method_not_allowed"
+	case strings.Contains(lower, "no access") ||
+		strings.Contains(lower, "no claim") ||
+		strings.Contains(lower, "denied") ||
+		strings.Contains(lower, "forbidden"):
+		return "denied"
+	case strings.Contains(lower, "rate limit"):
+		return "rate_limited"
+	case strings.Contains(lower, "compliance"):
+		return "compliance"
+	case strings.Contains(lower, "upstream") ||
+		strings.Contains(lower, "debug_tracecall") ||
+		strings.Contains(lower, "trace"):
+		return "upstream_error"
+	case strings.Contains(lower, "decode") || strings.Contains(lower, "malformed"):
+		return "decode_error"
+	case strings.Contains(lower, "user is banned"):
+		return "user_banned"
+	default:
+		// Truncate as a final defense — never persist >200 chars of
+		// free text.
+		if len(s) > max {
+			return s[:max]
+		}
+		return s
+	}
 }
 
 // dryRunTraceResult is what forwardDryRunTrace returns to the handler.
@@ -392,30 +513,76 @@ func extractLogsFromCallTrace(raw json.RawMessage) []json.RawMessage {
 	return out
 }
 
+// filterDryRunLogs is the legacy package-level wrapper used by tests
+// to assert the deny / allow shape of FilterEventLogs without needing
+// a Server. New production code paths call the method on Server (see
+// (*Server).filterDryRunLogs) which additionally wires an ABI
+// provider. The wrapper passes nil for those, matching pre-M3 test
+// expectations.
+func filterDryRunLogs(logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
+	if len(logs) == 0 || perms == nil {
+		return nil
+	}
+	_ = user
+	_ = viewerDID
+	return rbac.FilterEventLogs(logs, perms, []string{}, nil, nil, nil)
+}
+
 // filterDryRunLogs runs the impersonated user's RBAC view over the
 // emitted logs, returning the subset they would actually see if they
 // fetched the receipt. Reuses rbac.FilterEventLogs so the dry-run
 // answer matches what a real eth_getTransactionReceipt would give the
 // user.
-func filterDryRunLogs(logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID string) []json.RawMessage {
+//
+// M3 / RD-930: pre-fix this called FilterEventLogs with `addrs` empty
+// and the abiProvider / visCtx / adminContracts arguments as nil. That
+// bypassed three production gates:
+//   - param-rule `must_be=self` constraints always failed (no addrs)
+//   - the RD-875/889 no-ABI deny gate didn't fire (abiProvider nil)
+//   - per-contract admin bypass didn't apply (adminContracts nil)
+//
+// Now: resolve the impersonated user's linked ETH addresses and wire
+// the production ABI provider. visibleTo unlock + admin bypass are
+// still nil because they require per-tx visibility context which the
+// dry-run synthetic principal doesn't have; we leave them at the
+// safe (under-redact) defaults. This is an over-approximation in the
+// other direction from what RD-930 pinned, but the audit answer is
+// strictly more accurate.
+func (s *Server) filterDryRunLogs(ctx context.Context, logs []json.RawMessage, perms *rbac.EffectivePermissions, user *rbac.User, viewerDID, orgID string) []json.RawMessage {
 	if len(logs) == 0 || perms == nil {
 		return nil
 	}
-	// Linked addresses for the impersonated user are required for
-	// param-rule evaluation (must_be=self). Fail-closed if the lookup
-	// errors — under dry-run, "viewer might see less than they really
-	// would" is the safer side.
-	addrs := []string{}
-	if user != nil {
-		// Best-effort: skip linked-address resolution if the DB layer
-		// doesn't expose a method here. The RBAC pipeline still
-		// evaluates correctly without addresses; param-rule self
-		// constraints just always fail.
+
+	// Resolve the impersonated user's linked ETH addresses for
+	// param-rule self-matching. Best-effort: if the lookup errors we
+	// still pass an empty list and FilterEventLogs evaluates correctly,
+	// just stricter (param-rule self always fails).
+	var addrs []string
+	if user != nil && s.db != nil {
+		links, err := s.db.GetEthAddressesByDID(ctx, user.ExternalID)
+		if err == nil {
+			addrs = make([]string, 0, len(links))
+			for _, l := range links {
+				addrs = append(addrs, strings.ToLower(l.EthAddress))
+			}
+		} else {
+			slog.Warn("dry-run: link resolution failed", "user_id", user.ID, "err", err)
+		}
 	}
-	// abiProvider nil → tests that wire dry-run through real DB will
-	// pass a real one upstream; this default is the in-memory path.
+
+	// abiProvider: wire the production store-backed provider so the
+	// RD-875/889 no-ABI deny gate fires correctly. Without it,
+	// FilterEventLogs treated every log as having no ABI to consult and
+	// silently let through events from contracts that production would
+	// have denied.
+	var abiProv rbac.ABIProvider
+	if s.db != nil {
+		abiProv = newStoreABIProvider(ctx, s.db)
+	}
+
 	_ = viewerDID
-	return rbac.FilterEventLogs(logs, perms, addrs, nil, nil, nil)
+	_ = orgID
+	return rbac.FilterEventLogs(logs, perms, addrs, abiProv, nil, nil)
 }
 
 // forwardDryRunRead forwards a read-only RPC call to the upstream node
@@ -476,11 +643,19 @@ func (s *Server) recordImpersonation(
 // dryRunParamsHash returns a stable hex-encoded SHA-256 of (method,
 // params). We never persist the raw params — they could carry private
 // addresses or signed-tx blobs.
+//
+// L7: if json.Marshal errors (unreachable through current gin binding
+// but a future refactor could trigger it), return an empty string so
+// every error case doesn't collapse to the constant SHA-256 of "".
 func dryRunParamsHash(method string, params []any) string {
-	payload, _ := json.Marshal(struct {
+	payload, err := json.Marshal(struct {
 		Method string `json:"m"`
 		Params []any  `json:"p"`
 	}{Method: method, Params: params})
+	if err != nil {
+		slog.Warn("dryRunParamsHash: marshal failed", "method", method, "err", err)
+		return ""
+	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }

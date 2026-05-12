@@ -697,11 +697,21 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 
 	// Store visibleTo rule if provided. The tx hash comes from the node response.
 	// Non-fatal: the tx is already sent, so we log errors but don't fail the response.
+	//
+	// M7 (security audit): if SaveTxVisibility errors here, the tx is
+	// already on-chain and the listed DIDs never get visibility on a
+	// tx the sender intended to share. Retry-on-next-request is not a
+	// thing for a one-shot mutation. A proper fix needs an outbox
+	// table + background reconciler (`pending_tx_visibility`) — left
+	// as a follow-up ticket. For now: escalate to slog.Error with the
+	// recipient list so operators can manually replay; surface a
+	// header so the client knows the side-channel failed.
 	if len(visibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
 				if err := saver.SaveTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
-					slog.Error("failed to save visibleTo", "tx", txHash, "error", err)
+					slog.Error("visibleTo save failed; tx is on-chain but recipients won't see it",
+						"tx", txHash, "recipients", len(visibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
 		}
@@ -982,6 +992,50 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, nil // Deployment - skip (handled by bytecode validation)
 	}
 
+	// L6 (security audit follow-up to RD-915): rebind / verify
+	// user-supplied `from`. Pre-fix, eth_sendTransaction trusted the
+	// node to verify that the unlocked key matches the from address.
+	// On a shared node (Anvil / multi-key staging), a JWT-bound user
+	// could forge any unlocked address as `from` and reach
+	// "if (msg.sender == orgB_router)" branches they would never
+	// otherwise touch. The fix is the same shape as RD-915 KD-2 for
+	// eth_call: empty `from` is allowed (node will treat it as the
+	// default account), a user-supplied `from` must match one of the
+	// JWT-linked EOAs.
+	//
+	// Defense-in-depth: production nodes also pin msg.sender via the
+	// unlocked key, but we don't rely on that — the node may not be
+	// under operator control (managed RPC) and key-unlock policy can
+	// drift. Rejection rather than silent rebinding preserves the
+	// audit trail of spoof attempts.
+	if from != "" {
+		userAddrs, addrErr := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if addrErr != nil {
+			slog.Warn("eth_sendTransaction trace: linked-address lookup failed",
+				slog.String("user", req.UserID), slog.Any("err", addrErr))
+			return nil, &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "failed to verify sender identity",
+			}
+		}
+		fromLC := strings.ToLower(from)
+		match := false
+		for _, a := range userAddrs {
+			if strings.ToLower(a) == fromLC {
+				match = true
+				break
+			}
+		}
+		if !match {
+			slog.Info("eth_sendTransaction trace: user-supplied from rejected (not in linked addresses)",
+				slog.String("user", req.UserID), slog.String("from", from))
+			return nil, &ProcessError{
+				StatusCode: http.StatusBadRequest,
+				Message:    "invalid sender: from address is not linked to your account",
+			}
+		}
+	}
+
 	// Only skip tracing for simple value transfers to EOAs.
 	// Contracts can execute receive()/fallback() which may make cross-org calls.
 	if isSimpleValueTransfer(data) {
@@ -1130,7 +1184,15 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	// alias stay at the operator's discretion per RD-911 — opting into
 	// wildcards opts out of RBAC, and re-tracing on top of that would defeat
 	// the wildcard semantic.
-	if rbac.ResolveMethodAlias(req.Method) != "eth_call" {
+	//
+	// H10 (security audit follow-up to RD-915): eth_estimateGas runs the
+	// EVM exactly like eth_call — revert reasons, SLOAD-derived branches,
+	// and STATICCALL return values flow through the same way. The
+	// cross-org composability leak the entry-point check used to allow is
+	// identical. Both methods (and their operator-aliased equivalents)
+	// share this gate.
+	resolved := rbac.ResolveMethodAlias(req.Method)
+	if resolved != "eth_call" && resolved != "eth_estimateGas" {
 		return nil
 	}
 	if targetAddr == "" {
@@ -1303,10 +1365,15 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 			p.metrics.ComplianceDecisionsTotal.WithLabelValues("error").Inc()
 		}
 		p.logAccess(ctx, req, http.StatusInternalServerError)
+		// M1: don't echo the raw compliance error to the client — it can
+		// carry token addresses, threshold values, sanction text, and
+		// upstream price-service detail. Keep the verbose message in
+		// slog; surface a generic 5xx to the caller.
+		slog.Error("compliance check failed", "method", req.Method, "err", compErr)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusInternalServerError,
-				Message:    "compliance check failed: " + compErr.Error(),
+				Message:    "compliance check failed",
 			},
 		}
 	}
@@ -1315,10 +1382,16 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 			p.metrics.ComplianceDecisionsTotal.WithLabelValues("denied").Inc()
 		}
 		p.logAccess(ctx, req, http.StatusForbidden)
+		// M1: map the deny reason to a finite enum-style category before
+		// echoing. Pre-fix, "no price configured for token 0x..." in the
+		// response confirmed existence of a private contract — same
+		// disclosure shape RD-916/917 closed elsewhere. Keep the full
+		// reason in compliance_log + slog only.
+		slog.Info("compliance denied", "method", req.Method, "reason", compResult.Reason)
 		return &ProcessResult{
 			Error: &ProcessError{
 				StatusCode: http.StatusForbidden,
-				Message:    "compliance denied: " + compResult.Reason,
+				Message:    "compliance denied: " + sanitizeComplianceReason(compResult.Reason),
 			},
 		}
 	}
@@ -1327,6 +1400,34 @@ func (p *JSONRPCProcessor) checkCompliance(ctx context.Context, req *ProcessRequ
 	}
 
 	return nil
+}
+
+// sanitizeComplianceReason maps a compliance deny reason to a finite
+// enum-style category safe to echo to the JSON-RPC client. The full
+// reason (which may contain token addresses, sanction text, threshold
+// values, or upstream price-service detail) is preserved in
+// compliance_log + slog only.
+//
+// Categories chosen to be operationally useful without revealing any
+// per-tenant data. See security audit M1.
+func sanitizeComplianceReason(in string) string {
+	lower := strings.ToLower(in)
+	switch {
+	case strings.Contains(lower, "sanction"):
+		return "sanctioned address"
+	case strings.Contains(lower, "no price") || strings.Contains(lower, "price not") || strings.Contains(lower, "unknown_price"):
+		return "transaction value cannot be computed"
+	case strings.Contains(lower, "threshold"):
+		return "transaction exceeds threshold"
+	case strings.Contains(lower, "record") && strings.Contains(lower, "required"):
+		return "travel-rule record required"
+	case strings.Contains(lower, "originator"):
+		return "originator validation failed"
+	case strings.Contains(lower, "currency"):
+		return "currency configuration error"
+	default:
+		return "transaction blocked by compliance policy"
+	}
 }
 
 // isSimpleValueTransfer returns true if the transaction has no calldata.
@@ -1454,7 +1555,19 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		defer p.concurrencyLimiter.Release(req.UserID)
 	}
 
-	// Runtime tracing validation (always runs for raw transactions)
+	// Runtime tracing validation (always runs for raw transactions
+	// when there's a target address).
+	//
+	// M10 (security audit, open follow-up): raw-tx DEPLOYMENTS (`to ==
+	// ""`) currently skip the runtime tracer entirely. The deploy
+	// validator runs bytecode-level checks at deploy time, but if the
+	// CREATE constructor itself makes internal CREATE/CREATE2/CALL
+	// frames into other orgs, those are not validated here. The threat
+	// is narrow (only relevant for factory-pattern constructors
+	// reaching across orgs at deploy time) and runtime tracing for
+	// pure deployments would need a debug_traceCall path with an
+	// empty `to`; tracked as a follow-up ticket. Leaving the gap
+	// explicit so a future code review doesn't lose sight of it.
 	var runtimeCreateTargets []rbac.CreateTarget
 	if to != "" {
 		skipTrace := false
@@ -2511,24 +2624,76 @@ func extractAndStripVisibleTo(req *ProcessRequest) []string {
 	// Rebuild request body without the field.
 	req.Body = rebuildRequestBody(req.Body, req.Params)
 
-	// Parse the DID list.
+	// Parse the DID list, validate each, and dedupe (L2).
 	switch v := raw.(type) {
 	case []any:
 		dids := make([]string, 0, len(v))
+		seen := make(map[string]struct{}, len(v))
 		for _, item := range v {
-			if s, ok := item.(string); ok && s != "" {
-				dids = append(dids, s)
+			s, ok := item.(string)
+			if !ok || !isValidDID(s) {
+				continue
 			}
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			dids = append(dids, s)
 		}
 		if len(dids) > 0 {
 			return dids
 		}
 	case []string:
-		if len(v) > 0 {
-			return v
+		dids := make([]string, 0, len(v))
+		seen := make(map[string]struct{}, len(v))
+		for _, s := range v {
+			if !isValidDID(s) {
+				continue
+			}
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			dids = append(dids, s)
+		}
+		if len(dids) > 0 {
+			return dids
 		}
 	}
 	return nil
+}
+
+// isValidDID validates the visibleTo DID format. L2 (security audit):
+// pre-fix the raw string was stored verbatim, so garbage/spam entries
+// bloated tx_visible_to and slowed every GetVisibleTxHashesForDID
+// lookup. Now: must start with "did:", contain a method and method-
+// specific identifier, total length ≤ 240, all chars in the iden3 /
+// W3C-DID safe alphabet.
+func isValidDID(s string) bool {
+	if len(s) < len("did:x:y") || len(s) > 240 {
+		return false
+	}
+	if !strings.HasPrefix(s, "did:") {
+		return false
+	}
+	// Require at least one ':' after "did:" (method + ID).
+	rest := s[4:]
+	colon := strings.IndexByte(rest, ':')
+	if colon <= 0 || colon == len(rest)-1 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == ':' || ch == '-' || ch == '_' || ch == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // extractAndStripRawTxVisibleTo extracts visibleTo from the second param

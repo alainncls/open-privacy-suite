@@ -272,6 +272,30 @@ func HasWildcardForPrefix(prefix string) bool {
 	return false
 }
 
+// IsDeniedByWildcard reports whether the method is explicitly denied by any
+// registered wildcard namespace's Deny list. Used by HasMethod as a hard
+// floor that runs BEFORE the explicit-allow short-circuit (security audit
+// M8): pre-fix a tier-1/2 admin could enumerate `linea_sendTransaction`
+// in a group's allowed_methods and bypass a Wildcard{Prefix:"linea_",
+// Deny:["linea_sendTransaction"]} configured by the operator.
+//
+// Returns true only when a wildcard covers the method's prefix AND the
+// Deny list rejects this specific method.
+func IsDeniedByWildcard(method string) bool {
+	for _, w := range Wildcards {
+		if !strings.HasPrefix(method, w.Prefix) {
+			continue
+		}
+		if matchAnyDenyGlob(method, w.Deny) {
+			return true
+		}
+		// Wildcard covers the prefix but doesn't deny — keep iterating
+		// in case a more specific wildcard with deny also applies (the
+		// usual case is a single wildcard per prefix).
+	}
+	return false
+}
+
 // AllAllowedMethods returns every RPC method that can legitimately appear in a
 // group's allowed_methods list. This is the union of ReadMethods, WriteMethods,
 // DeployMethods, and ExtraMethods, minus any method that is globally blocked.

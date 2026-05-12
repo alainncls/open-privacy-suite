@@ -9,6 +9,7 @@ import (
 
 	"privacy-proxy/internal/auth"
 	"privacy-proxy/internal/disclosure"
+	"privacy-proxy/internal/rbac"
 )
 
 // registerDisclosureRoutes registers admin disclosure API endpoints.
@@ -85,7 +86,15 @@ func (s *Server) disclosureUserMiddleware() gin.HandlerFunc {
 	}
 }
 
-// createDisclosureRequest creates a new disclosure request (admin endpoint)
+// createDisclosureRequest creates a new disclosure request (admin endpoint).
+//
+// Audit C3: pre-fix this endpoint trusted org_id and target_user_id
+// from the request body without any caller-scope check. A tier-2
+// admin of Org A could manufacture a disclosure request for any Org B
+// user; once the target approved, the requester saw that user's ETH
+// activity globally via getDisclosedAddressesForViewer. Now the
+// handler enforces both org_id ∈ caller_scope and target_user_id ∈
+// caller_scope.
 func (s *Server) createDisclosureRequest(c *gin.Context) {
 	var input struct {
 		RequesterUserID string           `json:"requester_user_id"` // Optional - who's requesting (internal user ID)
@@ -99,13 +108,26 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
 	orgID := input.OrgID
 	if orgID == "" {
 		orgID = "00000000-0000-0000-0000-000000000001" // Default org
+	}
+
+	// Cross-org gate. Super-admin / dev: any org. JWT admin: org must
+	// be in admin_org_ids (mutating action — read-only not enough).
+	if !requireFullAdminInScope(c, orgID) {
+		return
+	}
+
+	// Target user must share at least one org with the caller. Pre-fix,
+	// a tier-2 admin of Org A could manufacture a disclosure request
+	// for any Org B user.
+	if !s.requireUserInCallerScope(c, input.TargetUserID) {
+		return
 	}
 
 	var expiresIn *time.Duration
@@ -126,14 +148,26 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 		expiresIn,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create disclosure request"})
 		return
 	}
+
+	s.recordAuditActionScoped(c, rbac.AuditActionCreate, rbac.ResourceTypeDisclosureRequest, req.ID, input.Reason, orgID,
+		nil,
+		map[string]any{
+			"target_user_id": input.TargetUserID,
+			"requester_did":  input.RequesterDID,
+			"scope":          input.Scope,
+		})
 
 	c.JSON(http.StatusCreated, req)
 }
 
-// listDisclosureRequests lists disclosure requests with filtering support
+// listDisclosureRequests lists disclosure requests with filtering support.
+//
+// Audit C3: pre-fix the ?org_id= query was honoured without scope
+// check, leaking any org's request list to any tier-2 admin. Now
+// clamped to caller's org_id set.
 func (s *Server) listDisclosureRequests(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
@@ -142,6 +176,11 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 		filter.OrgID = orgID
 	} else {
 		filter.OrgID = "00000000-0000-0000-0000-000000000001" // Default org
+	}
+
+	// Cross-org gate: the requested org must be in caller's scope.
+	if !requireTargetInScope(c, filter.OrgID) {
+		return
 	}
 
 	// Parse status
@@ -205,13 +244,34 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// listDisclosureGrants lists disclosure grants with filtering support (admin endpoint)
+// listDisclosureGrants lists disclosure grants with filtering support (admin endpoint).
+// Audit C3 — same fix as listDisclosureRequests.
 func (s *Server) listDisclosureGrants(c *gin.Context) {
 	filter := &disclosure.DisclosureFilter{}
 
-	// Parse org_id
+	// Parse org_id. Pre-fix the empty case left filter.OrgID = "" which
+	// silently meant "any org" at the DB layer. Now JWT admins MUST
+	// supply an org_id (or get clamped to their scope by the cross-org
+	// gate below).
 	if orgID := c.Query("org_id"); orgID != "" {
 		filter.OrgID = orgID
+	} else if c.GetString("auth_method") == "jwt_admin" {
+		// Default to the first full-admin org. If the caller has none
+		// (RO-only) and supplies no org_id, deny.
+		if ids, ok := c.Get("admin_org_ids"); ok {
+			if list, ok := ids.([]string); ok && len(list) > 0 {
+				filter.OrgID = list[0]
+			}
+		}
+		if filter.OrgID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "org_id query parameter is required"})
+			return
+		}
+	}
+
+	// Cross-org gate (only enforced when filter.OrgID is set).
+	if filter.OrgID != "" && !requireTargetInScope(c, filter.OrgID) {
+		return
 	}
 
 	// Parse status (for grants: approved = active, revoked, expired)
@@ -275,30 +335,65 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// deleteDisclosureRequest deletes a pending disclosure request (admin endpoint)
+// deleteDisclosureRequest deletes a pending disclosure request (admin endpoint).
+// Audit C3: re-verify the loaded request's org is in caller's scope.
 func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 
-	err := s.disclosureService.DeletePendingRequest(c.Request.Context(), requestID)
+	// Load the request to find its org before any mutation.
+	reqDetails, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load request"})
+		return
+	}
+	if reqDetails == nil || reqDetails.Request == nil {
+		// Generic 403 to avoid existence oracle.
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		return
+	}
+	if !requireFullAdminInScope(c, reqDetails.Request.OrgID) {
+		return
+	}
+
+	err = s.disclosureService.DeletePendingRequest(c.Request.Context(), requestID)
 	if err != nil {
 		if err == disclosure.ErrRequestNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 			return
 		}
 		if err == disclosure.ErrRequestNotPending {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "can only delete pending requests"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete request"})
 		return
 	}
+
+	s.recordAuditActionScoped(c, rbac.AuditActionDelete, rbac.ResourceTypeDisclosureRequest, reqDetails.Request.ID, reqDetails.Request.Reason, reqDetails.Request.OrgID,
+		map[string]any{"target_user_id": reqDetails.Request.TargetUserID, "requester_did": reqDetails.Request.RequesterDID, "status": reqDetails.Request.Status},
+		nil)
 
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
-// adminRevokeDisclosureGrant revokes a disclosure grant (admin endpoint)
+// adminRevokeDisclosureGrant revokes a disclosure grant (admin endpoint).
+// Audit C3: verify the loaded grant belongs to an org in caller's scope.
 func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 	grantID := c.Param("grant_id")
+
+	// Load grant to find owning org via its parent request.
+	grantWithReq, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load grant"})
+		return
+	}
+	if grantWithReq == nil || grantWithReq.Request == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		return
+	}
+	if !requireFullAdminInScope(c, grantWithReq.Request.OrgID) {
+		return
+	}
 
 	var input struct {
 		Reason string `json:"reason"`
@@ -309,31 +404,39 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 
 	if err := s.disclosureService.RevokeGrant(c.Request.Context(), grantID, input.Reason); err != nil {
 		if err == disclosure.ErrGrantNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "grant not found"})
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke grant"})
 		return
 	}
+
+	s.recordAuditActionScoped(c, rbac.AuditActionRevoke, rbac.ResourceTypeDisclosureGrant, grantID, input.Reason, grantWithReq.Request.OrgID,
+		map[string]any{"request_id": grantWithReq.Request.ID, "requester_did": grantWithReq.Request.RequesterDID},
+		nil)
 
 	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 }
 
-// getDisclosureRequest gets a disclosure request by ID
+// getDisclosureRequest gets a disclosure request by ID.
+// Audit C3: verify request's org is in caller's scope.
 func (s *Server) getDisclosureRequest(c *gin.Context) {
 	requestID := c.Param("request_id")
 
-	req, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
+	reqDetails, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load request"})
 		return
 	}
-	if req == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+	if reqDetails == nil || reqDetails.Request == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		return
+	}
+	if !requireTargetInScope(c, reqDetails.Request.OrgID) {
 		return
 	}
 
-	c.JSON(http.StatusOK, req)
+	c.JSON(http.StatusOK, reqDetails)
 }
 
 // checkDisclosureAccess checks if a requester DID has access to a target user's data.

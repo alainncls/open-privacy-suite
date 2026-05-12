@@ -119,7 +119,7 @@ func (s *Server) createGroup(c *gin.Context) {
 		return
 	}
 
-	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeGroup, group.ID, group.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionCreate, rbac.ResourceTypeGroup, group.ID, group.Name, group.OrgID,
 		nil,
 		map[string]any{
 			"slug":                  group.Slug,
@@ -169,15 +169,35 @@ func uniqueConflictMessage(err error) string {
 	}
 }
 
+// verifyGroupBelongsToPathOrg checks the loaded group's OrgID matches
+// the :org_id in the request path. Required because routes like
+// /orgs/:org_id/groups/:group_id/... LOOK scoped but the handler
+// previously trusted the URL without re-verifying — a tier-2 admin of
+// Org A could PUT /orgs/orgA/groups/<orgB-group-id>/... and seize an
+// Org B group (audit C2).
+//
+// Returns true if the group is in the path org (caller may proceed).
+// Returns false and writes a 403 otherwise. The error string matches
+// the not-found shape so an attacker cannot distinguish "exists in
+// another org" from "does not exist".
+func verifyGroupBelongsToPathOrg(c *gin.Context, group *rbac.Group) bool {
+	pathOrg := c.Param("org_id")
+	if pathOrg == "" || group == nil || group.OrgID != pathOrg {
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		return false
+	}
+	return true
+}
+
 func (s *Server) getGroup(c *gin.Context) {
 	groupID := c.Param("group_id")
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("get group: db read failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read group"})
 		return
 	}
-	if group == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+	if !verifyGroupBelongsToPathOrg(c, group) {
 		return
 	}
 	c.JSON(http.StatusOK, group)
@@ -192,8 +212,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update group"})
 		return
 	}
-	if group == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+	if !verifyGroupBelongsToPathOrg(c, group) {
 		return
 	}
 	if group.IsSystem {
@@ -261,7 +280,7 @@ func (s *Server) updateGroup(c *gin.Context) {
 		return
 	}
 
-	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeGroup, group.ID, group.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeGroup, group.ID, group.Name, group.OrgID,
 		oldValue,
 		map[string]any{
 			"name":                  group.Name,
@@ -288,6 +307,9 @@ func (s *Server) deleteGroup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete group"})
 		return
 	}
+	if !verifyGroupBelongsToPathOrg(c, group) {
+		return
+	}
 	if group != nil && group.IsSystem {
 		c.JSON(http.StatusForbidden, gin.H{"error": "system group cannot be deleted"})
 		return
@@ -307,7 +329,7 @@ func (s *Server) deleteGroup(c *gin.Context) {
 	}
 
 	if group != nil {
-		s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeGroup, group.ID, group.Name,
+		s.recordAuditActionScoped(c, rbac.AuditActionDelete, rbac.ResourceTypeGroup, group.ID, group.Name, group.OrgID,
 			map[string]any{
 				"slug":                  group.Slug,
 				"is_org_admin":          group.IsOrgAdmin,
@@ -322,9 +344,23 @@ func (s *Server) deleteGroup(c *gin.Context) {
 
 func (s *Server) getGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
+	// Re-verify group belongs to path :org_id (audit C2). Pre-fix,
+	// PUT /orgs/orgA/groups/<orgB-group-id>/access could read /
+	// modify Org B's group_access.
+	group, err := s.db.GetGroup(c.Request.Context(), groupID)
+	if err != nil {
+		slog.Error("get group access: get group failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read group"})
+		return
+	}
+	if !verifyGroupBelongsToPathOrg(c, group) {
+		return
+	}
+
 	access, err := s.db.GetGroupAccess(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("get group access: db read failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read access"})
 		return
 	}
 	if access == nil {
@@ -337,8 +373,7 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 	}
 
 	// Compute effective claims for child groups
-	group, err := s.db.GetGroup(c.Request.Context(), groupID)
-	if err == nil && group != nil && group.ParentID != nil {
+	if group.ParentID != nil {
 		s.populateEffectiveClaims(c.Request.Context(), group, access)
 	}
 
@@ -351,14 +386,17 @@ func (s *Server) getGroupAccess(c *gin.Context) {
 func (s *Server) setGroupAccess(c *gin.Context) {
 	groupID := c.Param("group_id")
 
-	// Verify group exists
+	// Verify group exists AND belongs to the path :org_id (audit C2).
+	// Pre-fix this handler accepted any group_id under any orgA route
+	// and would happily widen allowed_methods, set claims=[admin], or
+	// rewrite rpc_api_key on a foreign-org group.
 	group, err := s.db.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("set group access: get group failed", "group_id", groupID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read group"})
 		return
 	}
-	if group == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+	if !verifyGroupBelongsToPathOrg(c, group) {
 		return
 	}
 
@@ -439,6 +477,14 @@ func (s *Server) setGroupAccess(c *gin.Context) {
 
 	// Invalidate cache for group members
 	s.rbacAccessCtrl.InvalidateGroup(c.Request.Context(), groupID)
+
+	// L9: if this is the anonymous system group, also drop the
+	// access controller's anonymous-row cache so the change takes
+	// effect immediately on the next anonymous request (instead of
+	// waiting for the 5s TTL to expire).
+	if groupID == rbac.AnonymousGroupID {
+		s.rbacAccessCtrl.InvalidateAnonymousAccess()
+	}
 
 	// Mask API key in response
 	maskGroupAccessAPIKey(access)
@@ -527,8 +573,11 @@ func (s *Server) batchDeletePreview(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		// L10: opaque deny — pre-fix the message distinguished "exists
+		// elsewhere" from "doesn't exist", letting a tier-2 admin probe
+		// group IDs in other orgs. Match the errTargetForeignOrg shape.
 		if group == nil || group.OrgID != orgID {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "group " + gid + " not found in this organization"})
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 			return
 		}
 

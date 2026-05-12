@@ -20,7 +20,14 @@ type sessionInfoResponse struct {
 	CompletedAt string `json:"completed_at,omitempty"`
 }
 
+// listSessions exposes the in-flight auth session store. The entries
+// are not org-tagged — they're cluster-wide auth-flow sessions, so a
+// JWT admin in Org A has no legitimate need to enumerate them
+// (audit H7). Restrict to super-admin.
 func (s *Server) listSessions(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	sessions := s.sessionStore.ListSessions()
 	count := s.sessionStore.Count()
 
@@ -45,7 +52,14 @@ func (s *Server) listSessions(c *gin.Context) {
 	})
 }
 
+// deleteSession terminates an in-flight auth session. Same reason as
+// listSessions — sessions are cluster-wide and not org-tagged, so a
+// JWT admin in Org A could mass-DoS in-progress logins across the
+// cluster (audit H7). Restrict to super-admin.
 func (s *Server) deleteSession(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	sessionID := c.Param("session_id")
 
 	// Check if session exists

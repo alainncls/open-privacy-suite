@@ -271,9 +271,19 @@ func extractUniqueAddresses(txs []Transaction) []string {
 // than in the tx-level "to" field (e.g., ERC20 transfer(address,uint256)).
 //
 // Supported function selectors:
-//   - 0xa9059cbb: transfer(address to, uint256 amount)      — to at bytes 4-36
-//   - 0x23b872dd: transferFrom(address from, address to, uint256 amount) — from at 4-36, to at 36-68
-//   - 0x095ea7b3: approve(address spender, uint256 amount)  — spender at bytes 4-36
+//   - ERC-20  0xa9059cbb: transfer(address to, uint256 amount)
+//   - ERC-20  0x23b872dd: transferFrom(address from, address to, uint256 amount)
+//   - ERC-20  0x095ea7b3: approve(address spender, uint256 amount)
+//   - ERC-721 0x42842e0e: safeTransferFrom(address from, address to, uint256 tokenId)
+//   - ERC-721 0xb88d4fde: safeTransferFrom(address from, address to, uint256 tokenId, bytes data)
+//   - ERC-721 0xa22cb465: setApprovalForAll(address operator, bool approved)
+//   - ERC-1155 0xf242432a: safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)
+//   - ERC-1155 0x2eb2c2d6: safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)
+//
+// M14: pre-fix this covered only the three ERC-20 selectors. Viewers
+// who were encoded recipients of ERC-721 / ERC-1155 transfers silently
+// lost the participant override — they saw [PRIVATE] for transactions
+// where they were the actual counterparty.
 func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
 	if len(viewerAddrs) == 0 || len(inputData) < 8 {
 		return false
@@ -302,12 +312,21 @@ func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
 	}
 
 	switch selector {
+	// ERC-20
 	case "0xa9059cbb": // transfer(address,uint256) — param 0 is recipient
 		return viewerAddrs[extractAddr(0)]
-	case "0x23b872dd": // transferFrom(address,address,uint256) — param 0 is from, param 1 is to
+	case "0x23b872dd": // transferFrom(address,address,uint256) — params 0,1
 		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
 	case "0x095ea7b3": // approve(address,uint256) — param 0 is spender
 		return viewerAddrs[extractAddr(0)]
+	// ERC-721 (same shape; from/to at params 0,1)
+	case "0x42842e0e", "0xb88d4fde":
+		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
+	case "0xa22cb465": // setApprovalForAll(address,bool)
+		return viewerAddrs[extractAddr(0)]
+	// ERC-1155 (from/to at params 0,1)
+	case "0xf242432a", "0x2eb2c2d6":
+		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
 	}
 	return false
 }
@@ -1015,7 +1034,29 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 
 	modified := false
 	for i, inp := range nonIndexed {
-		if inp.Type.T != abi.AddressTy {
+		// M15 / G23 (security audit follow-up to RD-915): pre-fix this
+		// loop only scanned slots whose ABI type was AddressTy. A field
+		// declared as bytes32 with an address right-aligned in the slot
+		// — a common pattern for "addresses passed as bytes32 for
+		// historical / cross-contract reasons" — leaked the address
+		// verbatim. Now also scan FixedBytesTy slots of size 32 (bytes32):
+		// the address pattern (first 12 bytes zero, last 20 = address)
+		// is detectable with the same heuristic as AddressTy.
+		//
+		// Dynamic bytes/string are NOT scanned: the static slot at
+		// position i contains the offset into the tail, not the value
+		// itself; following the offset would require modelling the full
+		// dynamic-encoding layout. Tracked as a follow-up to G23.
+		//
+		// uint256 / int256 are NOT scanned because legitimate small
+		// numeric values (e.g. a uint256 = 123) have the first 12 bytes
+		// zero and would false-positive as a hidden address (0x..0007b),
+		// silently zeroing event values. Contract authors who encode
+		// addresses in uint256 must declare the field as `address`
+		// instead — that's an ABI-level signal we honour today.
+		eligible := inp.Type.T == abi.AddressTy ||
+			(inp.Type.T == abi.FixedBytesTy && inp.Type.Size == 32)
+		if !eligible {
 			continue
 		}
 		slot := dataBytes[i*32 : (i+1)*32]
@@ -1036,7 +1077,7 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 			continue
 		}
 		// Zero out the entire 32-byte slot.
-		for j := i*32; j < (i+1)*32; j++ {
+		for j := i * 32; j < (i+1)*32; j++ {
 			dataBytes[j] = 0
 		}
 		modified = true

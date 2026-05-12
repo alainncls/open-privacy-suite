@@ -23,6 +23,23 @@ type TraceValidatorStore interface {
 	CreateSharedInfrastructure(ctx context.Context, infra *SharedInfrastructure) error
 	ListSharedInfrastructure(ctx context.Context) ([]*SharedInfrastructure, error)
 	DeleteSharedInfrastructure(ctx context.Context, address string) error
+	// GetSharedInfrastructure returns the full row for a tagged address,
+	// or nil when not tagged. Used by M5 codehash-pin: the validator
+	// needs the stored codehash, not just the tagged-bool. Returns nil
+	// when not found.
+	GetSharedInfrastructure(ctx context.Context, address string) (*SharedInfrastructure, error)
+}
+
+// CodeHashFetcher fetches the keccak256 of the current bytecode at an
+// address. Used by TraceValidator (M5 codehash-pin for
+// shared_infrastructure). Implemented by *tracer.RuntimeTracer; tests
+// inject a static map.
+//
+// The implementation MUST resolve the code at "latest" — pinning to a
+// historical block would defeat the rotation-detection property the
+// codehash check exists to provide.
+type CodeHashFetcher interface {
+	GetCodeHash(ctx context.Context, address string) (string, error)
 }
 
 // TraceValidator validates transaction traces against RBAC rules.
@@ -31,6 +48,19 @@ type TraceValidatorStore interface {
 type TraceValidator struct {
 	store          TraceValidatorStore
 	precompileFunc func(addr string) bool // For dependency injection in tests
+	// codeFetcher is used by the M5 codehash-pin check on
+	// shared_infrastructure. Nil disables the check — tagged rows
+	// continue to behave as before. Set via SetCodeHashFetcher; the
+	// server wires *tracer.RuntimeTracer here at startup.
+	codeFetcher CodeHashFetcher
+}
+
+// SetCodeHashFetcher wires a CodeHashFetcher into the validator. Call
+// at startup after the runtime tracer is initialised. A nil fetcher
+// disables the M5 codehash-pin check (back-compat for callers that
+// don't have node access — tests).
+func (v *TraceValidator) SetCodeHashFetcher(f CodeHashFetcher) {
+	v.codeFetcher = f
 }
 
 // TraceValidationResult contains the result of trace validation.
@@ -50,11 +80,13 @@ type TraceValidationResult struct {
 type DenialKind string
 
 const (
-	DenialKindNone           DenialKind = ""
-	DenialKindForeignOrg     DenialKind = "foreign_org"          // target is owned by an org the caller is not in
-	DenialKindUnregistered   DenialKind = "unregistered"         // target is not in the Contract registry at all
-	DenialKindDeployClaim    DenialKind = "deploy_claim_missing" // trace contains CREATE/CREATE2 but caller lacks deploy
-	DenialKindCreateForeign  DenialKind = "create_foreign_org"   // CREATE/CREATE2 collides with an address registered to another org
+	DenialKindNone                 DenialKind = ""
+	DenialKindForeignOrg           DenialKind = "foreign_org"             // target is owned by an org the caller is not in
+	DenialKindUnregistered         DenialKind = "unregistered"            // target is not in the Contract registry at all
+	DenialKindDeployClaim          DenialKind = "deploy_claim_missing"    // trace contains CREATE/CREATE2 but caller lacks deploy
+	DenialKindCreateForeign        DenialKind = "create_foreign_org"      // CREATE/CREATE2 collides with an address registered to another org
+	DenialKindDelegateSharedInfra  DenialKind = "delegatecall_shared_infra" // M6: DELEGATECALL into shared infrastructure
+	DenialKindCodehashMismatch     DenialKind = "shared_infra_codehash_mismatch" // M5: shared_infrastructure bytecode rotated since attestation
 )
 
 // CreateTarget represents a contract address created during trace execution.
@@ -66,10 +98,23 @@ type CreateTarget struct {
 
 // SharedInfrastructure represents a globally accessible contract (e.g., Uniswap router).
 // These contracts are allowed for all organizations and do not require org ownership.
+//
+// Codehash (M5, security audit follow-up to RD-915): the keccak256 of
+// the contract's bytecode at attestation time. When set, the trace
+// validator fetches eth_getCode at validation time, hashes it, and
+// rejects the skip if the hash drifts — a rotated bytecode behind a
+// stable address would otherwise let an operator-misconfigured proxy
+// silently bypass the tracer. Optional for legacy rows; admins should
+// attest a codehash on every new tag and rotate the entry on
+// bytecode change. Tag / untag operations are audit-logged.
+//
+// Format: lowercase 0x-prefixed 32-byte hex string. Nil/empty disables
+// the check for backward compatibility.
 type SharedInfrastructure struct {
 	Address     string    `json:"address"`     // lowercase 0x-prefixed address
 	Name        string    `json:"name"`        // Human-readable name (e.g., "Uniswap V3 Router")
 	Description string    `json:"description"` // Description of the contract
+	Codehash    *string   `json:"codehash,omitempty"` // M5: optional codehash pin
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -170,13 +215,67 @@ func (v *TraceValidator) ValidateTrace(
 			continue
 		}
 
-		// Rule 2b: Check if target is shared infrastructure (always allowed)
-		isShared, err := v.store.IsSharedInfrastructure(ctx, addr)
+		// Rule 2b: Check if target is shared infrastructure.
+		//
+		// M5/M6 (security audit follow-up to RD-915):
+		// - M6: DELEGATECALL into shared infrastructure is denied even
+		//   when the address is tagged. DELEGATECALL runs the callee's
+		//   bytecode against the CALLER's storage, so a tagged contract
+		//   whose bytecode is rotated could exfiltrate caller storage
+		//   or impersonate same-org calls. The skip is for CALL +
+		//   STATICCALL only.
+		// - M5: when the row has a codehash, fetch the current
+		//   bytecode hash and compare. Mismatch → treat as untagged
+		//   (the contract's code rotated since attestation; the trust
+		//   decision the operator made no longer applies). This guards
+		//   against a proxy whose implementation slot is rewritten
+		//   after the address is tagged.
+		sharedRow, err := v.store.GetSharedInfrastructure(ctx, addr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check shared infrastructure: %w", err)
 		}
-		if isShared {
-			continue
+		if sharedRow != nil {
+			if target.Type == "DELEGATECALL" {
+				slog.Debug("trace denied: DELEGATECALL into shared infrastructure",
+					"address", addr)
+				return &TraceValidationResult{
+					Allowed:      false,
+					Reason:       ErrContractAccessDenied,
+					DenialKind:   DenialKindDelegateSharedInfra,
+					DeniedTarget: addr,
+				}, nil
+			}
+			// Codehash-pin: if the row carries an attested hash AND
+			// the validator has a code fetcher wired, verify.
+			if sharedRow.Codehash != nil && *sharedRow.Codehash != "" && v.codeFetcher != nil {
+				currentHash, err := v.codeFetcher.GetCodeHash(ctx, addr)
+				if err != nil {
+					slog.Warn("trace: shared_infra codehash fetch failed; failing closed",
+						"address", addr, "err", err)
+					// Fail closed: cannot verify, so we don't trust
+					// the tag. Fall through to the normal ownership
+					// rules (which will likely deny as unregistered).
+				} else if strings.EqualFold(currentHash, *sharedRow.Codehash) {
+					// Hash matches the attested value → keep the
+					// skip (CALL / STATICCALL only — DELEGATECALL
+					// branch above already returned).
+					continue
+				} else {
+					slog.Warn("trace: shared_infra codehash mismatch — treating as untagged",
+						"address", addr,
+						"attested", *sharedRow.Codehash,
+						"observed", currentHash)
+					return &TraceValidationResult{
+						Allowed:      false,
+						Reason:       ErrContractAccessDenied,
+						DenialKind:   DenialKindCodehashMismatch,
+						DeniedTarget: addr,
+					}, nil
+				}
+			} else {
+				// No codehash pin OR no fetcher wired → legacy skip.
+				continue
+			}
 		}
 
 		// Rule 2c: Check if target is owned by any of the user's orgs

@@ -371,6 +371,10 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		TieredEnabled: cfg.TraceTieredValidation,
 	})
 	traceValidator := rbac.NewTraceValidator(database)
+	// M5 (security audit follow-up to RD-915): wire the runtime tracer
+	// as the CodeHashFetcher so the validator can codehash-pin
+	// shared_infrastructure entries.
+	traceValidator.SetCodeHashFetcher(runtimeTracer)
 	slog.Info("runtime tracing enabled", "cache_ttl", cfg.TraceCacheTTL, "timeout", cfg.TraceTimeout, "tiered", cfg.TraceTieredValidation)
 
 	// Initialize Prometheus metrics

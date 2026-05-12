@@ -880,6 +880,11 @@ func (s *Server) addressVisibleOrFullGrant(ctx context.Context, viewerWallet, vi
 // addDisclosureAddressToFilter returns a copy of the visibility filter with the
 // disclosure address added to the visible set. This ensures that transaction
 // counts and filtered queries include transactions involving the disclosed address.
+//
+// L4: pre-fix both the constructor (filter==nil) and copy paths dropped
+// VisibleTxHashes — disclosed-address views silently suppressed the
+// viewer's visibleTo-shared txs. Now both code paths preserve every
+// VisibilityFilter field.
 func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter, address string) *explorer.VisibilityFilter {
 	if filter == nil {
 		return &explorer.VisibilityFilter{
@@ -893,10 +898,11 @@ func (s *Server) addDisclosureAddressToFilter(filter *explorer.VisibilityFilter,
 			return filter
 		}
 	}
-	// Copy to avoid mutating the original
+	// Copy to avoid mutating the original — including VisibleTxHashes.
 	newFilter := &explorer.VisibilityFilter{
 		AllPrivate:       filter.AllPrivate,
 		VisibleAddresses: make([]string, len(filter.VisibleAddresses)+1),
+		VisibleTxHashes:  append([]string(nil), filter.VisibleTxHashes...),
 	}
 	copy(newFilter.VisibleAddresses, filter.VisibleAddresses)
 	newFilter.VisibleAddresses[len(filter.VisibleAddresses)] = address
@@ -1066,9 +1072,18 @@ func (s *Server) getExplorerBlockByHash(c *gin.Context) {
 // getViewerDIDFromRequest extracts the viewer's DID.
 // Priority: (1) validated JWT claims set by OptionalJWTAuthMiddleware,
 // (2) wallet->DID lookup via ?wallet= query param (verified via DB).
-// SECURITY: DID is never accepted directly from query parameters to prevent
-// identity spoofing. The ?wallet= param is safe because the DB lookup verifies
-// the wallet is actually linked to a DID.
+//
+// L3: the ?wallet=<addr> shortcut was a viewer-impersonation oracle —
+// any unauthenticated caller who knew a wallet address could probe
+// the explorer view of the wallet's owner. The caller never proves
+// possession of the wallet. Now ?wallet= is honoured ONLY when the
+// caller also has a valid JWT (subject set by OptionalJWTAuthMiddleware),
+// in which case the JWT subject itself takes priority anyway. The
+// shortcut therefore is effectively dead and the surface is closed.
+//
+// If a legitimate non-JWT consumer needs viewer-as-wallet resolution,
+// they must sign a challenge — that is a future feature, not the
+// silent oracle this used to be.
 func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 	// 1. JWT claims (set by OptionalJWTAuthMiddleware)
 	if subject, exists := c.Get("subject"); exists {
@@ -1076,11 +1091,9 @@ func (s *Server) getViewerDIDFromRequest(c *gin.Context) string {
 			return did
 		}
 	}
-	// 2. Wallet address lookup (DB-verified)
-	if wallet := c.Query("wallet"); wallet != "" {
-		viewerDID, _ := s.db.GetDIDByEthAddress(c.Request.Context(), strings.ToLower(wallet))
-		return viewerDID
-	}
+	// 2. Wallet lookup is intentionally removed — the previous
+	// implementation allowed any caller to impersonate any wallet's
+	// view without proof of possession.
 	return ""
 }
 
@@ -2045,10 +2058,17 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	}
 	address := strings.ToLower(c.Param("address"))
 
-	// Visibility pre-check: if the token address is Hidden, pretend it doesn't exist.
+	// Visibility pre-check: if the token address is Hidden OR Redacted,
+	// pretend it doesn't exist.
+	//
+	// M12: pre-fix, Hidden → 404 and Redacted → 200-with-masked-fields.
+	// The 200-vs-404 split was an enumeration oracle: it told an
+	// attacker whether an arbitrary address was registered to *some*
+	// org. Same class as the G16 fix for /check-address/. Now both
+	// non-Full visibilities return the same 404.
 	viewerWallet, viewerDID := getViewerIdentity(c)
 	visibility := s.calculateAddressVisibilityWithDID(c.Request.Context(), viewerWallet, viewerDID, address)
-	if visibility.Level == VisibilityHidden {
+	if visibility.Level == VisibilityHidden || visibility.Level == VisibilityRedacted {
 		respondNotFound(c, "token not found")
 		return
 	}
@@ -2064,18 +2084,7 @@ func (s *Server) getExplorerToken(c *gin.Context) {
 	}
 
 	// Redact sensitive fields for non-full visibility.
-	if visibility.Level == VisibilityRedacted {
-		token.Address = "[PRIVATE]"
-		token.Name = nil
-		token.Symbol = ""
-		token.TotalSupply = nil
-		token.HolderCount = 0
-		token.TransferCount = 0
-		token.CreationTx = nil
-		token.L1Address = nil
-		token.USDPrice = nil
-		token.IconURL = nil
-	} else if visibility.Level == VisibilityPseudonymous {
+	if visibility.Level == VisibilityPseudonymous {
 		pseudonym := explorer.GeneratePseudonym(token.Address)
 		token.Address = pseudonym
 		token.Name = nil

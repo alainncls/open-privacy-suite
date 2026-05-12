@@ -335,6 +335,7 @@ type AuditLogEntry struct {
 	ResourceType    string         `json:"resource_type"`
 	ResourceID      *string        `json:"resource_id,omitempty"`
 	ResourceName    string         `json:"resource_name,omitempty"`
+	OrgID           *string        `json:"org_id,omitempty"` // parent org of the affected resource (audit H1 — used for cross-org scoping of the list endpoint)
 	OldValue        map[string]any `json:"old_value,omitempty"`
 	NewValue        map[string]any `json:"new_value,omitempty"`
 	IPAddress       string         `json:"ip_address,omitempty"`
@@ -448,7 +449,24 @@ type ContractGrantSummary struct {
 // namespace is registered with the same prefix AND that wildcard would allow
 // the method (deny list checked there). This prevents groups from inventing
 // prefixes the operator hasn't enabled in EXTRA_RPC_NAMESPACES.
+//
+// M8 (security audit): a registered global wildcard's Deny list now
+// blocks the method regardless of whether the group's AllowedMethods
+// has the method enumerated explicitly. Pre-fix, an operator who
+// registered Wildcard{Prefix:"linea_", Deny:["linea_sendTransaction"]}
+// could be defeated by a tier-1/2 admin listing `linea_sendTransaction`
+// explicitly in a group's AllowedMethods — the explicit-match
+// short-circuited before the wildcard Deny consultation. Only
+// GlobalBlockedMethods was a hard floor. Now Wildcards[].Deny is
+// also a hard floor (consulted before the explicit-allow short-circuit).
 func (e *EffectivePermissions) HasMethod(method string) bool {
+	// Hard-floor check: if any registered global wildcard covers this
+	// method's prefix and the wildcard's Deny list rejects the method,
+	// it is denied — even if the group explicitly enumerates it.
+	if IsDeniedByWildcard(method) {
+		return false
+	}
+
 	if slices.Contains(e.AllowedMethods, "*") || slices.Contains(e.AllowedMethods, method) {
 		return true
 	}

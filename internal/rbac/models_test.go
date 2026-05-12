@@ -32,9 +32,14 @@ func TestEffectivePermissions_HasMethod_Glob(t *testing.T) {
 		{"glob does NOT cover deny-listed method", []string{"linea_*"}, "linea_sendTransaction", false},
 		{"glob does NOT cover deny-glob match", []string{"linea_*"}, "linea_signTypedData", false},
 		{"unrelated prefix glob without registered wildcard is ignored", []string{"zksync_*"}, "zksync_anyMethod", false},
-		{"bare * still allows anything (admin shortcut)", []string{"*"}, "linea_anything", true},
+		{"bare * still allows anything not in any wildcard Deny", []string{"*"}, "linea_anything", true},
 		{"empty glob entry is ignored", []string{""}, "linea_brandNew", false},
-		{"plain * inside list does not turn into prefix", []string{"*"}, "linea_sendTransaction", true},
+		// M8 (security audit): a wildcard's Deny list is a hard floor —
+		// even bare "*" in allowed_methods cannot override it. Pre-fix
+		// this case returned true, allowing tier-1/2 admins to bypass an
+		// operator-configured per-namespace deny by listing "*" or the
+		// method explicitly.
+		{"wildcard Deny is hard floor even against *", []string{"*"}, "linea_sendTransaction", false},
 		{"glob entry alongside explicits — explicit wins for explicit method", []string{"linea_estimateGas", "linea_*"}, "linea_estimateGas", true},
 		{"glob entry alongside explicits — glob covers other methods", []string{"linea_estimateGas", "linea_*"}, "linea_getProof", true},
 		{"no glob, unknown method denied", []string{"linea_estimateGas"}, "linea_brandNew", false},

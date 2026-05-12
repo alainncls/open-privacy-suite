@@ -49,7 +49,32 @@ func TestEthCallTracing_WrongMethodBypasses(t *testing.T) {
 		Params: []any{"0x1111111111111111111111111111111111111111", "latest"},
 	}
 	require.Nil(t, proc.validateEthCallWithTracing(context.Background(), req, "0x1111111111111111111111111111111111111111"),
-		"non-eth_call method must early-return")
+		"non-eth_call non-eth_estimateGas method must early-return")
+}
+
+// H10 (security audit follow-up to RD-915): eth_estimateGas runs the
+// EVM the same way eth_call does and therefore shares the same
+// cross-org composability leak shape. The gate must fire for it too.
+// This pins the post-fix behavior: a malformed eth_estimateGas to/
+// from must reach the validator and return 400 (rather than silently
+// being bypassed at the method check). When this test starts to fail
+// it almost certainly means someone narrowed validateEthCallWithTracing
+// back to eth_call only — re-read the H10 comment in the validator
+// before changing the gate.
+func TestEthEstimateGasTracing_InvalidFromReturns400(t *testing.T) {
+	proc, _ := setupEthCallProc(t)
+	req := &ProcessRequest{
+		UserID: "did:privado:any",
+		Method: "eth_estimateGas",
+		Params: []any{map[string]any{
+			"to":   "0x2222222222222222222222222222222222222222",
+			"from": "0xnope",
+		}},
+	}
+	err := proc.validateEthCallWithTracing(context.Background(), req, "0x2222222222222222222222222222222222222222")
+	require.NotNil(t, err, "eth_estimateGas must go through the tracing gate")
+	assert.Equal(t, 400, err.StatusCode)
+	assert.Contains(t, err.Message, "invalid request shape")
 }
 
 func TestEthCallTracing_EmptyTargetBypasses(t *testing.T) {
