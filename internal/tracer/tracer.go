@@ -3,13 +3,24 @@ package tracer
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/sha3"
 )
+
+// keccak256 computes the Ethereum keccak256 hash (NOT NIST SHA3-256).
+// Used by GetCodeHash for codehash-pinning shared_infrastructure (M5).
+func keccak256(data []byte) []byte {
+	h := sha3.NewLegacyKeccak256()
+	h.Write(data)
+	return h.Sum(nil)
+}
 
 // DefaultTimeout is the default timeout for trace calls.
 const DefaultTimeout = 30 * time.Second
@@ -322,6 +333,66 @@ func (t *Tracer) TraceTransaction(ctx context.Context, txHash string) (*TraceRes
 	}
 
 	return result, nil
+}
+
+// GetCodeHash returns keccak256(eth_getCode(address)) as a lowercase
+// 0x-prefixed hex string. Used by the M5 codehash-pin check in
+// rbac.TraceValidator (security audit follow-up to RD-915).
+//
+// The hash is computed over the raw bytes the node returns from
+// eth_getCode — including any metadata trailer. Operators who attest
+// a codehash must compute it the same way.
+func (t *Tracer) GetCodeHash(ctx context.Context, address string) (string, error) {
+	reqBody := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getCode",
+		Params:  []any{address, "latest"},
+		ID:      1,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.nodeURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("eth_getCode request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rpcResp jsonRPCResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("eth_getCode RPC error: %s", rpcResp.Error.Message)
+	}
+
+	var code string
+	if err := json.Unmarshal(rpcResp.Result, &code); err != nil {
+		return "", fmt.Errorf("failed to parse code result: %w", err)
+	}
+	code = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(code), "0x"))
+
+	// Decode hex bytecode then keccak. For an EOA this hashes the empty
+	// byte slice — the canonical "no code" hash
+	// (0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470)
+	// — which is a valid attestation value if an operator deliberately
+	// tagged an EOA address.
+	codeBytes, err := hex.DecodeString(code)
+	if err != nil {
+		return "", fmt.Errorf("failed to hex-decode code: %w", err)
+	}
+	h := keccak256(codeBytes)
+	return "0x" + hex.EncodeToString(h), nil
 }
 
 // HasCode checks if an address has contract code deployed.

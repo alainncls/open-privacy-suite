@@ -992,6 +992,50 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 		return nil, nil // Deployment - skip (handled by bytecode validation)
 	}
 
+	// L6 (security audit follow-up to RD-915): rebind / verify
+	// user-supplied `from`. Pre-fix, eth_sendTransaction trusted the
+	// node to verify that the unlocked key matches the from address.
+	// On a shared node (Anvil / multi-key staging), a JWT-bound user
+	// could forge any unlocked address as `from` and reach
+	// "if (msg.sender == orgB_router)" branches they would never
+	// otherwise touch. The fix is the same shape as RD-915 KD-2 for
+	// eth_call: empty `from` is allowed (node will treat it as the
+	// default account), a user-supplied `from` must match one of the
+	// JWT-linked EOAs.
+	//
+	// Defense-in-depth: production nodes also pin msg.sender via the
+	// unlocked key, but we don't rely on that — the node may not be
+	// under operator control (managed RPC) and key-unlock policy can
+	// drift. Rejection rather than silent rebinding preserves the
+	// audit trail of spoof attempts.
+	if from != "" {
+		userAddrs, addrErr := p.rbacAccessCtrl.Store().GetLinkedEthAddresses(ctx, req.UserID)
+		if addrErr != nil {
+			slog.Warn("eth_sendTransaction trace: linked-address lookup failed",
+				slog.String("user", req.UserID), slog.Any("err", addrErr))
+			return nil, &ProcessError{
+				StatusCode: http.StatusForbidden,
+				Message:    "failed to verify sender identity",
+			}
+		}
+		fromLC := strings.ToLower(from)
+		match := false
+		for _, a := range userAddrs {
+			if strings.ToLower(a) == fromLC {
+				match = true
+				break
+			}
+		}
+		if !match {
+			slog.Info("eth_sendTransaction trace: user-supplied from rejected (not in linked addresses)",
+				slog.String("user", req.UserID), slog.String("from", from))
+			return nil, &ProcessError{
+				StatusCode: http.StatusBadRequest,
+				Message:    "invalid sender: from address is not linked to your account",
+			}
+		}
+	}
+
 	// Only skip tracing for simple value transfers to EOAs.
 	// Contracts can execute receive()/fallback() which may make cross-org calls.
 	if isSimpleValueTransfer(data) {
@@ -1140,7 +1184,15 @@ func (p *JSONRPCProcessor) validateEthCallWithTracing(ctx context.Context, req *
 	// alias stay at the operator's discretion per RD-911 — opting into
 	// wildcards opts out of RBAC, and re-tracing on top of that would defeat
 	// the wildcard semantic.
-	if rbac.ResolveMethodAlias(req.Method) != "eth_call" {
+	//
+	// H10 (security audit follow-up to RD-915): eth_estimateGas runs the
+	// EVM exactly like eth_call — revert reasons, SLOAD-derived branches,
+	// and STATICCALL return values flow through the same way. The
+	// cross-org composability leak the entry-point check used to allow is
+	// identical. Both methods (and their operator-aliased equivalents)
+	// share this gate.
+	resolved := rbac.ResolveMethodAlias(req.Method)
+	if resolved != "eth_call" && resolved != "eth_estimateGas" {
 		return nil
 	}
 	if targetAddr == "" {

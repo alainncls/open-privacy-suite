@@ -1034,7 +1034,29 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 
 	modified := false
 	for i, inp := range nonIndexed {
-		if inp.Type.T != abi.AddressTy {
+		// M15 / G23 (security audit follow-up to RD-915): pre-fix this
+		// loop only scanned slots whose ABI type was AddressTy. A field
+		// declared as bytes32 with an address right-aligned in the slot
+		// — a common pattern for "addresses passed as bytes32 for
+		// historical / cross-contract reasons" — leaked the address
+		// verbatim. Now also scan FixedBytesTy slots of size 32 (bytes32):
+		// the address pattern (first 12 bytes zero, last 20 = address)
+		// is detectable with the same heuristic as AddressTy.
+		//
+		// Dynamic bytes/string are NOT scanned: the static slot at
+		// position i contains the offset into the tail, not the value
+		// itself; following the offset would require modelling the full
+		// dynamic-encoding layout. Tracked as a follow-up to G23.
+		//
+		// uint256 / int256 are NOT scanned because legitimate small
+		// numeric values (e.g. a uint256 = 123) have the first 12 bytes
+		// zero and would false-positive as a hidden address (0x..0007b),
+		// silently zeroing event values. Contract authors who encode
+		// addresses in uint256 must declare the field as `address`
+		// instead — that's an ABI-level signal we honour today.
+		eligible := inp.Type.T == abi.AddressTy ||
+			(inp.Type.T == abi.FixedBytesTy && inp.Type.Size == 32)
+		if !eligible {
 			continue
 		}
 		slot := dataBytes[i*32 : (i+1)*32]
@@ -1055,7 +1077,7 @@ func (r *RedactionEngine) redactLogData(data string, contractABI json.RawMessage
 			continue
 		}
 		// Zero out the entire 32-byte slot.
-		for j := i*32; j < (i+1)*32; j++ {
+		for j := i * 32; j < (i+1)*32; j++ {
 			dataBytes[j] = 0
 		}
 		modified = true
