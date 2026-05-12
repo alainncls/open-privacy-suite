@@ -90,15 +90,26 @@ The proxy uses `debug_traceCall` to validate all addresses touched by transactio
 
 **`eth_call` cross-org isolation (RD-915):**
 
-`eth_call` is traced on every request, separately from the send-side path. Two differences matter:
+`eth_call` is traced on every request, separately from the send-side path. Three differences matter:
 
 - **Uncached.** Proxy-pattern contracts (EIP-1967, Diamond, Beacon, transparent upgradeable) can re-target their internal calls by rewriting a storage slot, so a `(from,to,data,value)` cache yields stale "allow" decisions after a cross-org upgrade. The eth_call path always asks the upstream node.
 - **`from` rebound to the JWT-bound EOA.** Sends pin `msg.sender` via the unlocked key; reads do not. The proxy looks up the caller's linked Ethereum addresses and rejects user-supplied `from` that doesn't match (rather than silently rebinding -- mismatches are logged as spoof attempts).
+- **Trace runs at the same block as the forwarded call.** If `eth_call` supplies a historical block tag or EIP-1898 object as `params[1]`, the trace runs at that same block. Otherwise an attacker could exfil historical cross-org state via a proxy contract that has since been re-targeted.
 
 <EnvTable vars={[
-  { name: "RUNTIME_TRACING_ETH_CALL_ENABLED", default: "true", description: "Rollback knob for the eth_call cross-org tracing path. Default ON. Set to false ONLY as a documented change-management exception (ISO 27001 A.8.32) -- disabling allows same-org wrapper contracts to bubble up foreign-org state via internal calls." },
-  { name: "ETH_CALL_TRACE_TIMEOUT", default: "5s", description: "Per-call timeout for the eth_call trace. Distinct from (and shorter than) the 30s send-side trace timeout — a slow upstream times out faster on the read path. Note: this caps individual trace duration only, not how many concurrent traces a single JWT may issue." },
+  { name: "RUNTIME_TRACING_ETH_CALL_ENABLED", default: "true", description: "Rollback knob for the eth_call cross-org tracing path. Default ON. Set to false ONLY as a documented change-management exception (ISO 27001 A.8.32) -- disabling allows same-org wrapper contracts to bubble up foreign-org state via internal calls. See the runtime toggle endpoint below for the emergency rollback path." },
+  { name: "ETH_CALL_TRACE_TIMEOUT", default: "5s", description: "Per-call timeout for the eth_call trace. Distinct from (and shorter than) the 30s send-side trace timeout — a slow upstream times out faster on the read path. Aggregate trace work per JWT is capped by MAX_CONCURRENT_REQUESTS, which is acquired before the trace runs." },
 ]} />
+
+**Runtime toggle endpoint (emergency rollback):** super-admins can flip the knob without a redeploy via `POST /api/v1/admin/system/eth-call-tracing` with body `{"enabled": false, "reason": "..."}`. The change is **in-memory only** — a restart re-arms the env value. The endpoint requires the super-admin token (`ADMIN_API_TOKEN`); tier-2 admin JWTs receive `403`. Every toggle writes a row to `rbac_audit_log` and (when configured) fires a SIEM event. `GET` returns the current state and is available to any admin caller so dashboards can prove the control is on.
+
+<Callout title="Important: eth_call tracing scope">
+
+The eth_call cross-org trace fires **only** when the method resolves to `eth_call` (via `ResolveMethodAlias`). Chain-specific aliases declared in `EXTRA_RPC_NAMESPACES_FILE` with `"alias": "eth_call"` (e.g. an explicit `linea_call` entry) are traced. **Methods that match a wildcard prefix without an explicit alias are NOT traced** — and they're also not subject to RBAC contract access checks or response redaction, by the wildcard's design (see Extra RPC Namespaces below).
+
+This is correct: a method the proxy has no alias mapping for has no defined `to`/`from`/`data` shape, so the proxy has nothing to extract for the trace and no way to know whether the method even runs the EVM. Operators who enable a wildcard namespace are accepting that **all** of that namespace's methods bypass cross-org isolation. If you need cross-org isolation on a chain-specific method, register it explicitly with an `alias` rather than relying on a wildcard.
+
+</Callout>
 
 ---
 

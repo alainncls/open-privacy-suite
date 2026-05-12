@@ -63,7 +63,7 @@ func TestTraceTransactionUncached_BypassesCachedHit(t *testing.T) {
 	poison := &TraceResult{CallTargets: []CallTarget{{Type: "CALL", From: "0xpoison", To: "0xpoison"}}}
 	rt.cache.Set(from, to, data, value, "latest", poison)
 
-	res, err := rt.TraceTransactionUncached(context.Background(), from, to, data, value)
+	res, err := rt.TraceTransactionUncached(context.Background(), from, to, data, value, "latest")
 	if err != nil {
 		t.Fatalf("uncached call failed: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestTraceTransactionUncached_DoesNotPopulateCache(t *testing.T) {
 	t.Cleanup(rt.Stop)
 
 	const from, to, data, value = "0xsender", "0xcontract", "0x", ""
-	if _, err := rt.TraceTransactionUncached(context.Background(), from, to, data, value); err != nil {
+	if _, err := rt.TraceTransactionUncached(context.Background(), from, to, data, value, "latest"); err != nil {
 		t.Fatalf("uncached call failed: %v", err)
 	}
 	if got := rt.cache.Size(); got != 0 {

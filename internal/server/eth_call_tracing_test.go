@@ -128,6 +128,39 @@ func TestEthCallTracing_FromSpoofRejected(t *testing.T) {
 	assert.Contains(t, err.Message, "invalid request shape")
 }
 
+func TestEthCallTracing_RuntimeOverrideTakesEffect(t *testing.T) {
+	// Verifies that the super-admin runtime override actually wins over
+	// the env-installed value at the next validator call. With the
+	// processor's tracer pointed at 127.0.0.1:1 (unreachable), an
+	// enabled validator deny-403s any reachable user; a disabled one
+	// returns nil and the call would forward. We assert the gate
+	// flips on Override.
+	proc, ts := setupEthCallProc(t)
+	ctx := context.Background()
+	did := createOrgGroupUserMembership(t, ctx, ts.db, []rbac.Claim{rbac.ClaimAdmin})
+
+	req := &ProcessRequest{
+		UserID: did,
+		Method: "eth_call",
+		Params: []any{map[string]any{"to": "0x2222222222222222222222222222222222222222"}},
+	}
+
+	// On (from setup) → upstream-unreachable path returns ethCallDenyTracerError.
+	err1 := proc.validateEthCallWithTracing(ctx, req, "0x2222222222222222222222222222222222222222")
+	require.NotNil(t, err1)
+	assert.Equal(t, ethCallDenyTracerError, err1.Message)
+
+	// Off via runtime override → validator bypasses entirely, returns nil.
+	proc.SetEthCallTracingRuntimeOverride(false, "test", "ops drill")
+	require.Nil(t, proc.validateEthCallWithTracing(ctx, req, "0x2222222222222222222222222222222222222222"),
+		"runtime override OFF must bypass the validator on the very next call")
+
+	// Re-enable.
+	proc.SetEthCallTracingRuntimeOverride(true, "test", "drill complete")
+	err3 := proc.validateEthCallWithTracing(ctx, req, "0x2222222222222222222222222222222222222222")
+	require.NotNil(t, err3, "runtime override ON re-arms the validator")
+}
+
 func TestEthCallTracing_UpstreamErrorDeniedClosed(t *testing.T) {
 	// Tracer points at 127.0.0.1:1 — connect refused → upstream error path.
 	// Must produce a 403 with the generic tracer-error message (no %v leak).

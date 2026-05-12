@@ -102,11 +102,20 @@ func (rt *RuntimeTracer) TraceTransaction(
 // TestEthCallTracing_ProxyImplementationFlip in internal/server (proxy
 // re-targeting flips the validator decision on the second call).
 //
+// blockParam must match the block parameter that the corresponding eth_call
+// will be forwarded with — otherwise the trace runs against a different
+// chain state than the actual call and an attacker can mount a time-shifted
+// variant of the proxy-flip attack (allow at latest, exfil at
+// historical-where-foreign). Accepts the same shapes as eth_call's second
+// param: a string tag/hex, an EIP-1898 object, or nil/"" (treated as
+// "latest"). The caller is responsible for shape validation.
+//
 // Sibling of TraceTransaction rather than a useCache boolean parameter
 // so the cache-bypass intent is legible at every call site.
 func (rt *RuntimeTracer) TraceTransactionUncached(
 	ctx context.Context,
 	from, to, data, value string,
+	blockParam any,
 ) (*TraceResult, error) {
 	if !rt.enabled {
 		return nil, nil
@@ -116,8 +125,12 @@ func (rt *RuntimeTracer) TraceTransactionUncached(
 	to = strings.ToLower(strings.TrimSpace(to))
 	data = strings.ToLower(strings.TrimSpace(data))
 	value = strings.TrimSpace(value)
+	// TraceCall handles the empty-string/nil → "latest" fallback itself.
+	if s, ok := blockParam.(string); ok {
+		blockParam = strings.ToLower(strings.TrimSpace(s))
+	}
 
-	return rt.tracer.TraceCall(ctx, from, to, data, value, "latest")
+	return rt.tracer.TraceCall(ctx, from, to, data, value, blockParam)
 }
 
 // TraceMinedTransaction traces a mined transaction to discover actual CREATE/CREATE2 addresses.

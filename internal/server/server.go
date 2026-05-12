@@ -689,6 +689,17 @@ func (s *Server) setupRouter() *gin.Engine {
 			// Dev-only endpoints
 			admin.POST("/dev/deploy-demo-erc20", s.handleDeployDemoERC20)
 		}
+
+		// System-wide settings — fleet-level toggles, NOT org-scoped.
+		// Separate group so we can omit orgScope (system settings have
+		// no :org_id) while keeping the localhost + admin-auth gates.
+		// Per-route super-admin checks happen inside the handlers.
+		system := apiV1.Group("/admin/system")
+		system.Use(s.localhostOnlyMiddleware(), adminAuth)
+		{
+			system.GET("/eth-call-tracing", s.handleGetEthCallTracing)
+			system.POST("/eth-call-tracing", s.handlePostEthCallTracing)
+		}
 	}
 
 	// Legacy API (unversioned) - deprecated, for backwards compatibility
