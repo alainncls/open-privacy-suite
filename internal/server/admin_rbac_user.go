@@ -31,6 +31,84 @@ type userListItem struct {
 	Groups []rbac.UserGroupMembership `json:"groups"`
 }
 
+// requireUserInCallerScope ensures the target user shares at least one
+// org with the caller's admin scope (full or read-only). Returns true
+// if the caller may proceed; writes a 403 otherwise.
+//
+// Super-admin (X-Admin-Token) and dev-mode callers bypass.
+//
+// The error string is intentionally identical to errTargetForeignOrg
+// so a tier-2 admin cannot distinguish "user exists in another org"
+// from "user does not exist" via the response.
+//
+// Caller must pass the user's memberships' org IDs (resolved via
+// GetUserOrgIDs). Empty intersection = denied.
+func (s *Server) requireUserInCallerScope(c *gin.Context, userID string) bool {
+	authMethod := c.GetString("auth_method")
+	if authMethod != "jwt_admin" {
+		return true
+	}
+	userOrgIDs, err := s.rbacAccessCtrl.GetUserOrgIDs(c.Request.Context(), userID)
+	if err != nil {
+		slog.Error("scope check: GetUserOrgIDs failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "scope check failed"})
+		return false
+	}
+	allowed := map[string]struct{}{}
+	if ids, ok := c.Get("admin_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				allowed[id] = struct{}{}
+			}
+		}
+	}
+	if ids, ok := c.Get("admin_readonly_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				allowed[id] = struct{}{}
+			}
+		}
+	}
+	for _, orgID := range userOrgIDs {
+		if _, ok := allowed[orgID]; ok {
+			return true
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+	return false
+}
+
+// requireUserInFullAdminScope is the mutating sibling: requires the
+// caller to full-admin (is_org_admin) at least one org the user
+// belongs to. Used by updateRBACUser / deleteRBACUser.
+func (s *Server) requireUserInFullAdminScope(c *gin.Context, userID string) bool {
+	authMethod := c.GetString("auth_method")
+	if authMethod != "jwt_admin" {
+		return true
+	}
+	userOrgIDs, err := s.rbacAccessCtrl.GetUserOrgIDs(c.Request.Context(), userID)
+	if err != nil {
+		slog.Error("scope check: GetUserOrgIDs failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "scope check failed"})
+		return false
+	}
+	allowed := map[string]struct{}{}
+	if ids, ok := c.Get("admin_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				allowed[id] = struct{}{}
+			}
+		}
+	}
+	for _, orgID := range userOrgIDs {
+		if _, ok := allowed[orgID]; ok {
+			return true
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+	return false
+}
+
 // jwtAdminFullAdminOrgIDs returns the slice of org IDs in which the
 // caller has is_org_admin (full admin), or nil if the caller is super
 // admin (X-Admin-Token bypass) / dev mode (no auth configured).
@@ -127,13 +205,18 @@ func (s *Server) listRBACUsers(c *gin.Context) {
 
 func (s *Server) getRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
+	if !s.requireUserInCallerScope(c, userID) {
+		return
+	}
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("get user: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user"})
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		// Generic 403 — never reveal "exists in another org" vs "doesn't exist".
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
 	}
 	c.JSON(http.StatusOK, user)
@@ -141,14 +224,18 @@ func (s *Server) getRBACUser(c *gin.Context) {
 
 func (s *Server) updateRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
+	if !s.requireUserInFullAdminScope(c, userID) {
+		return
+	}
 
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("update user: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user"})
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
 	}
 
@@ -176,8 +263,17 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 		user.Metadata = input.Metadata
 	}
 
+	// Capture before-image for audit log.
+	before := map[string]any{
+		"kyc":      user.KYC,
+		"banned":   user.Banned,
+		"note":     user.Note,
+		"metadata": user.Metadata,
+	}
+
 	if err := s.db.UpdateUser(c.Request.Context(), user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("update user: db write failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user"})
 		return
 	}
 
@@ -194,20 +290,33 @@ func (s *Server) updateRBACUser(c *gin.Context) {
 		}
 	}
 
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeUser, user.ID, user.ExternalID,
+		before,
+		map[string]any{
+			"kyc":      user.KYC,
+			"banned":   user.Banned,
+			"note":     user.Note,
+			"metadata": user.Metadata,
+		})
+
 	c.JSON(http.StatusOK, user)
 }
 
 func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 	userID := c.Param("user_id")
+	if !s.requireUserInCallerScope(c, userID) {
+		return
+	}
 
 	// Get user to find their external ID (DID)
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("get linked addresses: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user"})
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
 	}
 
@@ -240,39 +349,50 @@ func (s *Server) getUserLinkedAddresses(c *gin.Context) {
 
 func (s *Server) deleteRBACUser(c *gin.Context) {
 	userID := c.Param("user_id")
+	if !s.requireUserInFullAdminScope(c, userID) {
+		return
+	}
 
 	// Check if user exists
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete user: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user"})
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
 	}
 
 	// Delete all memberships for this user first
 	memberships, err := s.db.ListUserMemberships(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete user: list memberships failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
 		return
 	}
 	for _, membership := range memberships {
 		if err := s.db.DeleteMembership(c.Request.Context(), membership.ID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete membership: " + err.Error()})
+			slog.Error("delete user: membership delete failed", "user_id", userID, "membership_id", membership.ID, "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
 			return
 		}
 	}
 
 	// Delete the user
 	if err := s.db.DeleteUser(c.Request.Context(), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("delete user: db delete failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
 		return
 	}
 
 	// Invalidate cache for this user
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
+
+	s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeUser, user.ID, user.ExternalID,
+		map[string]any{"external_id": user.ExternalID, "banned": user.Banned, "kyc": user.KYC},
+		nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "user deleted"})
 }
@@ -281,10 +401,48 @@ func (s *Server) deleteRBACUser(c *gin.Context) {
 
 func (s *Server) listUserMemberships(c *gin.Context) {
 	userID := c.Param("user_id")
+	// Caller must share at least one org with the user — prevents
+	// enumeration of which groups in which orgs a multi-org user
+	// belongs to (security audit H6).
+	if !s.requireUserInCallerScope(c, userID) {
+		return
+	}
 	memberships, err := s.db.ListUserMembershipsWithDetails(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("list memberships: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read memberships"})
 		return
+	}
+	// Filter memberships to caller's scope (full or read-only admin
+	// orgs). Super-admin sees everything. Pre-fix, the response
+	// enumerated all of a multi-org user's memberships including
+	// foreign orgs.
+	if c.GetString("auth_method") == "jwt_admin" {
+		allowed := map[string]struct{}{}
+		if ids, ok := c.Get("admin_org_ids"); ok {
+			if list, ok := ids.([]string); ok {
+				for _, id := range list {
+					allowed[id] = struct{}{}
+				}
+			}
+		}
+		if ids, ok := c.Get("admin_readonly_org_ids"); ok {
+			if list, ok := ids.([]string); ok {
+				for _, id := range list {
+					allowed[id] = struct{}{}
+				}
+			}
+		}
+		filtered := memberships[:0]
+		for _, m := range memberships {
+			if m.Group == nil {
+				continue
+			}
+			if _, ok := allowed[m.Group.OrgID]; ok {
+				filtered = append(filtered, m)
+			}
+		}
+		memberships = filtered
 	}
 	c.JSON(http.StatusOK, memberships)
 }
@@ -349,7 +507,7 @@ func (s *Server) createUserMembership(c *gin.Context) {
 
 	s.rbacAccessCtrl.InvalidateUser(c.Request.Context(), userID)
 
-	s.recordAuditAction(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionAssign, rbac.ResourceTypeMembership, membership.ID, group.Name, group.OrgID,
 		nil,
 		map[string]any{
 			"user_id":  userID,
@@ -401,7 +559,7 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 		return
 	}
 
-	s.recordAuditAction(c, rbac.AuditActionRevoke, rbac.ResourceTypeMembership, membershipID, group.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionRevoke, rbac.ResourceTypeMembership, membershipID, group.Name, group.OrgID,
 		map[string]any{
 			"user_id":  userID,
 			"group_id": group.ID,
@@ -415,26 +573,54 @@ func (s *Server) deleteUserMembership(c *gin.Context) {
 
 func (s *Server) getEffectivePermissions(c *gin.Context) {
 	userID := c.Param("user_id")
+	// Caller must share at least one org with the user. Prevents a
+	// tier-2 admin from extracting the AllowedMethods / Claims /
+	// ContractAccess map of foreign-org users (audit H3).
+	if !s.requireUserInCallerScope(c, userID) {
+		return
+	}
 
 	user, err := s.db.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("effective perms: db read failed", "user_id", userID, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user"})
 		return
 	}
 	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
 		return
 	}
 
-	// Get org slug from query param, default to "default"
+	// Get org slug from query param, default to "default".
 	orgSlug := c.Query("org")
 	if orgSlug == "" {
 		orgSlug = "default"
 	}
 
+	// Audit H3: the ?org=<slug> parameter must also be in the caller's
+	// scope. Otherwise a tier-2 admin in Org A can ask "what would
+	// user X see in Org B" — a cross-org probe.
+	if c.GetString("auth_method") == "jwt_admin" {
+		targetOrg, err := s.db.GetOrganizationBySlug(c.Request.Context(), orgSlug)
+		if err != nil {
+			slog.Error("effective perms: org-by-slug failed", "slug", orgSlug, "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve org"})
+			return
+		}
+		if targetOrg == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+		if !inScope(c, targetOrg.ID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+	}
+
 	perms, err := s.rbacAccessCtrl.GetEffectivePermissions(c.Request.Context(), user.ExternalID, orgSlug)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("effective perms: resolve failed", "user_id", userID, "org", orgSlug, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to compute permissions"})
 		return
 	}
 
@@ -444,19 +630,67 @@ func (s *Server) getEffectivePermissions(c *gin.Context) {
 func (s *Server) checkAccessAPI(c *gin.Context) {
 	var req rbac.AccessCheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
+	}
+
+	// Audit H4: clamp the probe target to the caller's scope. The
+	// raw endpoint is a permission-map enumeration oracle otherwise —
+	// any tier-2 admin can ask arbitrary {did, orgSlug, method,
+	// target} combinations across the cluster.
+	if c.GetString("auth_method") == "jwt_admin" {
+		// Resolve target org from request (OrgID preferred, OrgSlug fallback).
+		var targetOrgID string
+		switch {
+		case req.OrgID != "":
+			targetOrgID = req.OrgID
+		case req.OrgSlug != "":
+			org, err := s.db.GetOrganizationBySlug(c.Request.Context(), req.OrgSlug)
+			if err != nil {
+				slog.Error("check access: org-by-slug failed", "slug", req.OrgSlug, "err", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve org"})
+				return
+			}
+			if org == nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+				return
+			}
+			targetOrgID = org.ID
+		default:
+			// No org specified — disallow probing for JWT admins.
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+		if !inScope(c, targetOrgID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			return
+		}
+		// Also clamp the probed user — caller must share an org with them.
+		if req.UserExternalID != "" {
+			user, err := s.db.GetUserByExternalID(c.Request.Context(), req.UserExternalID)
+			if err == nil && user != nil {
+				if !s.requireUserInCallerScope(c, user.ID) {
+					return
+				}
+			}
+		}
 	}
 
 	result, err := s.rbacAccessCtrl.CheckAccess(c.Request.Context(), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("check access: resolve failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check access"})
 		return
 	}
 	c.JSON(http.StatusOK, result)
 }
 
 func (s *Server) getCacheStats(c *gin.Context) {
+	// Cache statistics expose cross-org cardinality. Restrict to
+	// super-admin (cluster-wide observability tooling).
+	if !requireSuperAdmin(c) {
+		return
+	}
 	stats := s.rbacAccessCtrl.CacheStats()
 	c.JSON(http.StatusOK, stats)
 }
@@ -464,11 +698,96 @@ func (s *Server) getCacheStats(c *gin.Context) {
 // getEthAddressCollisions lists ETH addresses linked to more than one DID.
 // These may indicate intentional key sharing (e.g. shared deployer wallets)
 // or a key-compromise event and should be reviewed by an administrator.
+//
+// Audit H5: pre-fix this returned every (eth_address, [DIDs]) collision
+// across the system. A tier-2 admin in Org A could read DIDs and
+// addresses from Org B users. Now restricted to super-admin (the only
+// caller who legitimately needs the cluster-wide list); JWT admins
+// receive only collisions involving at least one user in their org
+// scope.
 func (s *Server) getEthAddressCollisions(c *gin.Context) {
 	collisions, err := s.db.GetAddressLinkCollisions(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("collisions: db read failed", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read collisions"})
 		return
 	}
+	if c.GetString("auth_method") == "jwt_admin" {
+		// Build allowed set of user IDs (members of any caller-scoped org).
+		allowedOrgs := map[string]struct{}{}
+		if ids, ok := c.Get("admin_org_ids"); ok {
+			if list, ok := ids.([]string); ok {
+				for _, id := range list {
+					allowedOrgs[id] = struct{}{}
+				}
+			}
+		}
+		if ids, ok := c.Get("admin_readonly_org_ids"); ok {
+			if list, ok := ids.([]string); ok {
+				for _, id := range list {
+					allowedOrgs[id] = struct{}{}
+				}
+			}
+		}
+		filtered := make([]*db.AddressLinkCollision, 0, len(collisions))
+		for _, col := range collisions {
+			// Keep the row if any of its DIDs maps to a user with
+			// membership in an allowed org.
+			keep := false
+			for _, did := range col.DIDs {
+				user, err := s.db.GetUserByExternalID(c.Request.Context(), did)
+				if err != nil || user == nil {
+					continue
+				}
+				orgIDs, err := s.rbacAccessCtrl.GetUserOrgIDs(c.Request.Context(), user.ID)
+				if err != nil {
+					continue
+				}
+				for _, orgID := range orgIDs {
+					if _, ok := allowedOrgs[orgID]; ok {
+						keep = true
+						break
+					}
+				}
+				if keep {
+					break
+				}
+			}
+			if keep {
+				filtered = append(filtered, col)
+			}
+		}
+		collisions = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{"collisions": collisions, "count": len(collisions)})
+}
+
+// inScope returns true if the JWT-admin caller has full or read-only
+// admin privileges on orgID. For super-admin / dev mode, always true.
+func inScope(c *gin.Context, orgID string) bool {
+	if c.GetString("auth_method") != "jwt_admin" {
+		return true
+	}
+	if orgID == "" {
+		return false
+	}
+	if ids, ok := c.Get("admin_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				if id == orgID {
+					return true
+				}
+			}
+		}
+	}
+	if ids, ok := c.Get("admin_readonly_org_ids"); ok {
+		if list, ok := ids.([]string); ok {
+			for _, id := range list {
+				if id == orgID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

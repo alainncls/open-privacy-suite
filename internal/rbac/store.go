@@ -142,6 +142,16 @@ type Store interface {
 	DeleteSharedInfrastructure(ctx context.Context, address string) error
 }
 
+// OrgAdminChecker is an optional extension implemented by the
+// production DB layer (db.DB.IsOrgAdmin). Used by AccessController to
+// determine whether a JWT-authenticated user has org-admin status for
+// the historical-state guard (M9). Returns (isAdmin, orgIDs, err) so
+// the implementation can also surface the admin's org list, though
+// the access controller only consumes the boolean.
+type OrgAdminChecker interface {
+	IsOrgAdmin(ctx context.Context, userID string) (bool, []string, error)
+}
+
 // AuditAction constants for audit logging.
 const (
 	AuditActionCreate = "create"
@@ -153,12 +163,25 @@ const (
 
 // ResourceType constants for audit logging.
 const (
-	ResourceTypeOrganization          = "organization"
-	ResourceTypeGroup                 = "group"
-	ResourceTypeUser                  = "user"
-	ResourceTypeMembership            = "membership"
-	ResourceTypeContract              = "contract"
-	ResourceTypeGrant                 = "grant"
-	ResourceTypeAccess                = "access"
-	ResourceTypePreregisteredAddress  = "preregistered_address"
+	ResourceTypeOrganization         = "organization"
+	ResourceTypeGroup                = "group"
+	ResourceTypeUser                 = "user"
+	ResourceTypeMembership           = "membership"
+	ResourceTypeContract             = "contract"
+	ResourceTypeGrant                = "grant"
+	ResourceTypeAccess               = "access"
+	ResourceTypePreregisteredAddress = "preregistered_address"
+
+	// Compliance / disclosure / SSO surfaces — audit-log every mutation
+	// for ISO 27001 A.5.25 / A.8.16 evidence (see security audit M2).
+	ResourceTypeCompliance         = "compliance"
+	ResourceTypeTokenPrice         = "token_price"
+	ResourceTypeSanction           = "sanction"
+	ResourceTypeTravelRule         = "travel_rule_record"
+	ResourceTypeAddressThreshold   = "address_threshold"
+	ResourceTypeBaseCurrency       = "base_currency"
+	ResourceTypeAzureTenant        = "azure_tenant"
+	ResourceTypeDisclosureRequest  = "disclosure_request"
+	ResourceTypeDisclosureGrant    = "disclosure_grant"
+	ResourceTypeSession            = "session"
 )

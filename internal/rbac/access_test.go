@@ -3418,6 +3418,11 @@ func TestAnonymousAccess_DBSourced(t *testing.T) {
 	store.groupAccess[AnonymousGroupID].AllowedMethods = append(
 		store.groupAccess[AnonymousGroupID].AllowedMethods, "eth_call",
 	)
+	// L9: the access path caches the anonymous row briefly (5s default
+	// in production) — admin handlers call InvalidateAnonymousAccess
+	// after writes. The test mutates the mock store directly so we
+	// must do the same.
+	controller.InvalidateAnonymousAccess()
 	res, err = controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_call"})
 	if err != nil || !res.Allowed {
 		t.Fatalf("eth_call should be allowed after adding it to AllowedMethods: err=%v allowed=%v", err, res.Allowed)
@@ -3425,6 +3430,7 @@ func TestAnonymousAccess_DBSourced(t *testing.T) {
 
 	// Remove the row entirely — fail closed. Anonymous gets nothing.
 	delete(store.groupAccess, AnonymousGroupID)
+	controller.InvalidateAnonymousAccess()
 	res, err = controller.CheckAccess(ctx, &AccessCheckRequest{Method: "eth_blockNumber"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

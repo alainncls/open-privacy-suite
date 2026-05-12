@@ -70,6 +70,17 @@ func JWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.Handler
 }
 
 // OptionalJWTAuthMiddleware validates JWT if present, but allows anonymous requests.
+//
+// L5 (security audit): the middleware previously trusted CheckAccess
+// downstream to enforce the banned-user check. That made the property
+// "no banned user can act through this proxy" depend on every JSON-RPC
+// consumer piping through CheckAccess — easy to silently regress when
+// a future feature reuses OptionalJWT for a new endpoint. Now Banned
+// is enforced here when the RevocationChecker also implements the
+// BannedChecker extension; the regular *db.DB satisfies both so the
+// production path is upgraded automatically. Implementations that
+// only satisfy RevocationChecker (test fixtures) keep the previous
+// behaviour.
 func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -112,6 +123,19 @@ func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin
 				c.Abort()
 				return
 			}
+			if banChk, ok := db.(BannedChecker); ok {
+				banned, err := banChk.IsUserBannedBySubject(c.Request.Context(), claims.Subject)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check user ban status"})
+					c.Abort()
+					return
+				}
+				if banned {
+					c.JSON(http.StatusForbidden, gin.H{"error": "user is banned"})
+					c.Abort()
+					return
+				}
+			}
 		}
 
 		c.Set("subject", claims.Subject)
@@ -125,6 +149,14 @@ func OptionalJWTAuthMiddleware(jwtService *JWTService, db RevocationChecker) gin
 // RevocationChecker interface for checking token revocation
 type RevocationChecker interface {
 	IsAccessTokenRevoked(ctx context.Context, tokenID string) (bool, error)
+}
+
+// BannedChecker is an optional extension to RevocationChecker that
+// lets OptionalJWTAuthMiddleware enforce user bans at the auth
+// boundary. The production *db.DB type implements it; test fixtures
+// that don't are not affected.
+type BannedChecker interface {
+	IsUserBannedBySubject(ctx context.Context, subject string) (bool, error)
 }
 
 // getTokenID generates a hash ID from token string for revocation tracking

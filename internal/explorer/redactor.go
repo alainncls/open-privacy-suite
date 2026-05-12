@@ -271,9 +271,19 @@ func extractUniqueAddresses(txs []Transaction) []string {
 // than in the tx-level "to" field (e.g., ERC20 transfer(address,uint256)).
 //
 // Supported function selectors:
-//   - 0xa9059cbb: transfer(address to, uint256 amount)      — to at bytes 4-36
-//   - 0x23b872dd: transferFrom(address from, address to, uint256 amount) — from at 4-36, to at 36-68
-//   - 0x095ea7b3: approve(address spender, uint256 amount)  — spender at bytes 4-36
+//   - ERC-20  0xa9059cbb: transfer(address to, uint256 amount)
+//   - ERC-20  0x23b872dd: transferFrom(address from, address to, uint256 amount)
+//   - ERC-20  0x095ea7b3: approve(address spender, uint256 amount)
+//   - ERC-721 0x42842e0e: safeTransferFrom(address from, address to, uint256 tokenId)
+//   - ERC-721 0xb88d4fde: safeTransferFrom(address from, address to, uint256 tokenId, bytes data)
+//   - ERC-721 0xa22cb465: setApprovalForAll(address operator, bool approved)
+//   - ERC-1155 0xf242432a: safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)
+//   - ERC-1155 0x2eb2c2d6: safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)
+//
+// M14: pre-fix this covered only the three ERC-20 selectors. Viewers
+// who were encoded recipients of ERC-721 / ERC-1155 transfers silently
+// lost the participant override — they saw [PRIVATE] for transactions
+// where they were the actual counterparty.
 func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
 	if len(viewerAddrs) == 0 || len(inputData) < 8 {
 		return false
@@ -302,12 +312,21 @@ func isViewerInCalldata(inputData string, viewerAddrs map[string]bool) bool {
 	}
 
 	switch selector {
+	// ERC-20
 	case "0xa9059cbb": // transfer(address,uint256) — param 0 is recipient
 		return viewerAddrs[extractAddr(0)]
-	case "0x23b872dd": // transferFrom(address,address,uint256) — param 0 is from, param 1 is to
+	case "0x23b872dd": // transferFrom(address,address,uint256) — params 0,1
 		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
 	case "0x095ea7b3": // approve(address,uint256) — param 0 is spender
 		return viewerAddrs[extractAddr(0)]
+	// ERC-721 (same shape; from/to at params 0,1)
+	case "0x42842e0e", "0xb88d4fde":
+		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
+	case "0xa22cb465": // setApprovalForAll(address,bool)
+		return viewerAddrs[extractAddr(0)]
+	// ERC-1155 (from/to at params 0,1)
+	case "0xf242432a", "0x2eb2c2d6":
+		return viewerAddrs[extractAddr(0)] || viewerAddrs[extractAddr(1)]
 	}
 	return false
 }

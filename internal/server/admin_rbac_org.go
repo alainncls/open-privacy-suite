@@ -175,7 +175,7 @@ func (s *Server) createOrganization(c *gin.Context) {
 		return
 	}
 
-	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionCreate, rbac.ResourceTypeOrganization, org.ID, org.Name, org.ID,
 		nil,
 		map[string]any{"slug": org.Slug, "name": org.Name})
 
@@ -256,7 +256,7 @@ func (s *Server) updateOrganization(c *gin.Context) {
 		return
 	}
 
-	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeOrganization, org.ID, org.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeOrganization, org.ID, org.Name, org.ID,
 		oldValue,
 		map[string]any{"slug": org.Slug, "name": org.Name})
 
@@ -309,7 +309,7 @@ func (s *Server) deleteOrganization(c *gin.Context) {
 	// Invalidate cache for this organization
 	s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
 
-	s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeOrganization, org.ID, org.Name,
+	s.recordAuditActionScoped(c, rbac.AuditActionDelete, rbac.ResourceTypeOrganization, org.ID, org.Name, org.ID,
 		map[string]any{"slug": org.Slug, "name": org.Name},
 		nil)
 

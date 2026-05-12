@@ -5,14 +5,27 @@ import (
 	"strings"
 
 	"privacy-proxy/internal/db"
+	"privacy-proxy/internal/rbac"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 // Azure Tenant admin handlers
+//
+// Audit C4: every endpoint here is a cluster-wide primitive — a
+// tier-2 admin in Org A creating an Azure tenant entry with
+// default_org_id=B + auto_provision=true escalates themselves to
+// admin of Org B via Azure SSO. Deleting a tenant entry triggers
+// BanUsersByTenantID which mass-bans every user authenticated
+// through that Azure tenant regardless of org. Restrict to
+// super-admin (X-Admin-Token) for every mutation; reads also
+// restricted because the entries reveal the cluster's SSO topology.
 
 func (s *Server) listAzureTenants(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	tenants, err := s.db.ListAllowedAzureTenants(c.Request.Context())
 	if err != nil {
 		slog.Error("failed to list Azure tenants", "error", err)
@@ -23,6 +36,9 @@ func (s *Server) listAzureTenants(c *gin.Context) {
 }
 
 func (s *Server) createAzureTenant(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	var input struct {
 		TenantID       string  `json:"tenant_id" binding:"required"`
 		Label          string  `json:"label"`
@@ -84,10 +100,23 @@ func (s *Server) createAzureTenant(c *gin.Context) {
 		return
 	}
 
+	s.recordAuditAction(c, rbac.AuditActionCreate, rbac.ResourceTypeAzureTenant, result.ID, result.TenantID,
+		nil,
+		map[string]any{
+			"tenant_id":        result.TenantID,
+			"label":            result.Label,
+			"default_org_id":   result.DefaultOrgID,
+			"default_group_id": result.DefaultGroupID,
+			"auto_provision":   result.AutoProvision,
+		})
+
 	respondCreated(c, result)
 }
 
 func (s *Server) getAzureTenant(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	id := c.Param("id")
 	tenant, err := s.db.GetAllowedAzureTenant(c.Request.Context(), id)
 	if err != nil {
@@ -103,6 +132,9 @@ func (s *Server) getAzureTenant(c *gin.Context) {
 }
 
 func (s *Server) updateAzureTenant(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	id := c.Param("id")
 
 	tenant, err := s.db.GetAllowedAzureTenant(c.Request.Context(), id)
@@ -175,6 +207,14 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 		}
 	}
 
+	before := map[string]any{
+		"tenant_id":        tenant.TenantID,
+		"label":            tenant.Label,
+		"default_org_id":   tenant.DefaultOrgID,
+		"default_group_id": tenant.DefaultGroupID,
+		"auto_provision":   tenant.AutoProvision,
+	}
+
 	result, err := s.db.UpdateAllowedAzureTenant(c.Request.Context(), tenant)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -186,10 +226,23 @@ func (s *Server) updateAzureTenant(c *gin.Context) {
 		return
 	}
 
+	s.recordAuditAction(c, rbac.AuditActionUpdate, rbac.ResourceTypeAzureTenant, result.ID, result.TenantID,
+		before,
+		map[string]any{
+			"tenant_id":        result.TenantID,
+			"label":            result.Label,
+			"default_org_id":   result.DefaultOrgID,
+			"default_group_id": result.DefaultGroupID,
+			"auto_provision":   result.AutoProvision,
+		})
+
 	respondOK(c, result)
 }
 
 func (s *Server) deleteAzureTenant(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
 	id := c.Param("id")
 
 	// Look up the tenant to get its Azure tenant_id before deleting
@@ -228,6 +281,18 @@ func (s *Server) deleteAzureTenant(c *gin.Context) {
 	} else if revoked > 0 {
 		slog.Info("revoked refresh tokens for deleted Azure tenant", "count", revoked, "tenant_id", tenant.TenantID)
 	}
+
+	s.recordAuditAction(c, rbac.AuditActionDelete, rbac.ResourceTypeAzureTenant, tenant.ID, tenant.TenantID,
+		map[string]any{
+			"tenant_id":        tenant.TenantID,
+			"label":            tenant.Label,
+			"default_org_id":   tenant.DefaultOrgID,
+			"default_group_id": tenant.DefaultGroupID,
+			"auto_provision":   tenant.AutoProvision,
+			"users_banned":     banned,
+			"tokens_revoked":   revoked,
+		},
+		nil)
 
 	respondDeleted(c, "azure tenant")
 }

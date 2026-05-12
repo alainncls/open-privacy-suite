@@ -795,6 +795,26 @@ func (d *DB) IsAccessTokenRevoked(ctx context.Context, tokenID string) (bool, er
 	return exists, nil
 }
 
+// IsUserBannedBySubject reports whether the user identified by subject
+// (DID / JWT subject claim) is banned. Used by OptionalJWTAuthMiddleware
+// (security audit L5) to fail-closed at the auth boundary rather than
+// relying on every downstream consumer to call CheckAccess.
+//
+// Returns (false, nil) for "no such user" so we don't leak account
+// existence to the caller via timing.
+func (d *DB) IsUserBannedBySubject(ctx context.Context, subject string) (bool, error) {
+	const query = `SELECT banned FROM users WHERE external_id = $1 LIMIT 1`
+	var banned bool
+	err := d.conn.QueryRowContext(ctx, query, subject).Scan(&banned)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check banned status: %w", err)
+	}
+	return banned, nil
+}
+
 // CleanupExpiredTokens removes expired tokens from the database
 func (d *DB) CleanupExpiredTokens(ctx context.Context) error {
 	// Use current time from Go to ensure consistency with how tokens are stored

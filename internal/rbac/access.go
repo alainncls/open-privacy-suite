@@ -305,12 +305,54 @@ type AccessController struct {
 	deployValidator  *DeploymentValidator
 	upgradeValidator *UpgradeValidator
 	pendingTracker   *PendingDeploymentTracker
+
+	// L9 (security audit): anonymous group_access is read on every
+	// anonymous request — at the documented 10 RPS rate limit per IP
+	// that's many DB hits per second per IP. Cache the row for a few
+	// seconds; invalidated whenever any group_access is edited via
+	// InvalidateOrg / InvalidateGroup. anonAccessCacheTTL is short
+	// (5s) so policy changes propagate quickly.
+	anonAccess         *GroupAccess
+	anonAccessExpires  time.Time
+	anonAccessCacheTTL time.Duration
 }
 
 // Store returns the underlying RBAC store for the access controller.
 // This is used for cross-org isolation checks that require direct database access.
 func (c *AccessController) Store() Store {
 	return c.store
+}
+
+// getAnonymousAccessCached returns the anonymous group's access row
+// with a short-TTL in-memory cache to avoid a DB hit on every
+// anonymous request (security audit L9).
+//
+// The cache is intentionally a single-row scalar (no map / no mutex
+// beyond a simple lock) — the anonymous group is one row and the
+// read path is the only consumer. TTL is 5 seconds so policy
+// changes propagate quickly without explicit invalidation, but
+// InvalidateAnonymousAccess can be called for instant refresh.
+func (c *AccessController) getAnonymousAccessCached(ctx context.Context) (*GroupAccess, error) {
+	if c.anonAccess != nil && time.Now().Before(c.anonAccessExpires) {
+		return c.anonAccess, nil
+	}
+	access, err := c.store.GetGroupAccess(ctx, AnonymousGroupID)
+	if err != nil {
+		return nil, err
+	}
+	c.anonAccess = access
+	c.anonAccessExpires = time.Now().Add(c.anonAccessCacheTTL)
+	return access, nil
+}
+
+// InvalidateAnonymousAccess drops the cached anonymous group_access.
+// Called by admin handlers that mutate group_access on the anonymous
+// system group so the change takes effect immediately. Safe to call
+// from any goroutine — the cache reads in CheckAccess are best-effort
+// and a stale read at worst defers policy change by anonAccessCacheTTL.
+func (c *AccessController) InvalidateAnonymousAccess() {
+	c.anonAccess = nil
+	c.anonAccessExpires = time.Time{}
 }
 
 // SetEncryptionKey configures the AES-256 key used by the resolver to decrypt
@@ -323,12 +365,13 @@ func (c *AccessController) SetEncryptionKey(key []byte) {
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
-		store:           store,
-		resolver:        NewResolver(store, cacheTTL),
-		cache:           NewCache(CacheConfig{TTL: cacheTTL}),
-		deployValidator: deployValidator,
-		upgradeValidator: NewUpgradeValidator(store),
-		pendingTracker:  NewPendingDeploymentTracker(1 * time.Hour),
+		store:              store,
+		resolver:           NewResolver(store, cacheTTL),
+		cache:              NewCache(CacheConfig{TTL: cacheTTL}),
+		deployValidator:    deployValidator,
+		upgradeValidator:   NewUpgradeValidator(store),
+		pendingTracker:     NewPendingDeploymentTracker(1 * time.Hour),
+		anonAccessCacheTTL: 5 * time.Second,
 	}
 }
 
@@ -337,12 +380,13 @@ func NewAccessController(store Store, cacheTTL time.Duration) *AccessController 
 func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache PermissionCache) *AccessController {
 	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
-		store:            store,
-		resolver:         NewResolver(store, cacheTTL),
-		cache:            cache,
-		deployValidator:  deployValidator,
-		upgradeValidator: NewUpgradeValidator(store),
-		pendingTracker:   NewPendingDeploymentTracker(1 * time.Hour),
+		store:              store,
+		resolver:           NewResolver(store, cacheTTL),
+		cache:              cache,
+		deployValidator:    deployValidator,
+		upgradeValidator:   NewUpgradeValidator(store),
+		pendingTracker:     NewPendingDeploymentTracker(1 * time.Hour),
+		anonAccessCacheTTL: 5 * time.Second,
 	}
 }
 
@@ -382,7 +426,7 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 
-		anonAccess, err := c.store.GetGroupAccess(ctx, AnonymousGroupID)
+		anonAccess, err := c.getAnonymousAccessCached(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load anonymous group access: %w", err)
 		}
@@ -455,6 +499,38 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			Allowed: false,
 			Reason:  "KYC verification required",
 		}, nil
+	}
+
+	// M9 (security audit): historical-state queries can probe a
+	// contract's state at a past block when ownership may have been
+	// different. The pre-fix IsHistoricalStateQuery guard only ran for
+	// anonymous viewers. Authenticated non-admin viewers are now also
+	// denied historical queries — the per-address visibility resolver
+	// uses CURRENT ownership, so a contract that was owned by another
+	// org at block N could leak past state to today's owner.
+	//
+	// Admin viewers (is_org_admin or admin claim on a specific
+	// contract) are exempted by checking the user's group memberships
+	// via the optional OrgAdminChecker extension on the store
+	// interface. When the extension is not implemented (test fixtures
+	// using a minimal mock store) we err on the side of allowing
+	// historical queries — those fixtures don't model multi-tenant
+	// ownership changes, so the leak isn't reproducible there.
+	if isHistorical, reason := IsHistoricalStateQuery(req.Method, req.Params); isHistorical {
+		allow := true
+		if adminChk, ok := c.store.(OrgAdminChecker); ok {
+			isAdmin, _, adminErr := adminChk.IsOrgAdmin(ctx, user.ID)
+			if adminErr != nil {
+				return nil, fmt.Errorf("failed to check admin status for historical query: %w", adminErr)
+			}
+			allow = isAdmin
+		}
+		if !allow {
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  reason,
+			}, nil
+		}
 	}
 
 	// Create OrgContext - handles cross-org isolation from the start

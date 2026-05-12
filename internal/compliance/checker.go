@@ -86,10 +86,13 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 		if sanctionedSpender {
 			reason := fmt.Sprintf("transaction sender %s is sanctioned", req.From)
 			slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
-			// M2: Denial decisions — warn on log failure but still deny. The tx is already
-			// blocked, so a missing audit entry is less severe than letting it through.
+			// M11: denial paths previously warned on log failure and
+			// still returned deny — escalate to slog.Error and surface
+			// a retryable internal-error so the audit row can be
+			// persisted on retry.
 			if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-				slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
+				slog.Error("compliance: failed to persist denial log, failing closed retryable", "org", req.OrgID, "user", req.UserID, "error", err)
+				return nil, fmt.Errorf("compliance audit log unavailable")
 			}
 			return &CheckResult{
 				Allowed:      false,
@@ -106,9 +109,13 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	if sanctionedTo {
 		reason := fmt.Sprintf("recipient address %s is sanctioned", info.ToAddress)
 		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
-		// M2: Denial — warn on log failure, still deny.
+		// M11: denial paths previously warned on log failure and still
+		// returned deny, leaving no forensic row for ISO 27001 / FATF
+		// evidence. Escalate to slog.Error and surface a retryable
+		// internal-error so the audit row can be persisted on retry.
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
+			slog.Error("compliance: failed to persist denial log, failing closed retryable", "org", req.OrgID, "user", req.UserID, "error", err)
+			return nil, fmt.Errorf("compliance audit log unavailable")
 		}
 		return &CheckResult{
 			Allowed:      false,
@@ -124,9 +131,13 @@ func (c *Checker) Check(ctx context.Context, req *CheckRequest) (*CheckResult, e
 	if sanctionedFrom {
 		reason := fmt.Sprintf("sender address %s is sanctioned", info.FromAddress)
 		slog.Warn("compliance denied", "org", req.OrgID, "user", req.UserID, "reason", reason)
-		// M2: Denial — warn on log failure, still deny.
+		// M11: denial paths previously warned on log failure and still
+		// returned deny, leaving no forensic row for ISO 27001 / FATF
+		// evidence. Escalate to slog.Error and surface a retryable
+		// internal-error so the audit row can be persisted on retry.
 		if err := c.logDecision(ctx, req, info, nil, nil, "denied", reason, nil, currency); err != nil {
-			slog.Warn("failed to log denial decision", "org", req.OrgID, "user", req.UserID, "error", err)
+			slog.Error("compliance: failed to persist denial log, failing closed retryable", "org", req.OrgID, "user", req.UserID, "error", err)
+			return nil, fmt.Errorf("compliance audit log unavailable")
 		}
 		return &CheckResult{
 			Allowed:      false,
