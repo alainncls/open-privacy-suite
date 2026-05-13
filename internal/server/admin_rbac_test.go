@@ -66,6 +66,13 @@ func setupTestServerForRBAC(t *testing.T) *testServerRBAC {
 	conn.ExecContext(ctx, "DELETE FROM groups")
 	conn.ExecContext(ctx, "DELETE FROM users")
 	conn.ExecContext(ctx, "DELETE FROM organizations")
+	// Hot-path visibility tables — tx_visible_to has UNIQUE(tx_hash) and
+	// SaveTxVisibility ON CONFLICT DO NOTHING (M7), so a row left over from a
+	// previous test silently absorbs subsequent SaveTxVisibility calls with
+	// the same tx_hash and the new viewer DIDs never land. Same hazard for
+	// pending_tx_visibility (M7 outbox). Must wipe per-test.
+	conn.ExecContext(ctx, "DELETE FROM tx_visible_to")
+	conn.ExecContext(ctx, "DELETE FROM pending_tx_visibility")
 
 	t.Cleanup(func() {
 		database.Close()

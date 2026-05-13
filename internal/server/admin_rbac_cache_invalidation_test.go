@@ -91,8 +91,21 @@ func TestCacheInvalidation_MembershipToggle(t *testing.T) {
 	require.Equal(t, 1, server.rbacAccessCtrl.CacheStats().Entries,
 		"in-memory cache should have exactly one entry after CheckAccess")
 
+	// Wait for the resolver's fire-and-forget cache write to land before we
+	// trigger the invalidation. Without this barrier the goroutine started by
+	// CheckAccess (resolver.go:118 — `go r.store.SetCachedPermissions(...)`)
+	// can run AFTER the DELETE handler, resurrecting the cache row and
+	// producing a flaky "DB permission cache must be cleared" failure on CI
+	// (race detector slows goroutine scheduling enough to make it observable).
+	require.Eventually(t, func() bool {
+		cached, err := server.db.GetCachedPermissions(ctx, user.ID, org.ID)
+		return err == nil && cached != nil
+	}, 5*time.Second, 10*time.Millisecond,
+		"resolver fire-and-forget cache write should land before invalidation test")
+
 	// Seed the DB cache synchronously so we can reliably observe invalidation.
-	// (The resolver's cache write is fire-and-forget, racy to assert on.)
+	// (The Eventually above guarantees the goroutine is done; this upsert
+	// gives us a stable row identity for the post-delete assertion.)
 	seedDBCache(t, server, user.ID, org.ID)
 	dbCached, err := server.db.GetCachedPermissions(ctx, user.ID, org.ID)
 	require.NoError(t, err)
