@@ -143,14 +143,37 @@ type VisibleToUnlockResolver interface {
 	Resolve(ctx context.Context, viewerDID string, addresses []string) map[string]bool
 }
 
+// DynamicPayloadAllowedResolver returns, for a batch of contract
+// addresses, the subset whose operator has explicitly opted out of the
+// M15 dynamic-payload drop gate (`events_allow_dynamic_payload = true`).
+// Mirrors the JSON-RPC layer's storeABIProvider.IsEventsAllowDynamicPayload
+// so both layers honour the same operator attestation per contract —
+// required by the access/visibility symmetry invariant in
+// REDACTION_SPEC.md.
+//
+// Returns a lowercase-address → bool map. Missing or false entries
+// mean "drop dynamic-payload events for non-Full viewers" (close-by-
+// default). True means "operator attests the dynamic payload is safe;
+// pass through" — used for standard ERC-20 / ERC-721 contracts where
+// `string symbol` / `bytes metadata` cannot contain foreign-org address
+// material.
+//
+// Implementations MUST scope reads to the canonical contracts table by
+// address; cross-org leakage is impossible here because the gate is a
+// contract-level attestation, not a viewer-level one.
+type DynamicPayloadAllowedResolver interface {
+	Resolve(ctx context.Context, addresses []string) map[string]bool
+}
+
 // RedactionEngine handles the bulk redaction of explorer data based on user grants
 type RedactionEngine struct {
-	store                   ContractStore
-	db                      Database // The main privacy proxy DB for RBAC checks
-	eventRuleChecker        EventRuleChecker
-	abiResolver             ABIResolver
-	adminContractsResolver  AdminContractsResolver
-	visibleToUnlockResolver VisibleToUnlockResolver
+	store                         ContractStore
+	db                            Database // The main privacy proxy DB for RBAC checks
+	eventRuleChecker              EventRuleChecker
+	abiResolver                   ABIResolver
+	adminContractsResolver        AdminContractsResolver
+	visibleToUnlockResolver       VisibleToUnlockResolver
+	dynamicPayloadAllowedResolver DynamicPayloadAllowedResolver
 }
 
 // Database interface for the methods RedactionEngine needs from the main DB
@@ -205,6 +228,21 @@ func (r *RedactionEngine) SetAdminContractsResolver(resolver AdminContractsResol
 // behaviour. Production server startup wires it.
 func (r *RedactionEngine) SetVisibleToUnlockResolver(resolver VisibleToUnlockResolver) {
 	r.visibleToUnlockResolver = resolver
+}
+
+// SetDynamicPayloadAllowedResolver wires the M15 per-contract opt-out
+// resolver. When set, Phase 4 of RedactLogs drops logs whose matching
+// event declares any dynamic non-indexed parameter for contracts where
+// the operator has NOT opted out — close-by-default. Mirrors the
+// JSON-RPC layer's storeABIProvider.IsEventsAllowDynamicPayload so both
+// layers agree per contract.
+//
+// Without this resolver wired, the M15 drop gate stays disabled —
+// dynamic-payload events pass through unredacted. Production server
+// startup MUST wire it; legacy tests without explicit M15 coverage skip
+// the gate.
+func (r *RedactionEngine) SetDynamicPayloadAllowedResolver(resolver DynamicPayloadAllowedResolver) {
+	r.dynamicPayloadAllowedResolver = resolver
 }
 
 // SetABIResolver wires the unified ABI resolver (RD-889 / Stage 2 of the
@@ -917,6 +955,77 @@ func redactTopicField(topic *string, visMap VisibilityMap) *string {
 	return &redacted
 }
 
+// eventHasDynamicNonIndexedParam mirrors rbac.eventHasDynamicNonIndexedParam:
+// reports whether the event matching topic0 in contractABI declares any
+// non-indexed parameter of a dynamically-sized ABI type (`bytes`,
+// `string`, dynamic arrays / fixed arrays of dynamic types, or tuples
+// containing any dynamic field).
+//
+// Drives the M15 drop gate (security audit follow-up to RD-915). When
+// true, the redactor drops the entire log for non-Full viewers (unless
+// the contract is opted out via DynamicPayloadAllowedResolver, or the
+// viewer has an admin / participant / visibleTo bypass — those resolve
+// before this check).
+//
+// Conservatively returns false on ABI parse failure or unknown topic0
+// — at that point the deny-when-no-ABI gate (RD-889) has already taken
+// over.
+func eventHasDynamicNonIndexedParam(contractABI json.RawMessage, topic0 string) bool {
+	if len(contractABI) == 0 || topic0 == "" {
+		return false
+	}
+	parsed, err := abi.JSON(strings.NewReader(string(contractABI)))
+	if err != nil {
+		return false
+	}
+	topic0Lower := strings.ToLower(topic0)
+	var matched *abi.Event
+	for _, ev := range parsed.Events {
+		sig := "0x" + hex.EncodeToString(crypto.Keccak256([]byte(ev.Sig)))
+		if strings.ToLower(sig) == topic0Lower {
+			ev := ev
+			matched = &ev
+			break
+		}
+	}
+	if matched == nil {
+		return false
+	}
+	for _, inp := range matched.Inputs {
+		if inp.Indexed {
+			continue
+		}
+		if isDynamicABIType(inp.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDynamicABIType mirrors rbac.isDynamicABIType — bytes / string /
+// slice / array-of-dynamic / tuple-with-any-dynamic are dynamic; fixed
+// types (bytesN, intN, uintN, bool, address, function, hash) are static.
+func isDynamicABIType(t abi.Type) bool {
+	switch t.T {
+	case abi.StringTy, abi.BytesTy, abi.SliceTy:
+		return true
+	case abi.ArrayTy:
+		if t.Elem == nil {
+			return false
+		}
+		return isDynamicABIType(*t.Elem)
+	case abi.TupleTy:
+		for _, ft := range t.TupleElems {
+			if ft != nil && isDynamicABIType(*ft) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // extractDataAddresses parses the ABI-encoded Data field of a log and returns the lowercase
 // "0x"-prefixed addresses found in any non-indexed address-typed parameter slots.
 // Returns nil if the ABI cannot be parsed, the event is not found, or no address params exist.
@@ -1315,6 +1424,20 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		unlockableContracts = r.visibleToUnlockResolver.Resolve(ctx, viewerDID, uniqueAddrs)
 	}
 
+	// Phase 3e (M15): resolve the per-contract dynamic-payload opt-out
+	// flag for emitting contracts. Drives the drop gate in Phase 4:
+	// events whose ABI declares any dynamic non-indexed param are
+	// dropped for non-Full viewers unless the contract is opted out
+	// (close-by-default). One DB pass per call.
+	allowDynamicPayload := map[string]bool{}
+	if r.dynamicPayloadAllowedResolver != nil && len(addrMap) > 0 {
+		uniqueAddrs := make([]string, 0, len(addrMap))
+		for a := range addrMap {
+			uniqueAddrs = append(uniqueAddrs, a)
+		}
+		allowDynamicPayload = r.dynamicPayloadAllowedResolver.Resolve(ctx, uniqueAddrs)
+	}
+
 	// Phase 4: apply redactions.
 	var result []Log
 	for _, l := range logs {
@@ -1370,6 +1493,55 @@ func (r *RedactionEngine) RedactLogsWithOpts(ctx context.Context, logs []Log, vi
 		// pre-RD-890 explorer-stricter-than-RPC asymmetry).
 		if r.abiResolver != nil && !adminContracts[contractAddr] {
 			if r.abiResolver.Resolve(ctx, contractAddr) == "" {
+				continue
+			}
+		}
+
+		// M15 dynamic-payload drop (security audit follow-up to RD-915):
+		// mirrors rbac.FilterEventLogs. When the emitting contract's
+		// matching event declares ANY dynamic non-indexed param
+		// (`bytes`, `string`, dynamic arrays, dynamic structs) and the
+		// operator has NOT opted out via `events_allow_dynamic_payload`,
+		// drop the log. Pre-M15 the static-slot scanner could not reach
+		// addresses embedded in dynamic payloads, so bridge / forwarder
+		// / smart-wallet contracts leaked foreign-org address material
+		// verbatim in their event data.
+		//
+		// Bypass precedence (only paths that fully skip the gate):
+		//   - Admins (Phase 3c) — admin already has full access in the
+		//     contract's owning org.
+		//   - visibleTo unlock (Phase 4 head, line ~1330) — early
+		//     return with no redaction, gate never reached.
+		// Participants and additive visibleTo viewers do NOT bypass:
+		// they get a level upgrade only, then hit this gate — drop
+		// fires for them too. Rationale: a dynamic payload can carry
+		// foreign-org addresses unrelated to the tx parties (e.g.,
+		// a relayer-pattern destination), and the static-slot scanner
+		// cannot reach them.
+		//
+		// Per-contract opt-out: admin-set flag, default FALSE
+		// (close-by-default). Operators flip it on standard ERC-20 /
+		// ERC-721 contracts where `string symbol` / `bytes metadata`
+		// cannot contain foreign-org address material.
+		//
+		// Anonymous events (no topic0) fall through this gate — the
+		// helper returns false. Anonymous events with dynamic payloads
+		// are blocked by event_rules deny-all below for non-admin
+		// viewers in any case.
+		if !adminContracts[contractAddr] && l.Topic0 != nil {
+			var abiForCheck json.RawMessage
+			if raw, ok := contractABIs[contractAddr]; ok && len(raw) > 0 {
+				abiForCheck = raw
+			} else if r.abiResolver != nil {
+				// Resolve on-demand for emitters that didn't go through
+				// the Phase 3 cache (e.g., level==Redacted contracts
+				// upgraded to Full by the participant override above).
+				if s := r.abiResolver.Resolve(ctx, contractAddr); s != "" {
+					abiForCheck = json.RawMessage(s)
+				}
+			}
+			if len(abiForCheck) > 0 && !allowDynamicPayload[contractAddr] &&
+				eventHasDynamicNonIndexedParam(abiForCheck, *l.Topic0) {
 				continue
 			}
 		}

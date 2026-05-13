@@ -266,6 +266,96 @@ func (s *Server) updateContractAllowVisibleToUnlock(c *gin.Context) {
 	c.JSON(http.StatusOK, contract)
 }
 
+// updateContractEventsAllowDynamicPayload toggles the per-contract
+// M15 opt-out for the dynamic-payload event drop gate (security audit
+// follow-up to RD-915).
+//
+// Body: {"events_allow_dynamic_payload": true|false}
+//
+// PUT /orgs/:org_id/contracts/:address/events-allow-dynamic-payload
+//
+// **Super-admin only** (X-Admin-Token). Tier-2 / tier-3 org admins
+// cannot flip this flag — it weakens a privacy default in a way that
+// affects every viewer of every event on the contract, and is not a
+// per-grant decision. Operating procedure: super-admin reviews the
+// contract's event ABI and confirms that its dynamic non-indexed
+// params cannot carry foreign-org address material before opting it
+// out. Default FALSE (close-by-default).
+//
+// Security: flipping to TRUE causes RedactLogs and FilterEventLogs to
+// pass dynamic-payload events through to non-Full viewers WITHOUT
+// scanning the payload for embedded private addresses. This is correct
+// for standard ERC-20 / ERC-721 contracts whose `string symbol`,
+// `string name`, or `bytes` metadata fields are static text — and
+// unsafe for bridge / forwarder / smart-wallet contracts that encode
+// foreign-org addresses inside `bytes` payloads. The pre-M15 default
+// (this flag effectively always true) is what the audit classified as
+// a leak.
+//
+// Audit-logged at ResourceTypeContract; the entry stores the before
+// and after state so ISO 27001 A.8.16 evidence is complete.
+func (s *Server) updateContractEventsAllowDynamicPayload(c *gin.Context) {
+	if !requireSuperAdmin(c) {
+		return
+	}
+	orgID := c.Param("org_id")
+	address := c.Param("address")
+
+	if !auth.IsValidAddress(address) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid Ethereum address format"})
+		return
+	}
+
+	contract, err := s.db.GetContractByAddress(c.Request.Context(), orgID, address)
+	if err != nil {
+		slog.Error("update events_allow_dynamic_payload: db read failed", "org", orgID, "addr", address, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read contract"})
+		return
+	}
+	if contract == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "contract not found"})
+		return
+	}
+
+	var input struct {
+		EventsAllowDynamicPayload *bool `json:"events_allow_dynamic_payload"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if input.EventsAllowDynamicPayload == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "events_allow_dynamic_payload is required"})
+		return
+	}
+
+	before := contract.EventsAllowDynamicPayload
+	if err := s.db.UpdateContractEventsAllowDynamicPayload(c.Request.Context(), contract.ID, *input.EventsAllowDynamicPayload); err != nil {
+		slog.Error("update events_allow_dynamic_payload: db write failed", "org", orgID, "addr", address, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update contract"})
+		return
+	}
+
+	// Invalidate org cache so the new flag takes effect on the next
+	// request. The resolver caches contract records along with grants;
+	// same pattern as updateContractAllowVisibleToUnlock.
+	if s.rbacAccessCtrl != nil {
+		s.rbacAccessCtrl.InvalidateOrg(c.Request.Context(), orgID)
+	}
+
+	s.recordAuditActionScoped(c, rbac.AuditActionUpdate, rbac.ResourceTypeContract, contract.ID, contract.Name, orgID,
+		map[string]any{
+			"events_allow_dynamic_payload": before,
+		},
+		map[string]any{
+			"events_allow_dynamic_payload": *input.EventsAllowDynamicPayload,
+			"address":                      contract.Address,
+		})
+
+	contract.EventsAllowDynamicPayload = *input.EventsAllowDynamicPayload
+	c.JSON(http.StatusOK, contract)
+}
+
 // listContractEvents parses the stored ABI and returns the list of events with
 // their topic0 hashes and parameter info. Used by the UI to show a human-readable
 // event picker for configuring event rules.

@@ -11,17 +11,24 @@ import (
 // storeABIProvider implements rbac.ABIProvider by looking up contract ABIs
 // from the RBAC store. It caches ABIs within a single request to avoid
 // repeated DB lookups.
+//
+// Also implements rbac.DynamicPayloadAllower (M15) — the per-contract
+// `events_allow_dynamic_payload` opt-out is read from the same Contract
+// row and cached alongside the ABI so the drop gate in FilterEventLogs
+// honours operator intent without an extra DB round-trip.
 type storeABIProvider struct {
-	store rbac.Store
-	ctx   context.Context
-	cache map[string]string // address -> ABI JSON (empty string if not found)
+	store               rbac.Store
+	ctx                 context.Context
+	cache               map[string]string // address -> ABI JSON (empty string if not found)
+	dynamicPayloadCache map[string]bool   // address -> events_allow_dynamic_payload
 }
 
 func newStoreABIProvider(ctx context.Context, store rbac.Store) *storeABIProvider {
 	return &storeABIProvider{
-		store: store,
-		ctx:   ctx,
-		cache: make(map[string]string),
+		store:               store,
+		ctx:                 ctx,
+		cache:               make(map[string]string),
+		dynamicPayloadCache: make(map[string]bool),
 	}
 }
 
@@ -33,11 +40,29 @@ func (p *storeABIProvider) GetContractABI(address string) string {
 	contract, err := p.store.GetContractByAddressGlobal(p.ctx, addr)
 	if err != nil || contract == nil {
 		p.cache[addr] = ""
+		p.dynamicPayloadCache[addr] = false
 		return ""
 	}
 	abi := rbac.ResolveContractABI(contract)
 	p.cache[addr] = abi
+	p.dynamicPayloadCache[addr] = contract.EventsAllowDynamicPayload
 	return abi
+}
+
+// IsEventsAllowDynamicPayload implements rbac.DynamicPayloadAllower
+// (M15). Returns the per-contract opt-out flag for the dynamic-payload
+// drop gate. Defaults to FALSE (close-by-default) when the contract is
+// unknown — same posture as the deny-when-no-ABI gate.
+//
+// Always calls GetContractABI first to populate the cache so the two
+// reads agree on the row. GetContractABI is idempotent and cached, so
+// the cost is one DB lookup per address per request.
+func (p *storeABIProvider) IsEventsAllowDynamicPayload(address string) bool {
+	addr := strings.ToLower(address)
+	if _, cached := p.cache[addr]; !cached {
+		_ = p.GetContractABI(addr)
+	}
+	return p.dynamicPayloadCache[addr]
 }
 
 // FilterLogsWithEventRules filters an eth_getLogs response using the unified

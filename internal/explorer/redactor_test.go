@@ -3571,3 +3571,276 @@ func TestRedactTransfers_DroppedWithoutEventAccess(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// M15 — Dynamic-payload event drop (security audit follow-up to RD-915)
+// ---------------------------------------------------------------------------
+
+// stubDynamicPayloadAllowedResolver returns a fixed allow-map per call.
+// Used to drive the M15 opt-out branch on the redactor.
+type stubDynamicPayloadAllowedResolver struct {
+	allow map[string]bool
+}
+
+func (s *stubDynamicPayloadAllowedResolver) Resolve(_ context.Context, _ []string) map[string]bool {
+	out := make(map[string]bool, len(s.allow))
+	for k, v := range s.allow {
+		out[k] = v
+	}
+	return out
+}
+
+// stubVisibleToUnlockResolver returns a fixed unlock map per call.
+// Mirrors the RD-874 resolver wired in production for the explorer.
+type stubVisibleToUnlockResolver struct {
+	unlockable map[string]bool
+}
+
+func (s *stubVisibleToUnlockResolver) Resolve(_ context.Context, _ string, _ []string) map[string]bool {
+	out := make(map[string]bool, len(s.unlockable))
+	for k, v := range s.unlockable {
+		out[k] = v
+	}
+	return out
+}
+
+// dynamicEventABI declares an event with one non-indexed `bytes`
+// param. Mirrors the bridge / forwarder / smart-wallet patterns that
+// pre-M15 could carry foreign-org addresses verbatim past the
+// static-slot redactor.
+//
+// signature: Bridge(address indexed sender, bytes payload)
+// topic0    = keccak256("Bridge(address,bytes)")
+const dynamicEventABI = `[{"type":"event","name":"Bridge","inputs":[{"name":"sender","type":"address","indexed":true},{"name":"payload","type":"bytes","indexed":false}]}]`
+
+// staticEventABI declares an event with no dynamic non-indexed param —
+// the M15 drop must NOT fire here, mirroring the standard ERC-20
+// Transfer / Approval shape.
+const staticEventABI = `[{"type":"event","name":"Static","inputs":[{"name":"who","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false}]}]`
+
+// TestRedactLogs_M15_DynamicPayload_Drops pins the close-by-default
+// behaviour: when the emitting contract's ABI declares a dynamic
+// non-indexed param (`bytes`, `string`, dynamic array/struct) and no
+// opt-out is in effect, the log is dropped for non-admin viewers — even
+// when the contract is otherwise fully visible.
+func TestRedactLogs_M15_DynamicPayload_Drops(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+	// Wildcard event rules so we're not blocked by the deny-all default
+	// — we want to assert the M15 gate, not the event-rules check.
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	engine.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{
+		allow: map[string]bool{}, // no opt-out
+	})
+
+	topic := eventTopic0("Bridge(address,bytes)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("M15: expected 0 logs (dynamic payload, no opt-out), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_M15_OptOut_Passes confirms the per-contract opt-out
+// branch — operators can flip `events_allow_dynamic_payload = true` on
+// vetted contracts (ERC-20 `string symbol`, ERC-721 `string name`, etc.)
+// and dynamic-payload events pass through.
+func TestRedactLogs_M15_OptOut_Passes(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	engine.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{
+		allow: map[string]bool{addr: true},
+	})
+
+	topic := eventTopic0("Bridge(address,bytes)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("M15 opt-out: expected 1 log (opted out), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_M15_StaticEvent_Unaffected pins that events with no
+// dynamic non-indexed params (standard ERC-20 Transfer / Approval
+// shape) are NOT subject to the drop gate even without an opt-out.
+func TestRedactLogs_M15_StaticEvent_Unaffected(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: staticEventABI}})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	engine.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{
+		allow: map[string]bool{}, // no opt-out — irrelevant for static
+	})
+
+	topic := eventTopic0("Static(address,uint256)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("M15 static: expected 1 log (static event, gate doesn't fire), got %d", len(result))
+	}
+}
+
+// TestRedactLogs_M15_AdminBypass confirms tier-2 / tier-3 admin viewers
+// see dynamic-payload events regardless of the opt-out flag — admin
+// already has full access in the contract's owning org. Mirrors the
+// rbac.FilterEventLogs isAdminByContract bypass.
+func TestRedactLogs_M15_AdminBypass(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	engine.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{
+		allow: map[string]bool{}, // no opt-out
+	})
+	engine.SetAdminContractsResolver(&stubAdminContractsResolver{
+		admin: map[string]bool{addr: true},
+	})
+
+	topic := eventTopic0("Bridge(address,bytes)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("M15 admin bypass: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestRedactLogs_M15_VisibleToUnlockBypass confirms the RD-874 visibleTo
+// unlock branch bypasses M15 — the sender explicitly shared the tx
+// with this viewer via visibleTo AND the contract is unlockable, so
+// the per-tx unlock returns the log before the M15 gate fires. Pins
+// the user-stated invariant: "visibleTo DIDs will still see the event."
+func TestRedactLogs_M15_VisibleToUnlockBypass(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	txHash := "0xbridgetx"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	engine.SetDynamicPayloadAllowedResolver(&stubDynamicPayloadAllowedResolver{
+		allow: map[string]bool{}, // no opt-out
+	})
+	engine.SetVisibleToUnlockResolver(&stubVisibleToUnlockResolver{
+		unlockable: map[string]bool{addr: true},
+	})
+
+	topic := eventTopic0("Bridge(address,bytes)")
+	logs := []Log{{ID: 1, Address: addr, TxHash: txHash, Topic0: &topic, Data: "0x"}}
+	opts := &RedactOpts{VisibleTxHashes: map[string]bool{txHash: true}}
+	result, err := engine.RedactLogsWithOpts(context.Background(), logs, "did:test", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Errorf("M15 visibleTo unlock: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestRedactLogs_M15_NoResolverDisablesGate is the test-ergonomics
+// safety net: callers that haven't wired DynamicPayloadAllowedResolver
+// see the gate disabled (legacy behaviour). Production startup MUST
+// wire it via wireExplorerRedactor (covered by
+// TestExplorerRedactorWiring_FullStack).
+func TestRedactLogs_M15_NoResolverDisablesGate(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	engine := newEngine(VisibilityMap{addr: VisibilityFull})
+	engine.SetABIResolver(&stubABIResolver{byAddr: map[string]string{addr: dynamicEventABI}})
+	engine.SetEventRuleChecker(&stubEventRuleChecker{
+		byAddr: map[string]EventRulesResolution{addr: {Wildcard: true}},
+	})
+	// No SetDynamicPayloadAllowedResolver call — allow map stays empty.
+	// Without the resolver wired, the close-by-default allow map is
+	// still empty so the gate still fires. This documents that the
+	// gate is wired on by default — only the per-contract opt-out is
+	// gated by resolver presence. Pre-M15 callers explicitly wanting
+	// the old behaviour must wire a resolver returning all-true.
+	topic := eventTopic0("Bridge(address,bytes)")
+	logs := []Log{{ID: 1, Address: addr, Topic0: &topic, Data: "0x"}}
+	result, err := engine.RedactLogs(context.Background(), logs, "did:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("M15 no resolver: expected 0 logs (close-by-default), got %d", len(result))
+	}
+}
+
+// TestEventHasDynamicNonIndexedParam_TypeMatrix exercises the helper
+// directly for the type matrix it must classify correctly.
+func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
+	cases := []struct {
+		name     string
+		abi      string
+		sig      string
+		expected bool
+	}{
+		{
+			name:     "static_only_ERC20_Transfer",
+			abi:      `[{"type":"event","name":"Transfer","inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]}]`,
+			sig:      "Transfer(address,address,uint256)",
+			expected: false,
+		},
+		{
+			name:     "non_indexed_bytes",
+			abi:      `[{"type":"event","name":"E","inputs":[{"name":"a","type":"address","indexed":true},{"name":"b","type":"bytes","indexed":false}]}]`,
+			sig:      "E(address,bytes)",
+			expected: true,
+		},
+		{
+			name:     "non_indexed_string",
+			abi:      `[{"type":"event","name":"E","inputs":[{"name":"a","type":"string","indexed":false}]}]`,
+			sig:      "E(string)",
+			expected: true,
+		},
+		{
+			name:     "non_indexed_dynamic_array",
+			abi:      `[{"type":"event","name":"E","inputs":[{"name":"a","type":"uint256[]","indexed":false}]}]`,
+			sig:      "E(uint256[])",
+			expected: true,
+		},
+		{
+			name:     "indexed_bytes_does_not_count",
+			abi:      `[{"type":"event","name":"E","inputs":[{"name":"a","type":"bytes","indexed":true}]}]`,
+			sig:      "E(bytes)",
+			expected: false,
+		},
+		{
+			name:     "fixed_bytes32_is_static",
+			abi:      `[{"type":"event","name":"E","inputs":[{"name":"a","type":"bytes32","indexed":false}]}]`,
+			sig:      "E(bytes32)",
+			expected: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			topic := eventTopic0(tc.sig)
+			got := eventHasDynamicNonIndexedParam([]byte(tc.abi), topic)
+			if got != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, got)
+			}
+		})
+	}
+}

@@ -53,6 +53,7 @@ func wireExplorerRedactor(redactor *explorer.RedactionEngine, store rbac.Store, 
 	}
 	if store != nil {
 		redactor.SetABIResolver(newDBABIResolver(store))
+		redactor.SetDynamicPayloadAllowedResolver(newDBDynamicPayloadAllowedResolver(store))
 	}
 	if accessCtrl != nil {
 		redactor.SetAdminContractsResolver(newDBAdminContractsResolver(accessCtrl))

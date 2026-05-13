@@ -18,6 +18,23 @@ func (p *testABIProvider) GetContractABI(address string) string {
 	return p.abis[address]
 }
 
+// testABIProviderWithDP also implements DynamicPayloadAllower so tests
+// can exercise the M15 drop gate. The base testABIProvider deliberately
+// does NOT implement the optional interface — that simulates pre-M15
+// callers and keeps the gate disabled (legacy tests pass unchanged).
+type testABIProviderWithDP struct {
+	abis  map[string]string
+	allow map[string]bool
+}
+
+func (p *testABIProviderWithDP) GetContractABI(address string) string {
+	return p.abis[address]
+}
+
+func (p *testABIProviderWithDP) IsEventsAllowDynamicPayload(address string) bool {
+	return p.allow[address]
+}
+
 func TestFilterEventLogs_NoEventRules_DenyAll(t *testing.T) {
 	// When no event rules are configured (nil), all logs are denied.
 	// nil and [] are equivalent — both mean "no events visible."
@@ -3174,5 +3191,196 @@ func TestFilterEventLogs_NilEventRules_DenyAll_EvenWithVisibleTo(t *testing.T) {
 	resultWith := FilterEventLogs(logs, perms, []string{"0xnotintopics"}, nil, visCtx, nil)
 	if len(resultWith) != 0 {
 		t.Errorf("with visCtx: expected 0 logs (nil event rules = deny all, visibleTo cannot override), got %d", len(resultWith))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// M15 — Dynamic-payload event drop (security audit follow-up to RD-915)
+// ---------------------------------------------------------------------------
+
+// dynamicEventABI declares a Bridge(address indexed, bytes) event —
+// pre-M15, the bytes payload could carry foreign-org addresses verbatim
+// past the static-slot redactor.
+const dynamicEventABI = `[{"type":"event","name":"Bridge","inputs":[{"name":"sender","type":"address","indexed":true},{"name":"payload","type":"bytes","indexed":false}]}]`
+
+// staticEventABI declares a static-only event (the standard ERC-20
+// Transfer shape minus indexed types differences) — the M15 gate must
+// NOT fire here.
+const staticEventABI = `[{"type":"event","name":"Static","inputs":[{"name":"who","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false}]}]`
+
+// bridgeTopic0 is keccak256("Bridge(address,bytes)").
+var bridgeTopic0 = "0x" + hex.EncodeToString(crypto.Keccak256([]byte("Bridge(address,bytes)")))
+
+// staticTopic0 is keccak256("Static(address,uint256)").
+var staticTopic0 = "0x" + hex.EncodeToString(crypto.Keccak256([]byte("Static(address,uint256)")))
+
+// TestFilterEventLogs_M15_DynamicPayload_Drops pins the close-by-
+// default behaviour: when the matching event ABI declares any dynamic
+// non-indexed param AND the contract has not opted out, the log is
+// dropped for non-admin viewers.
+func TestFilterEventLogs_M15_DynamicPayload_Drops(t *testing.T) {
+	contract := "0xcontract1"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + bridgeTopic0 + `"],"data":"0x"}`),
+	}
+	abiProv := &testABIProviderWithDP{
+		abis:  map[string]string{contract: dynamicEventABI},
+		allow: map[string]bool{}, // no opt-out
+	}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("M15 drop: expected 0 logs, got %d", len(result))
+	}
+}
+
+// TestFilterEventLogs_M15_OptOut_Passes confirms the per-contract opt-
+// out bypasses the drop gate for that one contract.
+func TestFilterEventLogs_M15_OptOut_Passes(t *testing.T) {
+	contract := "0xcontract1"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + bridgeTopic0 + `"],"data":"0x"}`),
+	}
+	abiProv := &testABIProviderWithDP{
+		abis:  map[string]string{contract: dynamicEventABI},
+		allow: map[string]bool{contract: true},
+	}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 1 {
+		t.Errorf("M15 opt-out: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestFilterEventLogs_M15_StaticEvent_Unaffected confirms events with no
+// dynamic non-indexed params pass even without an opt-out — the gate is
+// keyed on ABI shape, not on contract identity.
+func TestFilterEventLogs_M15_StaticEvent_Unaffected(t *testing.T) {
+	contract := "0xcontract1"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + staticTopic0 + `"],"data":"0x"}`),
+	}
+	abiProv := &testABIProviderWithDP{
+		abis:  map[string]string{contract: staticEventABI},
+		allow: map[string]bool{}, // no opt-out
+	}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 1 {
+		t.Errorf("M15 static event: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestFilterEventLogs_M15_AdminBypass confirms admin viewers see
+// dynamic-payload events regardless of opt-out — admin already has
+// full access in the contract's owning org.
+func TestFilterEventLogs_M15_AdminBypass(t *testing.T) {
+	contract := "0xcontract1"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + bridgeTopic0 + `"],"data":"0x"}`),
+	}
+	abiProv := &testABIProviderWithDP{
+		abis:  map[string]string{contract: dynamicEventABI},
+		allow: map[string]bool{}, // no opt-out
+	}
+	isAdmin := map[string]bool{contract: true}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, isAdmin)
+	if len(result) != 1 {
+		t.Errorf("M15 admin bypass: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestFilterEventLogs_M15_VisibleToUnlockBypass confirms the RD-874
+// visibleTo unlock bypasses M15 — same precedence as in the explorer
+// redactor, and same as the user-stated invariant: visibleTo DIDs see
+// the event.
+func TestFilterEventLogs_M15_VisibleToUnlockBypass(t *testing.T) {
+	contract := "0xcontract1"
+	txHash := "0xbridgetx"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + bridgeTopic0 + `"],"data":"0x","transactionHash":"` + txHash + `"}`),
+	}
+	abiProv := &testABIProviderWithDP{
+		abis:  map[string]string{contract: dynamicEventABI},
+		allow: map[string]bool{},
+	}
+	visCtx := &TxVisibilityContext{
+		ViewerDID:           "did:viewer",
+		TxVisibility:        map[string][]string{txHash: {"did:viewer"}},
+		UnlockableContracts: map[string]bool{contract: true},
+	}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, visCtx, nil)
+	if len(result) != 1 {
+		t.Errorf("M15 visibleTo unlock: expected 1 log, got %d", len(result))
+	}
+}
+
+// TestFilterEventLogs_M15_LegacyProviderDisablesGate confirms that
+// callers using the base testABIProvider (no DynamicPayloadAllower
+// implementation) keep pre-M15 behaviour: the gate fires close-by-
+// default because the allow lookup returns false. This documents that
+// "no opt-out resolver" == "all contracts drop" — the explicit pre-M15
+// fallback requires positive opt-out wiring.
+func TestFilterEventLogs_M15_LegacyProviderDisablesGate(t *testing.T) {
+	contract := "0xcontract1"
+	perms := &EffectivePermissions{
+		ContractAccess: map[string]ContractAccess{
+			contract: {EventRules: &EventRulesField{Wildcard: true}},
+		},
+	}
+	logs := []json.RawMessage{
+		json.RawMessage(`{"address":"` + contract + `","topics":["` + bridgeTopic0 + `"],"data":"0x"}`),
+	}
+	abiProv := &testABIProvider{abis: map[string]string{contract: dynamicEventABI}}
+	result := FilterEventLogs(logs, perms, []string{"0xuser1"}, abiProv, nil, nil)
+	if len(result) != 0 {
+		t.Errorf("M15 legacy provider: expected 0 logs (gate fires close-by-default), got %d", len(result))
+	}
+}
+
+func TestEventHasDynamicNonIndexedParam_TypeMatrix(t *testing.T) {
+	cases := []struct {
+		name     string
+		abi      string
+		sig      string
+		expected bool
+	}{
+		{name: "ERC20_Transfer_static", abi: `[{"type":"event","name":"Transfer","inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]}]`, sig: "Transfer(address,address,uint256)", expected: false},
+		{name: "non_indexed_bytes", abi: `[{"type":"event","name":"E","inputs":[{"name":"a","type":"bytes","indexed":false}]}]`, sig: "E(bytes)", expected: true},
+		{name: "non_indexed_string", abi: `[{"type":"event","name":"E","inputs":[{"name":"a","type":"string","indexed":false}]}]`, sig: "E(string)", expected: true},
+		{name: "non_indexed_dynamic_array", abi: `[{"type":"event","name":"E","inputs":[{"name":"a","type":"uint256[]","indexed":false}]}]`, sig: "E(uint256[])", expected: true},
+		{name: "indexed_bytes_does_not_count", abi: `[{"type":"event","name":"E","inputs":[{"name":"a","type":"bytes","indexed":true}]}]`, sig: "E(bytes)", expected: false},
+		{name: "bytes32_is_static", abi: `[{"type":"event","name":"E","inputs":[{"name":"a","type":"bytes32","indexed":false}]}]`, sig: "E(bytes32)", expected: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			topic := "0x" + hex.EncodeToString(crypto.Keccak256([]byte(tc.sig)))
+			got := eventHasDynamicNonIndexedParam(tc.abi, topic)
+			if got != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, got)
+			}
+		})
 	}
 }

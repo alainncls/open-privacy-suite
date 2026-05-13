@@ -138,9 +138,21 @@ type Contract struct {
 	// preserves the pre-RD-874 additive-only behaviour. Admin-only via
 	// the dedicated PATCH endpoint; never settable by sendTransaction
 	// or by non-admin contract create/update calls.
-	AllowVisibleToUnlock bool      `json:"allow_visibleto_unlock"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	AllowVisibleToUnlock bool `json:"allow_visibleto_unlock"`
+
+	// EventsAllowDynamicPayload: when true, RedactLogs /
+	// FilterEventLogs pass through events with dynamic non-indexed
+	// parameters (`bytes`, `string`, dynamic arrays / structs)
+	// without dropping for non-Full viewers (M15 opt-out, security
+	// audit follow-up to RD-915). Default false — close-by-default
+	// behaviour: events whose payload could embed foreign-org
+	// addresses are dropped for any viewer who didn't earn Full
+	// visibility via admin claim, participant override, or
+	// visibleTo unlock. Admin-only via the dedicated PUT endpoint.
+	EventsAllowDynamicPayload bool `json:"events_allow_dynamic_payload"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // FunctionRule describes access to a single contract function selector,
