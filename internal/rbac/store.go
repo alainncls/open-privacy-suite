@@ -181,6 +181,7 @@ const (
 	ResourceTypeAddressThreshold   = "address_threshold"
 	ResourceTypeBaseCurrency       = "base_currency"
 	ResourceTypeAzureTenant        = "azure_tenant"
+	ResourceTypeSharedInfra        = "shared_infrastructure"
 	ResourceTypeDisclosureRequest  = "disclosure_request"
 	ResourceTypeDisclosureGrant    = "disclosure_grant"
 	ResourceTypeSession            = "session"
