@@ -83,8 +83,17 @@ type ethCallTracingState struct {
 }
 
 // TxVisibilitySaver saves per-tx visibleTo rules. Implemented by db.DB.
+//
+// M7 (security audit follow-up): the JSON-RPC hot path now uses
+// EnqueuePendingTxVisibility (a write into the outbox table
+// pending_tx_visibility). A background reconciler promotes outbox rows
+// into tx_visible_to. SaveTxVisibility is kept on the interface for
+// test fixtures and for callers that need the direct write path (e.g.
+// migrations). Production code should NOT call SaveTxVisibility from
+// the hot path — use the outbox to survive DB hiccups.
 type TxVisibilitySaver interface {
 	SaveTxVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error
+	EnqueuePendingTxVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -695,22 +704,23 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// could forge any unlocked address as `from`. System-linking is only safe for
 	// eth_sendRawTransaction where the sender is recovered from the signature.
 
-	// Store visibleTo rule if provided. The tx hash comes from the node response.
-	// Non-fatal: the tx is already sent, so we log errors but don't fail the response.
+	// M7 (security audit follow-up): write the visibleTo rule into the
+	// outbox (pending_tx_visibility). A background reconciler (5s
+	// ticker) promotes it to tx_visible_to. This survives DB hiccups —
+	// the row stays in the outbox until the next reconciler tick. If
+	// the outbox INSERT itself fails (which means the DB is completely
+	// unreachable, a much rarer condition than the original
+	// SaveTxVisibility race) we still log with the full recipient
+	// count + sender + org for manual replay.
 	//
-	// M7 (security audit): if SaveTxVisibility errors here, the tx is
-	// already on-chain and the listed DIDs never get visibility on a
-	// tx the sender intended to share. Retry-on-next-request is not a
-	// thing for a one-shot mutation. A proper fix needs an outbox
-	// table + background reconciler (`pending_tx_visibility`) — left
-	// as a follow-up ticket. For now: escalate to slog.Error with the
-	// recipient list so operators can manually replay; surface a
-	// header so the client knows the side-channel failed.
+	// The reconciler-driven model adds a small (≤ 5s) latency between
+	// "tx on-chain" and "recipients can see it in explorer", which is
+	// dominated by block-confirmation latency anyway.
 	if len(visibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
-				if err := saver.SaveTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
-					slog.Error("visibleTo save failed; tx is on-chain but recipients won't see it",
+				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("visibleTo outbox enqueue failed; tx is on-chain but recipients won't see it",
 						"tx", txHash, "recipients", len(visibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
@@ -1766,12 +1776,15 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
-	// Store visibleTo rule if provided (raw tx). Non-fatal.
+	// M7 (security audit follow-up): write the raw-tx visibleTo rule
+	// into the outbox; reconciler promotes to tx_visible_to. Same
+	// rationale as the eth_sendTransaction path above.
 	if len(rawTxVisibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
-				if err := saver.SaveTxVisibility(ctx, txHash, rawTxVisibleTo, req.UserID, result.OrgID); err != nil {
-					slog.Error("failed to save visibleTo for raw tx", "tx", txHash, "error", err)
+				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, rawTxVisibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("visibleTo outbox enqueue failed for raw tx; tx is on-chain but recipients won't see it",
+						"tx", txHash, "recipients", len(rawTxVisibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
 		}

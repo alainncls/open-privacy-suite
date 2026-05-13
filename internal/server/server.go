@@ -93,9 +93,10 @@ type Server struct {
 	explorerStore      explorer.ExplorerBackend
 	explorerMu         sync.RWMutex // protects explorerStore + explorerRedactor during background reconnect
 	explorerRedactor   *explorer.RedactionEngine
-	siemForwarder      *audit.SIEMForwarder
-	retentionCleaner   *audit.RetentionCleaner
-	redisCloser        io.Closer
+	siemForwarder        *audit.SIEMForwarder
+	retentionCleaner     *audit.RetentionCleaner
+	visibilityReconciler *VisibilityReconciler // M7 outbox drain
+	redisCloser          io.Closer
 }
 
 // DB returns the database instance (for testing)
@@ -135,6 +136,9 @@ func (s *Server) Stop() {
 	}
 	if s.retentionCleaner != nil {
 		s.retentionCleaner.Stop()
+	}
+	if s.visibilityReconciler != nil {
+		s.visibilityReconciler.Stop()
 	}
 	if s.azureStateStore != nil {
 		s.azureStateStore.Stop()
@@ -495,6 +499,14 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 		"travel", cfg.RetentionTravelRecords,
 		"interval", cfg.RetentionCleanupInterval,
 		"max_access_log_rows", cfg.MaxAccessLogRows)
+
+	// M7 (security audit follow-up): visibility outbox reconciler. Drains
+	// pending_tx_visibility rows into tx_visible_to. Survives DB hiccups
+	// in the hot JSON-RPC write path; rows are retried until promoted or
+	// dead-lettered (attempt_count >= 10).
+	s.visibilityReconciler = NewVisibilityReconciler(database, DefaultVisibilityReconcilerConfig())
+	s.visibilityReconciler.Start(context.Background())
+	slog.Info("visibility reconciler started", "interval", "5s", "batch", 100)
 
 	// Security: warn loudly if admin API has no token configured.
 	// Without a token, admin endpoints are open to the entire private network.
