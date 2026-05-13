@@ -10,14 +10,23 @@ import (
 )
 
 // SaveTxVisibility stores visibleTo DIDs for a transaction.
-// Must be called BEFORE forwarding the tx to the node (race condition prevention:
-// the rule must be in the DB before anyone can query the receipt).
+//
+// Post-M7 / migration 053: tx_visible_to.tx_hash is UNIQUE. This
+// method becomes idempotent — repeat calls with the same tx_hash
+// no-op. The reconciler uses the same ON CONFLICT path; direct
+// callers (tests, migrations, recovery scripts) get the same
+// behavior. If a caller needs to OVERWRITE an existing row (different
+// recipients, different sender), they should DELETE then INSERT in
+// their own transaction — silently updating from inside SaveTxVisibility
+// would erase a previously-saved recipient list that the original
+// caller relied on.
 func (d *DB) SaveTxVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error {
 	if txHash == "" || len(visibleToDIDs) == 0 {
 		return nil
 	}
 	query := `INSERT INTO tx_visible_to (tx_hash, visible_to_dids, sender_did, org_id)
-	          VALUES ($1, $2, $3, $4)`
+	          VALUES ($1, $2, $3, $4)
+	          ON CONFLICT (tx_hash) DO NOTHING`
 	_, err := d.conn.ExecContext(ctx, query, strings.ToLower(txHash), pq.Array(visibleToDIDs), senderDID, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to save tx visibility: %w", err)
