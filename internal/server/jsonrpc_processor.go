@@ -83,8 +83,17 @@ type ethCallTracingState struct {
 }
 
 // TxVisibilitySaver saves per-tx visibleTo rules. Implemented by db.DB.
+//
+// M7 (security audit follow-up): the JSON-RPC hot path now uses
+// EnqueuePendingTxVisibility (a write into the outbox table
+// pending_tx_visibility). A background reconciler promotes outbox rows
+// into tx_visible_to. SaveTxVisibility is kept on the interface for
+// test fixtures and for callers that need the direct write path (e.g.
+// migrations). Production code should NOT call SaveTxVisibility from
+// the hot path — use the outbox to survive DB hiccups.
 type TxVisibilitySaver interface {
 	SaveTxVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error
+	EnqueuePendingTxVisibility(ctx context.Context, txHash string, visibleToDIDs []string, senderDID, orgID string) error
 }
 
 // AccessLogger logs access attempts for auditing.
@@ -695,22 +704,23 @@ func (p *JSONRPCProcessor) Process(ctx context.Context, req *ProcessRequest) *Pr
 	// could forge any unlocked address as `from`. System-linking is only safe for
 	// eth_sendRawTransaction where the sender is recovered from the signature.
 
-	// Store visibleTo rule if provided. The tx hash comes from the node response.
-	// Non-fatal: the tx is already sent, so we log errors but don't fail the response.
+	// M7 (security audit follow-up): write the visibleTo rule into the
+	// outbox (pending_tx_visibility). A background reconciler (5s
+	// ticker) promotes it to tx_visible_to. This survives DB hiccups —
+	// the row stays in the outbox until the next reconciler tick. If
+	// the outbox INSERT itself fails (which means the DB is completely
+	// unreachable, a much rarer condition than the original
+	// SaveTxVisibility race) we still log with the full recipient
+	// count + sender + org for manual replay.
 	//
-	// M7 (security audit): if SaveTxVisibility errors here, the tx is
-	// already on-chain and the listed DIDs never get visibility on a
-	// tx the sender intended to share. Retry-on-next-request is not a
-	// thing for a one-shot mutation. A proper fix needs an outbox
-	// table + background reconciler (`pending_tx_visibility`) — left
-	// as a follow-up ticket. For now: escalate to slog.Error with the
-	// recipient list so operators can manually replay; surface a
-	// header so the client knows the side-channel failed.
+	// The reconciler-driven model adds a small (≤ 5s) latency between
+	// "tx on-chain" and "recipients can see it in explorer", which is
+	// dominated by block-confirmation latency anyway.
 	if len(visibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
-				if err := saver.SaveTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
-					slog.Error("visibleTo save failed; tx is on-chain but recipients won't see it",
+				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, visibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("visibleTo outbox enqueue failed; tx is on-chain but recipients won't see it",
 						"tx", txHash, "recipients", len(visibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
@@ -942,6 +952,89 @@ func rewriteToGetBlock(originalBody []byte, newMethod string, params []any) []by
 	return b
 }
 
+// validateDeployWithTracing enforces cross-org isolation on every internal
+// CALL/STATICCALL/DELEGATECALL/CREATE/CREATE2 frame executed by a contract
+// constructor at deploy time (M10, security audit follow-up to RD-915).
+//
+// Pre-fix, both `eth_sendTransaction` and `eth_sendRawTransaction` with an
+// empty `to` (contract creation) skipped runtime tracing entirely — the
+// deploy_validator did static bytecode analysis that flagged constant
+// CALL/DELEGATECALL targets but explicitly allowed dynamic targets,
+// trusting a "runtime tracing validates them at execution time" claim that
+// was never wired. A deployer with the deploy claim could ship a
+// constructor that took `address foreignContract` as a constructor arg
+// and `STATICCALL`ed into another org's private contract, persisting the
+// foreign state in the new contract's storage.
+//
+// This function closes that gap by tracing the deploy via
+// debug_traceCall (top-level frame with empty to) and feeding every
+// internal frame through trace_validator.ValidateTrace. The same
+// cross-org rules and CREATE/CREATE2 collision checks apply.
+//
+// Returns the discovered CREATE/CREATE2 targets so the caller can
+// pre-register them. Returns a ProcessError when the trace itself
+// errors or validation denies the deploy. Returns (nil, nil) when the
+// feature is disabled or not applicable.
+func (p *JSONRPCProcessor) validateDeployWithTracing(
+	ctx context.Context, req *ProcessRequest,
+	from, data, value string,
+	userOrgIDs map[string]bool, userHasDeploy bool,
+) ([]rbac.CreateTarget, *ProcessError) {
+	// Skip if tracing is not configured. Operators who run a node
+	// without debug_* exposed (some managed RPC services) keep the
+	// pre-M10 behavior; the bytecode analyzer remains as a thinner
+	// fallback. The recommended deployment is geth/erigon with debug_*
+	// available, in which case this runs and is the primary gate.
+	if p.runtimeTracer == nil || p.traceValidator == nil || !p.runtimeTracer.IsEnabled() {
+		return nil, nil
+	}
+
+	// Block param is "latest" — deploys execute against the current
+	// chain state and there is no user-supplied block-tag knob.
+	traceResult, err := p.runtimeTracer.TraceTransactionUncached(ctx, from, "", data, value, "latest")
+	if err != nil {
+		slog.Warn("deploy trace: upstream tracer error",
+			slog.String("user", req.UserID), slog.Any("err", err))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceDenyTracerError,
+		}
+	}
+	if traceResult == nil {
+		slog.Warn("deploy trace: nil result", slog.String("user", req.UserID))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceDenyTracerError,
+		}
+	}
+
+	// Validate the trace. The top-level frame is a CREATE (debug_traceCall
+	// with empty `to` reports it as a deploy); ValidateTrace already
+	// handles the deploy-claim gate + CREATE collision check + every
+	// nested CALL/STATICCALL/DELEGATECALL frame against userOrgIDs.
+	validationResult, err := p.traceValidator.ValidateTrace(ctx, userOrgIDs, traceResult, userHasDeploy)
+	if err != nil {
+		slog.Warn("deploy trace: validator error",
+			slog.String("user", req.UserID), slog.Any("err", err))
+		return nil, &ProcessError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    sendTraceValidatorError,
+		}
+	}
+	if !validationResult.Allowed {
+		slog.Info("deploy trace: denial", slog.String("user", req.UserID))
+		slog.Debug("deploy trace: denial detail",
+			slog.String("user", req.UserID),
+			slog.String("reason", validationResult.Reason),
+			slog.String("denied_target", validationResult.DeniedTarget))
+		return nil, &ProcessError{
+			StatusCode: http.StatusForbidden,
+			Message:    sendTraceDenyMessage(validationResult.Reason),
+		}
+	}
+	return validationResult.CreateTargets, nil
+}
+
 // validateWithTracing performs runtime trace validation for eth_sendTransaction.
 // Returns the list of CREATE/CREATE2 targets discovered during tracing (may be nil),
 // and a ProcessError if validation fails.
@@ -988,8 +1081,17 @@ func (p *JSONRPCProcessor) validateWithTracing(ctx context.Context, req *Process
 
 	// Extract transaction parameters for tracing
 	from, to, data, value := extractTxParams(req.Params)
+
+	// M10 (security audit follow-up to RD-915): deploys are now traced
+	// via validateDeployWithTracing. Pre-fix, the bytecode-level static
+	// analyzer claimed to handle them, but it only validated CONSTANT
+	// call targets — dynamic CALL/STATICCALL/DELEGATECALL with a
+	// constructor-arg target slipped through, enabling cross-org state
+	// exfiltration during constructor execution. Runtime tracing
+	// validates every executed frame against userOrgIDs.
 	if to == "" {
-		return nil, nil // Deployment - skip (handled by bytecode validation)
+		userHasDeploy := p.userHasDeployClaim(ctx, memberships)
+		return p.validateDeployWithTracing(ctx, req, from, data, value, userOrgIDs, userHasDeploy)
 	}
 
 	// L6 (security audit follow-up to RD-915): rebind / verify
@@ -1555,19 +1657,13 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		defer p.concurrencyLimiter.Release(req.UserID)
 	}
 
-	// Runtime tracing validation (always runs for raw transactions
-	// when there's a target address).
-	//
-	// M10 (security audit, open follow-up): raw-tx DEPLOYMENTS (`to ==
-	// ""`) currently skip the runtime tracer entirely. The deploy
-	// validator runs bytecode-level checks at deploy time, but if the
-	// CREATE constructor itself makes internal CREATE/CREATE2/CALL
-	// frames into other orgs, those are not validated here. The threat
-	// is narrow (only relevant for factory-pattern constructors
-	// reaching across orgs at deploy time) and runtime tracing for
-	// pure deployments would need a debug_traceCall path with an
-	// empty `to`; tracked as a follow-up ticket. Leaving the gap
-	// explicit so a future code review doesn't lose sight of it.
+	// Runtime tracing validation. For non-deploy raw transactions
+	// (to != "") and for deploys (to == ""). Pre-M10 deploys skipped
+	// tracing entirely, leaving constructor frames unvalidated; M10
+	// closes that by routing deploys through validateDeployWithTracing.
+	// The bytecode analyzer keeps running as a thinner fallback for
+	// operators without debug_* on the upstream node, but the
+	// authoritative gate is the trace.
 	var runtimeCreateTargets []rbac.CreateTarget
 	if to != "" {
 		skipTrace := false
@@ -1591,6 +1687,40 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 			}
 			runtimeCreateTargets = rawRuntimeCreateTargets
 		}
+	} else if p.runtimeTracer != nil && p.runtimeTracer.IsEnabled() {
+		// M10: raw-tx contract deployment. Trace + validate.
+		user, err := p.rbacAccessCtrl.Store().GetUserByExternalID(ctx, req.UserID)
+		if err != nil || user == nil {
+			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{
+				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError},
+			}
+		}
+		memberships, err := p.rbacAccessCtrl.Store().ListUserMembershipsWithDetails(ctx, user.ID)
+		if err != nil {
+			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{
+				Error: &ProcessError{StatusCode: http.StatusForbidden, Message: sendTraceDenyTracerError},
+			}
+		}
+		userOrgIDs := make(map[string]bool)
+		for _, m := range memberships {
+			if m.Group != nil {
+				userOrgIDs[m.Group.OrgID] = true
+			}
+		}
+		userHasDeploy := p.userHasDeployClaim(ctx, memberships)
+		deployTargets, traceErr := p.validateDeployWithTracing(ctx, req, from, data, value, userOrgIDs, userHasDeploy)
+		if traceErr != nil {
+			p.recordRPCOutcome(req.Method, "send_trace_denied", start)
+			p.logAccess(ctx, req, http.StatusForbidden)
+			return &ProcessResult{
+				Error: traceErr,
+			}
+		}
+		runtimeCreateTargets = deployTargets
 	}
 
 	// Travel rule compliance check (after RBAC + tracing, before rate limiting)
@@ -1766,12 +1896,15 @@ func (p *JSONRPCProcessor) processRawTransaction(ctx context.Context, req *Proce
 		}
 	}
 
-	// Store visibleTo rule if provided (raw tx). Non-fatal.
+	// M7 (security audit follow-up): write the raw-tx visibleTo rule
+	// into the outbox; reconciler promotes to tx_visible_to. Same
+	// rationale as the eth_sendTransaction path above.
 	if len(rawTxVisibleTo) > 0 && statusCode == http.StatusOK {
 		if txHash := extractTxHashFromResult(responseBody); txHash != "" {
 			if saver, ok := p.txVisibilityStore.(TxVisibilitySaver); ok {
-				if err := saver.SaveTxVisibility(ctx, txHash, rawTxVisibleTo, req.UserID, result.OrgID); err != nil {
-					slog.Error("failed to save visibleTo for raw tx", "tx", txHash, "error", err)
+				if err := saver.EnqueuePendingTxVisibility(ctx, txHash, rawTxVisibleTo, req.UserID, result.OrgID); err != nil {
+					slog.Error("visibleTo outbox enqueue failed for raw tx; tx is on-chain but recipients won't see it",
+						"tx", txHash, "recipients", len(rawTxVisibleTo), "sender", req.UserID, "org", result.OrgID, "error", err)
 				}
 			}
 		}

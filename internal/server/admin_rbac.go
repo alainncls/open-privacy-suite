@@ -83,6 +83,11 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.PUT("/azure-tenants/:id", s.updateAzureTenant)
 	api.DELETE("/azure-tenants/:id", s.deleteAzureTenant)
 
+	// shared_infrastructure (KD-1, follow-up to M5 / RD-915).
+	// Super-admin only; the table is not org-scoped, every mutation
+	// changes cluster-wide trust policy.
+	s.registerSharedInfraRoutes(api)
+
 	// Debugging
 	api.GET("/users/:user_id/effective-permissions", s.getEffectivePermissions)
 	api.POST("/access/check", s.checkAccessAPI)

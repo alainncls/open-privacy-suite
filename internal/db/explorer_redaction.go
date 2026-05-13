@@ -448,6 +448,12 @@ func (d *DB) GetBatchVisibilityDetailed(ctx context.Context, viewerDID string, a
 // getDisclosedAddressesForViewer returns ETH addresses that the viewer has an
 // active full-disclosure grant on. Used by GetBatchVisibility to upgrade
 // disclosed addresses to VisibilityFull in regular explorer views.
+//
+// The upgrade is scoped to disclosure requests whose `org_id` matches an org
+// the viewer is currently a member of. Without this scoping a disclosure grant
+// created in org A would upgrade visibility globally for the requester in
+// every other org's explorer view (M13: defence-in-depth against cross-org
+// disclosure creation, which is C3's primary fix).
 func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID string) ([]string, error) {
 	if viewerDID == "" {
 		return nil, nil
@@ -457,12 +463,17 @@ func (d *DB) getDisclosedAddressesForViewer(ctx context.Context, viewerDID strin
 		SELECT DISTINCT LOWER(eal.eth_address)
 		FROM disclosure_grants g
 		JOIN disclosure_requests r ON g.request_id = r.id
-		JOIN users u ON r.target_user_id = u.id
-		JOIN eth_address_links eal ON eal.did = u.external_id
+		JOIN users target_u ON r.target_user_id = target_u.id
+		JOIN eth_address_links eal ON eal.did = target_u.external_id
+		JOIN users viewer_u ON viewer_u.external_id = $1
+		JOIN user_memberships m ON m.user_id = viewer_u.id
+		JOIN groups gr ON gr.id = m.group_id
 		WHERE r.requester_did = $1
 		  AND eal.revoked = false
 		  AND g.revoked_at IS NULL
-		  AND g.expires_at > NOW()`
+		  AND g.expires_at > NOW()
+		  AND gr.org_id = r.org_id
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())`
 
 	rows, err := d.conn.QueryContext(ctx, query, viewerDID)
 	if err != nil {

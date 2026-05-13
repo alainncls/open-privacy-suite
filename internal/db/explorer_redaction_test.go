@@ -903,8 +903,16 @@ func TestViewerHasContractAccess(t *testing.T) {
 // ============================================================================
 
 // setupDisclosureGrant creates the full disclosure chain:
-//   org → user (target) → eth_address_link → disclosure_request → disclosure_grant
-// Returns (orgID, viewerDID, targetUserID, targetEthAddr, grantID).
+//
+//	org → group → viewer membership → user (target) → eth_address_link
+//	    → disclosure_request → disclosure_grant
+//
+// The viewer is seeded as a member of a group inside the disclosure's org so
+// that the org-scoping introduced for M13 (getDisclosedAddressesForViewer
+// requires viewer ∈ disclosure_requests.org_id) is satisfied in happy-path
+// tests. Cross-org tests should call setupCrossOrgDisclosureGrant or seed an
+// extra unrelated org membership manually.
+// Returns (orgID, targetUserID, grantID).
 func setupDisclosureGrant(t *testing.T, database *DB, viewerDID, targetDID, targetEthAddr string, expiresAt time.Time) (orgID, targetUserID, grantID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -915,6 +923,15 @@ func setupDisclosureGrant(t *testing.T, database *DB, viewerDID, targetDID, targ
 		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
 		orgID, "disc-org-"+orgID[:8], "Disclosure Test Org")
 	require.NoError(t, err)
+
+	// Group + viewer membership inside the disclosure's org so the
+	// org-scoping check in getDisclosedAddressesForViewer passes.
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupID, orgID)
+	require.NoError(t, err)
+	addMember(t, database, viewerDID, groupID)
 
 	// Create target user
 	targetUserID = uuid.New().String()
@@ -1040,6 +1057,95 @@ func TestDisclosedAddressesForViewer_RevokedEthLink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, addrs,
 		"revoked eth_address_link must prevent disclosure even if grant is active")
+}
+
+// TestDisclosedAddressesForViewer_CrossOrgScoping regresses the M13 fix:
+// a disclosure request created for org A must not upgrade visibility for a
+// viewer who is only a member of org B, even if the grant itself is valid.
+// This is defence-in-depth against C3 (cross-org disclosure creation).
+func TestDisclosedAddressesForViewer_CrossOrgScoping(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	const viewerDID = "did:test:crossorg_viewer"
+	const targetDID = "did:test:crossorg_target"
+	const targetEthAddr = "0xd15c00000000000000000000000000000000000c"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	orgAID, _, _ := setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	// Baseline: viewer is in org A (seeded by helper) → sees target address.
+	addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	require.Contains(t, addrs, targetEthAddr,
+		"viewer in disclosure's org must see target address (baseline)")
+
+	// Remove viewer from org A — viewer is now in NO org. Visibility must drop.
+	_, err = conn.ExecContext(ctx, `
+		DELETE FROM user_memberships
+		WHERE user_id = (SELECT id FROM users WHERE external_id = $1)
+		  AND group_id IN (SELECT id FROM groups WHERE org_id = $2)`,
+		viewerDID, orgAID)
+	require.NoError(t, err)
+
+	addrs, err = database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	assert.Empty(t, addrs,
+		"viewer with no org membership must not see disclosed addresses")
+
+	// Now place viewer in an UNRELATED org B. Disclosure was for org A, so
+	// visibility must still be denied — this is the actual M13 scenario.
+	orgBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
+		orgBID, "disc-org-b-"+orgBID[:8], "Disclosure Test Org B")
+	require.NoError(t, err)
+
+	groupBID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupBID, orgBID)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO user_memberships (id, user_id, group_id, source) SELECT $1, id, $2, 'admin' FROM users WHERE external_id = $3",
+		uuid.New().String(), groupBID, viewerDID)
+	require.NoError(t, err)
+
+	addrs, err = database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	assert.Empty(t, addrs,
+		"viewer in different org than disclosure must not see target address (M13)")
+}
+
+// TestDisclosedAddressesForViewer_ExpiredMembership: a membership that has
+// already lapsed must not authorise the disclosure visibility upgrade.
+func TestDisclosedAddressesForViewer_ExpiredMembership(t *testing.T) {
+	database := setupRBACTestDB(t)
+	defer cleanupTestDB(t, database)
+	ctx := context.Background()
+	conn := database.Conn()
+
+	const viewerDID = "did:test:expired_member_viewer"
+	const targetDID = "did:test:expired_member_target"
+	const targetEthAddr = "0xd15c00000000000000000000000000000000000d"
+
+	futureExpiry := time.Now().Add(24 * time.Hour)
+	setupDisclosureGrant(t, database, viewerDID, targetDID, targetEthAddr, futureExpiry)
+
+	// Expire the viewer's membership (seeded by setupDisclosureGrant).
+	_, err := conn.ExecContext(ctx, `
+		UPDATE user_memberships
+		SET expires_at = NOW() - INTERVAL '1 hour'
+		WHERE user_id = (SELECT id FROM users WHERE external_id = $1)`,
+		viewerDID)
+	require.NoError(t, err)
+
+	addrs, err := database.getDisclosedAddressesForViewer(ctx, viewerDID)
+	require.NoError(t, err)
+	assert.Empty(t, addrs,
+		"expired membership must not authorise disclosure visibility upgrade")
 }
 
 // ============================================================================
@@ -1244,6 +1350,15 @@ func TestDisclosureGrant_MultipleAddresses(t *testing.T) {
 		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}')",
 		orgID, "disc-multi-"+orgID[:8], "Disclosure Multi Org")
 	require.NoError(t, err)
+
+	// Group + viewer membership in the disclosure's org so the M13 org-scoping
+	// check in getDisclosedAddressesForViewer is satisfied.
+	groupID := uuid.New().String()
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'members', 'Members', 0, 'members')",
+		groupID, orgID)
+	require.NoError(t, err)
+	addMember(t, database, viewerDID, groupID)
 
 	// Create target user with TWO linked ETH addresses
 	targetUserID := uuid.New().String()

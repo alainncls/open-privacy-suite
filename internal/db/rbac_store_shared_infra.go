@@ -105,6 +105,49 @@ func (d *DB) ListSharedInfrastructure(ctx context.Context) ([]*rbac.SharedInfras
 	return scanSharedInfrastructureRows(rows)
 }
 
+// UpdateSharedInfrastructure updates the mutable fields of a shared
+// infrastructure record. The address is the lookup key and is never
+// updated. Returns sql.ErrNoRows when no row matches the address.
+//
+// Used by the admin API (KD-1): the most common mutation is
+// rotating the codehash after a legitimate proxy upgrade rotated the
+// bytecode at a stable address — the operator re-attests by writing
+// the new keccak256(eth_getCode(addr)) into the codehash column.
+func (d *DB) UpdateSharedInfrastructure(ctx context.Context, infra *rbac.SharedInfrastructure) error {
+	var description, codehash sql.NullString
+	if infra.Description != "" {
+		description = sql.NullString{String: infra.Description, Valid: true}
+	}
+	if infra.Codehash != nil && *infra.Codehash != "" {
+		codehash = sql.NullString{String: strings.ToLower(*infra.Codehash), Valid: true}
+	}
+
+	const query = `
+		UPDATE shared_infrastructure
+		SET name = $2,
+		    description = $3,
+		    codehash = $4
+		WHERE LOWER(address) = LOWER($1)
+	`
+	result, err := d.conn.ExecContext(ctx, query,
+		strings.ToLower(infra.Address),
+		infra.Name,
+		description,
+		codehash,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update shared infrastructure: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // DeleteSharedInfrastructure removes a shared infrastructure record by address.
 func (d *DB) DeleteSharedInfrastructure(ctx context.Context, address string) error {
 	result, err := d.conn.ExecContext(ctx, `
