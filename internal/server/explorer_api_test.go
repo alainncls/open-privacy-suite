@@ -141,16 +141,56 @@ func linkEthAddressToUser(t *testing.T, database *db.DB, did, address string) {
 	require.NoError(t, err)
 }
 
+// ensureDefaultOrgMembership idempotently provisions a default org + group and
+// places the requester DID into that group. Disclosure-grant tests need this
+// because getDisclosedAddressesForViewer / ViewerHasFullDisclosureGrant now
+// require the viewer to be a member of the disclosure's org (M13 fix).
+//
+// Safe to call repeatedly within a test: org/group/user/membership inserts use
+// ON CONFLICT DO NOTHING, and the membership lookup is via external_id so the
+// caller need not pre-create the viewer user (we create it if missing).
+func ensureDefaultOrgMembership(t *testing.T, database *db.DB, requesterDID string) (defaultOrgID, defaultGroupID string) {
+	t.Helper()
+	ctx := context.Background()
+	conn := database.Conn()
+
+	defaultOrgID = "00000000-0000-0000-0000-000000000001"
+	defaultGroupID = "00000000-0000-0000-0000-000000000002"
+
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
+		defaultOrgID, "default", "Default Organization")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO groups (id, org_id, slug, name, depth, path) VALUES ($1, $2, 'default-members', 'Default Members', 0, 'default-members') ON CONFLICT (id) DO NOTHING",
+		defaultGroupID, defaultOrgID)
+	require.NoError(t, err)
+
+	// Create the viewer user if missing — some tests skip createTestUserForExplorer
+	// for the requester DID and rely on the grant helper to wire things up.
+	_, err = conn.ExecContext(ctx,
+		"INSERT INTO users (id, external_id, kyc, banned, metadata) VALUES ($1, $2, false, false, '{}') ON CONFLICT (external_id) DO NOTHING",
+		uuid.New().String(), requesterDID)
+	require.NoError(t, err)
+
+	// Seed membership (idempotent: UNIQUE(user_id, group_id)).
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO user_memberships (id, user_id, group_id, source)
+		 SELECT $1, u.id, $2, 'admin' FROM users u WHERE u.external_id = $3
+		 ON CONFLICT (user_id, group_id) DO NOTHING`,
+		uuid.New().String(), defaultGroupID, requesterDID)
+	require.NoError(t, err)
+
+	return defaultOrgID, defaultGroupID
+}
+
 // createDisclosureGrant creates a disclosure grant between two users
 // Returns the grant ID
 func createDisclosureGrant(t *testing.T, database *db.DB, requesterDID, targetUserID string, expiresAt time.Time) string {
 	ctx := context.Background()
 
-	// Create default org if not exists
-	defaultOrgID := "00000000-0000-0000-0000-000000000001"
-	_, _ = database.Conn().ExecContext(ctx,
-		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
-		defaultOrgID, "default", "Default Organization")
+	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, requesterDID)
 
 	// Create disclosure request
 	requestID := uuid.New().String()
@@ -724,11 +764,7 @@ func TestGeneratePseudonym_CaseInsensitive(t *testing.T) {
 func createDisclosureGrantWithLevel(t *testing.T, database *db.DB, requesterDID, targetUserID string, level disclosure.DisclosureLevel, expiresAt time.Time) string {
 	ctx := context.Background()
 
-	// Create default org if not exists
-	defaultOrgID := "00000000-0000-0000-0000-000000000001"
-	_, _ = database.Conn().ExecContext(ctx,
-		"INSERT INTO organizations (id, slug, name, settings) VALUES ($1, $2, $3, '{}') ON CONFLICT (id) DO NOTHING",
-		defaultOrgID, "default", "Default Organization")
+	defaultOrgID, _ := ensureDefaultOrgMembership(t, database, requesterDID)
 
 	// Create disclosure request with scope
 	requestID := uuid.New().String()
