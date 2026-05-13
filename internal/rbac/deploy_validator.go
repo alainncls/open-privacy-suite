@@ -2,14 +2,50 @@ package rbac
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"privacy-proxy/internal/evm/bytecode"
-	"privacy-proxy/internal/evm/precompile"
 )
 
-// DeploymentValidator validates contract deployments against org security rules.
+// DeploymentValidator extracts metadata from contract-deployment bytecode.
+//
+// SCOPE (post-M10, security audit follow-up to RD-915):
+//
+// This validator used to perform two separate jobs:
+//
+//   1. Extract metadata from the bytecode (HasCreate/HasCreate2 flags,
+//      proxy-pattern detection — needed by the proxy auto-registration
+//      flow and by the admin UI to label proxies).
+//
+//   2. Statically validate constant CALL/DELEGATECALL targets and
+//      constructor-argument addresses against the org's allowed set.
+//
+// Job #2 was a security gate, but it only caught CONSTANT targets;
+// dynamic targets (constructor args, storage reads, computed addresses)
+// slipped through silently. A code comment claimed runtime tracing
+// covered the dynamic cases, but no runtime tracing was wired for the
+// deploy path. The combination meant a deployer with the deploy claim
+// could ship a constructor that took `address foreignContract` as a
+// constructor arg and STATICCALL'd into another org's private contract
+// during construction, persisting the foreign state in the new
+// contract's initial storage.
+//
+// M10 closed that by routing deploys through runtime tracing
+// (debug_traceCall against empty `to`), which validates EVERY executed
+// frame regardless of how the target address was computed. Once that
+// gate exists in the JSON-RPC processor (validateDeployWithTracing),
+// the static call-target / constructor-arg analysis here is
+// strictly subsumed by it — and worse, leaving it in place duplicates
+// the trace's effort for the constant case while reinforcing the false
+// impression that bytecode analysis defends against dynamic targets.
+//
+// What's left here is JOB #1 ONLY: bytecode metadata extraction
+// (HasCreate, HasCreate2, IsProxy, ProxyType) for the downstream
+// proxy auto-registration flow. Operators who run upstream nodes
+// without `debug_*` exposed lose the M10 gate; they should either
+// re-enable debug_* on their RPC service or accept the deploy-time
+// cross-org leak risk. The architectural assumption (we run our own
+// geth/erigon nodes with debug_* available) makes this the right
+// trade-off.
 type DeploymentValidator struct {
 	store Store
 }
@@ -19,65 +55,74 @@ func NewDeploymentValidator(store Store) *DeploymentValidator {
 	return &DeploymentValidator{store: store}
 }
 
-// ValidationResult contains the result of deployment validation.
+// ValidationResult contains bytecode-extracted metadata. The Allowed
+// flag is always true post-M10 — the actual security gate moved to
+// runtime trace. The metadata fields remain because the proxy auto-
+// registration flow consumes them.
 type ValidationResult struct {
-	Allowed         bool     // Whether the deployment is allowed
-	Reason          string   // Reason for denial (if not allowed)
-	ConstantTargets []string // Addresses the contract will call
-	HasDynamicCalls bool     // Whether contract has dynamic call targets
+	Allowed         bool     // Always true post-M10. Kept for interface compatibility.
+	Reason          string   // Always empty post-M10. Kept for interface compatibility.
+	ConstantTargets []string // Addresses the contract will call. Informational only.
+	HasDynamicCalls bool     // Whether contract has dynamic call targets. Informational only.
 	HasCreate       bool     // Whether contract uses CREATE
 	HasCreate2      bool     // Whether contract uses CREATE2
 
-	// Proxy detection fields
+	// Proxy detection fields — consumed by jsonrpc_processor for
+	// proxy auto-registration. These are why DeploymentValidator
+	// continues to exist.
 	IsProxy   bool                // Whether this is a proxy contract
 	ProxyType string              // Type of proxy if applicable (e.g., "ERC1967", "Transparent", "UUPS")
 	ProxyInfo *bytecode.ProxyInfo // Full proxy detection info
 
-	// Constructor validation fields
+	// Constructor validation fields. Post-M10 these are informational
+	// only — runtime tracing validates every executed frame.
 	ConstructorAddresses []string // Addresses found in constructor arguments
-	ConstructorValidated bool     // Whether constructor args were validated
+	ConstructorValidated bool     // Always false post-M10. Kept for interface compatibility.
 	HasConstructorArgs   bool     // Whether bytecode has constructor arguments
 }
 
-// ValidateDeployment checks if a contract deployment is allowed.
-// It analyzes the bytecode to ensure:
-// 1. Trusted factory detection (CREATE/CREATE2 allowed for whitelisted factories)
-// 2. All constant call targets are allowed for the org
+// ValidateDeployment extracts bytecode metadata for a contract
+// deployment. Post-M10 the call-target validation is gone — the
+// runtime trace in jsonrpc_processor.validateDeployWithTracing is the
+// authoritative gate. This function returns the extracted metadata
+// (HasCreate, HasCreate2, IsProxy, ProxyType, ProxyInfo) so the
+// proxy auto-registration pipeline still has what it needs.
 //
-// Dynamic calls and CREATE/CREATE2 are allowed because runtime tracing validates
-// them at execution time via debug_traceCall.
-//
-// The hasAdminClaim parameter allows admin users to deploy factory contracts
-// that contain CREATE/CREATE2 opcodes.
+// The hasAdminClaim parameter is retained for interface compatibility
+// but ignored — admin claim was a workaround for the now-deleted
+// static "no CREATE/CREATE2 unless admin" rule.
 func (v *DeploymentValidator) ValidateDeployment(
 	ctx context.Context,
 	orgID string,
 	bytecodeHex string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode twice:
-	// 1. Original (for trusted factory hash check - hash includes CBOR metadata)
-	// 2. CBOR-stripped (for opcode analysis - CBOR metadata can look like opcodes)
+	_ = ctx
+	_ = orgID
+	_ = hasAdminClaim
+
 	bcOriginal, err := bytecode.ParseHex(bytecodeHex)
 	if err != nil {
+		// Malformed bytecode never makes it to a node that would accept
+		// it as a deploy, so reject here as a cheap early-bail.
 		return &ValidationResult{
 			Allowed: false,
 			Reason:  "invalid bytecode: " + err.Error(),
 		}, nil
 	}
 
-	// Handle empty bytecode
+	// Empty bytecode is a degenerate case (zero-length init code). Let
+	// it through — the runtime trace will see a CREATE frame with no
+	// nested frames and validate the deploy-claim gate.
 	if bcOriginal.IsEmpty() {
-		return &ValidationResult{
-			Allowed: true,
-			Reason:  "",
-		}, nil
+		return &ValidationResult{Allowed: true}, nil
 	}
 
-	// Parse again with CBOR stripping for security analysis.
-	// This is important because Solidity's CBOR metadata at the end of contracts
-	// can contain bytes that look like opcodes (e.g., 0xf0 = CREATE, 0xf5 = CREATE2,
-	// 0x73 = PUSH20 which is 's' in "solc") but are actually just data, not executable code.
+	// CBOR-strip for opcode analysis: Solidity's CBOR metadata at the
+	// end of contracts can contain bytes that look like opcodes
+	// (0xf0 = CREATE, 0xf5 = CREATE2, 0x73 = PUSH20 = 's' in "solc") but
+	// are just data, not executable code. The proxy detector and
+	// CREATE/CREATE2 flags would false-positive without stripping.
 	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
 	if err != nil {
 		return &ValidationResult{
@@ -86,13 +131,11 @@ func (v *DeploymentValidator) ValidateDeployment(
 		}, nil
 	}
 
-	// Analyze CBOR-stripped bytecode for call targets
 	analysis := bytecode.ExtractCallTargets(bc)
-
-	// Detect if this is a proxy contract
 	proxyInfo := bytecode.DetectProxyPattern(bc)
 
-	result := &ValidationResult{
+	return &ValidationResult{
+		Allowed:         true,
 		ConstantTargets: analysis.ConstantAddrs,
 		HasDynamicCalls: analysis.HasDynamicCall,
 		HasCreate:       analysis.HasCreate,
@@ -100,65 +143,18 @@ func (v *DeploymentValidator) ValidateDeployment(
 		IsProxy:         proxyInfo.IsProxy,
 		ProxyType:       string(proxyInfo.ProxyType),
 		ProxyInfo:       proxyInfo,
-	}
-
-	// CREATE/CREATE2 in deployment bytecode are allowed — runtime tracing validates
-	// the actual execution and auto-registers created addresses.
-	_ = hasAdminClaim // Retained for interface compatibility
-
-	// Verify all constant call targets are allowed
-	for _, target := range analysis.CallTargets {
-		if target.TargetType != bytecode.CallTargetConstant {
-			continue
-		}
-
-		addr := strings.ToLower(target.Address)
-
-		// Precompiles are always allowed
-		if precompile.IsPrecompileAddress(addr) {
-			continue
-		}
-
-		// DELEGATECALL requires org ownership (library must be org-owned)
-		if target.OpcodeName == "DELEGATECALL" {
-			owned, err := v.store.IsAddressOwnedByOrg(ctx, addr, orgID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check DELEGATECALL target ownership: %w", err)
-			}
-			if !owned {
-				result.Allowed = false
-				result.Reason = fmt.Sprintf("DELEGATECALL target %s must be owned by org", addr)
-				return result, nil
-			}
-			continue
-		}
-
-		// Regular CALL: target must be org-owned or truly public
-		allowed, err := v.isAddressAllowedForOrg(ctx, addr, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check CALL target: %w", err)
-		}
-		if !allowed {
-			result.Allowed = false
-			result.Reason = fmt.Sprintf("call target %s not allowed for org", addr)
-			return result, nil
-		}
-	}
-
-	result.Allowed = true
-	return result, nil
+	}, nil
 }
 
-// ValidateDeploymentWithABI validates a deployment with constructor argument validation.
-// If the bytecode has constructor arguments (trailing bytes after opcodes), the ABI is REQUIRED.
-// If no constructor arguments exist, the ABI is optional.
+// ValidateDeploymentWithABI is the historical entry point that also
+// took a constructor ABI for argument validation. Post-M10 the ABI
+// parameter is ignored — the runtime trace handles every cross-org
+// access, including those passed in as constructor arguments. Returns
+// the same metadata as ValidateDeployment.
 //
-// This method performs all the same validations as ValidateDeployment, plus:
-// - Detects if bytecode has constructor arguments
-// - If args exist and no ABI provided: skips constructor validation (runtime tracing catches cross-org calls)
-// - If args exist and ABI provided: decodes args and validates any addresses
-//
-// The hasAdminClaim parameter allows admin users to deploy factory contracts.
+// Kept on the surface so callers don't need to be updated in
+// lockstep; future cleanup may drop this in favor of
+// ValidateDeployment alone.
 func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	ctx context.Context,
 	orgID string,
@@ -166,160 +162,6 @@ func (v *DeploymentValidator) ValidateDeploymentWithABI(
 	constructorABI string,
 	hasAdminClaim bool,
 ) (*ValidationResult, error) {
-	// Parse bytecode twice:
-	// 1. Original (for trusted factory hash check - hash includes CBOR metadata)
-	// 2. CBOR-stripped (for opcode analysis - CBOR metadata can look like opcodes)
-	bcOriginal, err := bytecode.ParseHex(bytecodeHex)
-	if err != nil {
-		return &ValidationResult{
-			Allowed: false,
-			Reason:  "invalid bytecode: " + err.Error(),
-		}, nil
-	}
-
-	// Handle empty bytecode
-	if bcOriginal.IsEmpty() {
-		return &ValidationResult{
-			Allowed: true,
-			Reason:  "",
-		}, nil
-	}
-
-	// Parse again with CBOR stripping for security analysis.
-	bc, err := bytecode.ParseHexForAnalysis(bytecodeHex)
-	if err != nil {
-		return &ValidationResult{
-			Allowed: false,
-			Reason:  "invalid bytecode: " + err.Error(),
-		}, nil
-	}
-
-	// Analyze CBOR-stripped bytecode for call targets
-	analysis := bytecode.ExtractCallTargets(bc)
-
-	// Detect if this is a proxy contract
-	proxyInfo := bytecode.DetectProxyPattern(bc)
-
-	result := &ValidationResult{
-		ConstantTargets: analysis.ConstantAddrs,
-		HasDynamicCalls: analysis.HasDynamicCall,
-		HasCreate:       analysis.HasCreate,
-		HasCreate2:      analysis.HasCreate2,
-		IsProxy:         proxyInfo.IsProxy,
-		ProxyType:       string(proxyInfo.ProxyType),
-		ProxyInfo:       proxyInfo,
-	}
-
-	// CREATE/CREATE2 in deployment bytecode are allowed — runtime tracing validates at execution time.
-	_ = hasAdminClaim // Retained for interface compatibility
-
-	// Verify all constant call targets are allowed
-	for _, target := range analysis.CallTargets {
-		if target.TargetType != bytecode.CallTargetConstant {
-			continue
-		}
-
-		addr := strings.ToLower(target.Address)
-
-		// Precompiles are always allowed
-		if precompile.IsPrecompileAddress(addr) {
-			continue
-		}
-
-		// DELEGATECALL requires org ownership (library must be org-owned)
-		if target.OpcodeName == "DELEGATECALL" {
-			owned, err := v.store.IsAddressOwnedByOrg(ctx, addr, orgID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check DELEGATECALL target ownership: %w", err)
-			}
-			if !owned {
-				result.Allowed = false
-				result.Reason = fmt.Sprintf("DELEGATECALL target %s must be owned by org", addr)
-				return result, nil
-			}
-			continue
-		}
-
-		// Regular CALL: target must be org-owned or truly public
-		allowed, err := v.isAddressAllowedForOrg(ctx, addr, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check CALL target: %w", err)
-		}
-		if !allowed {
-			result.Allowed = false
-			result.Reason = fmt.Sprintf("call target %s not allowed for org", addr)
-			return result, nil
-		}
-	}
-
-	// Check 3: Constructor argument validation
-	// When no ABI is provided, skip constructor validation — runtime tracing
-	// will catch any cross-org calls at execution time.
-	if constructorABI == "" {
-		result.ConstructorValidated = false
-		result.HasConstructorArgs = false
-		result.Allowed = true
-		return result, nil
-	}
-
-	constructorResult, err := bytecode.ExtractConstructorArgs(bc.Raw, constructorABI)
-	if err != nil {
-		result.Allowed = false
-		result.Reason = err.Error()
-		return result, nil
-	}
-
-	result.ConstructorAddresses = constructorResult.Addresses
-	result.ConstructorValidated = true
-	result.HasConstructorArgs = constructorResult.HasArgs
-
-	// Validate each address from constructor args
-	for _, addr := range constructorResult.Addresses {
-		// Precompiles are always allowed
-		if precompile.IsPrecompileAddress(addr) {
-			continue
-		}
-
-		allowed, err := v.isAddressAllowedForOrg(ctx, addr, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check constructor arg address: %w", err)
-		}
-		if !allowed {
-			result.Allowed = false
-			result.Reason = fmt.Sprintf("constructor argument contains address %s not allowed for org", addr)
-			return result, nil
-		}
-	}
-
-	result.Allowed = true
-	return result, nil
-}
-
-// isAddressAllowedForOrg checks if an address can be called by contracts in the org.
-// An address is allowed if:
-// 1. It is owned by this org (already deployed by the org), OR
-// 2. It is preregistered for this org (whitelisted for deployment)
-//
-// Note: Precompile addresses are checked before this function is called.
-func (v *DeploymentValidator) isAddressAllowedForOrg(ctx context.Context, addr, orgID string) (bool, error) {
-	// Check if address is owned by this org (already deployed contract)
-	owned, err := v.store.IsAddressOwnedByOrg(ctx, addr, orgID)
-	if err != nil {
-		return false, err
-	}
-	if owned {
-		return true, nil
-	}
-
-	// Check if address is preregistered for this org (whitelisted for deployment)
-	preregistered, err := v.store.IsAddressPreregistered(ctx, orgID, addr)
-	if err != nil {
-		return false, err
-	}
-	if preregistered {
-		return true, nil
-	}
-
-	// Address is neither owned nor preregistered - deny
-	return false, nil
+	_ = constructorABI
+	return v.ValidateDeployment(ctx, orgID, bytecodeHex, hasAdminClaim)
 }
