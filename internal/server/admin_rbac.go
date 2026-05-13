@@ -33,6 +33,7 @@ func (s *Server) registerRBACRoutes(api *gin.RouterGroup) {
 	api.DELETE("/orgs/:org_id/contracts/:address", s.deleteContract)
 	api.PUT("/orgs/:org_id/contracts/:address/abi", s.updateContractABI)
 	api.PUT("/orgs/:org_id/contracts/:address/visibleto-unlock", s.updateContractAllowVisibleToUnlock)
+	api.PUT("/orgs/:org_id/contracts/:address/events-allow-dynamic-payload", s.updateContractEventsAllowDynamicPayload)
 	api.GET("/orgs/:org_id/contracts/:address/events", s.listContractEvents)
 
 	// RD-872: admin dry-run / impersonation. Tier-2 admin of :org_id

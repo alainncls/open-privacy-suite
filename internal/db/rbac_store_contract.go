@@ -36,21 +36,21 @@ func (d *DB) CreateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) GetContract(ctx context.Context, id string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE id = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, id))
 }
 
 func (d *DB) GetContractByAddress(ctx context.Context, orgID, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 AND lower(address) = $2`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, orgID, strings.ToLower(address)))
 }
 
 func (d *DB) GetContractByAddressGlobal(ctx context.Context, address string) (*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE lower(address) = $1`
 
 	return scanContract(d.conn.QueryRowContext(ctx, query, strings.ToLower(address)))
@@ -61,7 +61,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 		return make(map[string]*rbac.Contract), nil
 	}
 
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE id = ANY($1)`
 
 	rows, err := d.conn.QueryContext(ctx, query, pq.Array(ids))
@@ -80,7 +80,7 @@ func (d *DB) GetContractsByIDs(ctx context.Context, ids []string) (map[string]*r
 
 		err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
+			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		)
 		if err != nil {
@@ -128,7 +128,7 @@ func (d *DB) UpdateContract(ctx context.Context, contract *rbac.Contract) error 
 }
 
 func (d *DB) ListContracts(ctx context.Context, orgID string) ([]*rbac.Contract, error) {
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID)
@@ -149,7 +149,7 @@ func (d *DB) ListContractsPaginated(ctx context.Context, orgID string, limit, of
 	}
 
 	// Get paginated results
-	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := `SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := d.conn.QueryContext(ctx, query, orgID, limit, offset)
@@ -201,7 +201,7 @@ func (d *DB) ListContractsFiltered(ctx context.Context, orgID string, limit, off
 		return nil, 0, fmt.Errorf("failed to count contracts: %w", err)
 	}
 
-	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, org_id, address, name, abi, deployed_by_user_id, deployed_at, metadata, allow_visibleto_unlock, events_allow_dynamic_payload, created_at, updated_at
 	          FROM contracts WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
@@ -257,6 +257,60 @@ func (d *DB) UpdateContractAllowVisibleToUnlock(ctx context.Context, id string, 
 		`UPDATE contracts SET allow_visibleto_unlock = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 		id, allow)
 	return err
+}
+
+// UpdateContractEventsAllowDynamicPayload toggles the per-contract
+// opt-out for the M15 dynamic-payload event drop (security audit
+// follow-up to RD-915). Admin-only. Setting this true tells
+// RedactLogs / FilterEventLogs to pass through events with dynamic
+// non-indexed parameters (bytes, string, dynamic arrays/structs)
+// for this contract even when the viewer didn't earn Full visibility
+// via admin claim, participant override, or visibleTo unlock.
+//
+// Operators should set this only after confirming that the
+// contract's events DO NOT embed foreign-org addresses inside
+// dynamic payloads (typical for standard ERC-20/ERC-721, dangerous
+// for bridge / forwarder / smart-wallet flows).
+func (d *DB) UpdateContractEventsAllowDynamicPayload(ctx context.Context, id string, allow bool) error {
+	_, err := d.conn.ExecContext(ctx,
+		`UPDATE contracts SET events_allow_dynamic_payload = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, allow)
+	return err
+}
+
+// GetBatchEventsAllowDynamicPayload returns the M15 opt-out flag for
+// each provided address (lowercase). Addresses not in the contracts
+// table or with the flag unset map to false (default-deny: drop logs
+// with dynamic payloads). Used by RedactLogs / FilterEventLogs to
+// resolve the flag for every emitting contract in a batch.
+func (d *DB) GetBatchEventsAllowDynamicPayload(ctx context.Context, addresses []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(addresses))
+	if len(addresses) == 0 {
+		return result, nil
+	}
+	lower := make([]string, len(addresses))
+	for i, a := range addresses {
+		lower[i] = strings.ToLower(a)
+	}
+	const query = `
+		SELECT LOWER(address), events_allow_dynamic_payload
+		FROM contracts
+		WHERE LOWER(address) = ANY($1)
+	`
+	rows, err := d.conn.QueryContext(ctx, query, pq.Array(lower))
+	if err != nil {
+		return nil, fmt.Errorf("batch events_allow_dynamic_payload: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var addr string
+		var allow bool
+		if err := rows.Scan(&addr, &allow); err != nil {
+			return nil, fmt.Errorf("scan events_allow_dynamic_payload: %w", err)
+		}
+		result[addr] = allow
+	}
+	return result, rows.Err()
 }
 
 // UpdateContractABI updates only the ABI field of a contract.
@@ -373,7 +427,7 @@ func scanContract(row *sql.Row) (*rbac.Contract, error) {
 
 	err := row.Scan(
 		&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-		&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
+		&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
 		&contract.CreatedAt, &contract.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -414,7 +468,7 @@ func scanContracts(rows *sql.Rows) ([]*rbac.Contract, error) {
 
 		if err := rows.Scan(
 			&contract.ID, &contract.OrgID, &contract.Address, &name, &abi,
-			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock,
+			&deployedByUserID, &deployedAt, &metadata, &contract.AllowVisibleToUnlock, &contract.EventsAllowDynamicPayload,
 			&contract.CreatedAt, &contract.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contract: %w", err)

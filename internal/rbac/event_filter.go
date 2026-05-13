@@ -17,6 +17,34 @@ type ABIProvider interface {
 	GetContractABI(address string) string
 }
 
+// DynamicPayloadAllower is an optional interface implemented by ABIProvider
+// instances that also know whether a contract has been opted out of the
+// M15 dynamic-payload drop gate (`contracts.events_allow_dynamic_payload`).
+//
+// Pre-M15, RedactLogs and FilterEventLogs scanned only AddressTy +
+// bytes32-typed STATIC slots of an event's non-indexed params for
+// embedded private addresses. Dynamic types — `bytes`, `string`,
+// dynamic arrays, dynamic structs — were passed through verbatim, so
+// any contract that embedded addresses inside a `bytes` payload (bridge
+// contracts, forwarders, smart-wallet calldata, etc.) leaked foreign-
+// org addresses to any viewer who could read the event log.
+//
+// Default-fix (close-by-default): when this interface is implemented
+// AND the contract returns false for IsEventsAllowDynamicPayload, the
+// filter drops the entire log if the matched event's ABI declares any
+// dynamic non-indexed parameter. Admins, participants, and visibleTo-
+// unlocked viewers are unaffected — the drop slots in AFTER those
+// bypasses, mirroring the explorer-side gate in redactor.go.
+//
+// The optional-interface pattern (type-assertion in FilterEventLogs)
+// keeps the legacy two-method ABIProvider interface intact: callers
+// that don't implement DynamicPayloadAllower (most tests) silently
+// disable the gate, which is the pre-M15 behaviour. Production server
+// startup wires storeABIProvider, which implements both.
+type DynamicPayloadAllower interface {
+	IsEventsAllowDynamicPayload(address string) bool
+}
+
 // TxVisibilityProvider looks up per-tx visibleTo rules from the database.
 type TxVisibilityProvider interface {
 	GetBatchTxVisibility(ctx context.Context, txHashes []string) (map[string][]string, error)
@@ -158,8 +186,49 @@ func FilterEventLogs(
 		// bypass above is the only exception). nil abiProvider disables
 		// the gate (test ergonomics — production paths always inject a
 		// real provider via newStoreABIProvider).
-		if abiProvider != nil && abiProvider.GetContractABI(contractAddr) == "" {
-			continue
+		var contractABI string
+		if abiProvider != nil {
+			contractABI = abiProvider.GetContractABI(contractAddr)
+			if contractABI == "" {
+				continue
+			}
+		}
+
+		// M15 dynamic-payload drop (security audit follow-up to RD-915):
+		// drop logs whose matching event declares any dynamic non-indexed
+		// param (`bytes`, `string`, dynamic arrays, dynamic structs) for
+		// non-Full viewers. Pre-M15 the static-slot scanner could not
+		// reach addresses embedded in dynamic payloads, so bridge /
+		// forwarder / smart-wallet contracts leaked foreign-org address
+		// material verbatim in their event data.
+		//
+		// Slot precedence: admin bypass and visibleTo unlock above ALREADY
+		// passed the log through; this gate only fires for viewers who
+		// fell through to the regular access path. Participants on the
+		// parent tx are handled at the RPC layer one level up (see
+		// FilterReceiptLogsWithEventRules — only participants reach this
+		// function for receipts; for eth_getLogs participation is not the
+		// gate, RBAC is).
+		//
+		// Per-contract opt-out: when the ABIProvider implements the
+		// DynamicPayloadAllower interface AND
+		// IsEventsAllowDynamicPayload(addr) returns true, the operator
+		// has explicitly attested that the contract's dynamic payloads
+		// are safe (ERC-20 string symbol, etc.) and the gate is bypassed
+		// for THAT contract. Default is close-by-default (drop).
+		//
+		// Anonymous events (no topic0) are treated as "no matching event"
+		// — the helper returns false and we fall through. Anonymous-event
+		// dynamic-payload leakage is a separate concern (covered by the
+		// deny-all default in event_rules below).
+		if contractABI != "" && len(entry.Topics) > 0 {
+			allowDynamic := false
+			if dpa, ok := abiProvider.(DynamicPayloadAllower); ok {
+				allowDynamic = dpa.IsEventsAllowDynamicPayload(contractAddr)
+			}
+			if !allowDynamic && eventHasDynamicNonIndexedParam(contractABI, entry.Topics[0]) {
+				continue
+			}
 		}
 
 		access := perms.GetContractAccess(contractAddr)
@@ -632,6 +701,72 @@ func eventRulesGetRules(f *EventRulesField) []EventRule {
 		return nil
 	}
 	return f.GetRules()
+}
+
+// eventHasDynamicNonIndexedParam reports whether the event matching
+// topic0 in contractABI declares ANY non-indexed parameter of a
+// dynamically-sized ABI type (`bytes`, `string`, dynamic arrays — incl.
+// fixed-length arrays of dynamic types — or tuples containing any
+// dynamic field).
+//
+// Used by FilterEventLogs (and the explorer's RedactLogs via a mirror)
+// to drive the M15 drop gate: dynamic payloads can embed foreign-org
+// addresses that the pre-M15 static-slot scanner cannot find. When the
+// ABI lookup fails (parse error, no matching event, no ABI provided),
+// the function conservatively returns FALSE — at this point the caller
+// has already cleared the deny-when-no-ABI gate (RD-875) via an admin
+// bypass or visibleTo unlock, so withholding the drop is acceptable.
+//
+// Indexed params are NEVER considered dynamic for this gate: dynamic
+// types appearing as indexed are stored as keccak256 hashes in topics,
+// not raw bytes — no address material survives.
+func eventHasDynamicNonIndexedParam(contractABI string, topic0 string) bool {
+	if contractABI == "" || topic0 == "" {
+		return false
+	}
+	ev := findEventByTopic0(contractABI, topic0)
+	if ev == nil {
+		return false
+	}
+	for _, inp := range ev.Inputs {
+		if inp.Indexed {
+			continue
+		}
+		if isDynamicABIType(inp.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDynamicABIType reports whether an abi.Type is dynamically-sized in
+// the ABI encoding sense. Mirrors go-ethereum's internal classification:
+//   - bytes, string                       — always dynamic
+//   - T[] (slice)                         — always dynamic
+//   - T[N] (fixed array) where T dynamic  — dynamic
+//   - tuple containing any dynamic field  — dynamic
+//
+// Plain fixed-size types (bytesN, intN, uintN, bool, address, function)
+// are static.
+func isDynamicABIType(t abi.Type) bool {
+	switch t.T {
+	case abi.StringTy, abi.BytesTy, abi.SliceTy:
+		return true
+	case abi.ArrayTy:
+		if t.Elem == nil {
+			return false
+		}
+		return isDynamicABIType(*t.Elem)
+	case abi.TupleTy:
+		for _, ft := range t.TupleElems {
+			if ft != nil && isDynamicABIType(*ft) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // findEventByTopic0 finds the event in a contract ABI that matches the given topic0.
