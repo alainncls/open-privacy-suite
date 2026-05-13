@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -108,7 +109,8 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		slog.Warn("disclosure: invalid create-request body", "err", err)
+		respondBadRequest(c, "invalid request body")
 		return
 	}
 
@@ -148,7 +150,8 @@ func (s *Server) createDisclosureRequest(c *gin.Context) {
 		expiresIn,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create disclosure request"})
+		slog.Error("disclosure: create request failed", "err", err, "target_user_id", input.TargetUserID, "org_id", orgID)
+		respondInternalError(c, "failed to create disclosure request")
 		return
 	}
 
@@ -237,7 +240,8 @@ func (s *Server) listDisclosureRequests(c *gin.Context) {
 
 	result, err := s.disclosureService.ListRequestsWithFilter(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list requests failed", "err", err, "org_id", filter.OrgID)
+		respondInternalError(c, "failed to list disclosure requests")
 		return
 	}
 
@@ -264,7 +268,7 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 			}
 		}
 		if filter.OrgID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "org_id query parameter is required"})
+			respondBadRequest(c, "org_id query parameter is required")
 			return
 		}
 	}
@@ -328,7 +332,8 @@ func (s *Server) listDisclosureGrants(c *gin.Context) {
 
 	result, err := s.disclosureService.ListGrantsWithFilter(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list grants failed", "err", err, "org_id", filter.OrgID)
+		respondInternalError(c, "failed to list disclosure grants")
 		return
 	}
 
@@ -343,12 +348,13 @@ func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 	// Load the request to find its org before any mutation.
 	reqDetails, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load request"})
+		slog.Error("disclosure: delete pre-load failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to retrieve disclosure request")
 		return
 	}
 	if reqDetails == nil || reqDetails.Request == nil {
 		// Generic 403 to avoid existence oracle.
-		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		respondForbidden(c, errTargetForeignOrg)
 		return
 	}
 	if !requireFullAdminInScope(c, reqDetails.Request.OrgID) {
@@ -358,14 +364,15 @@ func (s *Server) deleteDisclosureRequest(c *gin.Context) {
 	err = s.disclosureService.DeletePendingRequest(c.Request.Context(), requestID)
 	if err != nil {
 		if err == disclosure.ErrRequestNotFound {
-			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			respondForbidden(c, errTargetForeignOrg)
 			return
 		}
 		if err == disclosure.ErrRequestNotPending {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "can only delete pending requests"})
+			respondBadRequest(c, "can only delete pending requests")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete request"})
+		slog.Error("disclosure: delete request failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to delete disclosure request")
 		return
 	}
 
@@ -384,11 +391,12 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 	// Load grant to find owning org via its parent request.
 	grantWithReq, err := s.db.GetDisclosureGrantWithRequest(c.Request.Context(), grantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load grant"})
+		slog.Error("disclosure: revoke pre-load failed", "err", err, "grant_id", grantID)
+		respondInternalError(c, "failed to retrieve disclosure grant")
 		return
 	}
 	if grantWithReq == nil || grantWithReq.Request == nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		respondForbidden(c, errTargetForeignOrg)
 		return
 	}
 	if !requireFullAdminInScope(c, grantWithReq.Request.OrgID) {
@@ -404,10 +412,11 @@ func (s *Server) adminRevokeDisclosureGrant(c *gin.Context) {
 
 	if err := s.disclosureService.RevokeGrant(c.Request.Context(), grantID, input.Reason); err != nil {
 		if err == disclosure.ErrGrantNotFound {
-			c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+			respondForbidden(c, errTargetForeignOrg)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke grant"})
+		slog.Error("disclosure: revoke grant failed", "err", err, "grant_id", grantID)
+		respondInternalError(c, "failed to revoke disclosure grant")
 		return
 	}
 
@@ -425,11 +434,12 @@ func (s *Server) getDisclosureRequest(c *gin.Context) {
 
 	reqDetails, err := s.db.GetDisclosureRequestWithDetails(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load request"})
+		slog.Error("disclosure: get request failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to retrieve disclosure request")
 		return
 	}
 	if reqDetails == nil || reqDetails.Request == nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": errTargetForeignOrg})
+		respondForbidden(c, errTargetForeignOrg)
 		return
 	}
 	if !requireTargetInScope(c, reqDetails.Request.OrgID) {
@@ -447,14 +457,15 @@ func (s *Server) checkDisclosureAccess(c *gin.Context) {
 	targetUserDID := c.Query("target_user_did")
 
 	if requesterDID == "" || targetUserDID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "requester_did and target_user_did are required"})
+		respondBadRequest(c, "requester_did and target_user_did are required")
 		return
 	}
 
 	// Check if there's an active grant for this requester DID and target user
 	grantWithReq, err := s.db.GetActiveGrantByRequesterDID(c.Request.Context(), requesterDID, targetUserDID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: check-access lookup failed", "err", err)
+		respondInternalError(c, "failed to check disclosure access")
 		return
 	}
 
@@ -481,7 +492,8 @@ func (s *Server) getMyDisclosureRequests(c *gin.Context) {
 
 	requests, err := s.disclosureService.GetMyPendingRequests(c.Request.Context(), userID.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list pending requests failed", "err", err, "user_id", userID)
+		respondInternalError(c, "failed to retrieve disclosure requests")
 		return
 	}
 
@@ -494,7 +506,8 @@ func (s *Server) getAllMyDisclosureRequests(c *gin.Context) {
 
 	requests, err := s.disclosureService.GetAllMyRequests(c.Request.Context(), userID.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list all my requests failed", "err", err, "user_id", userID)
+		respondInternalError(c, "failed to retrieve disclosure requests")
 		return
 	}
 
@@ -524,15 +537,16 @@ func (s *Server) approveDisclosureRequest(c *gin.Context) {
 	// Verify user is the target of the request
 	req, err := s.db.GetDisclosureRequest(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: approve lookup failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to retrieve disclosure request")
 		return
 	}
 	if req == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		respondNotFound(c, "request not found")
 		return
 	}
 	if req.TargetUserID != userID.(string) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "you can only approve requests targeting your own data"})
+		respondForbidden(c, "you can only approve requests targeting your own data")
 		return
 	}
 
@@ -545,7 +559,8 @@ func (s *Server) approveDisclosureRequest(c *gin.Context) {
 		input.Reason,
 	)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: approve request failed", "err", err, "request_id", requestID)
+		respondBadRequest(c, "failed to approve disclosure request")
 		return
 	}
 
@@ -570,20 +585,22 @@ func (s *Server) rejectDisclosureRequest(c *gin.Context) {
 	// Verify user is the target of the request
 	req, err := s.db.GetDisclosureRequest(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: reject lookup failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to retrieve disclosure request")
 		return
 	}
 	if req == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		respondNotFound(c, "request not found")
 		return
 	}
 	if req.TargetUserID != userID.(string) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "you can only reject requests targeting your own data"})
+		respondForbidden(c, "you can only reject requests targeting your own data")
 		return
 	}
 
 	if err := s.disclosureService.RejectRequest(c.Request.Context(), requestID, userID.(string), input.Reason); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: reject request failed", "err", err, "request_id", requestID)
+		respondBadRequest(c, "failed to reject disclosure request")
 		return
 	}
 
@@ -605,20 +622,22 @@ func (s *Server) revokeDisclosureRequest(c *gin.Context) {
 	// Verify user is the target of the request
 	req, err := s.db.GetDisclosureRequest(c.Request.Context(), requestID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: revoke lookup failed", "err", err, "request_id", requestID)
+		respondInternalError(c, "failed to retrieve disclosure request")
 		return
 	}
 	if req == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		respondNotFound(c, "request not found")
 		return
 	}
 	if req.TargetUserID != userID.(string) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "you can only revoke requests targeting your own data"})
+		respondForbidden(c, "you can only revoke requests targeting your own data")
 		return
 	}
 
 	if err := s.disclosureService.RevokeRequest(c.Request.Context(), requestID, userID.(string), input.Reason); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: revoke request failed", "err", err, "request_id", requestID)
+		respondBadRequest(c, "failed to revoke disclosure request")
 		return
 	}
 
@@ -631,7 +650,8 @@ func (s *Server) getMyActiveGrants(c *gin.Context) {
 
 	grants, err := s.disclosureService.GetMyActiveGrants(c.Request.Context(), userID.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list active grants failed", "err", err, "user_id", userID)
+		respondInternalError(c, "failed to retrieve disclosure grants")
 		return
 	}
 
@@ -644,7 +664,8 @@ func (s *Server) getAllMyGrants(c *gin.Context) {
 
 	grants, err := s.disclosureService.GetAllMyGrants(c.Request.Context(), userID.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list all my grants failed", "err", err, "user_id", userID)
+		respondInternalError(c, "failed to retrieve disclosure grants")
 		return
 	}
 
@@ -673,12 +694,13 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 
 	grantWithReq, err := s.validateDisclosureToken(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: token validation failed (logs)", "err", err, "grant_id", grantID)
+		respondUnauthorized(c, "invalid disclosure token")
 		return
 	}
 
 	if grantWithReq.Grant.ID != grantID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not match grant"})
+		respondForbidden(c, "token does not match grant")
 		return
 	}
 
@@ -703,7 +725,8 @@ func (s *Server) getDisclosureLogs(c *gin.Context) {
 
 	logs, err := s.disclosureService.GetActivityLogs(c.Request.Context(), grantID, viewerUserID, viewerIP, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: get activity logs failed", "err", err, "grant_id", grantID)
+		respondInternalError(c, "failed to retrieve disclosure logs")
 		return
 	}
 
@@ -716,12 +739,13 @@ func (s *Server) getDisclosureSummary(c *gin.Context) {
 
 	grantWithReq, err := s.validateDisclosureToken(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: token validation failed (summary)", "err", err, "grant_id", grantID)
+		respondUnauthorized(c, "invalid disclosure token")
 		return
 	}
 
 	if grantWithReq.Grant.ID != grantID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not match grant"})
+		respondForbidden(c, "token does not match grant")
 		return
 	}
 
@@ -733,7 +757,8 @@ func (s *Server) getDisclosureSummary(c *gin.Context) {
 
 	summary, err := s.disclosureService.GetActivitySummary(c.Request.Context(), grantID, viewerUserID, viewerIP)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: get activity summary failed", "err", err, "grant_id", grantID)
+		respondInternalError(c, "failed to retrieve disclosure summary")
 		return
 	}
 
@@ -747,12 +772,13 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 
 	grantWithReq, err := s.validateDisclosureToken(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: token validation failed (report)", "err", err, "grant_id", grantID)
+		respondUnauthorized(c, "invalid disclosure token")
 		return
 	}
 
 	if grantWithReq.Grant.ID != grantID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not match grant"})
+		respondForbidden(c, "token does not match grant")
 		return
 	}
 
@@ -761,7 +787,7 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 	case disclosure.ReportActivitySummary, disclosure.ReportSanctionsCheck, disclosure.ReportCompliance:
 		// Valid report type
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid report type"})
+		respondBadRequest(c, "invalid report type")
 		return
 	}
 
@@ -773,7 +799,8 @@ func (s *Server) getDisclosureReport(c *gin.Context) {
 
 	report, err := s.disclosureService.GenerateComplianceReport(c.Request.Context(), grantID, viewerUserID, viewerIP, reportType)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: generate compliance report failed", "err", err, "grant_id", grantID, "report_type", reportTypeStr)
+		respondInternalError(c, "failed to generate disclosure report")
 		return
 	}
 
@@ -786,12 +813,13 @@ func (s *Server) getDisclosureEvents(c *gin.Context) {
 
 	grantWithReq, err := s.validateDisclosureToken(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		slog.Warn("disclosure: token validation failed (events)", "err", err, "grant_id", grantID)
+		respondUnauthorized(c, "invalid disclosure token")
 		return
 	}
 
 	if grantWithReq.Grant.ID != grantID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not match grant"})
+		respondForbidden(c, "token does not match grant")
 		return
 	}
 
@@ -810,7 +838,8 @@ func (s *Server) getDisclosureEvents(c *gin.Context) {
 
 	events, err := s.db.ListDisclosureEventsByGrant(c.Request.Context(), grantID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("disclosure: list events failed", "err", err, "grant_id", grantID)
+		respondInternalError(c, "failed to retrieve disclosure events")
 		return
 	}
 
