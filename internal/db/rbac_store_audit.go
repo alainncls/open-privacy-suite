@@ -68,7 +68,11 @@ func (d *DB) CreateAuditLog(ctx context.Context, entry *rbac.AuditLogEntry) erro
 		).Scan(&id); scanErr != nil {
 			return "", nil, fmt.Errorf("reserve rbac_audit_log id: %w", scanErr)
 		}
-		createdAt := time.Now().UTC()
+		// Postgres TIMESTAMP stores microsecond precision; truncate
+		// Go's nanosecond-precision Now() so the hash content (built
+		// before write) matches what the verifier reads back. See
+		// LogAccessChained for the same gotcha.
+		createdAt := time.Now().UTC().Truncate(time.Microsecond)
 		content := buildRBACAuditContent(id, createdAt, entry, oldValue, newValue)
 
 		write := func(hash string) error {

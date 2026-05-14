@@ -91,12 +91,24 @@ Output on failure (non-zero exit code so cron / CI can alert):
 
 ## Role separation (defense in depth)
 
-The migration `057_audit_role_separation.sql` creates two Postgres roles:
+The migration `057_audit_role_separation.sql` creates two Postgres roles with an **explicit per-table allowlist** (not a deny-list):
 
-- `privacy_proxy_app` — the proxy runtime identity. `INSERT` + `SELECT` on the append-forever tables (`rbac_audit_log`, `compliance_logs`). Full CRUD on the rest of the schema. Retention prune on `access_logs` still works because that table is intentional-prune by policy.
+- `privacy_proxy_app` — the proxy runtime identity. `INSERT` + `SELECT` only on the append-forever audit tables (`rbac_audit_log`, `compliance_logs`, `disclosure_events`, `price_change_log`, `impersonation_log`). Full CRUD on operational tables. Retention prune on `access_logs` still works because that table is intentional-prune by policy.
 - `privacy_proxy_admin` — operator identity. Full DDL/DML. Used **rarely**, by a human via a credential that lives outside the app's secret store.
 
-This raises the bar against an attacker who compromises the proxy host: they get the app credential, which by itself cannot rewrite `rbac_audit_log` history. They'd need a separate compromise to acquire admin credentials.
+This raises the bar against an attacker who compromises the proxy host: they get the app credential, which by itself cannot rewrite admin-action or compliance history. They'd need a separate compromise to acquire admin credentials.
+
+<Callout variant="warn" title="New-table checklist for future migration authors">
+  Adding a new table in a future migration? You **must** add a `GRANT` block in the same migration:
+
+  - **Audit / forever-append**: `GRANT SELECT, INSERT ON <table> TO privacy_proxy_app;`
+  - **Operational**: `GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO privacy_proxy_app;`
+  - **Sequences** (BIGSERIAL / SERIAL primary keys only): `GRANT USAGE, UPDATE ON SEQUENCE <table>_id_seq TO privacy_proxy_app;`
+
+  The admin role inherits all permissions automatically via the schema-wide `ALL TABLES` grant — no per-table action needed for it.
+
+  Forgetting a GRANT means the runtime fails loudly with `permission denied for table` the first time the new table is touched — that's the **intentional** failure mode. Loud-break-on-mistake beats silent-permission-leak for compliance-sensitive grants.
+</Callout>
 
 <Callout variant="info" title="Credential lifecycle is your call">
   The migration creates the roles with NOLOGIN and no password. We do not pick a secret store on your behalf — the infra team applies whichever credential-lifecycle mechanism fits the deployment. Options below.

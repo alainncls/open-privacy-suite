@@ -560,7 +560,13 @@ func (d *DB) LogAccessChained(
 		).Scan(&id); scanErr != nil {
 			return "", nil, fmt.Errorf("reserve access_logs id: %w", scanErr)
 		}
-		createdAt := time.Now().UTC()
+		// Postgres TIMESTAMP stores microsecond precision; Go's
+		// time.Now() carries nanoseconds. Truncate so the hash content
+		// (computed before write) matches the value the verifier reads
+		// back. Without this, every chain would look tampered on
+		// re-read because the last three digits of the format string
+		// disagree.
+		createdAt := time.Now().UTC().Truncate(time.Microsecond)
 		paramsDigest := ""
 		if len(params) > 0 {
 			paramsDigest = string(params)
