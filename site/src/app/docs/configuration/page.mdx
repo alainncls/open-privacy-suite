@@ -376,6 +376,32 @@ make db-new-migration name=add_feature
 
 ---
 
+## Audit Log Integrity
+
+Both `access_logs` and `rbac_audit_log` are protected by a SHA-256 hash chain (RD-858). Every row links to the previous row's hash so an attacker cannot silently rewrite history without invalidating every downstream hash. A scheduled in-process verifier walks the chain at a configurable interval and fires structured alerts on mismatch.
+
+<EnvTable vars={[
+  { name: "AUDIT_INTEGRITY_VERIFY_INTERVAL", default: "15m", description: "How often the in-process verifier walks every audit chain. Set to 0 to disable the scheduled worker entirely (manual verification via privacy-cli still works). Go duration format." },
+  { name: "AUDIT_TAMPER_WEBHOOK_URL", default: "(empty)", description: "Optional generic webhook POSTed with a JSON payload when the verifier detects tampering. Used when no SIEM is configured; wire to Slack incoming webhooks, PagerDuty Events API, Discord, or your alert ingestion bus. Subject to the same SSRF guard as SIEM_WEBHOOK_URL (loopback, RFC-1918, link-local, cloud-metadata IPs are rejected). Leave empty when SIEM forwarding is the alert channel — the verifier already emits a SIEM event of type 'audit.chain.tamper_detected' on every violation." },
+]} />
+
+When a violation is detected, the verifier:
+
+- Logs a structured `slog.Error` with the chain name, the offending row id, and the mismatch reason.
+- Increments Prometheus counter `privacy_proxy_audit_chain_integrity_violations_total{chain,reason}`.
+- Emits a SIEM event of type `audit.chain.tamper_detected` via the existing `SIEM_WEBHOOK_URL` forwarder (preferred channel — the customer's SIEM already routes to PagerDuty / Slack / Datadog).
+- POSTs a JSON payload to `AUDIT_TAMPER_WEBHOOK_URL` if configured.
+
+For on-demand verification (auditor spot-check, incident response), use:
+
+```bash
+privacy-cli audit verify --database-url $DATABASE_URL --chain all
+```
+
+The CLI is read-only; connect with the `privacy_proxy_admin` role or a dedicated read-only audit role, not the runtime app credential.
+
+---
+
 ## Trusted Proxies
 
 For Docker environments, the server trusts `X-Forwarded-For` from:

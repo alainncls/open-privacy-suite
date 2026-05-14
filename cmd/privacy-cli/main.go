@@ -29,6 +29,8 @@ func main() {
 		runVerify(verifyCmd, os.Args[2:])
 	case "list":
 		runList(listCmd, os.Args[2:])
+	case "audit":
+		runAudit(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("privacy-cli version %s\n", Version)
 	case "help", "-h", "--help":
@@ -50,6 +52,7 @@ Commands:
   prepare           Analyze Foundry broadcast and register addresses with Privacy Proxy
   verify            Verify deployment matches registration
   list              List pending deployments for an organization
+  audit verify      Walk an audit hash chain and report integrity (RD-858)
 
 Options:
   -h, --help        Show this help message

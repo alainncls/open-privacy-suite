@@ -10,8 +10,16 @@ import (
 )
 
 // ChainNameAccessLogs is the chain identifier stored in audit_chain_anchor for
-// the access_logs hash chain. Other chains can be added later (e.g. rbac_audit).
+// the access_logs hash chain.
 const ChainNameAccessLogs = "access_logs"
+
+// ChainNameRBACAuditLog is the chain identifier stored in audit_chain_anchor
+// for the rbac_audit_log hash chain (RD-858). The chain protects admin-
+// action records (group / grant / membership mutations, compliance config
+// changes, etc.) against silent tampering by an attacker with DB read or
+// write access — the auditor scope where the access_logs-only chain was
+// strictly insufficient for SOC 2 / ISO 27001 CC7 evidence.
+const ChainNameRBACAuditLog = "rbac_audit_log"
 
 // PruneResult carries the metadata an audit-of-the-audit row needs after a
 // prune operation. CleanupAccessLogs and TrimAccessLogsFIFOBatch return this

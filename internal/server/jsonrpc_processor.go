@@ -20,6 +20,7 @@ import (
 
 	"privacy-proxy/internal/audit"
 	"privacy-proxy/internal/compliance"
+	"privacy-proxy/internal/db"
 	"privacy-proxy/internal/metrics"
 	"privacy-proxy/internal/proxy"
 	"privacy-proxy/internal/rbac"
@@ -103,7 +104,22 @@ type AccessLogger interface {
 
 // EnhancedAccessLogger logs access with correlation ID, params, and returns the entry ID for hash chain.
 // responseStatus is nil when it matches statusCode (non-opaque request).
+//
+// LogAccessChained (RD-858) writes the row AND advances the hash chain
+// atomically — preferred over the LogAccessEnhanced + UpdateAccessLogHash
+// pair, which leaves entry_hash NULL on process crash between the two
+// statements. The legacy pair is retained for tests that seed rows
+// without chain participation.
 type EnhancedAccessLogger interface {
+	LogAccessChained(
+		ctx context.Context,
+		chain db.RBACAuditChain,
+		externalID, method string,
+		statusCode int,
+		ipAddress, correlationID string,
+		params []byte,
+		responseStatus *int,
+	) (int64, time.Time, string, error)
 	LogAccessEnhanced(ctx context.Context, externalID, method string, statusCode int, ipAddress, correlationID string, params []byte, responseStatus *int) (int64, time.Time, error)
 	UpdateAccessLogHash(ctx context.Context, id int64, hash string) error
 }
@@ -277,30 +293,24 @@ func (p *JSONRPCProcessor) logAccess(ctx context.Context, req *ProcessRequest, s
 		if respStatus != statusCode {
 			respStatusPtr = &respStatus
 		}
-		id, createdAt, err := p.enhancedLogger.LogAccessEnhanced(ctx, req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID, params, respStatusPtr)
+
+		// RD-858: single-statement INSERT with entry_hash set atomically.
+		// Closes the pre-fix race where a process crash between
+		// LogAccessEnhanced and UpdateAccessLogHash left entry_hash
+		// NULL — a state the verifier cannot distinguish from
+		// tampering. The chain advances only when the INSERT commits.
+		id, createdAt, hash, err := p.enhancedLogger.LogAccessChained(
+			ctx,
+			p.hashChain,
+			req.UserID, req.Method, statusCode, req.ClientIP, req.CorrelationID,
+			params, respStatusPtr,
+		)
 		if err != nil {
 			// Fallback to basic logging
 			p.accessLogger.LogAccess(ctx, req.UserID, req.Method, statusCode, req.ClientIP)
 			return
 		}
-
-		// Compute and store hash chain entry (format version 2)
-		// All fields stored in DB and verifiable — request_params is TEXT
-		// (not JSONB) to preserve exact bytes for hash chain verification.
-		paramsDigest := ""
-		if len(params) > 0 {
-			paramsDigest = string(params)
-		}
-		entryContent := fmt.Sprintf("v2|%d|%s|%s|%s|%d|%d|%s|%s|%s",
-			id, req.UserID, req.Method, req.ClientIP, statusCode, respStatus,
-			createdAt.Format(time.RFC3339Nano),
-			req.CorrelationID,
-			paramsDigest,
-		)
-		hash := p.hashChain.ComputeNext(entryContent)
-		if err := p.enhancedLogger.UpdateAccessLogHash(ctx, id, hash); err != nil {
-			slog.Warn("failed to update access log hash", "id", id, "error", err)
-		}
+		_ = id
 
 		// Forward to SIEM if configured
 		if p.siemForwarder != nil {
