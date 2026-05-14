@@ -29,6 +29,15 @@ func setupIntegrityTestDB(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatalf("db.New: %v", err)
 	}
+	// Match the package-internal setupTestDB pattern: clear data
+	// tables so the test runs against a known-empty audit history.
+	// Critical when CI shares a single Postgres instance across
+	// every test in the package — without this, earlier tests'
+	// access_logs / rbac_audit_log rows leak into the verifier's
+	// walk and break id-based assertions.
+	if err := db.ResetTestDatabase(database); err != nil {
+		t.Fatalf("ResetTestDatabase: %v", err)
+	}
 	t.Cleanup(func() {
 		_ = database.Close()
 	})
@@ -104,13 +113,19 @@ func TestAuditIntegrity_TamperedAccessLogRow_DetectedAsHashMismatch(t *testing.T
 		}
 	}
 
-	// Tamper: change row id=3's entry_hash. The verifier walks in id
-	// order, so this row IS the one it should flag (the next row's
-	// recomputation continues to use whatever stored hash it sees on
-	// its predecessor).
+	// Pick the third row by offset rather than hardcoded id —
+	// ResetTestDatabase clears rows but does not reset the
+	// access_logs_id_seq, so the writer may have started at any
+	// value. The verifier walks in id order regardless.
+	var targetID int64
+	if err := database.Conn().QueryRowContext(ctx,
+		`SELECT id FROM access_logs ORDER BY id ASC OFFSET 2 LIMIT 1`,
+	).Scan(&targetID); err != nil {
+		t.Fatalf("pick target row: %v", err)
+	}
 	if _, err := database.Conn().ExecContext(ctx,
-		`UPDATE access_logs SET entry_hash = $1 WHERE id = 3`,
-		"deadbeef"+"00000000000000000000000000000000000000000000000000000000",
+		`UPDATE access_logs SET entry_hash = $1 WHERE id = $2`,
+		"deadbeef"+"00000000000000000000000000000000000000000000000000000000", targetID,
 	); err != nil {
 		t.Fatalf("tamper UPDATE: %v", err)
 	}
@@ -127,8 +142,8 @@ func TestAuditIntegrity_TamperedAccessLogRow_DetectedAsHashMismatch(t *testing.T
 		t.Fatalf("expected reason=%s, got %s",
 			audit.ReasonHashMismatch, res.FirstMismatchReason)
 	}
-	if res.FirstMismatchID != 3 {
-		t.Fatalf("expected mismatch at id=3, got id=%d", res.FirstMismatchID)
+	if res.FirstMismatchID != targetID {
+		t.Fatalf("expected mismatch at id=%d, got id=%d", targetID, res.FirstMismatchID)
 	}
 }
 
