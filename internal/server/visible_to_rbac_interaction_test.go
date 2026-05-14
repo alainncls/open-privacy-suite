@@ -72,6 +72,7 @@ func TestCheckAccess_VisibleTo_DoesNotBypassMethodAllowlist(t *testing.T) {
 
 	result, err := ts.rbacAccessCtrl.CheckAccess(ctx, &rbac.AccessCheckRequest{
 		UserExternalID: viewerDID,
+		OrgID:          orgID,
 		Method:         rbac.MethodGetTransactionByHash,
 		Params:         []any{txHash},
 		RequiredClaims: []rbac.Claim{},

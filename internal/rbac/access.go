@@ -127,7 +127,7 @@ var GlobalBlockedMethods = map[string]bool{
 	"txpool_status":      true,
 
 	// NOTE: eth_getStorageAt is NOT globally blocked — it uses tiered access control
-	// in CheckAccess: admin-claim users get all slots, read-claim users get only
+	// in CheckAccess: admin-claim users get all slots, non-admin users get only
 	// well-known infrastructure slots (EIP-1967, EIP-2535). See storage_slots.go.
 
 	// Signing methods - key exposure risk
@@ -547,8 +547,10 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 		}, nil
 	}
 
-	// Determine which org to use for permissions
-	// Priority: 1) explicit OrgID, 2) explicit OrgSlug, 3) target-based org context, 4) user's default org
+	// Determine which org to use for permissions.
+	// Priority: 1) explicit OrgID, 2) explicit OrgSlug, 3) target-based org context.
+	// No implicit fallback: if none of the above resolves, the request is denied.
+	// Clients must use /rpc/:org_id or target a registered contract.
 	var org *Organization
 	if req.OrgID != "" {
 		// Explicit org ID requested - look it up and verify membership
@@ -593,20 +595,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 	} else {
-		// No explicit org - use target-based context or default
+		// No explicit org - derive from target address ownership.
 		org = orgCtx.Org()
 		if org == nil {
-			// No target-based org context (public contract or no target), use user's default org
-			org, err = c.getUserDefaultOrganization(ctx, user.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to determine user organization: %w", err)
-			}
-			if org == nil {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  "user has no organization membership",
-				}, nil
-			}
+			// No target-based org context and no explicit org_id.
+			// Fail closed: the caller must specify an org via /rpc/:org_id.
+			return &AccessCheckResult{
+				Allowed: false,
+				Reason:  "org context required: use /rpc/:org_id or target a registered contract",
+			}, nil
 		}
 	}
 
@@ -988,8 +985,8 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 	} else if requiredClaim == ClaimDeploy {
 		// No target address but operation requires 'deploy' claim (contract deployment)
 		// Check if user has the deploy claim via default claims
-		// Note: read/write claims without target_address are allowed without claim check
-		// because contract-specific claims only apply when targeting a specific contract
+		// No claim check for deploy-less methods without a target address;
+		// the method allowlist is the only gate for non-deploy operations.
 		if !containsClaim(perms.Claims, ClaimDeploy) {
 			return &AccessCheckResult{
 				Allowed: false,
@@ -1402,32 +1399,6 @@ func (c *AccessController) GetUserOrgIDs(ctx context.Context, userID string) ([]
 	return orgIDs, nil
 }
 
-// getUserDefaultOrganization returns the user's default (first) organization.
-// Used for operations without a target address (e.g., deployments).
-func (c *AccessController) getUserDefaultOrganization(ctx context.Context, userID string) (*Organization, error) {
-	memberships, err := c.store.ListUserMembershipsWithDetails(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user memberships: %w", err)
-	}
-
-	if len(memberships) == 0 {
-		return nil, nil // No memberships
-	}
-
-	// Return the first org found
-	for _, m := range memberships {
-		if m.Group != nil {
-			org, err := c.store.GetOrganization(ctx, m.Group.OrgID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get organization: %w", err)
-			}
-			return org, nil
-		}
-	}
-
-	return nil, nil
-}
-
 // getOrgContextForTarget determines the organization context based on the target address.
 // For multi-org users, this enables accessing contracts from any org they belong to.
 // Returns:
@@ -1693,7 +1664,7 @@ func GetFunctionSelector(method string, params []any) string {
 // ValidateGetLogsAccess validates eth_getLogs access based on address filter.
 // SECURITY: This function enforces that:
 // 1. eth_getLogs MUST have an address filter (prevent broad queries)
-// 2. User must have 'read' claim on ALL addresses in the filter
+// 2. User must have explicit contract access on ALL addresses in the filter.
 // This prevents users from querying logs from contracts they shouldn't see,
 // enforcing cross-org isolation.
 func ValidateGetLogsAccess(perms *EffectivePermissions, params []any) error {

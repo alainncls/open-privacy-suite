@@ -1331,6 +1331,7 @@ type TestRequestInput struct {
 	Method   string        `json:"method"`
 	Params   []interface{} `json:"params"`
 	JWTToken string        `json:"jwt_token,omitempty"`
+	OrgID    string        `json:"org_id,omitempty"`
 }
 
 // TestRequestResponse represents the response for test request
@@ -1366,6 +1367,7 @@ func (s *Server) handleTestRequest(c *gin.Context) {
 	}
 	accessReq := &rbac.AccessCheckRequest{
 		UserExternalID:   testIdentity,
+		OrgID:            input.OrgID,
 		Method:           input.Method,
 		Params:           input.Params,
 		TargetAddress:    rbac.GetTargetAddress(input.Method, input.Params),
