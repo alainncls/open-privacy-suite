@@ -329,7 +329,8 @@ func TestE2E_Proxy_JSONRPCWithAuth(t *testing.T) {
 
 	jsonBody, _ := json.Marshal(reqBody)
 
-	req, _ := http.NewRequest("POST", serverURL+"/", bytes.NewReader(jsonBody))
+	// Use /rpc/:org_id — explicit org required since getUserDefaultOrganization was removed (RD-877)
+	req, _ := http.NewRequest("POST", serverURL+"/rpc/"+rbac.DefaultOrgID, bytes.NewReader(jsonBody))
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
