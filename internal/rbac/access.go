@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"privacy-proxy/internal/evm/bytecode"
 	"privacy-proxy/internal/evm/precompile"
 
 	"github.com/google/uuid"
@@ -302,7 +301,6 @@ type AccessController struct {
 	store            Store
 	resolver         *Resolver
 	cache            PermissionCache
-	deployValidator  *DeploymentValidator
 	upgradeValidator *UpgradeValidator
 	pendingTracker   *PendingDeploymentTracker
 
@@ -363,12 +361,10 @@ func (c *AccessController) SetEncryptionKey(key []byte) {
 
 // NewAccessController creates a new access controller.
 func NewAccessController(store Store, cacheTTL time.Duration) *AccessController {
-	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
 		store:              store,
 		resolver:           NewResolver(store, cacheTTL),
 		cache:              NewCache(CacheConfig{TTL: cacheTTL}),
-		deployValidator:    deployValidator,
 		upgradeValidator:   NewUpgradeValidator(store),
 		pendingTracker:     NewPendingDeploymentTracker(1 * time.Hour),
 		anonAccessCacheTTL: 5 * time.Second,
@@ -378,12 +374,10 @@ func NewAccessController(store Store, cacheTTL time.Duration) *AccessController 
 // NewAccessControllerWithCache creates a new access controller with a custom cache implementation.
 // This allows injecting alternative cache backends (e.g., Redis) for horizontal scaling.
 func NewAccessControllerWithCache(store Store, cacheTTL time.Duration, cache PermissionCache) *AccessController {
-	deployValidator := NewDeploymentValidator(store)
 	return &AccessController{
 		store:              store,
 		resolver:           NewResolver(store, cacheTTL),
 		cache:              cache,
-		deployValidator:    deployValidator,
 		upgradeValidator:   NewUpgradeValidator(store),
 		pendingTracker:     NewPendingDeploymentTracker(1 * time.Hour),
 		anonAccessCacheTTL: 5 * time.Second,
@@ -1003,7 +997,17 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 			}, nil
 		}
 
-		// For contract deployments, validate the bytecode
+		// For contract deployments, runtime tracing
+		// (jsonrpc_processor.validateDeployWithTracing — debug_traceCall
+		// against empty `to`) is the authoritative cross-org isolation
+		// gate. We just confirm the bytecode is present (404 helps the
+		// client distinguish missing-payload from access-denied) and
+		// pass — every executed frame is checked at the trace layer
+		// against userOrgIDs. The pre-M10 static bytecode analyzer
+		// covered only constant CALL targets; the dynamic ones it
+		// claimed to delegate to runtime tracing weren't actually
+		// wired. M10 wired the trace gate and the static analyzer was
+		// removed.
 		if requiredClaim == ClaimDeploy && IsContractDeployment(req.EffectiveMethod(), req.Params) {
 			bytecodeHex := extractDeploymentBytecode(req.EffectiveMethod(), req.Params)
 			if bytecodeHex == "" {
@@ -1012,37 +1016,15 @@ func (c *AccessController) CheckAccess(ctx context.Context, req *AccessCheckRequ
 					Reason:  "contract deployment missing bytecode",
 				}, nil
 			}
-
-			// Check if user has admin claim for factory deployment
 			allClaims := collectAllClaims(perms)
-			hasAdminClaim := containsClaim(allClaims, ClaimAdmin)
-
-			validationResult, err := c.deployValidator.ValidateDeployment(ctx, org.ID, bytecodeHex, hasAdminClaim)
-			if err != nil {
-				return nil, fmt.Errorf("failed to validate deployment bytecode: %w", err)
-			}
-
-			if !validationResult.Allowed {
-				return &AccessCheckResult{
-					Allowed: false,
-					Reason:  fmt.Sprintf("deployment validation failed: %s", validationResult.Reason),
-				}, nil
-			}
-
-			// Include deployment info in the result for proxy tracking
 			return &AccessCheckResult{
-				Allowed:         true,
-				OrgID:           org.ID,
-				UserID:          user.ID,
-				RateLimitRPS:    perms.RateLimitRPS,
-				RateLimitDaily:  perms.RateLimitDaily,
-				RPCAPIKey:       perms.RPCAPIKey,
-				Claims:          allClaims,
-				DeploymentInfo: &DeploymentInfo{
-					OrgID:     org.ID,
-					IsProxy:   validationResult.IsProxy,
-					ProxyType: validationResult.ProxyType,
-				},
+				Allowed:        true,
+				OrgID:          org.ID,
+				UserID:         user.ID,
+				RateLimitRPS:   perms.RateLimitRPS,
+				RateLimitDaily: perms.RateLimitDaily,
+				RPCAPIKey:      perms.RPCAPIKey,
+				Claims:         allClaims,
 			}, nil
 		}
 	}
@@ -2048,37 +2030,6 @@ func (c *AccessController) Stop() {
 	c.cache.Stop()
 }
 
-// TrackPendingDeployment tracks a pending proxy deployment for later registration.
-// This should be called by the RPC layer after successfully forwarding a deployment
-// transaction that was validated as a proxy.
-//
-// Parameters:
-//   - txHash: The transaction hash returned by eth_sendTransaction
-//   - orgID: The organization ID that owns the deployment
-//   - proxyType: The detected proxy type (e.g., "ERC1967", "Transparent", "UUPS")
-//   - proxyInfo: The full proxy detection info from validation
-func (c *AccessController) TrackPendingDeployment(
-	txHash string,
-	orgID string,
-	proxyType string,
-	proxyInfo *bytecode.ProxyInfo,
-) {
-	if txHash == "" || orgID == "" {
-		return
-	}
-
-	deployment := &PendingDeployment{
-		TxHash:      txHash,
-		OrgID:       orgID,
-		IsProxy:     proxyInfo != nil && proxyInfo.IsProxy,
-		ProxyType:   proxyType,
-		ProxyInfo:   proxyInfo,
-		SubmittedAt: time.Now(),
-	}
-
-	c.pendingTracker.Track(txHash, deployment)
-}
-
 // TrackPlainCreateDeployment tracks a plain CREATE deployment for post-mining finalization.
 // The pre-registration (in preregistered_addresses) is cleaned up or finalized when the tx mines.
 func (c *AccessController) TrackPlainCreateDeployment(
@@ -2090,7 +2041,6 @@ func (c *AccessController) TrackPlainCreateDeployment(
 	deployment := &PendingDeployment{
 		TxHash:            txHash,
 		OrgID:             orgID,
-		IsProxy:           false,
 		IsPlainCreate:     true,
 		PreRegisteredAddr: preRegisteredAddr,
 		DeployerUserID:    deployerUserID,
@@ -2099,16 +2049,18 @@ func (c *AccessController) TrackPlainCreateDeployment(
 	c.pendingTracker.Track(txHash, deployment)
 }
 
-// NotifyDeploymentMined processes a mined deployment transaction.
-// This should be called by the RPC layer after receiving the transaction receipt.
+// NotifyDeploymentMined finalizes (or cleans up) a tracked plain CREATE
+// deployment now that its receipt has arrived. The pre-registration row
+// inserted before the tx was forwarded is converted to a full contract
+// record on success, or deleted on revert. Untracked tx hashes are a
+// silent no-op — the caller doesn't need to know which deploys we
+// tracked.
 //
 // Parameters:
 //   - ctx: Context for database operations
 //   - txHash: The transaction hash of the mined deployment
 //   - contractAddress: The address of the deployed contract from the receipt
-//
-// Returns nil if the deployment was not tracked (not a proxy) or was successfully registered.
-// Returns an error if proxy registration fails.
+//     (empty when the tx reverted)
 func (c *AccessController) NotifyDeploymentMined(
 	ctx context.Context,
 	txHash string,
@@ -2120,54 +2072,52 @@ func (c *AccessController) NotifyDeploymentMined(
 		// Not a tracked deployment - this is fine
 		return nil
 	}
-
-	// Handle plain CREATE pre-registration finalization/cleanup.
-	if deployment.IsPlainCreate && deployment.PreRegisteredAddr != "" {
-		if contractAddress == "" {
-			// Transaction reverted or receipt had no contract address — clean up.
-			if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
-				slog.Warn("failed to clean up plain CREATE pre-registration", "address", deployment.PreRegisteredAddr, "error", err)
-			}
-			return fmt.Errorf("plain CREATE deployment reverted or produced no contract address")
-		}
-		// Transaction succeeded — create a full contract record and remove the pre-registration.
-		now := time.Now()
-		contract := &Contract{
-			ID:      uuid.New().String(),
-			OrgID:   deployment.OrgID,
-			Address: strings.ToLower(contractAddress),
-			Name:    fmt.Sprintf("Contract %s", contractAddress[:10]),
-			Metadata: map[string]any{
-				"auto_registered": true,
-				"via":             "plain_create",
-			},
-		}
-		if deployment.DeployerUserID != "" {
-			contract.DeployedByUserID = &deployment.DeployerUserID
-		}
-		contract.DeployedAt = &now
-		if err := c.store.CreateContract(ctx, contract); err != nil {
-			slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
-			// Still clean up pre-registration even if contract creation failed.
-		} else if deployment.DeployerUserID != "" {
-			// Grant contract to deployer's existing deploy group (non-fatal if it fails)
-			if err := c.store.GrantContractToDeployerGroup(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID); err != nil {
-				slog.Warn("failed to grant contract to deployer group", "address", contractAddress, "error", err)
-			} else {
-				// Drop the deployer's cached permissions so the next call to the
-				// freshly-deployed contract re-resolves and sees the new grant
-				// instead of waiting for cache TTL expiry.
-				if invErr := c.InvalidateUser(ctx, deployment.DeployerUserID); invErr != nil {
-					slog.Warn("failed to invalidate deployer cache after plain CREATE grant", "user_id", deployment.DeployerUserID, "error", invErr)
-				}
-			}
-		}
-		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
-			slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)
-		}
+	if !deployment.IsPlainCreate || deployment.PreRegisteredAddr == "" {
 		return nil
 	}
 
+	if contractAddress == "" {
+		// Transaction reverted or receipt had no contract address — clean up.
+		if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
+			slog.Warn("failed to clean up plain CREATE pre-registration", "address", deployment.PreRegisteredAddr, "error", err)
+		}
+		return fmt.Errorf("plain CREATE deployment reverted or produced no contract address")
+	}
+	// Transaction succeeded — create a full contract record and remove the pre-registration.
+	now := time.Now()
+	contract := &Contract{
+		ID:      uuid.New().String(),
+		OrgID:   deployment.OrgID,
+		Address: strings.ToLower(contractAddress),
+		Name:    fmt.Sprintf("Contract %s", contractAddress[:10]),
+		Metadata: map[string]any{
+			"auto_registered": true,
+			"via":             "plain_create",
+		},
+	}
+	if deployment.DeployerUserID != "" {
+		contract.DeployedByUserID = &deployment.DeployerUserID
+	}
+	contract.DeployedAt = &now
+	if err := c.store.CreateContract(ctx, contract); err != nil {
+		slog.Warn("failed to create contract record for plain CREATE", "address", contractAddress, "error", err)
+		// Still clean up pre-registration even if contract creation failed.
+	} else if deployment.DeployerUserID != "" {
+		// Grant contract to deployer's existing deploy group (non-fatal if it fails)
+		if err := c.store.GrantContractToDeployerGroup(ctx, deployment.OrgID, contract.ID, deployment.DeployerUserID); err != nil {
+			slog.Warn("failed to grant contract to deployer group", "address", contractAddress, "error", err)
+		} else {
+			// Drop the deployer's cached permissions so the next call to the
+			// freshly-deployed contract re-resolves and sees the new grant
+			// instead of waiting for cache TTL expiry.
+			if invErr := c.InvalidateUser(ctx, deployment.DeployerUserID); invErr != nil {
+				slog.Warn("failed to invalidate deployer cache after plain CREATE grant", "user_id", deployment.DeployerUserID, "error", invErr)
+			}
+		}
+	}
+	if err := c.store.DeletePreregisteredAddressByAddress(ctx, deployment.PreRegisteredAddr); err != nil {
+		slog.Warn("failed to delete pre-registration after finalization", "address", deployment.PreRegisteredAddr, "error", err)
+	}
 	return nil
 }
 
@@ -2186,10 +2136,4 @@ func (c *AccessController) PendingDeploymentCount() int {
 // Returns the number of entries removed.
 func (c *AccessController) CleanupPendingDeployments() int {
 	return c.pendingTracker.Cleanup()
-}
-
-// DeploymentValidator returns the deployment validator for direct use.
-// This is useful when the caller needs to access validation results for proxy tracking.
-func (c *AccessController) DeploymentValidator() *DeploymentValidator {
-	return c.deployValidator
 }

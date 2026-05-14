@@ -387,17 +387,8 @@ type AccessCheckResult struct {
 	UserID            string             `json:"user_id,omitempty"`             // Internal user ID (UUID)
 	RateLimitRPS   *int            `json:"rate_limit_rps,omitempty"`  // Deprecated: rate limiting moved to RPC proxy
 	RateLimitDaily *int            `json:"rate_limit_daily,omitempty"` // Deprecated: rate limiting moved to RPC proxy
-	RPCAPIKey      string          `json:"-"`                          // API key for upstream RPC proxy (excluded from JSON — sensitive)
-	Claims         []Claim         `json:"claims,omitempty"`
-	DeploymentInfo *DeploymentInfo `json:"deployment_info,omitempty"` // Set for allowed deployments
-}
-
-// DeploymentInfo contains information about an allowed deployment.
-// This is used by the RPC layer to track pending deployments for proxy registration.
-type DeploymentInfo struct {
-	OrgID     string `json:"org_id"`
-	IsProxy   bool   `json:"is_proxy"`
-	ProxyType string `json:"proxy_type,omitempty"`
+	RPCAPIKey string  `json:"-"`                // API key for upstream RPC proxy (excluded from JSON — sensitive)
+	Claims    []Claim `json:"claims,omitempty"`
 }
 
 // GroupWithAccess combines a Group with its access settings.

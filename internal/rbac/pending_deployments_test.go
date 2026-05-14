@@ -4,26 +4,21 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"privacy-proxy/internal/evm/bytecode"
 )
 
 func TestPendingDeploymentTracker_TrackAndGet(t *testing.T) {
 	tracker := NewPendingDeploymentTracker(1 * time.Hour)
 
 	deployment := &PendingDeployment{
-		TxHash:      "0x123",
-		OrgID:       "org1",
-		IsProxy:     true,
-		ProxyType:   "ERC1967",
-		ProxyInfo:   &bytecode.ProxyInfo{IsProxy: true, ProxyType: bytecode.ProxyTypeERC1967},
-		SubmittedAt: time.Now(),
+		TxHash:            "0x123",
+		OrgID:             "org1",
+		IsPlainCreate:     true,
+		PreRegisteredAddr: "0xabc",
+		SubmittedAt:       time.Now(),
 	}
 
-	// Track the deployment
 	tracker.Track("0x123", deployment)
 
-	// Should be able to retrieve it
 	got := tracker.Get("0x123")
 	if got == nil {
 		t.Fatal("expected to get deployment, got nil")
@@ -34,11 +29,11 @@ func TestPendingDeploymentTracker_TrackAndGet(t *testing.T) {
 	if got.OrgID != "org1" {
 		t.Errorf("expected OrgID 'org1', got '%s'", got.OrgID)
 	}
-	if !got.IsProxy {
-		t.Error("expected IsProxy to be true")
+	if !got.IsPlainCreate {
+		t.Error("expected IsPlainCreate to be true")
 	}
-	if got.ProxyType != "ERC1967" {
-		t.Errorf("expected ProxyType 'ERC1967', got '%s'", got.ProxyType)
+	if got.PreRegisteredAddr != "0xabc" {
+		t.Errorf("expected PreRegisteredAddr '0xabc', got '%s'", got.PreRegisteredAddr)
 	}
 }
 
@@ -247,7 +242,6 @@ func TestPendingDeploymentTracker_TrackOverwrite(t *testing.T) {
 	deployment1 := &PendingDeployment{
 		TxHash:      "0x123",
 		OrgID:       "org1",
-		IsProxy:     false,
 		SubmittedAt: time.Now(),
 	}
 	tracker.Track("0x123", deployment1)
@@ -256,7 +250,6 @@ func TestPendingDeploymentTracker_TrackOverwrite(t *testing.T) {
 	deployment2 := &PendingDeployment{
 		TxHash:      "0x123",
 		OrgID:       "org2",
-		IsProxy:     true,
 		SubmittedAt: time.Now(),
 	}
 	tracker.Track("0x123", deployment2)
@@ -268,9 +261,6 @@ func TestPendingDeploymentTracker_TrackOverwrite(t *testing.T) {
 	}
 	if got.OrgID != "org2" {
 		t.Errorf("expected OrgID 'org2', got '%s'", got.OrgID)
-	}
-	if !got.IsProxy {
-		t.Error("expected IsProxy to be true")
 	}
 }
 
