@@ -1,0 +1,159 @@
+import { Callout } from "@/components/mdx/callout";
+
+export const metadata = {
+  title: "Audit Log Integrity",
+  description:
+    "Hash chain protection for access_logs and rbac_audit_log, scheduled tamper detection, role separation for the application identity, and how to verify the chain manually.",
+};
+
+# Audit Log Integrity
+
+The proxy protects its audit trail against silent tampering with a SHA-256 hash chain. Every row in `access_logs` and `rbac_audit_log` includes `entry_hash = SHA-256(prev_row.entry_hash || canonical_row_content)`. If anyone edits a row in place, the hash no longer matches and the verifier flags it. If anyone deletes a row from the middle, the next row's hash no longer matches and the verifier flags it. If anyone replaces a row and recomputes every downstream hash, the tail no longer matches the SIEM-forwarded tail snapshot.
+
+<Callout variant="warn" title="Threat model — be honest about what this defends against">
+  The DB-resident hash chain catches accidental corruption, lazy tampering (delete a row, forget to recompute), and any attacker with DB read access but not write. It does NOT defend against an attacker with DB write credentials AND knowledge of the chain seed: SHA-256 is standard, they can recompute every downstream hash in seconds. The defenses that raise the bar against a write-capable attacker — role separation, SIEM-forwarded tail, S3 Object Lock anchor, HSM-signed entries — are documented further down. The hash chain alone is the floor, not the ceiling.
+</Callout>
+
+---
+
+## What's protected
+
+| Table | Chain name | Append-only? | Default retention |
+|-------|------------|--------------|-------------------|
+| `access_logs` | `access_logs` | No — FIFO + TTL prune (anchor preserves seed) | 90 days |
+| `rbac_audit_log` | `rbac_audit_log` | Yes — forever-append | 1 year |
+| `compliance_logs` | (not yet chained) | Yes — forever-append | ~7 years |
+
+`compliance_logs` is on the roadmap (medium-term tier of RD-858). The shape mirrors `rbac_audit_log` — same chain mechanism, separate seed.
+
+---
+
+## How verification works
+
+A read-only `Verifier` walks the chain in id order:
+
+1. Start from the previous chain anchor (or empty seed for fresh DBs).
+2. For each row:
+   - Recompute `SHA-256(prev || canonical_content)`.
+   - Compare against the stored `entry_hash`.
+   - On mismatch: stop, return the row id, the stored hash, and the expected hash.
+3. Cross-check the final tail hash against the writer's view of the chain head.
+
+The canonical content format is versioned per table (`hash_format_version` column). New columns mean a format bump — the verifier picks the matching builder by version.
+
+---
+
+## Scheduled verification (recommended)
+
+The proxy ships an in-process worker that runs the verifier every `AUDIT_INTEGRITY_VERIFY_INTERVAL` (default 15 minutes) across every configured chain. On detection it:
+
+- Logs `slog.Error` with the chain name, row id, and mismatch reason.
+- Increments `privacy_proxy_audit_chain_integrity_violations_total{chain,reason}` (Prometheus).
+- Emits a SIEM event of type `audit.chain.tamper_detected` via `SIEM_WEBHOOK_URL` — **preferred** notification path because the customer's SIEM already routes to their alerting (PagerDuty / Slack / Datadog).
+- Optionally POSTs a JSON payload to `AUDIT_TAMPER_WEBHOOK_URL` (generic webhook fallback for smaller deployments).
+
+Set `AUDIT_INTEGRITY_VERIFY_INTERVAL=0` to disable the scheduled worker if you prefer cron-driven verification.
+
+---
+
+## Manual verification
+
+For auditor spot-checks, incident response, or scheduled cron, use the CLI:
+
+```bash
+privacy-cli audit verify \
+  --database-url postgres://privacy_proxy_admin:***@.../privacy_proxy \
+  --chain all
+```
+
+The CLI is read-only. Connect with the **admin role** (or a dedicated read-only audit role), not the runtime app credential — the app role has only `INSERT`/`SELECT` on the audit tables by design.
+
+Output on success:
+
+```
+[access_logs]   OK   scanned=12345 null_hash_rows=0 duration=2.3s
+  seed=abc12345...8765dcba tail=fedcba98...3456abcd
+[rbac_audit_log] OK   scanned=678 null_hash_rows=0 duration=180ms
+  seed=...
+```
+
+Output on failure (non-zero exit code so cron / CI can alert):
+
+```
+[rbac_audit_log] FAIL scanned=678 null_hash_rows=0 duration=170ms
+  seed=abc12345...
+  first_mismatch: reason=hash_mismatch id=512 at=2026-05-13T08:14:22Z
+    stored=11111111...22222222
+    expect=33333333...44444444
+```
+
+---
+
+## Role separation (defense in depth)
+
+The migration `057_audit_role_separation.sql` creates two Postgres roles:
+
+- `privacy_proxy_app` — the proxy runtime identity. `INSERT` + `SELECT` on the append-forever tables (`rbac_audit_log`, `compliance_logs`). Full CRUD on the rest of the schema. Retention prune on `access_logs` still works because that table is intentional-prune by policy.
+- `privacy_proxy_admin` — operator identity. Full DDL/DML. Used **rarely**, by a human via a credential that lives outside the app's secret store.
+
+This raises the bar against an attacker who compromises the proxy host: they get the app credential, which by itself cannot rewrite `rbac_audit_log` history. They'd need a separate compromise to acquire admin credentials.
+
+<Callout variant="info" title="Credential lifecycle is your call">
+  The migration creates the roles with NOLOGIN and no password. We do not pick a secret store on your behalf — the infra team applies whichever credential-lifecycle mechanism fits the deployment. Options below.
+</Callout>
+
+### Recommended: AWS Secrets Manager via IRSA (canonical)
+
+- Create two secrets in AWS Secrets Manager: `privacy-proxy/app-db` and `privacy-proxy/admin-db`.
+- Bind the proxy's pod IAM role (IRSA) only to `privacy-proxy/app-db`. The pod can read the app credential at startup; it cannot reach the admin credential.
+- Bind a separate IAM role (the operator's break-glass role) to `privacy-proxy/admin-db`. Used via `aws secretsmanager get-secret-value` from a workstation when needed.
+- Rotate via Secrets Manager rotation Lambda (or whatever your IaC uses).
+
+### Alternative: RDS IAM authentication
+
+- No static credentials at all. The operator generates a 15-minute token via `aws rds generate-db-auth-token` when they need to run admin SQL.
+- Stronger but requires the IAM-auth Postgres extension and a matching connection-string pattern in the operator's tooling.
+
+### Alternative: Vault dynamic secrets
+
+- The admin role is created on demand, lives one hour, then auto-revokes via Vault's Postgres database plugin.
+- Best-in-class for short-lived credentials, but operationally heavier than the AWS Secrets Manager pattern.
+
+### Activating the roles
+
+The migration does NOT set passwords or flip the roles to LOGIN. After the migration runs and your credential lifecycle is in place, the operator runs one of:
+
+```sql
+-- Password-based (simplest, works with all secret stores)
+ALTER ROLE privacy_proxy_app LOGIN PASSWORD '<from-secret-store>';
+ALTER ROLE privacy_proxy_admin LOGIN PASSWORD '<from-secret-store>';
+
+-- RDS IAM auth (no password)
+ALTER ROLE privacy_proxy_app LOGIN;
+ALTER ROLE privacy_proxy_admin LOGIN;
+GRANT rds_iam TO privacy_proxy_app, privacy_proxy_admin;
+```
+
+Then update the proxy's `DATABASE_URL` to use `privacy_proxy_app`. The admin role stays unused by the app and is activated by operators when they need it.
+
+<Callout variant="warn" title="Migrations need the admin role">
+  `make db-migrate` runs DDL and requires the admin role. Plan for this in your CI/CD: the deploy pipeline assumes the operator IAM role to run migrations, then drops back to the app credential for runtime. Don't give the app role permanent DDL — that defeats the separation.
+</Callout>
+
+---
+
+## Storage anchor (preserves chain across pruning)
+
+`access_logs` retention prunes rows by age and by FIFO row cap. The `audit_chain_anchor` table records the last-pruned row's id and hash so the verifier can pick up the chain seed across prune cuts. This is automatic; no operator action required.
+
+`rbac_audit_log` does not prune by default (it's forever-append), but the anchor mechanism is wired and ready if you change the policy.
+
+---
+
+## What's not implemented yet (medium / long term, RD-858)
+
+- **External tail-hash anchor**: forward the tail hash to S3 with Object Lock at every batch. Defeats the "attacker rewrites the entire chain" scenario because the customer's AWS account is a different trust boundary. Roadmap.
+- **HSM-signed entries**: sign each entry (or each block) with a dedicated audit key. Lifts integrity from "DB-level" to "whoever holds the key". Long-term.
+- **`compliance_logs` chain**: same mechanism as `rbac_audit_log`. Roadmap, medium-term.
+
+If you have a compliance scope that requires one of these before the current scheduled detection cadence, please reach out — the architecture is ready; the operator-facing config and notifier surface stay identical.

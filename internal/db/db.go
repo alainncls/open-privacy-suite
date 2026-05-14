@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,19 @@ import (
 
 	"privacy-proxy/internal/db/migrations"
 )
+
+// RBACAuditChain is the minimal HashChain surface CreateAuditLog needs.
+// Defined here (rather than importing internal/audit directly) to avoid
+// an import cycle: internal/audit/retention.go imports internal/db, so
+// the chain must reach the DB from above. Server startup constructs
+// the concrete audit.HashChain, seeds it via GetLatestRBACAuditLogHash,
+// and calls SetRBACAuditChain on the DB.
+//
+// The Append contract matches audit.HashChain.Append exactly — see that
+// method's doc-comment for the build/write semantics.
+type RBACAuditChain interface {
+	Append(build func(prevHash string) (content string, write func(hash string) error, err error)) (string, error)
+}
 
 const (
 	// dbMaxRetries is the number of connection attempts before giving up.
@@ -37,6 +51,37 @@ var ErrRecordAlreadyUsed = errors.New("travel rule record already used")
 type DB struct {
 	conn        *sql.DB
 	databaseURL string
+
+	// rbacAuditChain is the in-process hash chain for rbac_audit_log
+	// (RD-858). nil until SetRBACAuditChain is called by server
+	// startup; CreateAuditLog falls back to chain-less writes in that
+	// case (legacy behaviour preserved for tests and bootstrap).
+	rbacAuditChainMu sync.RWMutex
+	rbacAuditChain   RBACAuditChain
+}
+
+// SetRBACAuditChain installs the rbac_audit_log hash chain on the DB.
+// Server startup is responsible for seeding the chain via
+// GetLatestRBACAuditLogHash and constructing audit.NewHashChain before
+// calling this. Once set, every CreateAuditLog call advances the chain
+// and writes the row's entry_hash in a single SQL statement (RD-858).
+//
+// Idempotent: replacing the chain is supported (e.g. for test
+// re-initialization) but should not be done while another goroutine
+// is mid-write.
+func (d *DB) SetRBACAuditChain(chain RBACAuditChain) {
+	d.rbacAuditChainMu.Lock()
+	defer d.rbacAuditChainMu.Unlock()
+	d.rbacAuditChain = chain
+}
+
+// getRBACAuditChain returns the installed chain or nil. Read-locks the
+// mutex so reads coexist with each other; SetRBACAuditChain takes the
+// write lock.
+func (d *DB) getRBACAuditChain() RBACAuditChain {
+	d.rbacAuditChainMu.RLock()
+	defer d.rbacAuditChainMu.RUnlock()
+	return d.rbacAuditChain
 }
 
 // Conn returns the underlying database connection (for testing)
@@ -423,9 +468,156 @@ func (d *DB) LogAccessEnhanced(ctx context.Context, externalID, method string, s
 }
 
 // UpdateAccessLogHash sets the entry_hash for an access log entry after hash chain computation.
+//
+// Deprecated: callers writing audit-integrity-sensitive rows should use
+// LogAccessChained instead, which combines the INSERT + UPDATE in a
+// single transaction and advances the hash chain only after the commit
+// succeeds. UpdateAccessLogHash is retained for tests that seed rows
+// without chain participation.
 func (d *DB) UpdateAccessLogHash(ctx context.Context, id int64, hash string) error {
 	_, err := d.conn.ExecContext(ctx, `UPDATE access_logs SET entry_hash = $2 WHERE id = $1`, id, hash)
 	return err
+}
+
+// AccessLogChainContent builds the canonical hash-chain content for an
+// access_logs row at format version 2. **Exported because the verifier
+// uses it** to recompute hashes when walking the chain, and the verifier
+// must agree byte-for-byte with the writer or every row would look
+// tampered.
+//
+// The format must NEVER change in place — bump hash_format_version
+// (column on access_logs) and add a new builder if fields are added /
+// reordered.
+//
+// Argument order mirrors the column order in LogAccessChained.
+func AccessLogChainContent(id int64, externalID, method, ipAddress string, statusCode, responseStatus int, createdAt time.Time, correlationID string, paramsDigest string) string {
+	return fmt.Sprintf("v2|%d|%s|%s|%s|%d|%d|%s|%s|%s",
+		id, externalID, method, ipAddress, statusCode, responseStatus,
+		createdAt.UTC().Format(time.RFC3339Nano),
+		correlationID,
+		paramsDigest,
+	)
+}
+
+// LogAccessChained writes an access_logs row AND its hash-chain link
+// atomically (RD-858: closes the two-step write race where a crash
+// between INSERT and UpdateAccessLogHash left entry_hash NULL — a
+// state the verifier cannot distinguish from tampering).
+//
+// Mechanism:
+//  1. Reserve the row id via nextval('access_logs_id_seq'). created_at
+//     is set on the Go side (UTC, nanosecond precision) so that the
+//     hash content is known BEFORE the INSERT.
+//  2. Build the canonical content via AccessLogChainContent.
+//  3. Ask the chain for the next hash. The chain mutex stays held
+//     through the row write — if INSERT fails, the chain rolls back
+//     and the next call uses the same prev hash, preserving
+//     id-ordered = chain-ordered semantics.
+//  4. INSERT the row with id, created_at, entry_hash all set in one
+//     statement.
+//
+// The chain head advances only when INSERT returns nil. A process
+// crash anywhere before the INSERT commits leaves no row and no chain
+// advance — the verifier never sees a NULL-hash row from this writer.
+//
+// chain must implement RBACAuditChain.Append's contract — the
+// audit.HashChain returned by audit.NewHashChain satisfies it. Pass
+// nil to skip the chain entirely (fallback for tests / startup paths
+// where the chain isn't installed yet); the row is written via
+// LogAccessEnhanced + UpdateAccessLogHash legacy path so behaviour
+// matches the pre-RD-858 default.
+func (d *DB) LogAccessChained(
+	ctx context.Context,
+	chain RBACAuditChain,
+	externalID, method string,
+	statusCode int,
+	ipAddress, correlationID string,
+	params []byte,
+	responseStatus *int,
+) (int64, time.Time, string, error) {
+	if chain == nil {
+		id, createdAt, err := d.LogAccessEnhanced(ctx, externalID, method, statusCode, ipAddress, correlationID, params, responseStatus)
+		return id, createdAt, "", err
+	}
+
+	var corrID *string
+	if correlationID != "" {
+		corrID = &correlationID
+	}
+
+	respStatus := statusCode
+	if responseStatus != nil {
+		respStatus = *responseStatus
+	}
+
+	var outID int64
+	var outCreatedAt time.Time
+
+	hash, err := chain.Append(func(prev string) (string, func(string) error, error) {
+		var id int64
+		if scanErr := d.conn.QueryRowContext(ctx,
+			`SELECT nextval('access_logs_id_seq')`,
+		).Scan(&id); scanErr != nil {
+			return "", nil, fmt.Errorf("reserve access_logs id: %w", scanErr)
+		}
+		createdAt := time.Now().UTC()
+		paramsDigest := ""
+		if len(params) > 0 {
+			paramsDigest = string(params)
+		}
+		content := AccessLogChainContent(id, externalID, method, ipAddress, statusCode, respStatus, createdAt, correlationID, paramsDigest)
+
+		write := func(hash string) error {
+			res, execErr := d.conn.ExecContext(ctx,
+				`INSERT INTO access_logs
+					(id, external_id, method, status_code, ip_address, correlation_id, request_params, response_status, hash_format_version, created_at, entry_hash)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $9, $10)`,
+				id, externalID, method, statusCode, ipAddress, corrID, params, responseStatus, createdAt, hash,
+			)
+			if execErr != nil {
+				return fmt.Errorf("insert access_logs: %w", execErr)
+			}
+			if affected, _ := res.RowsAffected(); affected != 1 {
+				return fmt.Errorf("insert access_logs: expected 1 row, got %d", affected)
+			}
+			outID = id
+			outCreatedAt = createdAt
+			return nil
+		}
+		_ = prev
+		return content, write, nil
+	})
+	if err != nil {
+		return 0, time.Time{}, "", err
+	}
+	return outID, outCreatedAt, hash, nil
+}
+
+// GetLatestRBACAuditLogHash returns the seed for the rbac_audit_log hash
+// chain (RD-858). Resolution order mirrors GetLatestAccessLogHash:
+//  1. The entry_hash of the most recent surviving rbac_audit_log row.
+//  2. If no row has an entry_hash, audit_chain_anchor.last_pruned_entry_hash
+//     for chain "rbac_audit_log".
+//  3. Otherwise the empty string (fresh chain).
+func (d *DB) GetLatestRBACAuditLogHash(ctx context.Context) (string, error) {
+	var hash sql.NullString
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT entry_hash FROM rbac_audit_log WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1`,
+	).Scan(&hash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("failed to get latest rbac audit log hash: %w", err)
+	}
+	if hash.Valid && hash.String != "" {
+		return hash.String, nil
+	}
+	anchor, err := d.GetAuditChainAnchor(ctx, ChainNameRBACAuditLog)
+	if err != nil {
+		return "", err
+	}
+	if anchor != nil {
+		return anchor.LastPrunedEntryHash, nil
+	}
+	return "", nil
 }
 
 // GetLatestAccessLogHash returns the seed for the access_logs hash chain.

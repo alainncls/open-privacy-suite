@@ -97,6 +97,9 @@ type Metrics struct {
 	SIEMBatchesTotal       *prometheus.CounterVec
 	SIEMEventsDroppedTotal prometheus.Counter
 
+	// Audit hash chain integrity (RD-858)
+	AuditChainIntegrityViolations *prometheus.CounterVec
+
 	// Pending deployments
 	PendingDeployments prometheus.Gauge
 
@@ -224,6 +227,12 @@ func New(version string) *Metrics {
 			Help:      "Total SIEM events dropped due to send failures.",
 		}),
 
+		AuditChainIntegrityViolations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "audit_chain_integrity_violations_total",
+			Help:      "Total audit hash-chain integrity violations detected by the scheduled verifier, labelled by chain and reason. NON-ZERO MEANS POTENTIAL TAMPERING — alert immediately. RD-858.",
+		}, []string{"chain", "reason"}),
+
 		PendingDeployments: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "pending_deployments",
@@ -248,6 +257,7 @@ func New(version string) *Metrics {
 		m.CircuitBreakerTripsTotal, m.ConcurrencyRejectionsTotal, m.UpstreamRateLimitTotal,
 		m.PricingFetchesTotal, m.PricingFetchDuration, m.PricingConsecutiveFailures,
 		m.SIEMBatchesTotal, m.SIEMEventsDroppedTotal,
+		m.AuditChainIntegrityViolations,
 		m.PendingDeployments,
 		m.Info,
 	)

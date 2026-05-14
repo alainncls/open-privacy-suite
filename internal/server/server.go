@@ -95,6 +95,7 @@ type Server struct {
 	explorerRedactor   *explorer.RedactionEngine
 	siemForwarder        *audit.SIEMForwarder
 	retentionCleaner     *audit.RetentionCleaner
+	auditIntegrityWorker *audit.IntegrityWorker
 	visibilityReconciler *VisibilityReconciler // M7 outbox drain
 	redisCloser          io.Closer
 }
@@ -136,6 +137,9 @@ func (s *Server) Stop() {
 	}
 	if s.retentionCleaner != nil {
 		s.retentionCleaner.Stop()
+	}
+	if s.auditIntegrityWorker != nil {
+		s.auditIntegrityWorker.Stop()
 	}
 	if s.visibilityReconciler != nil {
 		s.visibilityReconciler.Stop()
@@ -463,6 +467,20 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	}
 	hashChain := audit.NewHashChain(hashChainSeed)
 
+	// RD-858: rbac_audit_log gets its own chain, seeded independently
+	// of access_logs. Both chains share the audit.HashChain
+	// implementation and are verifiable via the same Verifier — they
+	// just live behind different `chain_name` entries in
+	// audit_chain_anchor. Installed onto the DB so every CreateAuditLog
+	// from anywhere in the codebase advances it atomically with the
+	// row write.
+	rbacAuditSeed, rbacSeedErr := database.GetLatestRBACAuditLogHash(context.Background())
+	if rbacSeedErr != nil {
+		slog.Warn("failed to seed rbac_audit_log hash chain from DB, starting fresh", "error", rbacSeedErr)
+	}
+	rbacAuditChain := audit.NewHashChain(rbacAuditSeed)
+	database.SetRBACAuditChain(rbacAuditChain)
+
 	// Initialize SIEM forwarder if webhook URL is configured
 	var siemForwarder *audit.SIEMForwarder
 	if cfg.SIEMWebhookURL != "" {
@@ -507,6 +525,40 @@ func NewWithVerifier(cfg *config.Config, verifier PrivadoVerifier) (*Server, err
 	s.visibilityReconciler = NewVisibilityReconciler(database, DefaultVisibilityReconcilerConfig())
 	s.visibilityReconciler.Start(context.Background())
 	slog.Info("visibility reconciler started", "interval", "5s", "batch", 100)
+
+	// RD-858: scheduled audit hash-chain integrity verifier. Default
+	// interval 15m (config: AUDIT_INTEGRITY_VERIFY_INTERVAL). On
+	// detection: structured slog.Error, Prometheus
+	// audit_chain_integrity_violations_total counter increment, SIEM
+	// event via the existing forwarder, and (optional) generic webhook
+	// POST to AUDIT_TAMPER_WEBHOOK_URL. The SSRF guard on the webhook
+	// URL is enforced in config.Validate.
+	if cfg.AuditIntegrityVerifyInterval > 0 {
+		verifier := audit.NewVerifier(database.Conn(), database)
+		notifiers := &audit.MultiNotifier{}
+		if siemForwarder != nil {
+			notifiers.Notifiers = append(notifiers.Notifiers, &audit.SIEMNotifier{Forwarder: siemForwarder})
+		}
+		if cfg.AuditTamperWebhookURL != "" {
+			webhookNotifier, whErr := audit.NewWebhookNotifier(cfg.AuditTamperWebhookURL)
+			if whErr != nil {
+				slog.Error("audit tamper webhook init failed; continuing without webhook notification", "err", whErr)
+			} else if webhookNotifier != nil {
+				notifiers.Notifiers = append(notifiers.Notifiers, webhookNotifier)
+			}
+		}
+		s.auditIntegrityWorker = audit.NewIntegrityWorker(verifier, notifiers, audit.IntegrityWorkerConfig{
+			Interval:   cfg.AuditIntegrityVerifyInterval,
+			Violations: m.AuditChainIntegrityViolations,
+		})
+		s.auditIntegrityWorker.Start(context.Background())
+		slog.Info("audit chain integrity verifier started",
+			"interval", cfg.AuditIntegrityVerifyInterval,
+			"siem_notify", siemForwarder != nil,
+			"webhook_notify", cfg.AuditTamperWebhookURL != "")
+	} else {
+		slog.Warn("AUDIT_INTEGRITY_VERIFY_INTERVAL=0: scheduled audit-chain verifier DISABLED. Run privacy-cli audit verify manually or via cron.")
+	}
 
 	// Security: warn loudly if admin API has no token configured.
 	// Without a token, admin endpoints are open to the entire private network.

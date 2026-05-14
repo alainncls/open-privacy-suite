@@ -298,6 +298,10 @@ type Config struct {
 	SIEMFlushInterval   time.Duration // Max time before flushing SIEM batch (default: 10s)
 	SIEMFallbackLogPath string        // If set, failed SIEM batches written here as JSON lines (M4 fix)
 
+	// Audit hash-chain integrity worker (RD-858)
+	AuditIntegrityVerifyInterval time.Duration // How often the scheduled verifier walks the chains (default: 15m; 0 = disabled).
+	AuditTamperWebhookURL        string        // Optional generic webhook POSTed when the verifier detects tampering. Subject to the same SSRF guard as SIEMWebhookURL. Empty = disabled (SIEM-only notification path).
+
 	// Hide the auto-created dev-admin org from the admin dashboard (for demos)
 	HideDevAdminOrg bool
 
@@ -477,6 +481,10 @@ func Load() *Config {
 	}
 	siemFlushInterval := parseDurationEnv("SIEM_FLUSH_INTERVAL", 10*time.Second)
 
+	// RD-858: scheduled audit-chain integrity verifier.
+	auditIntegrityInterval := parseDurationEnv("AUDIT_INTEGRITY_VERIFY_INTERVAL", 15*time.Minute)
+	auditTamperWebhookURL := getEnv("AUDIT_TAMPER_WEBHOOK_URL", "")
+
 	// Per-user concurrency cap (default 50)
 	maxConcurrentRequests := 50
 	if mcStr := getEnv("MAX_CONCURRENT_REQUESTS", ""); mcStr != "" {
@@ -573,6 +581,8 @@ func Load() *Config {
 		SIEMBatchSize:            siemBatchSize,
 		SIEMFlushInterval:        siemFlushInterval,
 		SIEMFallbackLogPath:      getEnv("SIEM_FALLBACK_LOG_PATH", ""),
+		AuditIntegrityVerifyInterval: auditIntegrityInterval,
+		AuditTamperWebhookURL:        auditTamperWebhookURL,
 		ExplorerDatabaseURL:      getEnv("EXPLORER_DATABASE_URL", ""),
 		IndexerURL:               getEnv("INDEXER_URL", ""),
 		TunnelURLFile:            getEnv("TUNNEL_URL_FILE", ""),
@@ -659,6 +669,13 @@ func (c *Config) Validate() error {
 	if c.SIEMWebhookURL != "" {
 		if err := audit.ValidateWebhookURL(c.SIEMWebhookURL); err != nil {
 			return err
+		}
+	}
+
+	// RD-858: same SSRF guard for the audit tamper webhook.
+	if c.AuditTamperWebhookURL != "" {
+		if err := audit.ValidateWebhookURL(c.AuditTamperWebhookURL); err != nil {
+			return fmt.Errorf("AUDIT_TAMPER_WEBHOOK_URL: %w", err)
 		}
 	}
 
