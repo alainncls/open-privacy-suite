@@ -269,7 +269,7 @@ INSERT INTO group_access (id, group_id, allowed_methods, default_claims)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000001',
-    ARRAY['eth_blockNumber', 'eth_chainId', 'eth_gasPrice', 'eth_getBalance', 'eth_getBlockByHash', 'eth_getBlockByNumber', 'eth_getCode', 'eth_getStorageAt', 'eth_getTransactionByHash', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_call', 'eth_estimateGas', 'eth_sendRawTransaction', 'eth_sendTransaction', 'eth_getLogs', 'eth_getBlockTransactionCountByHash', 'eth_getBlockTransactionCountByNumber', 'eth_getUncleCountByBlockHash', 'eth_getUncleCountByBlockNumber', 'eth_protocolVersion', 'eth_syncing', 'net_version', 'net_listening', 'net_peerCount', 'web3_clientVersion', 'web3_sha3'],
+    ARRAY['eth_blockNumber', 'eth_chainId', 'eth_gasPrice', 'net_version', 'net_listening', 'web3_clientVersion'],
     ARRAY[]::TEXT[] -- Default claims for unregistered contracts (none — legacy read/write removed)
 )
 ON CONFLICT (group_id) DO NOTHING;

@@ -206,6 +206,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
+			OrgID:          "org-a",
 			Method:         "eth_call",
 			Params:         []any{map[string]any{"to": precompileAddr, "data": "0x"}, "latest"},
 			TargetAddress:  precompileAddr,
@@ -223,6 +224,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
+			OrgID:          "org-a",
 			Method:         "eth_getLogs",
 			Params:         []any{map[string]any{"address": precompileAddr}},
 		})
@@ -240,6 +242,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": unregisteredAddr, "value": "0x1"}},
 			TargetAddress:  unregisteredAddr,
@@ -257,6 +260,7 @@ func TestUnregisteredContractAccess(t *testing.T) {
 
 		result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 			UserExternalID: "did:test:user",
+			OrgID:          "org-a",
 			Method:         "eth_getBalance",
 			Params:         []any{unregisteredAddr, "latest"},
 			TargetAddress:  unregisteredAddr,

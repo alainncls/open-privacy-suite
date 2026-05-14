@@ -1251,6 +1251,7 @@ func TestCheckAccessDeployerAutoGrant(t *testing.T) {
 	t.Run("DEPLOYER-001: Deployer can read their deployed contract", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
+			OrgID:          "org-a",
 			Method:         "eth_call",
 			Params:         []any{map[string]any{"to": deployedContract, "data": "0x"}, "latest"},
 			TargetAddress:  deployedContract,
@@ -1268,6 +1269,7 @@ func TestCheckAccessDeployerAutoGrant(t *testing.T) {
 	t.Run("DEPLOYER-002: Deployer can write to their deployed contract", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": deployedContract, "from": "0x9999999999999999999999999999999999999999", "data": "0xa9059cbb"}},
 			TargetAddress:  deployedContract,
@@ -1397,6 +1399,7 @@ func TestCheckAccessDeployerAutoGrantMerge(t *testing.T) {
 		// User has read via default_claims, but deployer auto-grant should add write
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:deployer",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": deployedContract, "from": "0x9999999999999999999999999999999999999999", "data": "0xa9059cbb"}},
 			TargetAddress:  deployedContract,
@@ -1465,6 +1468,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:user1",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(upgradeCalldata)}, "latest"},
 			TargetAddress:  contractAddr,
@@ -1554,6 +1558,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:user1",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(regularCalldata)}, "latest"},
 			TargetAddress:  contractAddr,
@@ -1592,6 +1597,7 @@ func TestCheckAccessUpgradeClaimEnforcement(t *testing.T) {
 
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:user1",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": contractAddr, "data": "0x" + hex.EncodeToString(upgradeCalldata)}, "latest"},
 			TargetAddress:  contractAddr,
@@ -1678,6 +1684,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 	t.Run("EOA-001: User with write claim can send ETH to EOA", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:writer",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x1111111111111111111111111111111111111111", "value": "0xde0b6b3a7640000"}},
 			TargetAddress:  strings.ToLower(eoaAddress),
@@ -1695,6 +1702,7 @@ func TestCheckAccessEOAValueTransfer(t *testing.T) {
 	t.Run("EOA-002: User without eth_sendTransaction in methods cannot send ETH to EOA", func(t *testing.T) {
 		req := &AccessCheckRequest{
 			UserExternalID: "did:test:reader",
+			OrgID:          "org-a",
 			Method:         "eth_sendTransaction",
 			Params:         []any{map[string]any{"to": eoaAddress, "from": "0x2222222222222222222222222222222222222222", "value": "0xde0b6b3a7640000"}},
 			TargetAddress:  strings.ToLower(eoaAddress),
@@ -1811,6 +1819,7 @@ func TestBasicAddressQueryOnEOA(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := controller.CheckAccess(ctx, &AccessCheckRequest{
 				UserExternalID: "did:test:reader",
+				OrgID:          "org-a",
 				Method:         tt.method,
 				TargetAddress:  eoaAddr,
 			})

@@ -88,12 +88,12 @@ func GetClaimForMethod(method string) Claim {
 	return ""
 }
 
-// IsReadMethod returns true if the method requires the "read" claim.
+// IsReadMethod returns true for read-only RPC methods (gated by method allowlist, not claims).
 func IsReadMethod(method string) bool {
 	return ReadMethods[method]
 }
 
-// IsWriteMethod returns true if the method requires the "write" claim.
+// IsWriteMethod returns true for state-modifying RPC methods (gated by method allowlist, not claims).
 func IsWriteMethod(method string) bool {
 	return WriteMethods[method]
 }
