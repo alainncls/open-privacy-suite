@@ -1,4 +1,4 @@
--- 056_rbac_audit_log_hash_chain.sql
+-- 057_rbac_audit_log_hash_chain.sql
 -- RD-858: extend the audit hash chain (currently access_logs only, migration
 -- 017) to cover rbac_audit_log. Admin actions on RBAC tables (groups,
 -- grants, memberships, contract claim, etc.) are exactly the records SOC 2

@@ -1,4 +1,4 @@
--- 057_audit_role_separation.sql
+-- 058_audit_role_separation.sql
 -- RD-858: split Postgres roles so the application identity cannot
 -- silently rewrite the audit chain. Pre-fix, a single role had full
 -- read/write/delete on every table — an attacker who compromised the

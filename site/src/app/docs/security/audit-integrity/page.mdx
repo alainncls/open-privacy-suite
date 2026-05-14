@@ -91,7 +91,7 @@ Output on failure (non-zero exit code so cron / CI can alert):
 
 ## Role separation (defense in depth)
 
-The migration `057_audit_role_separation.sql` creates two Postgres roles with an **explicit per-table allowlist** (not a deny-list):
+The migration `058_audit_role_separation.sql` creates two Postgres roles with an **explicit per-table allowlist** (not a deny-list):
 
 - `privacy_proxy_app` — the proxy runtime identity. `INSERT` + `SELECT` only on the append-forever audit tables (`rbac_audit_log`, `compliance_logs`, `disclosure_events`, `price_change_log`, `impersonation_log`). Full CRUD on operational tables. Retention prune on `access_logs` still works because that table is intentional-prune by policy.
 - `privacy_proxy_admin` — operator identity. Full DDL/DML. Used **rarely**, by a human via a credential that lives outside the app's secret store.
