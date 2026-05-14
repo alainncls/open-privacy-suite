@@ -224,6 +224,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			name: "eth_sendTransaction below threshold is allowed",
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",
+				OrgID:  seed.orgID,
 				Params: []interface{}{
 					map[string]interface{}{
 						"from":  fromAddr,
@@ -238,6 +239,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			name: "eth_sendTransaction above threshold denied without travel rule record",
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",
+				OrgID:  seed.orgID,
 				Params: []interface{}{
 					map[string]interface{}{
 						"from":  fromAddr,
@@ -265,6 +267,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			},
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",
+				OrgID:  seed.orgID,
 				Params: []interface{}{
 					map[string]interface{}{
 						"from":  fromAddr,
@@ -279,6 +282,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			name: "eth_blockNumber bypasses compliance",
 			body: TestRequestInput{
 				Method: "eth_blockNumber",
+				OrgID:  seed.orgID,
 				Params: []interface{}{},
 			},
 			expectedStatus: http.StatusOK,
@@ -301,6 +305,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			},
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",
+				OrgID:  seed.orgID,
 				Params: []interface{}{
 					map[string]interface{}{
 						"from":  fromAddr,
@@ -324,6 +329,7 @@ func TestHandleTestRequest_ComplianceCheck(t *testing.T) {
 			},
 			body: TestRequestInput{
 				Method: "eth_sendTransaction",
+				OrgID:  seed.orgID,
 				Params: []interface{}{
 					map[string]interface{}{
 						"from":  fromAddr,
