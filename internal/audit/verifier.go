@@ -86,7 +86,7 @@ type Verifier struct {
 }
 
 // NewVerifier constructs a Verifier. conn must point at a database
-// where the audit schema has been migrated to at least migration 056
+// where the audit schema has been migrated to at least migration 057
 // (rbac_audit_log entry_hash column). seedFn supplies the chain seed
 // — in production this is the *db.DB itself.
 func NewVerifier(conn *sql.DB, seedFn SeedReader) *Verifier {
