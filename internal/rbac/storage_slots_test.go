@@ -2,8 +2,6 @@ package rbac
 
 import (
 	"testing"
-
-	"privacy-proxy/internal/evm/bytecode"
 )
 
 func TestIsWellKnownStorageSlot(t *testing.T) {
@@ -33,7 +31,7 @@ func TestIsWellKnownStorageSlot(t *testing.T) {
 		// Diamond storage slot (EIP-2535)
 		{
 			name: "Diamond storage slot (EIP-2535)",
-			slot: bytecode.DiamondStorageSlot,
+			slot: "0xc8fcad8db84d3cc18b4c41d551ea0ee66dd599cde068d998e57d5e09332c131c",
 			want: true,
 		},
 		// Without 0x prefix

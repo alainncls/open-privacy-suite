@@ -3,26 +3,36 @@ package rbac
 import (
 	"sync"
 	"time"
-
-	"privacy-proxy/internal/evm/bytecode"
 )
 
-// PendingDeployment represents a deployment waiting to be confirmed.
+// PendingDeployment represents a plain-CREATE deployment whose pre-
+// registration row (in `preregistered_addresses`) is awaiting receipt-
+// driven finalization or cleanup.
+//
+// History: this struct used to carry proxy-detection fields (IsProxy,
+// ProxyType, ProxyInfo) populated by the deploy-time bytecode
+// analyzer. M10 (security audit 2026-05-12 follow-up to RD-915) moved
+// the cross-org isolation gate to runtime tracing and the analyzer's
+// metadata was never consumed downstream — the proxy auto-registration
+// path it claimed to feed was orphaned. The tracker is retained for
+// plain CREATE only, where the pre-registration / receipt-finalization
+// dance closes a genuine race window.
 type PendingDeployment struct {
 	TxHash      string
 	OrgID       string
-	IsProxy     bool
-	ProxyType   string
-	ProxyInfo   *bytecode.ProxyInfo
 	SubmittedAt time.Time
-	// Fields for plain CREATE pre-registration cleanup/finalization.
-	IsPlainCreate     bool   // true when this is a plain CREATE (not CREATE3/proxy)
-	PreRegisteredAddr string // address inserted into preregistered_addresses; empty if not pre-registered
-	DeployerUserID    string // internal user UUID, for the contract record DeployedByUserID
+	// IsPlainCreate is true for plain CREATE deploys that pre-register
+	// the deterministic `keccak256(rlp([sender, nonce]))[12:]` address
+	// before forwarding the tx. The reconciler in NotifyDeploymentMined
+	// finalizes (success) or deletes (revert) the row.
+	IsPlainCreate     bool
+	PreRegisteredAddr string // address inserted into preregistered_addresses
+	DeployerUserID    string // internal user UUID for Contract.DeployedByUserID
 }
 
-// PendingDeploymentTracker tracks proxy deployments waiting for confirmation.
-// It is thread-safe and supports automatic cleanup of expired entries.
+// PendingDeploymentTracker tracks plain-CREATE deployments waiting for
+// receipt-driven reconciliation. Thread-safe; supports TTL-based
+// cleanup of orphaned entries.
 type PendingDeploymentTracker struct {
 	mu      sync.RWMutex
 	pending map[string]*PendingDeployment // txHash -> deployment

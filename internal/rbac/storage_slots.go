@@ -2,9 +2,22 @@ package rbac
 
 import (
 	"strings"
-
-	"privacy-proxy/internal/evm/bytecode"
 )
+
+// erc1967Slots is the set of standard EIP-1967 storage slot hashes
+// (implementation, admin, beacon) used by upgradeable proxy contracts
+// to keep proxy metadata in predictable locations. Inlined here
+// because they're consumed only by the eth_getStorageAt allowlist
+// below; the historical home in internal/evm/bytecode/proxy.go was
+// deleted alongside the dead deploy-time bytecode analyzer.
+var erc1967Slots = []string{
+	"0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", // implementation
+	"0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103", // admin
+	"0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50", // beacon
+}
+
+// diamondStorageSlot is the EIP-2535 Diamond storage slot.
+const diamondStorageSlot = "0xc8fcad8db84d3cc18b4c41d551ea0ee66dd599cde068d998e57d5e09332c131c"
 
 // WellKnownStorageSlots is the set of storage slots that read-claim users may
 // access via eth_getStorageAt. These are infrastructure metadata slots defined
@@ -16,11 +29,11 @@ import (
 var WellKnownStorageSlots map[string]bool
 
 func init() {
-	WellKnownStorageSlots = make(map[string]bool, len(bytecode.ERC1967Slots)+1)
-	for slot := range bytecode.ERC1967Slots {
+	WellKnownStorageSlots = make(map[string]bool, len(erc1967Slots)+1)
+	for _, slot := range erc1967Slots {
 		WellKnownStorageSlots[strings.ToLower(slot)] = true
 	}
-	WellKnownStorageSlots[strings.ToLower(bytecode.DiamondStorageSlot)] = true
+	WellKnownStorageSlots[strings.ToLower(diamondStorageSlot)] = true
 }
 
 // IsWellKnownStorageSlot checks if a storage slot is in the infrastructure allowlist.
