@@ -47,10 +47,16 @@ const ERC20_ABI = JSON.stringify([
 
 // ---------------------------------------------------------------------------
 // Helper: open the Contract Permissions dialog for the first contract in the
-// table, then click "Add Group" to open the grant form.
-// Returns the grant form dialog locator.
+// table, then click "Add Group" to open the grant form, select the first
+// available group, and advance the wizard to step 2 (events). The grant form
+// became a two-step wizard in PR #217 (split-contract-grant-form); step 1 is
+// group + functions, step 2 is events.
+// Returns the grant form dialog locator (on step 2).
 // ---------------------------------------------------------------------------
-async function openGrantForm(page: import('@playwright/test').Page) {
+async function openGrantForm(
+  page: import('@playwright/test').Page,
+  opts?: { groupId?: string },
+) {
   // Click the shield icon on the first contract row to open the permissions dialog
   const rows = page.locator('table tbody tr');
   await expect(rows).toHaveCount(1, { timeout: 10000 });
@@ -68,11 +74,31 @@ async function openGrantForm(page: import('@playwright/test').Page) {
   // A nested dialog appears — use the "Add Group Access" title to scope
   const grantDialog = page.locator(selectors.common.dialog).filter({ hasText: 'Add Group Access' });
   await expect(grantDialog).toBeVisible({ timeout: 5000 });
+
+  // Step 1: select a group, then click "Next" to advance to the events step.
+  // Callers that assert API state (e.g. "grant exists for groupId X") must pass
+  // `opts.groupId`, otherwise the helper picks the first available group — which
+  // can be the auto-created E2E_HIDDEN_ADMIN group from createOrgWithAdmin.
+  // The form's "Next" button only enables once a group is selected
+  // (functionMode defaults to 'all', so functions need no setup).
+  const groupSelect = grantDialog.locator('select').first();
+  if (opts?.groupId) {
+    await groupSelect.selectOption(opts.groupId);
+  } else {
+    await groupSelect.selectOption({ index: 1 });
+  }
+  await grantDialog.getByRole('button', { name: 'Next' }).click();
+
+  // The events section is now visible (step 2).
   return grantDialog;
 }
 
 // ---------------------------------------------------------------------------
-// Helper: open the edit form for the first grant on the first contract.
+// Helper: open the edit-events form for the first grant on the first contract.
+// The grant card now exposes two pencils — "Edit function access" (functions
+// only) and "Edit event visibility" (events only). Use the events pencil so
+// the form opens with editMode === 'events' and the events section is shown
+// without needing a wizard step.
 // ---------------------------------------------------------------------------
 async function openEditGrantForm(page: import('@playwright/test').Page) {
   const rows = page.locator('table tbody tr');
@@ -84,12 +110,22 @@ async function openEditGrantForm(page: import('@playwright/test').Page) {
   await expect(permDialog).toBeVisible({ timeout: 5000 });
   await expect(permDialog.getByText('Contract Permissions')).toBeVisible();
 
-  // Click the edit (pencil) button on the first grant card
-  const editBtn = permDialog.getByTitle('Edit function access').first();
-  await editBtn.click();
+  // Click the pencil button in the events row (NOT the functions row) so the
+  // form opens directly in editMode='events'. The pencils used to expose a
+  // `title=` attribute, but commit 65fbc6c wrapped them in a Radix Tooltip,
+  // which moves the label text to a Portal element and drops the title
+  // attribute — so `getByTitle` no longer resolves. Target structurally
+  // instead: each grant card has two parallel rows (Functions / Events) with
+  // the same flex layout; filter by the row's visible "Events:" label and
+  // pick the (single) button inside it.
+  const eventRow = permDialog
+    .locator('div.flex.items-start.justify-between')
+    .filter({ hasText: 'Events:' })
+    .first();
+  await eventRow.locator('button').first().click();
 
-  // The edit dialog has "Edit Grant Rules" title
-  const editDialog = page.locator(selectors.common.dialog).filter({ hasText: 'Edit Grant Rules' });
+  // The edit-events dialog has the "Edit Event Rules" title.
+  const editDialog = page.locator(selectors.common.dialog).filter({ hasText: 'Edit Event Rules' });
   await expect(editDialog).toBeVisible({ timeout: 5000 });
   return editDialog;
 }
@@ -355,10 +391,7 @@ test.describe('Event rules — selecting events and constraints', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const grantDialog = await openGrantForm(page);
-
-    // Select the group
-    await grantDialog.locator('select').selectOption(group.id);
+    const grantDialog = await openGrantForm(page, { groupId: group.id });
 
     // Switch to specific events and add Transfer
     await grantDialog.getByText('Specific events only').click();
@@ -383,7 +416,7 @@ test.describe('Event rules — selecting events and constraints', () => {
     await expect(selectedEvent.getByText('from=self')).toBeVisible();
 
     // Save the grant
-    await grantDialog.getByRole('button', { name: /add group access/i }).click();
+    await grantDialog.getByRole('button', { name: /create grant/i }).click();
 
     // Dialog should close
     await expect(grantDialog).not.toBeVisible({ timeout: 10000 });
@@ -443,17 +476,14 @@ test.describe('Event rules — save and display', () => {
 
     const grantDialog = await openGrantForm(page);
 
-    // Select group
-    await grantDialog.locator('select').selectOption(group.id);
-
-    // Switch to specific events, add both Transfer and Approval
+    // Switch to specific events, add both Transfer and Approval (group selected by helper)
     await grantDialog.getByText('Specific events only').click();
     await expect(grantDialog.getByText('Contract events (2):')).toBeVisible({ timeout: 5000 });
     await grantDialog.getByRole('button', { name: /Transfer/ }).click();
     await grantDialog.getByRole('button', { name: /Approval/ }).click();
 
     // Save
-    await grantDialog.getByRole('button', { name: /add group access/i }).click();
+    await grantDialog.getByRole('button', { name: /create grant/i }).click();
     await expect(grantDialog).not.toBeVisible({ timeout: 10000 });
 
     // The permissions dialog should now show the grant card with event pills
@@ -491,16 +521,13 @@ test.describe('Event rules — save and display', () => {
     await page.locator(selectors.rbac.orgSelector).click();
     await page.getByText(org.name).click();
 
-    const grantDialog = await openGrantForm(page);
-
-    // Select group
-    await grantDialog.locator('select').first().selectOption(group.id);
+    const grantDialog = await openGrantForm(page, { groupId: group.id });
 
     // Explicitly choose "All events visible" — the form default is now "No events visible"
     // (since RD-875 wildcard-event_rules support: undefined => 'none').
     await grantDialog.locator('input[name="eventMode"][value="all"]').click();
 
-    await grantDialog.getByRole('button', { name: /add group access/i }).click();
+    await grantDialog.getByRole('button', { name: /create grant/i }).click();
     await expect(grantDialog).not.toBeVisible({ timeout: 10000 });
 
     // Should show "All events visible" in the grant card
@@ -538,15 +565,12 @@ test.describe('Event rules — save and display', () => {
 
     const grantDialog = await openGrantForm(page);
 
-    // Select group
-    await grantDialog.locator('select').selectOption(group.id);
-
-    // Switch to specific events but do NOT add any events
+    // Switch to specific events but do NOT add any events (group selected by helper)
     await grantDialog.getByText('Specific events only').click();
 
     // Try to save
     // Submit button should be disabled natively
-    await expect(grantDialog.getByRole('button', { name: /add group access/i })).toBeDisabled();
+    await expect(grantDialog.getByRole('button', { name: /create grant/i })).toBeDisabled();
 
     // Should show validation error
     await expect(grantDialog.getByText(/select at least one event/i)).toBeVisible({ timeout: 5000 });

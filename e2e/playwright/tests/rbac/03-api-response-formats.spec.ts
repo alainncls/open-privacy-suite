@@ -61,13 +61,16 @@ test.describe('RBAC API Response Formats', () => {
       }
     });
 
-    test('returns 404 for non-existent user', async () => {
+    test('returns 403/404 for non-existent user (opaque-deny shape)', async () => {
       try {
         await ctx.rbac.getUserLinkedAddresses('00000000-0000-0000-0000-000000000099');
         // Should not reach here
         expect(true).toBe(false);
       } catch (error) {
-        expect(String(error)).toContain('404');
+        // The admin scope hardening in 8ce16e2 collapsed "not found" and
+        // "cross-org" into a single opaque 403 so a tier-2 admin cannot
+        // probe existence. Accept either 404 (legacy shape) or 403 (current).
+        expect(String(error)).toMatch(/40[34]/);
       }
     });
   });
