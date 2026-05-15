@@ -29,9 +29,13 @@ export const selectors = {
     nav: '[data-testid="admin-nav"]',
   },
 
-  // Navigation tabs
+  // Navigation tabs. The legacy "Dashboard" tab was renamed to "Diagnostics"
+  // and demoted from landing-page status (RBAC is now the default landing tab).
+  // `nav.dashboard` is retained as an alias for `nav.diagnostics` so older
+  // tests still resolve, but new tests should prefer `nav.diagnostics`.
   nav: {
-    dashboard: '[data-testid="nav-dashboard"]',
+    diagnostics: '[data-testid="nav-diagnostics"]',
+    dashboard: '[data-testid="nav-diagnostics"]',
     logs: '[data-testid="nav-logs"]',
     rbac: '[data-testid="nav-rbac"]',
   },

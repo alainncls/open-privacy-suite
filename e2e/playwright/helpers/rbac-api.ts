@@ -379,7 +379,13 @@ export class RBACApiClient {
 
   async getGroup(orgId: string, groupId: string): Promise<Group | null> {
     const response = await this.get(`${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}`);
-    if (response.status() === 404) {
+    // 404 is the historical "not found" shape; 403 with the opaque
+    // "access denied to target resource" body is the post-RD-916/917 shape —
+    // both map to null here so callers can do "find or null" without caring
+    // about the wire-level distinction. The opaque-deny design intentionally
+    // collapses "exists in another org" and "does not exist" into one
+    // indistinguishable response (see admin_scope.go:errTargetForeignOrg).
+    if (response.status() === 404 || response.status() === 403) {
       return null;
     }
     if (!response.ok()) {
@@ -413,7 +419,8 @@ export class RBACApiClient {
     const response = await this.get(
       `${ADMIN_URL}/api/v1/admin/orgs/${orgId}/groups/${groupId}/access`
     );
-    if (response.status() === 404) {
+    // See getGroup() comment — 403 maps to null (opaque-deny shape).
+    if (response.status() === 404 || response.status() === 403) {
       return null;
     }
     if (!response.ok()) {
@@ -458,7 +465,9 @@ export class RBACApiClient {
 
   async getUser(userId: string): Promise<User | null> {
     const response = await this.get(`${ADMIN_URL}/api/v1/admin/users/${userId}`);
-    if (response.status() === 404) {
+    // See getGroup() comment — 403 is the opaque-deny shape that collapses
+    // "not found" and "cross-org" into a single response.
+    if (response.status() === 404 || response.status() === 403) {
       return null;
     }
     if (!response.ok()) {

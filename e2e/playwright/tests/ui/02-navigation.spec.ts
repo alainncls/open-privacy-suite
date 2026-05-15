@@ -25,29 +25,30 @@ test.describe('Admin Navigation', () => {
   });
 
   test('navigation tabs are visible and functional', async ({ page }) => {
-    await page.goto('/admin/dashboard');
+    await page.goto('/admin/diagnostics');
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
-    // Verify all navigation tabs are visible
-    await expect(page.locator(selectors.nav.dashboard)).toBeVisible();
+    // Verify all navigation tabs are visible. The "Dashboard" tab was renamed
+    // to "Diagnostics" in App.tsx; RBAC is now the default landing tab.
+    await expect(page.locator(selectors.nav.diagnostics)).toBeVisible();
     await expect(page.locator(selectors.nav.logs)).toBeVisible();
     await expect(page.locator(selectors.nav.rbac)).toBeVisible();
 
     // Verify tab text content
-    await expect(page.locator(selectors.nav.dashboard)).toContainText('Dashboard');
+    await expect(page.locator(selectors.nav.diagnostics)).toContainText('Diagnostics');
     await expect(page.locator(selectors.nav.logs)).toContainText('Access Logs');
     await expect(page.locator(selectors.nav.rbac)).toContainText('RBAC');
   });
 
-  test('clicking Dashboard tab navigates to dashboard', async ({ page }) => {
+  test('clicking Diagnostics tab navigates to diagnostics', async ({ page }) => {
     await page.goto('/admin/rbac');
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
-    // Click on Dashboard tab
-    await page.locator(selectors.nav.dashboard).click();
+    // Click on Diagnostics tab (formerly Dashboard)
+    await page.locator(selectors.nav.diagnostics).click();
 
     // Verify navigation
-    await expect(page).toHaveURL(/\/admin\/dashboard/);
+    await expect(page).toHaveURL(/\/admin\/diagnostics/);
   });
 
   test('clicking Access Logs tab navigates to logs', async ({ page }) => {
@@ -121,12 +122,12 @@ test.describe('Admin Navigation', () => {
   });
 
   test('active tab is visually indicated', async ({ page }) => {
-    await page.goto('/admin/dashboard');
+    await page.goto('/admin/diagnostics');
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
-    // Dashboard tab should be active (has data-state="active" on Radix tabs)
-    const dashboardTab = page.locator(selectors.nav.dashboard);
-    await expect(dashboardTab).toHaveAttribute('data-state', 'active');
+    // Diagnostics tab should be active (Radix tabs use data-state="active").
+    const diagnosticsTab = page.locator(selectors.nav.diagnostics);
+    await expect(diagnosticsTab).toHaveAttribute('data-state', 'active');
 
     // Navigate to RBAC
     await page.locator(selectors.nav.rbac).click();
@@ -136,8 +137,8 @@ test.describe('Admin Navigation', () => {
     const rbacTab = page.locator(selectors.nav.rbac);
     await expect(rbacTab).toHaveAttribute('data-state', 'active');
 
-    // Dashboard tab should no longer be active
-    await expect(dashboardTab).toHaveAttribute('data-state', 'inactive');
+    // Diagnostics tab should no longer be active
+    await expect(diagnosticsTab).toHaveAttribute('data-state', 'inactive');
   });
 
   test('URL directly to RBAC sub-route loads correctly', async ({ page }) => {
@@ -172,15 +173,15 @@ test.describe('Admin Navigation', () => {
   });
 
   test('navigation preserves scroll position within sections', async ({ page }) => {
-    await page.goto('/admin/dashboard');
+    await page.goto('/admin/diagnostics');
     await expect(page.locator(selectors.admin.app)).toBeVisible({ timeout: 10000 });
 
-    // Navigate to RBAC and back
+    // Navigate to RBAC and back to Diagnostics
     await page.locator(selectors.nav.rbac).click();
     await expect(page).toHaveURL(/\/admin\/rbac/);
 
-    await page.locator(selectors.nav.dashboard).click();
-    await expect(page).toHaveURL(/\/admin\/dashboard/);
+    await page.locator(selectors.nav.diagnostics).click();
+    await expect(page).toHaveURL(/\/admin\/diagnostics/);
 
     // Page should be scrolled to top after navigation
     const scrollPosition = await page.evaluate(() => window.scrollY);

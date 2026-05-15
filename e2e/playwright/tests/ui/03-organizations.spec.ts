@@ -98,7 +98,11 @@ test.describe('Organization CRUD', () => {
     await page.goto('/admin/rbac/organizations');
     await expect(page.locator(selectors.rbac.manager)).toBeVisible({ timeout: 10000 });
 
-    await expect(page.getByText(org.slug)).toBeVisible({ timeout: 10000 });
+    // The slug now appears in two places on the row: concatenated into the
+    // displayed name (`Test Org <slug>`) and as a standalone monospace badge.
+    // Use { exact: true } to target only the standalone badge so we don't trip
+    // Playwright's strict-mode duplicate-element guard.
+    await expect(page.getByText(org.slug, { exact: true })).toBeVisible({ timeout: 10000 });
   });
 
   test('clicking organization row selects it', async ({ page, request }) => {
