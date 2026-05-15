@@ -554,6 +554,109 @@ func TestFilterBlockTransactions_BlockLogsBloom_Zeroed_NonParticipantViewer(t *t
 	}
 }
 
+// RD-929: block-aggregate gas fields (gasUsed, blobGasUsed) are zeroed for every
+// viewer, mirroring the logsBloom treatment in RD-873. The fields are by spec
+// the sum of every tx's gas in the block — including txs we filter out — so
+// passing them through verbatim is a presence leak. A non-participant who sees
+// transactions:[] paired with gasUsed:0x500000 learns the block had hidden
+// activity. For participants the field aggregates other users' gas footprints.
+// Users who need their own gas read it from per-tx receipts.
+
+const expectedZeroGasUsed = "0x0"
+
+func extractBlockGasFields(t *testing.T, body []byte) (gasUsed, blobGasUsed string) {
+	t.Helper()
+	var resp struct {
+		Result *struct {
+			GasUsed     string `json:"gasUsed"`
+			BlobGasUsed string `json:"blobGasUsed"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v\nbody: %s", err, body)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected non-null result")
+	}
+	return resp.Result.GasUsed, resp.Result.BlobGasUsed
+}
+
+func TestFilterBlockTransactions_BlockGasUsed_Zeroed_Participant(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","blobGasUsed":"0x20000","transactions":[` +
+		`{"from":"` + userAddr + `","to":"0xother","input":"0x","hash":"0xh1"},` +
+		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh2"}` +
+		`]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
+	if gasUsed != expectedZeroGasUsed {
+		t.Errorf("gasUsed must be zeroed for participants\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
+	}
+	if blobGasUsed != expectedZeroGasUsed {
+		t.Errorf("blobGasUsed must be zeroed for participants\ngot:  %s\nwant: %s", blobGasUsed, expectedZeroGasUsed)
+	}
+}
+
+func TestFilterBlockTransactions_BlockGasUsed_Zeroed_NonParticipant(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","blobGasUsed":"0x20000","transactions":[` +
+		`{"from":"0xother1","to":"0xother2","input":"0x","hash":"0xh1"}` +
+		`]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
+	if gasUsed != expectedZeroGasUsed {
+		t.Errorf("gasUsed must be zeroed for non-participants (the actual presence-leak case)\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
+	}
+	if blobGasUsed != expectedZeroGasUsed {
+		t.Errorf("blobGasUsed must be zeroed for non-participants\ngot:  %s\nwant: %s", blobGasUsed, expectedZeroGasUsed)
+	}
+}
+
+func TestFilterBlockTransactions_BlockGasUsed_Zeroed_EmptyTxArray(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","blobGasUsed":"0x20000","transactions":[]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	gasUsed, blobGasUsed := extractBlockGasFields(t, got)
+	if gasUsed != expectedZeroGasUsed {
+		t.Errorf("gasUsed must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
+	}
+	if blobGasUsed != expectedZeroGasUsed {
+		t.Errorf("blobGasUsed must be zeroed on empty-tx blocks\ngot:  %s\nwant: %s", blobGasUsed, expectedZeroGasUsed)
+	}
+}
+
+func TestFilterBlockTransactions_BlockGasUsed_Zeroed_HashesOnly(t *testing.T) {
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":["0xhash1","0xhash2"]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, false)
+	gasUsed, _ := extractBlockGasFields(t, got)
+	if gasUsed != expectedZeroGasUsed {
+		t.Errorf("gasUsed must be zeroed on hash-only blocks\ngot:  %s\nwant: %s", gasUsed, expectedZeroGasUsed)
+	}
+}
+
+func TestFilterBlockTransactions_BlockGasUsed_Untouched_WhenFieldAbsent(t *testing.T) {
+	// Some node implementations may omit blobGasUsed on pre-Cancun blocks.
+	// We only zero fields that exist — don't fabricate them.
+	userAddr := "0xabc1234567890123456789012345678901234567"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"number":"0x1","gasUsed":"0x500000","transactions":[]}}`
+
+	got := FilterBlockTransactions([]byte(response), []string{userAddr}, true)
+	var resp struct {
+		Result map[string]json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(got, &resp); err != nil {
+		t.Fatalf("output not valid JSON: %v", err)
+	}
+	if _, present := resp.Result["blobGasUsed"]; present {
+		t.Error("blobGasUsed must not be fabricated when upstream omits it")
+	}
+}
+
 func TestFilterBlockTransactions_ContractCreation_DeployerKept(t *testing.T) {
 	// Contract creation tx (to=null) where user is the deployer — must be kept.
 	userAddr := "0xabc1234567890123456789012345678901234567"

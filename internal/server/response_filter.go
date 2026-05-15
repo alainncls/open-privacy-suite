@@ -304,6 +304,11 @@ func FilterLogs(responseBody []byte, userAddresses []string) []byte {
 // response gets its bloom replaced with this value (RD-873).
 var zeroLogsBloomJSON = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
 
+// zeroGasUsedJSON is the canonical hex-zero value used to overwrite a block's
+// gas-aggregate fields (gasUsed, blobGasUsed). See FilterBlockTransactions
+// docstring for the threat model (RD-929).
+var zeroGasUsedJSON = json.RawMessage(`"0x0"`)
+
 // FilterBlockTransactions filters an eth_getBlockByNumber or eth_getBlockByHash response.
 // Removes non-participant transactions. If the user originally requested hashes, maps the
 // filtered full tx objects back to the transaction hashes.
@@ -316,6 +321,16 @@ var zeroLogsBloomJSON = json.RawMessage(`"0x` + strings.Repeat("0", 512) + `"`)
 // target address" staying false (out-of-band leakage, contract authors using
 // addresses as identifiers), so the field is sanitised to all-zero on the way
 // out. This closes decisions.md §2 G6.
+//
+// RD-929 extends the same treatment to gasUsed (and blobGasUsed for EIP-4844).
+// These are block-aggregate fields: by spec they're the sum of every tx's gas
+// in the block, including txs we hide from the viewer via the transactions[]
+// filter above. Passing them through verbatim is a direct presence leak — a
+// non-participant who sees transactions:[] paired with gasUsed:0x500000 learns
+// "this block had hidden activity." Even for participants the field reveals
+// the gas footprint of other users' txs in the same block. We mirror logsBloom
+// and always return 0x0; users who need their own gas can get it from the
+// per-tx receipts they already have access to.
 func FilterBlockTransactions(responseBody []byte, userAddresses []string, originalFull bool) []byte {
 	var resp struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -340,13 +355,19 @@ func FilterBlockTransactions(responseBody []byte, userAddresses []string, origin
 		return responseBody
 	}
 
-	// Always zero logsBloom before any further filtering — fail-closed for
-	// the bloom regardless of transaction-array shape (full objects, hash
-	// list, empty, or absent). Done unconditionally rather than per-branch
-	// so future branches added below can't accidentally leave the field
-	// untouched.
+	// Always zero logsBloom and gas-aggregate fields before any further
+	// filtering — fail-closed regardless of transaction-array shape (full
+	// objects, hash list, empty, or absent). Done unconditionally rather
+	// than per-branch so future branches added below can't accidentally
+	// leave the fields untouched. See docstring for the threat model.
 	if _, ok := block["logsBloom"]; ok {
 		block["logsBloom"] = zeroLogsBloomJSON
+	}
+	if _, ok := block["gasUsed"]; ok {
+		block["gasUsed"] = zeroGasUsedJSON
+	}
+	if _, ok := block["blobGasUsed"]; ok {
+		block["blobGasUsed"] = zeroGasUsedJSON
 	}
 
 	if txsRaw, ok := block["transactions"]; ok {
