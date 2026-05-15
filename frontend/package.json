@@ -46,7 +46,8 @@
     "hono": "4.12.16",
     "axios": "^1.15.1",
     "uuid": "^14.0.0",
-    "follow-redirects": "^1.16.0"
+    "follow-redirects": "^1.16.0",
+    "zod@<4.4.0": "4.4.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",
