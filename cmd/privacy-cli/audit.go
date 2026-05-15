@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -161,6 +162,9 @@ func (r *cliSeedReader) GetLatestRBACAuditLogHash(ctx context.Context) (string, 
 }
 
 func (r *cliSeedReader) latestHash(ctx context.Context, table, chainName string) (string, error) {
+	if !regexp.MustCompile(`^[a-zA-Z0-9_]+$`).MatchString(table) {
+		return "", fmt.Errorf("invalid table name: %s", table)
+	}
 	var hash sql.NullString
 	q := fmt.Sprintf(
 		`SELECT entry_hash FROM %s WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1`,
