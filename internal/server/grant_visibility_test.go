@@ -191,7 +191,7 @@ func TestGrantVisibility(t *testing.T) {
 			}
 		})
 
-		t.Run("RedactedGrant_EmptyTransactions", func(t *testing.T) {
+		t.Run("RedactedGrant_TxsVisibleAddressesPrivate", func(t *testing.T) {
 			redactedGrantID := createDisclosureGrantWithLevel(t, database, aliceDID, daveUserID,
 				disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
 			redactedAddressID := explorer.GenerateAddressID(addrDave, redactedGrantID)
@@ -207,7 +207,20 @@ func TestGrantVisibility(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 			assert.Equal(t, "redacted", resp.DisclosureLevel)
-			assert.Empty(t, resp.Transactions, "redacted grant should return empty transactions")
+			require.NotEmpty(t, resp.Transactions,
+				"redacted grant should return txs (proof of activity), not an empty list")
+
+			body := w.Body.String()
+			assert.NotContains(t, body, addrDave, "real disclosed address leaked")
+			assert.NotContains(t, body, addrAlice, "real counterparty (Alice) leaked")
+
+			for _, tx := range resp.Transactions {
+				assert.Nil(t, tx.TxHash, "tx hash must be withheld")
+				assert.Equal(t, "hidden", tx.Value, "value must be hidden")
+				assert.Equal(t, "[PRIVATE]", tx.From, "from must be uniform [PRIVATE]")
+				assert.Equal(t, "[PRIVATE]", tx.To, "to must be uniform [PRIVATE]")
+			}
+			assert.Empty(t, resp.AddressLabels, "no per-address labels in redacted (no linkability)")
 		})
 	})
 

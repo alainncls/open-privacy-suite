@@ -26,7 +26,15 @@ The disclosure system provides:
 |-------|-----------------|----------|
 | **Full** | Real addresses (`0xa32c...94cd`) | Regulatory subpoenas, law enforcement investigations |
 | **Pseudonymous** | Consistent pseudonyms (`Address-KDCM`) | Financial audits -- allows pattern analysis without revealing identity |
-| **Redacted** | `[PRIVATE]` | Minimal disclosure -- proves activity exists without revealing addresses |
+| **Redacted** | Uniform `[PRIVATE]` placeholder for every address | Proof of activity -- timing, direction, gas, status visible, but no counterparty correlation across transactions |
+
+The three levels form a privacy ladder:
+
+- **Full** = identity + transaction graph.
+- **Pseudonymous** = transaction graph without identity (same address renders as the same pseudonym within a grant, so patterns are visible).
+- **Redacted** = volume and timing without graph (every address renders as the same placeholder, so the auditor cannot correlate counterparties between transactions). `value` is also withheld at this level; transaction hashes are never returned.
+
+Activity log access (RPC method invocations as proof of activity, without addresses or parameters) is **orthogonal** to disclosure level — it is granted via the `activity_logs` or `full_disclosure` scope on the grant, not by the disclosure level.
 
 ## Workflow
 

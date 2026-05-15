@@ -29,7 +29,7 @@ type OwnAddress struct {
 // DisclosedAddress represents an address disclosed to the viewer via a grant
 // SECURITY: For non-full disclosures, Address contains the pseudonym or placeholder, NOT the real address
 type DisclosedAddress struct {
-	Address         string     `json:"address"`    // Pseudonym for pseudonymous, "[REDACTED]" for redacted, real for full
+	Address         string     `json:"address"`    // Pseudonym for pseudonymous, "[PRIVATE]" for redacted, real for full
 	AddressID       string     `json:"address_id"` // Opaque identifier for routing (hash of real address)
 	OwnerDID        string     `json:"owner_did"`
 	DisclosureLevel string     `json:"disclosure_level"`
@@ -324,11 +324,11 @@ func (s *Server) getDisclosedAddressesForViewer(ctx context.Context, viewerDID s
 				disclosed.Address = explorer.GeneratePseudonym(addr.EthAddress)
 				// Don't include ENS name - it could reveal identity
 			case "redacted":
-				disclosed.Address = "[REDACTED]"
+				disclosed.Address = "[PRIVATE]"
 				// Don't include ENS name
 			default:
 				// SECURITY: Fail-safe - treat unknown disclosure levels as redacted
-				disclosed.Address = "[REDACTED]"
+				disclosed.Address = "[PRIVATE]"
 			}
 
 			result = append(result, disclosed)
@@ -485,17 +485,6 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 		disclosureLevel = string(grant.Scope.DisclosureLevel)
 	}
 
-	// For redacted grants, return empty transactions
-	if disclosureLevel == "redacted" {
-		c.JSON(http.StatusOK, GrantTransactionsResponse{
-			Transactions:    []GrantTransaction{},
-			DisclosureLevel: disclosureLevel,
-			AddressLabels:   map[string]string{},
-			HasMore:         false,
-		})
-		return
-	}
-
 	// Get target user and their addresses
 	request := grantWithRequest.Request
 	targetUser, err := s.db.GetUser(c.Request.Context(), request.TargetUserID)
@@ -634,6 +623,19 @@ func (s *Server) getGrantTransactions(c *gin.Context) {
 
 			gt.Value = "hidden"
 			// tx hash intentionally omitted for pseudonymous
+
+		case "redacted":
+			// Every address renders as the same opaque placeholder. Unlike
+			// pseudonymous, no per-address stable token is emitted — the
+			// auditor cannot correlate counterparties across txs. Value and
+			// tx hash are also withheld so the auditor learns timing, gas,
+			// status, and direction only ("proof of activity" without graph
+			// or financial pattern correlation).
+			gt.From = "[PRIVATE]"
+			if tx.HasRecipient() {
+				gt.To = "[PRIVATE]"
+			}
+			gt.Value = "hidden"
 		}
 
 		grantTxs = append(grantTxs, gt)

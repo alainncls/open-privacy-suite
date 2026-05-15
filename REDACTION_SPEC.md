@@ -329,7 +329,7 @@ Token visibility is determined by the token's contract address. If the address i
 
 ## 4. Known Gaps
 
-The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G22 are resolved. G4, G15, G23 are outstanding.
+The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, G20, G21, G22 are resolved. G4, G15, G23 are outstanding.
 
 ### Resolved
 
@@ -377,11 +377,11 @@ The following gaps are numbered. G1, G2, G3, G5, G6, G7, G8, G9, G11, G14, G16, 
 - **G19: Grant page should show viewer's own address as "Mine" not External-XXXX**
   On the pseudonymous grant page, the viewer's own address is pseudonymized as `External-XXXX` like any other external address. The proxy should detect when an external address in a grant transaction matches the viewer's linked address and label it as "You" or "Mine" instead of generating a pseudonym.
 
-- **G20: Redacted disclosure level — use case undefined**
-  `DisclosureRedacted` is documented as "hides all addresses — for minimal disclosure" but the business use case is not specified. Currently shows an empty transaction list on the grant page. **Decision needed from product/team lead:** What scenario requires a grant that reveals no data? Is it a placeholder, a compliance checkbox ("yes this user exists"), or something else? Implementation should wait for clarification.
+- **G20 (resolved): Redacted disclosure level — proof of activity without correlation.**
+  Earlier the `redacted` level short-circuited `/grant/:id/:addr/transactions` to an empty list, which contradicted the docs/UI promise of "proves activity exists." Resolved by giving Redacted a distinct semantic: txs are returned, but every address (disclosed and counterparty alike) renders as the uniform placeholder `[PRIVATE]`, `value` is `"hidden"`, no tx hash, no per-address labels. The auditor sees timing, direction, gas, and status — sufficient for a proof-of-activity audit — but cannot correlate counterparties across txs (no stable per-address pseudonym, unlike Pseudonymous). Three-level model now reads as: Full = identity + graph, Pseudonymous = graph without identity, Redacted = volume/timing without graph. Activity-log access remains orthogonal (gated by `Scope.Methods` containing `activity_logs`/`full_disclosure`).
 
-- **G21: Inbound transaction visibility — should recipient see sender?**
-  When someone sends a transaction TO a user, the participant override reveals the sender's address to the recipient. This is currently correct (the recipient knows who sent them funds). However, the reverse case needs consideration: if someone receives an unsolicited transaction, should the sender's identity be revealed? On a public chain this is a non-issue, but on a private network where identity is protected, receiving a tx could be used to probe someone's explorer view. **Decision needed:** Is the current behavior (always reveal counterparty to participants) correct, or should inbound-only participants have restricted visibility?
+- **G21 (resolved): Inbound transaction visibility — recipient sees sender.**
+  Earlier framing labelled this a "probing" primitive, but no probing exists: the only information flow is sender → recipient (the sender reveals their own address by sending the tx). The recipient has no return channel to the sender, and learns one address per inbound tx with no visibility into the sender's other activity. Hiding sender from recipient would break legitimate audit/settlement use cases (knowing who paid you is a baseline requirement) without preventing any disclosure the sender had not already volunteered by sending. The symmetric participant override in `response_filter.go:104-110` (and equivalents in `FilterTransactionReceipt:153-160` and `RedactLogs` via `explorer_api.go:1556-1567`) is correct.
 
 - **G23: Explorer log-data redaction does not cover cross-org-touched txs**
   RD-915 closes the `eth_call`-side cross-org leak at the proxy boundary, but the explorer-side log-data redaction (RD-875/RD-889) is keyed on the *emitting contract* of each log, not on whether the originating tx touched a foreign-org contract via internal calls. A tx authored by org A that internally STATICCALLs an org B contract may end up with org A logs whose `data` references org B state. The RPC-layer `eth_call` gate prevents the live-query angle; the indexed/historical explorer view is still open. Follow-up needed: extend `RedactLogs` (or add a tx-level pre-filter) so that any log of a tx whose trace touched a foreign-org address is treated as cross-org for the viewer. See `docs/rd-915-design.md` §KD-6.

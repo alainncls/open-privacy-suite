@@ -891,7 +891,7 @@ func TestGetDisclosedAddressesForViewer_RedactedDisclosure(t *testing.T) {
 
 	// SECURITY: Real address should NOT be returned
 	assert.NotEqual(t, testTargetAddress, disclosed.Address, "Redacted should NOT show real address")
-	assert.Equal(t, "[REDACTED]", disclosed.Address, "Should show [REDACTED] placeholder")
+	assert.Equal(t, "[PRIVATE]", disclosed.Address, "Should show [PRIVATE] placeholder")
 	assert.Equal(t, "redacted", disclosed.DisclosureLevel)
 	assert.NotEmpty(t, disclosed.AddressID)
 	assert.Nil(t, disclosed.ENSName, "ENS name should not be included for redacted")
@@ -1145,7 +1145,7 @@ func TestSecurity_RedactedDoesNotLeakRealAddress(t *testing.T) {
 	body := w.Body.String()
 	assert.NotContains(t, body, sensitiveAddress, "SECURITY VIOLATION: Real address leaked in redacted mode")
 	assert.NotContains(t, body, "Secret9999", "SECURITY VIOLATION: Real address parts leaked")
-	assert.Contains(t, body, "[REDACTED]", "Should show redacted placeholder")
+	assert.Contains(t, body, "[PRIVATE]", "Should show redacted placeholder")
 }
 
 // ============================================================================

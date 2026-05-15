@@ -220,8 +220,8 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 				"SECURITY: real address must not appear in redacted resolve response")
 		})
 
-		// --- Transactions (redacted = empty) ---
-		t.Run("Transactions_200_Empty", func(t *testing.T) {
+		// --- Transactions (redacted = txs visible, all addresses [PRIVATE]) ---
+		t.Run("Transactions_200_PrivatePlaceholders", func(t *testing.T) {
 			req := httptest.NewRequest("GET",
 				"/api/v1/explorer/grant/"+gs.GrantID+"/"+gs.AddressID+"/transactions", nil)
 			addBearerToken(t, req, srv, gs.RequesterDID)
@@ -232,8 +232,11 @@ func TestGrantVisibilityMatrix(t *testing.T) {
 			var resp GrantTransactionsResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, "redacted", resp.DisclosureLevel)
-			assert.Empty(t, resp.Transactions,
-				"redacted level should return empty transactions")
+			// No tx seeding here — body is empty by chance, not by short-circuit.
+			// The level-correctness assertions live in the dedicated redacted tests
+			// (TestGrantTransactions_RedactedDisclosure, RedactedGrant_*).
+			assert.NotContains(t, w.Body.String(), gs.TargetAddr,
+				"real address must not appear in redacted response")
 		})
 
 		// --- Activity Logs (full_disclosure scope includes activity) ---
