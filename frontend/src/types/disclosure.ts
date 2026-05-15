@@ -166,7 +166,7 @@ export const DISCLOSURE_LEVEL_LABELS: Record<DisclosureLevel, string> = {
 export const DISCLOSURE_LEVEL_DESCRIPTIONS: Record<DisclosureLevel, string> = {
   full: 'Auditor sees real ETH addresses - for regulatory subpoenas, law enforcement',
   pseudonymous: 'Auditor sees consistent pseudonyms (Address-A, Address-B) - for compliance audits',
-  redacted: 'All addresses hidden, only aggregate stats visible - for minimal disclosure',
+  redacted: 'All addresses replaced with [PRIVATE]; auditor sees timing, direction, gas, and status but cannot correlate counterparties between transactions',
 };
 
 // All disclosure levels

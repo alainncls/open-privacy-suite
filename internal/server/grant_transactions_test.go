@@ -198,7 +198,7 @@ func TestGrantTransactions_PseudonymousDirection_Self(t *testing.T) {
 }
 
 func TestGrantTransactions_RedactedDisclosure(t *testing.T) {
-	srv, database, _ := setupTestServerForExplorerTransactions(t)
+	srv, database, conn := setupTestServerForExplorerTransactions(t)
 	router := setupGrantTransactionsRouter(srv)
 
 	targetUserID := createTestUserForExplorer(t, database, testTargetDID)
@@ -208,6 +208,15 @@ func TestGrantTransactions_RedactedDisclosure(t *testing.T) {
 		disclosure.DisclosureRedacted, time.Now().Add(24*time.Hour))
 
 	addressID := explorer.GenerateAddressID(testTargetAddress, grantID)
+
+	externalA := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	externalB := "0xcccccccccccccccccccccccccccccccccccccccc"
+	block1 := seedExplorerBlock(t, conn)
+	seedExplorerTransaction(t, conn, block1, "0xtx_redacted_out_a", testTargetAddress, externalA)
+	block2 := seedExplorerBlock(t, conn)
+	seedExplorerTransaction(t, conn, block2, "0xtx_redacted_in_a", externalA, testTargetAddress)
+	block3 := seedExplorerBlock(t, conn)
+	seedExplorerTransaction(t, conn, block3, "0xtx_redacted_out_b", testTargetAddress, externalB)
 
 	req := httptest.NewRequest("GET",
 		"/api/v1/explorer/grant/"+grantID+"/"+addressID+"/transactions", nil)
@@ -220,7 +229,26 @@ func TestGrantTransactions_RedactedDisclosure(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	assert.Equal(t, "redacted", resp.DisclosureLevel)
-	assert.Empty(t, resp.Transactions, "redacted grant should return empty transactions")
+	require.Len(t, resp.Transactions, 3, "redacted should return all txs (proof of activity)")
+
+	body := w.Body.String()
+	assert.NotContains(t, body, testTargetAddress, "real disclosed address leaked in redacted mode")
+	assert.NotContains(t, body, externalA, "real external address leaked in redacted mode")
+	assert.NotContains(t, body, externalB, "real external address leaked in redacted mode")
+	assert.NotContains(t, body, "0xtx_redacted", "tx hash leaked in redacted mode")
+
+	for _, tx := range resp.Transactions {
+		assert.Nil(t, tx.TxHash, "redacted must NOT include tx hash")
+		assert.Equal(t, "hidden", tx.Value, "redacted must hide value")
+		assert.Equal(t, "[PRIVATE]", tx.From, "redacted from must be uniform [PRIVATE]")
+		assert.Equal(t, "[PRIVATE]", tx.To, "redacted to must be uniform [PRIVATE]")
+		assert.NotEmpty(t, tx.Direction, "direction (in/out/self) is preserved for activity proof")
+	}
+
+	// Linkability check: the two txs involving externalA must be indistinguishable
+	// from the third tx (externalB) on the counterparty side — no per-address stable
+	// pseudonym is emitted.
+	assert.Empty(t, resp.AddressLabels, "redacted must not emit address labels")
 }
 
 func TestGrantTransactions_ExpiredGrant(t *testing.T) {
