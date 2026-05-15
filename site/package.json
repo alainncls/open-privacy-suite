@@ -42,6 +42,6 @@
     "typescript": "^5"
   },
   "overrides": {
-    "dompurify": "^3.4.1"
+    "dompurify": "^3.4.2"
   }
 }
